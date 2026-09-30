@@ -21,6 +21,11 @@ from ..models import (
     Reembolso,
 )
 from ..utils.mexico_city_dates import utc_now
+from .cuenta_settlement_service import (
+    PREAPPROVAL_INFORME_STATES,
+    CuentaSettlementValidationError,
+    validate_cuenta_surplus_is_returned,
+)
 from .payment_schedule_service import assign_fecha_pago_on_solicitud_approval
 from .amex_accounting_posting_service import ensure_amex_report_approval_posting
 from .employee_debtor_accounting_service import (
@@ -472,9 +477,17 @@ async def documento_financial_terminal_reason(
     reembolso_filters = [Reembolso.documento_id == documento.id]
     if getattr(documento, "cuenta_gastos_id", None):
         reembolso_filters.append(Reembolso.cuenta_gastos_id == documento.cuenta_gastos_id)
+    settlement_filters = []
+    if documento.tipo == "INFORME" and estado in PREAPPROVAL_INFORME_STATES:
+        # Returning an advance does not approve its expenses. The INFORME must
+        # still complete its first authorization cycle; reimbursements stay locked.
+        settlement_filters.append(
+            func.lower(func.coalesce(Reembolso.tipo, "")) != "devolucion"
+        )
     reembolso_result = await session.execute(
         select(func.count(Reembolso.id)).where(
             or_(*reembolso_filters),
+            *settlement_filters,
             func.lower(func.coalesce(Reembolso.estado, "")).notin_(
                 NON_TERMINAL_SETTLEMENT_STATES
             ),
@@ -495,6 +508,18 @@ async def documento_has_approval(session: AsyncSession, documento: Documento) ->
         )
     )
     return int(result.scalar_one() or 0) > 0
+
+
+async def validate_informe_surplus_before_submission(
+    session: AsyncSession, documento: Documento
+) -> None:
+    """Apply the same surplus invariant to closing, sending, and approval."""
+    if documento.tipo != "INFORME" or documento.cuenta_gastos_id is None:
+        return
+    try:
+        await validate_cuenta_surplus_is_returned(session, documento.cuenta_gastos_id)
+    except CuentaSettlementValidationError as exc:
+        raise DocumentoWorkflowValidationError(exc.code, exc.message) from exc
 
 
 async def documento_workflow_locked_reason(
@@ -595,6 +620,7 @@ async def transition_documento_workflow(
                 "El documento solo puede enviarse cuando está en estado 'borrador'.",
             )
         if documento.tipo == "INFORME":
+            await validate_informe_surplus_before_submission(session, documento)
             gastos_count = await _count_active_document_expenses(
                 session,
                 documento_id=documento_uuid,
@@ -650,6 +676,7 @@ async def transition_documento_workflow(
                 "invalid_estado",
                 "El documento solo puede aprobarse cuando está en estado 'enviado'.",
             )
+        await validate_informe_surplus_before_submission(session, documento)
         if is_employee_reimbursement_solicitud(
             documento
         ) and not await _solicitud_linked_informe_is_approved(session, documento):

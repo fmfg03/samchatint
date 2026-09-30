@@ -1205,11 +1205,9 @@ def test_devolucion_sobrantes_copy_is_used_for_positive_saldo_ctas():
         )
     ]
 
-    assert "Registrar devolución de sobrantes" in document_detail
-    assert "El empleado devuelve el sobrante del anticipo a la empresa." in (
-        document_detail
-    )
-    assert "Registrar devolución de sobrantes" in informe_detail
+    assert "_devolucion_sobrante_action_html(" in document_detail
+    assert "_devolucion_sobrante_action_html(" in informe_detail
+    assert "{devolver_sobrante_actions_html}" in informe_detail
 
 
 def test_saldar_form_uses_devolucion_sobrantes_copy():

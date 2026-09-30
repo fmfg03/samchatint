@@ -201,6 +201,7 @@ from ..services.documento_workflow_service import (
     promote_solicitudes_ready_for_payment,
     reserve_documento_cfdis_or_raise,
     transition_documento_workflow,
+    validate_informe_surplus_before_submission,
 )
 from ..services.reimbursement_payment_run_service import (
     ensure_approved_informe_reimbursement_for_payment_run,
@@ -252,11 +253,15 @@ from ..services.documento_semantics import (
     reimbursement_concept_from_cuenta,
 )
 from ..services.cuenta_settlement_service import (
+    PREAPPROVAL_INFORME_STATES,
     CuentaSettlementPermissionError,
     CuentaSettlementValidationError,
+    advance_return_is_stale,
     cancel_cuenta_settlement,
     compute_cuenta_saldo_adjustments,
     register_cuenta_settlement,
+    sum_active_advance_returns,
+    validate_settlement_eligibility,
 )
 from ..services.loan_request_service import (
     PRESTAMO_ABONO_STATUS_ENVIADO,
@@ -29762,6 +29767,7 @@ async def _apply_control_presupuestal_assignment(
             "El concepto no corresponde al torneo/fase del documento.",
         )
 
+    await validate_informe_surplus_before_submission(session, documento)
     concept_uuid = UUIDType(str(budget_concept["id"]))
     documento.budget_concept_id = concept_uuid
     now = datetime.utcnow()
@@ -29917,6 +29923,7 @@ async def _apply_control_presupuestal_expense_assignment(
 
     released = await _informe_budget_assignment_complete(session, documento)
     if released:
+        await validate_informe_surplus_before_submission(session, documento)
         documento.budget_concept_id = concept_uuid
         documento.estado = "enviado"
         documento.enviado_en = now
@@ -38953,31 +38960,36 @@ async def ver_documento(
     if documento.tipo == "INFORME" and cuenta_vinculada is not None and cuenta_saldo_ctx:
         saldo_doc = float(cuenta_saldo_ctx["saldo_raw"] or 0)
         active_settlements_doc = int(cuenta_saldo_ctx["active_settlement_count"] or 0)
-        if active_settlements_doc > 0:
-            informe_settlement_html = """
-            <div class="status-chip info">Liquidación en curso</div>
-            """
+        if cuenta_saldo_ctx.get("advance_return_stale") or active_settlements_doc > 0:
+            _, informe_settlement_html = _cuenta_settlement_status_html(
+                stale_return=bool(cuenta_saldo_ctx.get("advance_return_stale")),
+                has_active_settlement=active_settlements_doc > 0,
+                saldo=saldo_doc,
+            )
         elif abs(saldo_doc) < 0.005:
             informe_settlement_html = """
             <div class="status-chip info">Cuenta saldada</div>
             """
-        elif documento.estado != "aprobado":
+        elif documento.estado not in PREAPPROVAL_INFORME_STATES | {"aprobado"}:
             informe_settlement_html = """
             <div class="section-note">La liquidación se habilita cuando el informe sea aprobado.</div>
             """
-        elif saldo_doc > 0 and _can_submit_settlement(
-            cuenta_vinculada, current_empleado, "devolucion"
+        elif saldo_doc > 0:
+            informe_settlement_html = _devolucion_sobrante_action_html(
+                cuenta_id=cuenta_vinculada.id,
+                informe_estado=documento.estado,
+                saldo=saldo_doc,
+                monto_entregado=cuenta_saldo_ctx["monto_entregado"],
+                has_active_settlement=False,
+                can_submit=_can_submit_settlement(
+                    cuenta_vinculada, current_empleado, "devolucion"
+                ),
+            )
+        elif (
+            saldo_doc < 0
+            and documento.estado == "aprobado"
+            and rol_actual in finance_admin_roles
         ):
-            informe_settlement_html = f"""
-            <div>
-                <a href="/informes-de-gastos/{documento.cuenta_gastos_id}/saldar"
-                   class="button primary">Registrar devolución de sobrantes</a>
-                <div class="section-note" style="margin-top:8px;">
-                    El empleado devuelve el sobrante del anticipo a la empresa.
-                </div>
-            </div>
-            """
-        elif saldo_doc < 0 and rol_actual in finance_admin_roles:
             informe_settlement_html = f"""
             <div>
                 <a href="/informes-de-gastos/{documento.cuenta_gastos_id}/saldar" class="button primary">Registrar reembolso</a>
@@ -40084,6 +40096,7 @@ async def _sync_informe_documento_to_enviado(
             "El informe debe tener al menos un gasto activo antes de poder cerrarse.",
         )
 
+    await validate_informe_surplus_before_submission(session, informe_doc)
     await reserve_documento_cfdis_or_raise(session, informe_doc, actor)
     now = datetime.utcnow()
     if (
@@ -43034,6 +43047,14 @@ async def cuenta_de_gastos_detail(
         settled_amount=settled_amount_cuenta,
     )
     saldo = saldo_breakdown.saldo
+    advance_return_stale = advance_return_is_stale(
+        saldo_gross=saldo_breakdown.saldo_gross,
+        returned_amount=sum(
+            (Decimal(str(r.monto or 0)) for r in active_cuenta_reembolsos
+             if r.tipo == "devolucion"),
+            Decimal("0.00"),
+        ),
+    )
 
     reembolso_state, reembolso_doc, reembolso_settlement = (
         _informe_reembolso_payment_state(
@@ -43225,6 +43246,8 @@ async def cuenta_de_gastos_detail(
         bool(informe_doc)
         and informe_doc_estado == "borrador"
         and bool(active_expenses)
+        and saldo <= 0.005
+        and not advance_return_stale
         and _can_manage_cuenta
         and cuenta.estado in {"abierta", "cerrada"}
     )
@@ -43298,7 +43321,7 @@ async def cuenta_de_gastos_detail(
         )
 
     informe_not_approved_note = ""
-    if saldo != 0 and not informe_doc_approved and not informe_doc_can_close:
+    if saldo < 0 and not informe_doc_approved and not informe_doc_can_close:
         if informe_doc_estado == "enviado":
             informe_not_approved_note = (
                 '<div class="section-note" style="margin-top:10px;">'
@@ -43310,14 +43333,18 @@ async def cuenta_de_gastos_detail(
                 'La liquidación se habilita cuando el documento INFORME esté aprobado.</div>'
             )
 
-    # Direction-aware CTA + active-settlement awareness after approval.
+    # Returns precede approval; reimbursements still require an approved report.
     has_active_settlement = len(active_cuenta_reembolsos) > 0
     saldar_cta_html = ""
     saldar_chip_html = ""
-    if saldo > 0 and informe_doc_approved and _can_manage_cuenta and not has_active_settlement:
-        saldar_cta_html = (
-            f'<a href="/informes-de-gastos/{cuenta.id}/saldar" class="button primary" '
-            f'style="margin-top:10px;display:inline-block;">Registrar devolución de sobrantes</a>'
+    if saldo > 0:
+        saldar_cta_html = _devolucion_sobrante_action_html(
+            cuenta_id=cuenta.id,
+            informe_estado=informe_doc_estado,
+            saldo=saldo,
+            monto_entregado=monto_entregado,
+            has_active_settlement=has_active_settlement,
+            can_submit=_can_submit_settlement(cuenta, current_empleado, "devolucion"),
         )
     elif saldo < 0 and informe_doc_approved:
         rol_lower = (current_empleado.rol or "").strip().lower()
@@ -43333,12 +43360,12 @@ async def cuenta_de_gastos_detail(
             )
     elif informe_not_approved_note:
         saldar_cta_html = informe_not_approved_note
-    if saldo == 0 and not has_active_settlement:
-        saldar_chip_html = '<div class="status-chip info" style="margin-top:10px;">Saldado</div>'
-    if has_active_settlement:
-        saldar_chip_html = (
-            '<div class="status-chip info" style="margin-top:10px;">Liquidación en curso</div>'
-        )
+    return_status_label, saldar_chip_html = _cuenta_settlement_status_html(
+        stale_return=advance_return_stale,
+        has_active_settlement=has_active_settlement,
+        saldo=saldo,
+    )
+    saldo_label = return_status_label or saldo_label
 
     # Document links: only INFORME in "Documentos vinculados"; banner if missing
     informe_link = f'<a href="/documentos/{informe_doc.id}" style="color: #4CAF50; text-decoration: none;">I-{escape(cuenta.referencia_base)}</a> <small style="color: #666;">({informe_doc.estado})</small>' if informe_doc else None
@@ -43499,6 +43526,7 @@ async def cuenta_de_gastos_detail(
                 'La DIOT se habilita cuando el INFORME esté aprobado.'
                 '</span>'
             )
+    devolver_sobrante_actions_html = saldar_cta_html if saldo > 0 else ""
     detail_actions_html = f"""
         <a href="/informes-de-gastos" class="button secondary">Volver a mis informes</a>
         {informe_support_actions_html}
@@ -43506,6 +43534,7 @@ async def cuenta_de_gastos_detail(
         {coi_actions_html}
         {diot_actions_html}
         {f'<a href="/informes-de-gastos/{cuenta.id}/editar" class="button primary">Editar informe</a>' if _can_manage_cuenta and _can_edit_cuenta_before_budget_assignment(cuenta, informe_doc) else ''}
+        {devolver_sobrante_actions_html}
         {cerrar_informe_form_html}
         {cancelar_borrador_form_html}
     """
@@ -43517,7 +43546,7 @@ async def cuenta_de_gastos_detail(
                 <span>Saldo</span>
                 <strong style="color:{saldo_color};">{format_currency(abs(saldo), currency_for(cuenta))}</strong>
                 <small>{saldo_label}</small>
-                {saldar_cta_html}
+                {saldar_cta_html if saldo <= 0 else ""}
                 {saldar_chip_html}
             </div>
             <div class="meta-card">
@@ -45110,6 +45139,10 @@ async def _compute_cuenta_saldo_context(
         monto_entregado=monto_entregado,
         settled_amount=settled_amount,
     )
+    advance_return_stale = bool(active_count) and advance_return_is_stale(
+        saldo_gross=saldo_breakdown.saldo_gross,
+        returned_amount=await sum_active_advance_returns(session, cuenta_id),
+    )
     return {
         "total_gastos": total_pagado_empleado,
         "total_pagado_empleado": total_pagado_empleado,
@@ -45117,6 +45150,7 @@ async def _compute_cuenta_saldo_context(
         "monto_entregado": monto_entregado,
         "settled_amount": settled_amount,
         "active_settlement_count": active_count,
+        "advance_return_stale": advance_return_stale,
         "saldo_gross": saldo_breakdown.saldo_gross,
         "saldo_raw": saldo_breakdown.saldo,
         "tipo": saldo_breakdown.settlement_tipo,
@@ -45130,6 +45164,58 @@ def _can_access_reembolso_cuenta(cuenta: CuentaDeGastos, empleado: Empleado) -> 
         return True
     rol = (empleado.rol or "").strip().lower()
     return rol in {"admin", "finanzas", "coordinador", "superadmin", "super_admin"}
+
+
+def _cuenta_settlement_status_html(
+    *, stale_return: bool, has_active_settlement: bool, saldo: float
+) -> tuple[str, str]:
+    """Present a stale return explicitly rather than labelling it settled."""
+    if stale_return:
+        return (
+            "Devolución debe recalcularse",
+            '<div class="section-note">Los gastos cambiaron después de devolver. '
+            'Solicita a Finanzas cancelar la devolución y recalcular el saldo '
+            'antes de enviar el informe.</div>',
+        )
+    if has_active_settlement:
+        return (
+            "",
+            '<div class="status-chip info" style="margin-top:10px;">Liquidación en curso</div>',
+        )
+    if saldo == 0:
+        return (
+            "",
+            '<div class="status-chip info" style="margin-top:10px;">Saldado</div>',
+        )
+    return "", ""
+
+
+def _devolucion_sobrante_action_html(
+    *,
+    cuenta_id: UUIDType,
+    informe_estado: str,
+    saldo: float,
+    monto_entregado: float,
+    has_active_settlement: bool,
+    can_submit: bool,
+) -> str:
+    """Render the same paid-advance return action on both report surfaces."""
+    if saldo <= 0 or has_active_settlement or not can_submit:
+        return ""
+    try:
+        validate_settlement_eligibility(
+            informe_estado=informe_estado,
+            tipo="devolucion",
+            monto_entregado=monto_entregado,
+        )
+    except CuentaSettlementValidationError:
+        return ""
+    return (
+        f'<a href="/informes-de-gastos/{cuenta_id}/saldar" class="button primary">'
+        'Registrar devolución de sobrantes</a>'
+        '<div class="section-note" style="margin-top:8px;">'
+        'El empleado devuelve el sobrante del anticipo a la empresa.</div>'
+    )
 
 
 def _can_submit_settlement(
@@ -45200,12 +45286,6 @@ async def saldar_cuenta_form(
             '<div class="notice warn"><strong>Sin documento INFORME.</strong> '
             'No se puede liquidar una cuenta sin documento vinculado.</div>'
         )
-    elif informe_doc.estado != "aprobado":
-        blocked = True
-        notice_html = (
-            '<div class="notice warn"><strong>Informe no aprobado.</strong> '
-            'La liquidación se habilita cuando el informe sea aprobado.</div>'
-        )
     elif saldo_ctx["active_settlement_count"] > 0:
         blocked = True
         notice_html = (
@@ -45229,6 +45309,17 @@ async def saldar_cuenta_form(
             notice_html = (
                 '<div class="notice warn">Solo el dueño del informe o finanzas pueden registrar una devolución.</div>'
             )
+
+    if not blocked:
+        try:
+            validate_settlement_eligibility(
+                informe_estado=informe_doc.estado,
+                tipo=tipo,
+                monto_entregado=saldo_ctx["monto_entregado"],
+            )
+        except CuentaSettlementValidationError as exc:
+            blocked = True
+            notice_html = f'<div class="notice warn">{escape(exc.message)}</div>'
 
     if error_msg:
         notice_html = (
@@ -45291,7 +45382,7 @@ async def saldar_cuenta_form(
             </div>
             <div class="form-group">
                 <label for="fecha_pago_sld">Fecha del pago</label>
-                <input type="date" name="fecha_pago" id="fecha_pago_sld" value="{today_iso}">
+                <input type="date" name="fecha_pago" id="fecha_pago_sld" value="{today_iso}" required>
             </div>
             <div class="form-group">
                 <label for="referencia_pago_sld">Referencia / folio</label>
@@ -45417,12 +45508,12 @@ async def saldar_cuenta_submit(
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
     informe_doc = await _informe_documento_for_cuenta(session, cuenta_id)
-    if informe_doc is None or informe_doc.estado != "aprobado":
+    if informe_doc is None:
         return RedirectResponse(
             url=_append_error_params(
                 f"/informes-de-gastos/{cuenta_id}/saldar",
-                error="informe_not_approved",
-                error_msg="La cuenta solo puede liquidarse cuando el informe esté aprobado.",
+                error="missing_informe_documento",
+                error_msg="La cuenta requiere un documento INFORME vinculado.",
             ),
             status_code=303,
         )
