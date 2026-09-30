@@ -98,16 +98,16 @@ async def test_informe_coi_uses_beneficiary_detail_account_over_generic_payable(
         "build_expense_accounting_preview",
         AsyncMock(return_value=_preview("2120-000-000")),
     )
-    monkeypatch.setattr(
-        coi, "resolve_cuenta_debtor_empleado", AsyncMock(return_value=employee)
-    )
-    monkeypatch.setattr(
-        coi, "resolve_cuenta_debtor_account", AsyncMock(return_value=debtor)
-    )
+    employee_resolver = AsyncMock(return_value=employee)
+    debtor_resolver = AsyncMock(return_value=debtor)
+    monkeypatch.setattr(coi, "resolve_cuenta_debtor_empleado", employee_resolver)
+    monkeypatch.setattr(coi, "resolve_cuenta_debtor_account", debtor_resolver)
 
     payload = await coi.build_expense_cfdi_for_export(_Session(cuenta), expense)
 
     assert payload.cuenta_contrapartida == "1170-001-007"
+    employee_resolver.assert_awaited_once()
+    debtor_resolver.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -160,3 +160,39 @@ async def test_company_amex_in_informe_keeps_its_configured_counterpart(monkeypa
 
     assert payload.cuenta_contrapartida == "2130-010-001"
     debtor_resolver.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_preassessed_batch_reuses_cached_beneficiary_counterpart(monkeypatch):
+    expense = _expense()
+    cuenta = SimpleNamespace(id=expense.cuenta_gastos_id)
+    employee = SimpleNamespace(id=uuid4(), nombre="Persona beneficiaria")
+    debtor = _account("1170-001-007", "Persona beneficiaria")
+    session = _Session(cuenta)
+
+    monkeypatch.setattr(
+        coi,
+        "build_cleanup_preview",
+        AsyncMock(return_value={"status": "Listo COI", "issues": []}),
+    )
+    monkeypatch.setattr(
+        coi,
+        "build_expense_accounting_preview",
+        AsyncMock(return_value=_preview("2120-000-000")),
+    )
+    employee_resolver = AsyncMock(return_value=employee)
+    debtor_resolver = AsyncMock(return_value=debtor)
+    monkeypatch.setattr(coi, "resolve_cuenta_debtor_empleado", employee_resolver)
+    monkeypatch.setattr(coi, "resolve_cuenta_debtor_account", debtor_resolver)
+
+    ready, issues = await coi.assess_expense_coi_cleanup_ready(session, expense)
+    assert ready is True
+    assert issues == []
+
+    payload = await coi.build_expense_cfdi_for_export(
+        session, expense, require_cleanup_ready=False
+    )
+
+    assert payload.cuenta_contrapartida == "1170-001-007"
+    employee_resolver.assert_awaited_once()
+    debtor_resolver.assert_awaited_once()
