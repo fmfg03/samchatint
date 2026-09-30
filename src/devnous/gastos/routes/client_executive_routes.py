@@ -238,7 +238,7 @@ class DirectionScenarioRequest(BaseModel):
     days: Optional[int] = Field(default=None, ge=0, le=365, strict=True)
     basis: Literal["observed_expense", "future_expense"] = "observed_expense"
     tournament_id: Optional[str] = Field(default=None, max_length=36)
-    concept_id: Optional[str] = Field(default=None, max_length=24)
+    concept_id: Optional[str] = Field(default=None, max_length=36)
 
 
 class DirectionReportRequest(BaseModel):

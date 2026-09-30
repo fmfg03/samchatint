@@ -553,6 +553,7 @@ def _merge_breakdown_row(
     store: dict[str, dict[str, Any]],
     *,
     label: Any,
+    concept_id: str | None = None,
     budget_total: float = 0.0,
     reference_total: float = 0.0,
     variance_total: float = 0.0,
@@ -565,11 +566,13 @@ def _merge_breakdown_row(
     document_count: int = 0,
     expense_count: int = 0,
 ) -> None:
-    bucket = _safe_str(label) or "Sin dato"
+    display_label = _safe_str(label) or "Sin dato"
+    bucket = f"concept:{concept_id}" if concept_id is not None else display_label
     entry = store.setdefault(
         bucket,
         {
-            "label": bucket,
+            "label": display_label,
+            **({"concept_id": concept_id} if concept_id is not None else {}),
             "budget_total": 0.0,
             "reference_total": 0.0,
             "variance_total": 0.0,
@@ -583,6 +586,8 @@ def _merge_breakdown_row(
             "expense_count": 0,
         },
     )
+    if concept_id is not None:
+        entry["label"] = display_label
     entry["budget_total"] += float(budget_total or 0)
     entry["reference_total"] += float(reference_total or 0)
     entry["variance_total"] += float(variance_total or 0)
@@ -606,6 +611,9 @@ def _finalize_breakdown_store(
         rows.append(
             {
                 "label": _safe_str(entry.get("label")) or "Sin dato",
+                **(
+                    {"concept_id": entry["concept_id"]} if "concept_id" in entry else {}
+                ),
                 "budget_total": round(float(entry.get("budget_total") or 0), 2),
                 "reference_total": round(float(entry.get("reference_total") or 0), 2),
                 "variance_total": round(float(entry.get("variance_total") or 0), 2),
@@ -641,6 +649,7 @@ def _build_budget_line_breakdowns(
     rows: list[dict[str, Any]],
     *,
     concept_limit: int | None = 6,
+    concept_identity: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     by_concept = _new_breakdown_store()
     by_phase = _new_breakdown_store()
@@ -653,7 +662,16 @@ def _build_budget_line_breakdowns(
         variance_total = _safe_decimal(row.get("variance_amount"))
         _merge_breakdown_row(
             by_concept,
-            label=row.get("concept_name"),
+            label=(
+                (row.get("current_concept_name") or row.get("concept_name"))
+                if concept_identity
+                else row.get("concept_name")
+            ),
+            concept_id=(
+                (_safe_str(row.get("budget_concept_id")) or "__unassigned__")
+                if concept_identity
+                else None
+            ),
             budget_total=budget_total,
             reference_total=reference_total,
             variance_total=variance_total,
@@ -849,6 +867,7 @@ async def _build_budget_finance_breakdowns(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     concept_limit: int | None = 6,
+    concept_identity: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     document_filter, expense_filter, params = _build_budget_scope_filters(
         edition_year=edition_year,
@@ -933,6 +952,7 @@ async def _build_budget_finance_breakdowns(
                 text(f"""
                 SELECT
                     COALESCE(NULLIF(TRIM(bc.concept_name), ''), 'Sin partida asignada') AS label,
+                    {"bc.id::text AS concept_id," if concept_identity else ""}
                     COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado') THEN COALESCE(d.monto_solicitado, d.monto_total, 0) ELSE 0 END), 0) AS requested_total,
                     COALESCE(SUM(CASE WHEN d.estado IN ('aprobado', 'pagado', 'cerrado') THEN COALESCE(d.monto_solicitado, d.monto_total, 0) ELSE 0 END), 0) AS committed_total,
                     COALESCE(SUM(CASE WHEN d.estado IN ('pagado', 'cerrado') OR d.pagado_en IS NOT NULL THEN COALESCE(d.monto_total, d.monto_solicitado, 0) ELSE 0 END), 0) AS paid_total,
@@ -941,7 +961,7 @@ async def _build_budget_finance_breakdowns(
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
                 LEFT JOIN budget_concepts bc ON bc.id = d.budget_concept_id
                 WHERE {' AND '.join(document_filter)}
-                GROUP BY 1
+                GROUP BY 1 {", bc.id" if concept_identity else ""}
                 """),
                 params,
             )
@@ -956,6 +976,11 @@ async def _build_budget_finance_breakdowns(
         _merge_breakdown_row(
             by_concept,
             label=row.get("label"),
+            concept_id=(
+                (_safe_str(row.get("concept_id")) or "__unassigned__")
+                if concept_identity
+                else None
+            ),
             requested_total=requested_total,
             committed_total=committed_total,
             paid_total=paid_total,
@@ -969,6 +994,7 @@ async def _build_budget_finance_breakdowns(
                 text(f"""
                 SELECT
                     COALESCE(NULLIF(TRIM(bc.concept_name), ''), 'Sin partida asignada') AS label,
+                    {"bc.id::text AS concept_id," if concept_identity else ""}
                     COALESCE(SUM({_budget_expense_base_amount_sql('e', 'cfdi')}), 0) AS actual_total,
                     COUNT(*) AS expense_count
                 FROM expense_reports e
@@ -977,7 +1003,7 @@ async def _build_budget_finance_breakdowns(
                 LEFT JOIN budget_concepts bc ON bc.id = e.budget_concept_id
                 LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
-                GROUP BY 1
+                GROUP BY 1 {", bc.id" if concept_identity else ""}
                 """),
                 params,
             )
@@ -989,6 +1015,11 @@ async def _build_budget_finance_breakdowns(
         _merge_breakdown_row(
             by_concept,
             label=row.get("label"),
+            concept_id=(
+                (_safe_str(row.get("concept_id")) or "__unassigned__")
+                if concept_identity
+                else None
+            ),
             actual_total=_safe_decimal(row.get("actual_total")),
             expense_count=int(row.get("expense_count") or 0),
         )
@@ -6329,6 +6360,8 @@ async def build_budget_snapshot(
                     l.tournament_code,
                     l.tournament_name,
                     l.concept_name,
+                    l.budget_concept_id,
+                    bc.concept_name AS current_concept_name,
                     l.account_code_final,
                     l.account_code_suggested,
                     l.phase,
@@ -6338,6 +6371,7 @@ async def build_budget_snapshot(
                     l.reference_amount,
                     l.variance_amount
                 FROM budget_lines l
+                LEFT JOIN budget_concepts bc ON bc.id = l.budget_concept_id
                 WHERE {' AND '.join(filters)}
                 ORDER BY l.tournament_name ASC, l.budget_amount DESC, l.concept_name ASC
                 """),
@@ -6422,7 +6456,8 @@ async def build_budget_snapshot(
     }
     forecast_health_counts = {"healthy": 0, "at_risk": 0, "over_budget": 0}
     summary_breakdowns = _build_budget_line_breakdowns(
-        [dict(row) for row in rows], **({"concept_limit": None} if executive_read else {})
+        [dict(row) for row in rows],
+        **({"concept_limit": None, "concept_identity": True} if executive_read else {}),
     )
     summary_finance_breakdowns = await _build_budget_finance_breakdowns(
         session,
@@ -6431,7 +6466,7 @@ async def build_budget_snapshot(
         tournament_name=tournament_name,
         tournament_code=None,
         **period_kwargs,
-        **({"concept_limit": None} if executive_read else {}),
+        **({"concept_limit": None, "concept_identity": True} if executive_read else {}),
     )
     by_concept_store = _new_breakdown_store()
     for item in summary_breakdowns.get("by_concept", []):

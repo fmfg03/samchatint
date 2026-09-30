@@ -406,10 +406,19 @@ def concept_evidence(snapshot: dict, values: dict) -> dict:
                 "rows": [],
                 "gap": "Desglose con importes incompletos.",
             }
+        if budget == 0 and actual == 0:
+            continue
+        identity = str(item.get("concept_id") or "")
+        if not identity or identity == "__unassigned__":
+            return {
+                "status": "unavailable",
+                "rows": [],
+                "gap": "Falta identidad canónica de conceptos; no se atribuyen excesos por nombre.",
+            }
         label = str(item.get("label") or "Sin concepto")
         rows.append(
             {
-                "id": hashlib.sha256(label.encode()).hexdigest()[:24],
+                "id": identity,
                 "label": label,
                 "budget": str(budget),
                 "actual": str(actual),

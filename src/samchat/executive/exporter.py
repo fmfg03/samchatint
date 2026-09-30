@@ -215,7 +215,7 @@ def generate_direction_report_xlsx(report: dict[str, Any]) -> bytes:
             ["Hipotético; los valores reales permanecen en Consejo y Respaldo."],
             [scenario["scope_label"]],
             ["Base MXN", money(scenario["base"])],
-            ["Porcentaje supuesto", float(scenario["assumptions"].get("percent", 0))],
+            ["Porcentaje supuesto", money(scenario["assumptions"].get("percent"))],
             ["Impacto MXN", money(scenario["effect"])],
             ["Resultado MXN", money(scenario["result"])],
             ["Fórmula", scenario["formula"]],

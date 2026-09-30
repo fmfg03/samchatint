@@ -41,7 +41,7 @@ def scenario_from_question(question: str, previous: dict | None = None) -> dict 
     elif any(w in text for w in ("aceler", "anticipar cob", "cobramos", "cobrar")):
         spec.update(kind="collection_acceleration")
         spec.pop("concept_id", None)
-    elif any(w in text for w in ("difer", "reprogram", "pospon", "aplaz")):
+    elif any(w in text for w in ("difer", "difier", "reprogram", "pospon", "aplaz")):
         spec.update(kind="payment_delay")
         spec.pop("concept_id", None)
     elif not (spec and (pct or days)):
@@ -339,12 +339,26 @@ def analyze(
         or report
         or bool(requested)
     )
+    scenario_edit = bool(
+        requested
+        and (
+            (previous or {}).get("scenario")
+            or re.search(r"escenario|supuesto|alternativa", text)
+        )
+    )
+    operational_write = bool(
+        re.search(
+            r"\b(paga|pagar|aprueba|aprobar|elimina|eliminar|factura|solicitud|registro|documento|presupuesto)\b",
+            text,
+        )
+    )
     prohibited = bool(
         re.search(
             r"\b(paga|pagar|aprueba|aprobar|elimina|eliminar|modifica|modificar)\b",
             text,
         )
     )
+    prohibited = prohibited and (operational_write or not scenario_edit)
     conclusion = "Esta cifra describe el alcance y corte seleccionados; su causa requiere evidencia de detalle."
     if prohibited:
         supported = False

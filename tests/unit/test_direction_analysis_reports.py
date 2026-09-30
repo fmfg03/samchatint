@@ -183,7 +183,12 @@ def test_concept_reconciliation_requires_all_rows_and_complete_money():
     values = {"actual": Decimal("40"), "budget": Decimal("100")}
     source = {
         "executive_concepts": [
-            {"label": "Partida", "actual_total": "40", "budget_total": "100"}
+            {
+                "concept_id": "canonical-1",
+                "label": "Partida",
+                "actual_total": "40",
+                "budget_total": "100",
+            }
         ]
     }
     assert home.concept_evidence(source, values)["status"] == "available"
@@ -371,3 +376,147 @@ def test_legacy_report_renders_persisted_business_facts_only():
     )
     assert "Torneo A" in html and "$100.00 MXN" in html and "$40.00 MXN" in html
     assert "secret" not in html and "<pre>" not in html
+
+
+@pytest.mark.asyncio
+async def test_renamed_and_same_named_concepts_reconcile_by_canonical_id():
+    from test_direction_home import Session
+
+    from samchat.budgets.service import (
+        _build_budget_finance_breakdowns,
+        _build_budget_line_breakdowns,
+        _finalize_breakdown_store,
+        _merge_breakdown_row,
+    )
+
+    lines = [
+        {
+            "budget_concept_id": "canonical-1",
+            "concept_name": "Nombre viejo",
+            "budget_amount": 100,
+        },
+        {
+            "budget_concept_id": "canonical-2",
+            "concept_name": "Nombre nuevo",
+            "budget_amount": 50,
+        },
+    ]
+    session = Session(
+        [
+            [],
+            [],
+            [],
+            [
+                {
+                    "concept_id": "canonical-1",
+                    "label": "Nombre nuevo",
+                    "actual_total": 40,
+                },
+                {
+                    "concept_id": "canonical-2",
+                    "label": "Nombre nuevo",
+                    "actual_total": 20,
+                },
+            ],
+        ]
+    )
+    budget = _build_budget_line_breakdowns(
+        lines, concept_limit=None, concept_identity=True
+    )
+    finance = await _build_budget_finance_breakdowns(
+        session,
+        edition_year=2026,
+        tournament_id=T1,
+        tournament_name="Torneo",
+        tournament_code=None,
+        concept_limit=None,
+        concept_identity=True,
+    )
+    store = {}
+    for item in budget["by_concept"] + finance["by_concept"]:
+        _merge_breakdown_row(store, **item)
+    source = {"executive_concepts": _finalize_breakdown_store(store, limit=None)}
+    evidence = home.concept_evidence(
+        source, {"budget": Decimal("150"), "actual": Decimal("60")}
+    )
+    assert evidence["status"] == "available" and len(evidence["rows"]) == 2
+    assert {r["id"] for r in evidence["rows"]} == {"canonical-1", "canonical-2"}
+    assert all(Decimal(r["excess"]) < 0 for r in evidence["rows"])
+    assert all("bc.id" in str(call[0]) for call in session.calls[2:])
+    source["executive_concepts"].append(
+        {"label": "Sin partida", "budget_total": "0", "actual_total": "0"}
+    )
+    assert (
+        home.concept_evidence(
+            source, {"budget": Decimal("150"), "actual": Decimal("60")}
+        )["status"]
+        == "available"
+    )
+    source["executive_concepts"][0].pop("concept_id")
+    assert (
+        home.concept_evidence(
+            source, {"budget": Decimal("150"), "actual": Decimal("60")}
+        )["status"]
+        == "unavailable"
+    )
+
+
+def test_scenario_edits_are_allowed_but_operational_writes_remain_denied():
+    data = snapshot()
+    previous = answer_snapshot(data, "actual", "Reduce 10%")
+    revised = answer_snapshot(data, "actual", "Modifica a 5%", previous=previous)
+    assert revised["supported"] and revised["scenario"]["result"] == "95.00"
+    for question in ("Modifica la factura a 5%", "Paga 5%", "Aprueba 5%"):
+        result = answer_snapshot(data, "actual", question, previous=previous)
+        assert not result["supported"] and result["scenario"] is None
+
+
+def test_payment_delay_export_has_days_and_no_invented_percentage():
+    data = snapshot([row()])
+    r = data["tournaments"][0]
+    r["values"]["obligations"] = "50"
+    r["payment_evidence"] = [
+        {"date": "2026-10-20", "value": "50", "reference": "REQ-1"}
+    ]
+    answer = answer_snapshot(data, "obligations", "Difiere 15 días")
+    report = build_report(data, answer)
+    book = load_workbook(
+        io.BytesIO(generate_direction_report_xlsx(report)), data_only=True
+    )
+    assert book["Escenario"]["B5"].value is None
+    assert book["Escenario"]["B10"].value == 15
+    assert book["Escenario"]["B6"].value == 50
+
+
+def test_legacy_forecast_alerts_and_safe_operational_fields_remain_visible():
+    html = render_published_report(
+        "Informe",
+        {},
+        {
+            "cards": [
+                {
+                    "tournament_name": "A",
+                    "projected": 110,
+                    "available": 12,
+                    "requested": 80,
+                    "pending_to_pay": 15,
+                    "alerts": [
+                        {"title": "Alerta material <script>", "severity": "high"}
+                    ],
+                    "secret": "private",
+                }
+            ]
+        },
+        "corte",
+    )
+    assert (
+        "$110.00 MXN" in html
+        and "$12.00 MXN" in html
+        and "$80.00 MXN" in html
+        and "$15.00 MXN" in html
+    )
+    assert (
+        "Alerta material &lt;script&gt;" in html
+        and "high" in html
+        and "private" not in html
+    )

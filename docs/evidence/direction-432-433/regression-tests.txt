@@ -1,6 +1,6 @@
-........................................................................ [ 36%]
-........................................................................ [ 73%]
-.....................................................                    [100%]
+........................................................................ [ 35%]
+........................................................................ [ 70%]
+...........................................................              [100%]
 =============================== warnings summary ===============================
 src/devnous/copa_telmex/models.py:27
   /workspace/scratch/d9cba2aa3f87/samchat-432-433/src/devnous/copa_telmex/models.py:27: MovedIn20Warning: The ``declarative_base()`` function is now available as sqlalchemy.orm.declarative_base(). (deprecated since: 2.0) (Background on SQLAlchemy 2.0 at: https://sqlalche.me/e/b8d9)
@@ -17,4 +17,4 @@ tests/unit/test_direction_home.py::test_scoped_finance_source_never_reads_global
 _______________ coverage: platform linux, python 3.12.14-final-0 _______________
 
 Coverage XML written to file /tmp/432-coverage.xml
-197 passed, 4 warnings in 60.88s (0:01:00)
+203 passed, 4 warnings in 60.57s (0:01:00)

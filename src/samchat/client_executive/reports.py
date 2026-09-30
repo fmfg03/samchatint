@@ -129,10 +129,19 @@ def render_published_report(label: str, summary: dict, snapshot: dict, cut: str)
                 ("actual_total", "Ejercido"),
                 ("committed_total", "Comprometido"),
                 ("paid_total", "Pagado documental"),
+                ("projected", "Cierre estimado"),
+                ("available", "Presupuesto remanente; no caja"),
+                ("requested", "Solicitado documental"),
+                ("pending_to_pay", "Pendiente documental de pago"),
             ):
                 rows.append(
                     f"<p>{escape(title)}: {escape(format_money(values.get(key, values.get(key.removesuffix("_total")))))}</p>"
                 )
+            for alert in card.get("alerts") or []:
+                if isinstance(alert, dict):
+                    rows.append(
+                        f"<p><b>Alerta:</b> {escape(str(alert.get('title') or 'Sin título'))} · {escape(str(alert.get('severity') or 'Sin nivel'))}</p>"
+                    )
     return (
         f"<article><h2>{escape(str(label))}</h2><p>{escape(str(summary.get('message') or 'Reporte de Dirección'))}</p>"
         f"<p>Corte: {escape(str(cut))}</p>{''.join(rows) or '<p>Sin indicadores homologados; consultar el tablero con cifras verificables.</p>'}</article>"
