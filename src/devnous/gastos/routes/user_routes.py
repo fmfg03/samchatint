@@ -11217,6 +11217,45 @@ def _can_finance_add_comprobante_pago(
     return documento.estado == "en_proceso_pago"
 
 
+def _can_finance_replace_comprobante_pago(
+    documento: Documento,
+    empleado: Empleado,
+    *,
+    solicitud_cancelada: bool = False,
+) -> bool:
+    """Authorized Accounting users may correct proof after payment without undoing it."""
+    if solicitud_cancelada or not _is_solicitud_terceros(documento):
+        return False
+    if not can_confirm_payment_run_payment(empleado):
+        return False
+    return documento.estado == "pagado" and bool(getattr(documento, "pagado_en", None))
+
+
+def _replaceable_solicitud_comprobante_ids(
+    documento: Documento,
+    empleado: Empleado,
+    adjuntos: list,
+    *,
+    solicitud_cancelada: bool = False,
+) -> set[UUIDType]:
+    if not _can_finance_replace_comprobante_pago(
+        documento,
+        empleado,
+        solicitud_cancelada=solicitud_cancelada,
+    ):
+        return set()
+    replaceable: set[UUIDType] = set()
+    for meta in adjuntos:
+        if (getattr(meta, "categoria", None) or "").strip().lower() != "comprobante_pago":
+            continue
+        if getattr(meta, "activo", True) is False:
+            continue
+        adjunto_id = _adjunto_meta_id(meta)
+        if adjunto_id is not None:
+            replaceable.add(adjunto_id)
+    return replaceable
+
+
 def _nueva_solicitud_terceros_form_url(
     *,
     error_msg: Optional[str] = None,
@@ -38874,11 +38913,18 @@ async def ver_documento(
             adjuntos_doc,
             solicitud_cancelada=solicitud_cancelada,
         )
+        replaceable_comprobante_ids = _replaceable_solicitud_comprobante_ids(
+            documento,
+            current_empleado,
+            adjuntos_doc,
+            solicitud_cancelada=solicitud_cancelada,
+        )
         archivos_links = (
             html_documento_archivos_detail(
                 documento_id,
                 adjuntos_doc,
                 removable_adjunto_ids=removable_adjunto_ids,
+                replaceable_adjunto_ids=replaceable_comprobante_ids,
             )
             if adjuntos_doc
             else "—"
