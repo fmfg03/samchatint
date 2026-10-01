@@ -30713,7 +30713,9 @@ async def documentos_pendientes_accion_lote(
 ) -> RedirectResponse:
     """Approve or reject multiple pending documents using the canonical workflow gate."""
     if not await _can_review_pending_approvals(session, current_empleado):
-        raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
+        raise HTTPException(
+            status_code=403, detail="Access denied. Insufficient permissions."
+        )
 
     redirect_url = determine_redirect_url(next, None, default_to_detail=False)
     normalized_action = (action or "").strip().lower()
@@ -30742,28 +30744,61 @@ async def documentos_pendientes_accion_lote(
             documento_ids.append(UUIDType(raw_text))
         except ValueError:
             return RedirectResponse(
-                url=_append_error_params(redirect_url, error="invalid_documento_id", error_msg="Selección inválida."),
+                url=_append_error_params(
+                    redirect_url,
+                    error="invalid_documento_id",
+                    error_msg="Selección inválida.",
+                ),
                 status_code=303,
             )
     if not documento_ids:
         return RedirectResponse(
-            url=_append_error_params(redirect_url, error="empty_selection", error_msg="Selecciona al menos un documento."),
+            url=_append_error_params(
+                redirect_url,
+                error="empty_selection",
+                error_msg="Selecciona al menos un documento.",
+            ),
             status_code=303,
         )
 
     ok_count = 0
     errors: list[str] = []
+    reimbursement_warnings: list[str] = []
+    actor_id = UUIDType(str(current_empleado.id))
     for documento_id in documento_ids:
         try:
-            await transition_documento_workflow(
+            workflow_result = await transition_documento_workflow(
                 session,
                 documento_id=documento_id,
-                actor_id=current_empleado.id,
+                actor_id=actor_id,
                 action=workflow_action,
                 comentario=comentario_normalizado or None,
                 request_context=audit_context_from_request(request),
             )
             ok_count += 1
+            if (
+                workflow_action == "approve"
+                and workflow_result.documento.tipo == "INFORME"
+            ):
+                # Approval is already committed. A routing failure must not
+                # count it as failed or prevent the remaining batch approvals.
+                informe_ref = workflow_result.documento.numero_referencia
+                try:
+                    _, warning = await _ensure_reembolso_solicitud_for_approved_informe(
+                        session,
+                        informe_doc=workflow_result.documento,
+                        actor_id=actor_id,
+                        request=request,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to route informe reimbursement after bulk approval",
+                        extra={"documento_id": str(documento_id)},
+                    )
+                    warning = "No se pudo completar automáticamente el reembolso."
+                if warning:
+                    await session.rollback()
+                    reimbursement_warnings.append(f"{informe_ref}: {warning}")
         except DocumentoWorkflowValidationError as exc:
             if exc.code == "documento_not_found":
                 errors.append(f"{documento_id}: no existe")
@@ -30775,27 +30810,62 @@ async def documentos_pendientes_accion_lote(
             await session.rollback()
             logger.exception(
                 "Unexpected error in bulk pending document action",
-                extra={"documento_id": str(documento_id), "actor_id": str(current_empleado.id), "action": workflow_action},
+                extra={
+                    "documento_id": str(documento_id),
+                    "actor_id": str(actor_id),
+                    "action": workflow_action,
+                },
             )
             errors.append("Ocurrió un error al procesar una de las partidas.")
 
     label = "aprobado" if workflow_action == "approve" else "rechazado"
     if errors and ok_count == 0:
         return RedirectResponse(
-            url=_append_error_params(redirect_url, error="bulk_action_failed", error_msg="No se procesó ningún documento: " + errors[0]),
+            url=_append_error_params(
+                redirect_url,
+                error="bulk_action_failed",
+                error_msg="No se procesó ningún documento: " + errors[0],
+            ),
             status_code=303,
+        )
+    reimbursement_feedback = ""
+    if reimbursement_warnings:
+        # Keep redirect feedback bounded, even for a large batch.
+        reimbursement_feedback = (
+            f"{len(reimbursement_warnings)} informe(s) aprobado(s) con "
+            "reembolso pendiente: "
+            + "; ".join(message[:200] for message in reimbursement_warnings[:3])
         )
     if errors:
         return RedirectResponse(
             url=_append_error_params(
-                _append_success_params(redirect_url, success_msg=f"{ok_count} documento(s) {label}(s)."),
+                _append_success_params(
+                    redirect_url, success_msg=f"{ok_count} documento(s) {label}(s)."
+                ),
                 error="bulk_action_partial",
-                error_msg=f"{len(errors)} documento(s) no se pudieron procesar.",
+                error_msg=(
+                    f"{len(errors)} documento(s) no se pudieron procesar. "
+                    + reimbursement_feedback
+                ).strip(),
+            ),
+            status_code=303,
+        )
+    if reimbursement_warnings:
+        return RedirectResponse(
+            url=_append_error_params(
+                _append_success_params(
+                    redirect_url,
+                    success_msg=f"{ok_count} documento(s) {label}(s).",
+                ),
+                error="bulk_reimbursement_partial",
+                error_msg=reimbursement_feedback,
             ),
             status_code=303,
         )
     return RedirectResponse(
-        url=_append_success_params(redirect_url, success_msg=f"{ok_count} documento(s) {label}(s)."),
+        url=_append_success_params(
+            redirect_url, success_msg=f"{ok_count} documento(s) {label}(s)."
+        ),
         status_code=303,
     )
 
