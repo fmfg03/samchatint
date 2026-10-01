@@ -80,6 +80,21 @@ class LocalReadTests(unittest.IsolatedAsyncioTestCase):
             installation_id="installation-A",
         )
 
+    async def test_revocation_while_audit_waits_suppresses_read_release(self):
+        append = self.audit.append_read
+
+        def revoked(**values):
+            receipt = append(**values)
+            self.connections.identity = replace(self.connections.identity, revoked=True)
+            return receipt
+
+        self.audit.append_read = revoked
+        async with create_connected_server_and_client_session(self.server) as client:
+            result = await client.call_tool("get_profile", {})
+            self.assertTrue(result.isError)
+            self.assertIsNone(result.structuredContent)
+            self.assertEqual(result.content[0].text, "UNAUTHENTICATED")
+
     async def test_initialize_discover_and_authenticated_profile_roundtrip(self):
         async with create_connected_server_and_client_session(self.server) as client:
             tools = (await client.list_tools()).tools
@@ -101,7 +116,7 @@ class LocalReadTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertNotIn("employee-A", result.content[0].text)
         self.assertEqual(self.reader.calls, [])
-        self.assertEqual(len(self.connections.calls), 2)
+        self.assertGreaterEqual(len(self.connections.calls), 2)
 
     async def test_profile_stable_reconnect_unique_other_account_and_no_selector(self):
         async with create_connected_server_and_client_session(self.server) as client:

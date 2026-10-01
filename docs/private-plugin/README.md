@@ -11,9 +11,12 @@ Este entregable no reduce el producto a cuatro tools: registra cada declaración
 HTTP localizada y las 44 acciones de `action_router.py`, sin convertirlas en
 facultades. Ninguna operación de negocio está habilitada en producción. La
 fábrica original sigue inerte; una composición local separada prueba perfil y
-lectura Direction con fixtures y guards canónicos, sin HTTP/OAuth ni conexiones.
+lectura Direction con fixtures y guards canónicos. El avance transaccional añade
+OAuth local y una prueba HTTP en memoria, sin conexiones a servicios reales.
 Ver [autorización sobre la sesión actual y revisión adversarial](session-authorization-review.md),
 [OAuth y recibos locales](oauth-local-verification.md),
+[flujo OAuth transaccional actual](oauth-transactional-verification.md),
+[preflight de activación](activation-preflight.md),
 [avance de roundtrips](local-read-verification.md) y
 [mapa de identidad/autoridad](identity-authority-map.md).
 

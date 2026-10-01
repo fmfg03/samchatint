@@ -281,6 +281,10 @@ def create_local_read_server(
                     raise ValueError()
             except Exception:
                 raise Denied("AUDIT_UNAVAILABLE") from None
+            # Persistence can wait on a lock; do not release data under a grant
+            # that expired, changed identity or was revoked during that wait.
+            if authenticate() != identity:
+                raise Denied("UNAUTHENTICATED")
             return types.ServerResult(
                 types.CallToolResult(
                     isError=False,

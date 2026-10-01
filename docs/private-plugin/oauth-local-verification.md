@@ -1,5 +1,10 @@
 # OAuth y recibos locales: evidencia del 2026-10-01
 
+**Evidencia histórica del commit `0488664`, anterior al flujo transaccional.**
+Las cifras y funciones ausentes que aparecen aquí corresponden a ese corte.
+Consultar [verificación transaccional actual](oauth-transactional-verification.md)
+y [preflight de activación](activation-preflight.md) para el estado vigente.
+
 Alcance autorizado: únicamente la instalación actual de Plataforma Sports y sus cuentas existentes. No se crea arquitectura multiempresa ni se altera la separación de tres razones sociales. Base de negocio PR445 `6cd122f`; avance anterior `87f0827`. Ninguna nueva ruta, listener, grant real, credencial, despliegue o conexión a ChatGPT.
 
 ## Implementado y probado
