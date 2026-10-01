@@ -10702,6 +10702,7 @@ def _blocking_informe_solicitudes_query(cuenta_id: UUIDType):
             Documento.estado.notin_(["rechazado", "cancelado"]),
             Documento.pagado_en.is_not(None),
             Documento.fecha_pago_efectiva.is_not(None),
+            Documento.gasto_generado_id.is_not(None),
             select(Anticipo.id)
             .where(Anticipo.documento_id == Documento.id)
             .exists(),

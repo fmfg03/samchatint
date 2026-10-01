@@ -575,24 +575,26 @@ def test_cancel_empty_draft_counts_only_active_expenses() -> None:
 
 
 @pytest.mark.parametrize(
-    ("estado", "paid_at", "effective_date", "advance", "blocked"),
+    ("estado", "paid_at", "effective_date", "advance", "generated", "blocked"),
     [
-        ("rechazado", None, None, False, False),
-        ("cancelado", None, None, False, False),
-        ("borrador", None, None, False, True),
-        ("enviado", None, None, False, True),
-        ("control_presupuestal", None, None, False, True),
-        ("aprobado", None, None, False, True),
-        ("pagado", None, None, False, True),
-        (None, None, None, False, True),
-        ("cancelado", "2026-09-30", None, False, True),
-        ("rechazado", None, "2026-09-30", False, True),
-        ("cancelado", None, None, True, True),
-        ("rechazado", None, None, True, True),
+        ("rechazado", None, None, False, False, False),
+        ("cancelado", None, None, False, False, False),
+        ("borrador", None, None, False, False, True),
+        ("enviado", None, None, False, False, True),
+        ("control_presupuestal", None, None, False, False, True),
+        ("aprobado", None, None, False, False, True),
+        ("pagado", None, None, False, False, True),
+        (None, None, None, False, False, True),
+        ("cancelado", "2026-09-30", None, False, False, True),
+        ("rechazado", None, "2026-09-30", False, False, True),
+        ("cancelado", None, None, True, False, True),
+        ("rechazado", None, None, True, False, True),
+        ("cancelado", None, None, False, True, True),
+        ("rechazado", None, None, False, True, True),
     ],
 )
 def test_empty_informe_solicitud_history_with_payment_evidence(
-    estado, paid_at, effective_date, advance, blocked
+    estado, paid_at, effective_date, advance, generated, blocked
 ):
     """Run the real count query: terminal history may still carry payment evidence."""
     cuenta_id = uuid4()
@@ -600,20 +602,23 @@ def test_empty_informe_solicitud_history_with_payment_evidence(
     with sqlite3.connect(":memory:") as db:
         db.execute(
             "CREATE TABLE documentos (id TEXT, cuenta_gastos_id TEXT, tipo TEXT, "
-            "estado TEXT, pagado_en TEXT, fecha_pago_efectiva TEXT)"
+            "estado TEXT, pagado_en TEXT, fecha_pago_efectiva TEXT, gasto_generado_id TEXT)"
         )
         db.execute("CREATE TABLE anticipos (id TEXT, documento_id TEXT)")
         db.execute(
-            "INSERT INTO documentos VALUES (?, ?, 'SOLICITUD', ?, ?, ?)",
-            (doc_id.hex, cuenta_id.hex, estado, paid_at, effective_date),
+            "INSERT INTO documentos VALUES (?, ?, 'SOLICITUD', ?, ?, ?, ?)",
+            (
+                doc_id.hex, cuenta_id.hex, estado, paid_at, effective_date,
+                uuid4().hex if generated else None,
+            ),
         )
         # Other accounts and the parent INFORME must never affect this count.
         db.execute(
-            "INSERT INTO documentos VALUES (?, ?, 'SOLICITUD', 'pagado', NULL, NULL)",
+            "INSERT INTO documentos VALUES (?, ?, 'SOLICITUD', 'pagado', NULL, NULL, NULL)",
             (uuid4().hex, uuid4().hex),
         )
         db.execute(
-            "INSERT INTO documentos VALUES (?, ?, 'INFORME', 'borrador', NULL, NULL)",
+            "INSERT INTO documentos VALUES (?, ?, 'INFORME', 'borrador', NULL, NULL, NULL)",
             (uuid4().hex, cuenta_id.hex),
         )
         if advance:
