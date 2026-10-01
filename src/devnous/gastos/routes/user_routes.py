@@ -4407,6 +4407,21 @@ async def _load_coi_lote_informe_documentos(
     return (
         await session.execute(
             select(Documento)
+            .options(
+                selectinload(Documento.beneficiario_empleado),
+                selectinload(Documento.beneficiario_proveedor_cliente),
+                selectinload(Documento.proveedor_cliente),
+                selectinload(Documento.empleado),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.beneficiario_empleado
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.beneficiario_proveedor_cliente
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.empleado
+                ),
+            )
             .where(
                 Documento.tipo == "INFORME",
                 Documento.estado == "aprobado",
@@ -4455,6 +4470,21 @@ async def _load_coi_lote_terceros_documentos(
     return (
         await session.execute(
             select(Documento)
+            .options(
+                selectinload(Documento.beneficiario_empleado),
+                selectinload(Documento.beneficiario_proveedor_cliente),
+                selectinload(Documento.proveedor_cliente),
+                selectinload(Documento.empleado),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.beneficiario_empleado
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.beneficiario_proveedor_cliente
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.empleado
+                ),
+            )
             .where(
                 Documento.tipo == "SOLICITUD",
                 Documento.proveedor_cliente_id.isnot(None),
@@ -4552,13 +4582,14 @@ def _coi_exportable_matches_search(
     expenses: List[ExpenseReport],
     search_q: str,
 ) -> bool:
-    token = (search_q or "").strip().lower()
+    token = _normalize_filter_value(search_q)
     if not token:
         return True
     haystack = [
         documento.numero_referencia or "",
         documento.estado or "",
         str(documento.id),
+        effective_document_beneficiary_name(documento, fallback=""),
     ]
     for expense in expenses:
         haystack.extend(
@@ -4569,7 +4600,7 @@ def _coi_exportable_matches_search(
                 str(expense.id),
             ]
         )
-    return any(token in (value or "").lower() for value in haystack)
+    return any(token in _normalize_filter_value(value) for value in haystack)
 
 
 async def _build_coi_exportable_lote_rows(
@@ -4797,6 +4828,7 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
         expenses = list(row.get("expenses") or [])
         documento_id = str(documento.id)
         doc_ref = escape(documento.numero_referencia or "(Sin referencia)")
+        beneficiary_name = escape(effective_document_beneficiary_name(documento))
         tipo_lote = row["tipo_lote"]
         tipo_label = "Informe" if tipo_lote == "INFORME" else "Solicitud terceros"
         gasto_links = "<br>".join(
@@ -4855,7 +4887,9 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
             <td style="text-align:center;">{selection}</td>
             <td>{status_forms}</td>
             <td>{escape(tipo_label)}</td>
-            <td><a href="/documentos/{documento_id}">{doc_ref}</a></td>
+            <td><a href="/documentos/{documento_id}">{doc_ref}</a>
+                <div class="muted">Titular/beneficiario: {beneficiary_name}</div>
+            </td>
             <td>{escape(row["period_label"])}</td>
             <td>{escape((documento.estado or "-").upper())}</td>
             <td>{gasto_links}</td>
