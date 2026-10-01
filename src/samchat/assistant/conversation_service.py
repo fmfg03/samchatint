@@ -1412,7 +1412,6 @@ async def _build_finance_comparison_response(
     return _response_object(assistant_message=rendered, tool_trace=tool_trace)
 
 
-
 def _finance_platform_read_intent(raw_message: str) -> bool:
     """Detect finance/accounting Q and A that can be answered from canonical reads."""
 
@@ -2052,6 +2051,81 @@ async def _build_multi_candidate_readonly_response(
     return _response_object(assistant_message=rendered, tool_trace=tool_trace)
 
 
+async def _run_contextual_turn(
+    *,
+    raw_message: str,
+    conversation: Any,
+    current_empleado: Any,
+    session: Any,
+    request: Any,
+    tournament_key: Optional[str],
+    bi_year: Optional[int],
+    bi_scope: Optional[str],
+    bi_segment: Optional[str],
+    assistant_mode: Optional[str],
+    openai_api_key: Optional[str],
+    assistant_turn: AssistantTurnFn,
+    maybe_append_export_prompt: AppendExportPromptFn,
+    document_action_router_executor: Optional[AsyncActionRouterExecutor] = None,
+    finance_rows_provider: Optional[FinanceRowsProvider] = None,
+    live_evidence_rows_provider: Optional[LiveEvidenceRowsProvider] = None,
+) -> Any:
+    for builder in (_build_case_memory_response,):
+        command_response = await builder(
+            raw_message=raw_message,
+            conversation=conversation,
+            current_empleado=current_empleado,
+            session=session,
+        )
+        if command_response is not None:
+            return command_response
+
+    response = await assistant_turn(
+        raw_message=raw_message,
+        conversation=conversation,
+        current_empleado=current_empleado,
+        session=session,
+        request=request,
+        tournament_key=tournament_key,
+        bi_year=bi_year,
+        bi_scope=bi_scope,
+        bi_segment=bi_segment,
+        assistant_mode=assistant_mode,
+        openai_api_key=openai_api_key,
+    )
+    response.assistant_message = maybe_append_export_prompt(
+        response.assistant_message,
+        response.tool_trace,
+    )
+    quality = evaluate_response_quality(response.assistant_message)
+    if not quality.ok:
+        fallback_message = render_quality_fallback(
+            user_message=raw_message,
+            reason=quality.reason,
+        )
+        quality_trace = {
+            "assistant_response_quality_gate": {
+                "stage": "post_response_display_guard",
+                "status": "blocked",
+                "reason": quality.reason,
+                "diagnostics": quality.diagnostics or {},
+                "provider_response_replaced": True,
+                "writes_attempted": False,
+            },
+            "tool": "assistant.response_quality_gate",
+            "result": {
+                "ok": False,
+                "reason": quality.reason,
+            },
+        }
+        response.tool_trace = list(response.tool_trace or []) + [quality_trace]
+        response.assistant_message = maybe_append_export_prompt(
+            fallback_message,
+            response.tool_trace,
+        )
+    return response
+
+
 async def run_conversation_turn(
     *,
     raw_message: str,
@@ -2070,6 +2144,7 @@ async def run_conversation_turn(
     document_action_router_executor: Optional[AsyncActionRouterExecutor] = None,
     finance_rows_provider: Optional[FinanceRowsProvider] = None,
     live_evidence_rows_provider: Optional[LiveEvidenceRowsProvider] = None,
+    contextual: bool = False,
 ) -> Any:
     work_frame = build_work_frame(raw_message)
 
@@ -2091,6 +2166,26 @@ async def run_conversation_turn(
     )
     if document_response is not None:
         return _with_work_frame_trace(document_response, work_frame)
+
+    if contextual:
+        response = await _run_contextual_turn(
+            raw_message=raw_message,
+            conversation=conversation,
+            current_empleado=current_empleado,
+            session=session,
+            request=request,
+            tournament_key=tournament_key,
+            bi_year=bi_year,
+            bi_scope=bi_scope,
+            bi_segment=bi_segment,
+            assistant_mode=assistant_mode,
+            openai_api_key=openai_api_key,
+            assistant_turn=assistant_turn,
+            maybe_append_export_prompt=maybe_append_export_prompt,
+            document_action_router_executor=document_action_router_executor,
+        )
+
+        return _with_work_frame_trace(response, work_frame)
 
     if _live_evidence_analyst_intent(raw_message, current_empleado) is not None:
         analyst_response = await _build_analyst_workbench_response(
@@ -2194,7 +2289,6 @@ async def run_conversation_turn(
     if owner_readiness_response is not None:
         return _with_work_frame_trace(owner_readiness_response, work_frame)
 
-
     request_response = await _build_request_intelligence_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -2236,7 +2330,7 @@ async def run_conversation_turn(
     if analyst_response is not None:
         return _with_work_frame_trace(analyst_response, work_frame)
 
-    response = await assistant_turn(
+    response = await _run_contextual_turn(
         raw_message=raw_message,
         conversation=conversation,
         current_empleado=current_empleado,
@@ -2248,37 +2342,9 @@ async def run_conversation_turn(
         bi_segment=bi_segment,
         assistant_mode=assistant_mode,
         openai_api_key=openai_api_key,
+        assistant_turn=assistant_turn,
+        maybe_append_export_prompt=maybe_append_export_prompt,
     )
-    response.assistant_message = maybe_append_export_prompt(
-        response.assistant_message,
-        response.tool_trace,
-    )
-    quality = evaluate_response_quality(response.assistant_message)
-    if not quality.ok:
-        fallback_message = render_quality_fallback(
-            user_message=raw_message,
-            reason=quality.reason,
-        )
-        quality_trace = {
-            "assistant_response_quality_gate": {
-                "stage": "post_response_display_guard",
-                "status": "blocked",
-                "reason": quality.reason,
-                "diagnostics": quality.diagnostics or {},
-                "provider_response_replaced": True,
-                "writes_attempted": False,
-            },
-            "tool": "assistant.response_quality_gate",
-            "result": {
-                "ok": False,
-                "reason": quality.reason,
-            },
-        }
-        response.tool_trace = list(response.tool_trace or []) + [quality_trace]
-        response.assistant_message = maybe_append_export_prompt(
-            fallback_message,
-            response.tool_trace,
-        )
     return _with_work_frame_trace(response, work_frame)
 
 
@@ -2306,6 +2372,7 @@ async def run_message_turn_with_pending(
     document_action_router_executor: Optional[AsyncActionRouterExecutor] = None,
     finance_rows_provider: Optional[FinanceRowsProvider] = None,
     live_evidence_rows_provider: Optional[LiveEvidenceRowsProvider] = None,
+    contextual: bool = False,
 ) -> Any:
     work_frame = build_work_frame(raw_message)
 
@@ -2426,6 +2493,25 @@ async def run_message_turn_with_pending(
     if document_response is not None:
         return _with_work_frame_trace(document_response, work_frame)
 
+    if contextual:
+        return await run_conversation_turn(
+            raw_message=raw_message,
+            conversation=conversation,
+            current_empleado=current_empleado,
+            session=session,
+            request=request,
+            tournament_key=tournament_key,
+            bi_year=bi_year,
+            bi_scope=bi_scope,
+            bi_segment=bi_segment,
+            assistant_mode=assistant_mode,
+            openai_api_key=openai_api_key,
+            assistant_turn=assistant_turn,
+            maybe_append_export_prompt=maybe_append_export_prompt,
+            document_action_router_executor=document_action_router_executor,
+            contextual=True,
+        )
+
     if _live_evidence_analyst_intent(raw_message, current_empleado) is not None:
         analyst_response = await _build_analyst_workbench_response(
             raw_message=raw_message,
@@ -2517,7 +2603,6 @@ async def run_message_turn_with_pending(
     )
     if owner_readiness_response is not None:
         return _with_work_frame_trace(owner_readiness_response, work_frame)
-
 
     request_response = await _build_request_intelligence_response(
         raw_message=raw_message,

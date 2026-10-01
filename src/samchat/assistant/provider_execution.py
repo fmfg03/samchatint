@@ -11,6 +11,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from fastapi import HTTPException
 
+from .turn_service import build_turn_messages
 
 RunReadToolFn = Callable[..., Awaitable[Dict[str, Any]]]
 OllamaChatFn = Callable[..., Awaitable[Dict[str, Any]]]
@@ -549,30 +550,28 @@ async def execute_anthropic_provider(
     total_budget_seconds = _runtime_total_budget_seconds()
     provider_timeout_seconds = _provider_timeout_seconds()
     provider_concurrency = _provider_max_concurrency()
-    system_prompt = assistant_system_prompt()
-    system_prompt = f"{system_prompt}\n\n{route_prompt}"
-    system_prompt = f"{system_prompt}\n\n{language_prompt}"
-    if hermes_profile_prompt:
-        system_prompt = f"{system_prompt}\n\n{hermes_profile_prompt}"
-    if workspace_context:
-        system_prompt = f"{system_prompt}\n\n{workspace_context}"
-    if module_key_default or module_label_default or module_context_default:
-        system_prompt = (
-            f"{system_prompt}\n\n"
-            "Contexto del modulo actual:\n"
-            f"- module_key={module_key_default or 'unknown'}\n"
-            "- module_label="
-            f"{module_label_default or module_key_default or 'unknown'}\n"
-            f"- module_context={module_context_default or 'n/a'}"
-        )
-    if retrieval_context:
-        system_prompt = f"{system_prompt}\n\n{retrieval_context}"
-
-    anthropic_messages: List[Dict[str, Any]] = []
-    for m in await history_messages(session, conversation_id=conversation.id, limit=20):
-        role = "assistant" if m["role"] == "assistant" else "user"
-        anthropic_messages.append({"role": role, "content": m.get("content") or ""})
-    anthropic_messages.append({"role": "user", "content": raw_message})
+    prepared_messages = await build_turn_messages(
+        session=session,
+        conversation_id=conversation.id,
+        raw_message=raw_message,
+        route_prompt=route_prompt,
+        language_prompt=language_prompt,
+        hermes_profile_prompt=hermes_profile_prompt,
+        workspace_context=workspace_context,
+        module_key_default=module_key_default,
+        module_label_default=module_label_default,
+        module_context_default=module_context_default,
+        retrieval_context=retrieval_context,
+        assistant_system_prompt=assistant_system_prompt,
+        history_messages=history_messages,
+        filter_context=(getattr(conversation, "metadata_", None) or {}).get(
+            "bi_filters"
+        ),
+    )
+    system_prompt = "\n\n".join(
+        m["content"] for m in prepared_messages if m["role"] == "system"
+    )
+    anthropic_messages = [m for m in prepared_messages if m["role"] != "system"]
 
     for _ in range(6):
         elapsed = time.monotonic() - started_at
