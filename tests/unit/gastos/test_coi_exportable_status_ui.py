@@ -880,3 +880,215 @@ async def test_standalone_policies_remain_independently_selectable(
     assert commits == [True]
     assert expenses[0].coi_estado == "contabilizado"
     assert not hasattr(expenses[1], "coi_estado")
+
+
+@pytest.mark.parametrize(
+    "party_path",
+    [
+        "beneficiario_empleado",
+        "beneficiario_proveedor_cliente",
+        "account_employee",
+        "account_provider",
+        "account_legacy",
+        "proveedor_cliente",
+        "empleado",
+    ],
+)
+def test_coi_search_and_display_use_effective_beneficiary(party_path):
+    party = SimpleNamespace(nombre="José <Pérez>")
+    document = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="I-42",
+        estado="aprobado",
+        empleado=SimpleNamespace(nombre="Solicitante diferente"),
+    )
+    account_paths = {
+        "account_employee": "beneficiario_empleado",
+        "account_provider": "beneficiario_proveedor_cliente",
+        "account_legacy": "empleado",
+    }
+    if party_path in account_paths:
+        document.cuenta_gastos = SimpleNamespace(**{account_paths[party_path]: party})
+    else:
+        setattr(document, party_path, party)
+    assert user_routes._coi_exportable_matches_search(
+        documento=document, expenses=[], search_q="JOSE <PE"
+    )
+    assert not user_routes._coi_exportable_matches_search(
+        documento=document, expenses=[], search_q="Solicitante diferente"
+    )
+    html = user_routes._render_coi_exportable_lote_rows_html(
+        [
+            {
+                "tipo_lote": "INFORME",
+                "documento": document,
+                "expenses": [],
+                "period_label": "2026-09-01",
+                "can_export": False,
+            }
+        ]
+    )
+    assert "Titular/beneficiario: José &lt;Pérez&gt;" in html
+    assert "Solicitante diferente" not in html
+
+
+def test_coi_search_missing_name_preserves_existing_fields():
+    document = SimpleNamespace(id=uuid4(), numero_referencia="I-42", estado="aprobado")
+    expense = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="G-12",
+        concepto="Hospedaje",
+        proyecto="Torneo",
+    )
+    for query in ("", " I-42 ", "aprobado", "hosped", "torneo", "G-12"):
+        assert user_routes._coi_exportable_matches_search(
+            documento=document, expenses=[expense], search_q=query
+        )
+    assert not user_routes._coi_exportable_matches_search(
+        documento=document, expenses=[expense], search_q="persona ausente"
+    )
+    html = user_routes._render_coi_exportable_lote_rows_html(
+        [
+            {
+                "tipo_lote": "INFORME",
+                "documento": document,
+                "expenses": [],
+                "period_label": "2026-09-01",
+                "can_export": False,
+            }
+        ]
+    )
+    assert "Titular/beneficiario: —" in html
+
+
+def test_coi_explicit_beneficiary_precedes_account_and_requester():
+    document = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="I-42",
+        estado="aprobado",
+        beneficiario_empleado=SimpleNamespace(nombre="Titular explícito"),
+        cuenta_gastos=SimpleNamespace(
+            beneficiario_empleado=SimpleNamespace(nombre="Titular cuenta")
+        ),
+        empleado=SimpleNamespace(nombre="Solicitante"),
+    )
+    for query, expected in (
+        ("titular explicito", True),
+        ("titular cuenta", False),
+        ("solicitante", False),
+    ):
+        assert (
+            user_routes._coi_exportable_matches_search(
+                documento=document, expenses=[], search_q=query
+            )
+            is expected
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["INFORME", "SOLICITUD_TERCEROS"])
+async def test_coi_loaders_eagerly_load_all_beneficiary_fallbacks(kind):
+    class Session:
+        statement = None
+
+        async def execute(self, statement):
+            self.statement = statement
+            return _ScalarRows([])
+
+    session = Session()
+    start, end = datetime(2026, 9, 1), datetime(2026, 10, 1)
+    if kind == "INFORME":
+        await user_routes._load_coi_lote_informe_documentos(session, start, end)
+    else:
+        await user_routes._load_coi_lote_terceros_documentos(
+            session, start, end, start.date(), end.date()
+        )
+    paths = {
+        tuple(element.key for element in option.path if hasattr(element, "key"))
+        for option in session.statement._with_options
+    }
+    assert paths == {
+        ("beneficiario_empleado",),
+        ("beneficiario_proveedor_cliente",),
+        ("proveedor_cliente",),
+        ("empleado",),
+        ("cuenta_gastos", "beneficiario_empleado"),
+        ("cuenta_gastos", "beneficiario_proveedor_cliente"),
+        ("cuenta_gastos", "empleado"),
+    }
+    sql = str(
+        session.statement.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "expense_reports.fecha >= '2026-09-01 00:00:00'" in sql
+    assert "expense_reports.fecha < '2026-10-01 00:00:00'" in sql
+    if kind == "INFORME":
+        assert "documentos.estado = 'aprobado'" in sql
+
+
+@pytest.mark.asyncio
+async def test_coi_view_searches_beneficiary_and_preserves_period(monkeypatch):
+    from starlette.requests import Request
+
+    document = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="I-42",
+        estado="aprobado",
+        tipo="INFORME",
+        cuenta_gastos_id=None,
+        aprobado_en=datetime(2026, 9, 5),
+        beneficiario_empleado=SimpleNamespace(nombre="José Pérez"),
+        empleado=SimpleNamespace(nombre="Solicitante diferente"),
+    )
+    expense = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="G-1",
+        concepto="Hospedaje",
+        proyecto="Torneo",
+        gasto_cantidad=100,
+        fecha=datetime(2026, 9, 5),
+    )
+    bounds = []
+
+    async def reports(_session, start, end):
+        bounds.append((start, end))
+        return [document]
+
+    async def third_parties(*_args):
+        return []
+
+    async def expenses(*_args):
+        return [expense]
+
+    async def ready(*_args):
+        return True, []
+
+    class Session:
+        async def execute(self, _statement):
+            return _ScalarRows([])
+
+    monkeypatch.setattr(user_routes, "_load_coi_lote_informe_documentos", reports)
+    monkeypatch.setattr(
+        user_routes, "_load_coi_lote_terceros_documentos", third_parties
+    )
+    monkeypatch.setattr(user_routes, "_load_documento_active_coi_expenses", expenses)
+    monkeypatch.setattr(user_routes, "assess_expense_coi_cleanup_ready", ready)
+    monkeypatch.setattr(user_routes, "render_top_navigation", lambda *_args: "")
+    request = Request({"type": "http", "query_string": b""})
+    for query, visible in (("jose pe", True), ("Solicitante diferente", False)):
+        html = await user_routes.contabilidad_coi_view(
+            request,
+            Session(),
+            SimpleNamespace(),
+            year=2026,
+            month=9,
+            tipo="Eg",
+            q=query,
+        )
+        assert ("Titular/beneficiario: José Pérez" in html) is visible
+        assert ('name="selected_documento_id"' in html) is visible
+        assert 'name="year" value="2026"' in html
+        assert 'name="month" value="9"' in html
+        assert f'name="q" value="{query}"' in html
+    assert bounds == [(datetime(2026, 9, 1), datetime(2026, 10, 1))] * 2

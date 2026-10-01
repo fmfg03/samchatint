@@ -4415,6 +4415,21 @@ async def _load_coi_lote_informe_documentos(
     return (
         await session.execute(
             select(Documento)
+            .options(
+                selectinload(Documento.beneficiario_empleado),
+                selectinload(Documento.beneficiario_proveedor_cliente),
+                selectinload(Documento.proveedor_cliente),
+                selectinload(Documento.empleado),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.beneficiario_empleado
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.beneficiario_proveedor_cliente
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.empleado
+                ),
+            )
             .where(
                 Documento.tipo == "INFORME",
                 Documento.estado == "aprobado",
@@ -4463,6 +4478,21 @@ async def _load_coi_lote_terceros_documentos(
     return (
         await session.execute(
             select(Documento)
+            .options(
+                selectinload(Documento.beneficiario_empleado),
+                selectinload(Documento.beneficiario_proveedor_cliente),
+                selectinload(Documento.proveedor_cliente),
+                selectinload(Documento.empleado),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.beneficiario_empleado
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.beneficiario_proveedor_cliente
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.empleado
+                ),
+            )
             .where(
                 Documento.tipo == "SOLICITUD",
                 Documento.proveedor_cliente_id.isnot(None),
@@ -4560,13 +4590,14 @@ def _coi_exportable_matches_search(
     expenses: List[ExpenseReport],
     search_q: str,
 ) -> bool:
-    token = (search_q or "").strip().lower()
+    token = _normalize_filter_value(search_q)
     if not token:
         return True
     haystack = [
         documento.numero_referencia or "",
         documento.estado or "",
         str(documento.id),
+        effective_document_beneficiary_name(documento, fallback=""),
     ]
     for expense in expenses:
         haystack.extend(
@@ -4577,7 +4608,7 @@ def _coi_exportable_matches_search(
                 str(expense.id),
             ]
         )
-    return any(token in (value or "").lower() for value in haystack)
+    return any(token in _normalize_filter_value(value) for value in haystack)
 
 
 async def _load_initial_amex_cut(
@@ -4827,6 +4858,7 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
         expenses = list(row.get("expenses") or [])
         documento_id = str(documento.id)
         doc_ref = escape(documento.numero_referencia or "(Sin referencia)")
+        beneficiary_name = escape(effective_document_beneficiary_name(documento))
         tipo_lote = row["tipo_lote"]
         tipo_label = "Informe" if tipo_lote == "INFORME" else "Solicitud terceros"
         gasto_links = "<br>".join(
@@ -4897,7 +4929,9 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
             <td style="text-align:center;">{selection}</td>
             <td>{status_forms}</td>
             <td>{escape(tipo_label)}</td>
-            <td><a href="/documentos/{documento_id}">{doc_ref}</a></td>
+            <td><a href="/documentos/{documento_id}">{doc_ref}</a>
+                <div class="muted">Titular/beneficiario: {beneficiary_name}</div>
+            </td>
             <td>{escape(row["period_label"])}</td>
             <td>{escape((documento.estado or "-").upper())}</td>
             <td>{gasto_links}</td>
@@ -35247,19 +35281,32 @@ def _informe_expense_export_amounts(
     """
     Build informe Excel row amounts.
 
-    importe_sin_iva maps to CFDI SubTotal when available.
+    importe_sin_iva includes identified ISH in the capture base, not fiscal data.
     iva column stores net tax effect (trasladados - retenciones) for template math.
     ExpenseReport.iva remains IVA 002 only for accounting compatibility.
     """
     total_val = round(float(expense.gasto_cantidad or 0), 2)
     cfdi_rec = cfdi_linked or cfdi
+    capture_taxes = None
+    if cfdi_rec is not None:
+        capture_taxes = quick_expense_tax_components_from_parsed(
+            {
+                "subtotal": cfdi_rec.subtotal,
+                "descuento": getattr(cfdi_rec, "descuento", None),
+                "total": cfdi_rec.total,
+                "total_impuestos_trasladados": getattr(
+                    cfdi_rec, "total_impuestos_trasladados", None
+                ),
+                "impuestos_detalle": getattr(cfdi_rec, "impuestos_detalle", None),
+            }
+        )
     if cfdi_rec is not None and getattr(expense, "cfdi_compartido_confirmado", False):
         fiscal_total = Decimal(str(cfdi_rec.total or 0))
         if fiscal_total > 0:
             tip = Decimal(str(getattr(expense, "propina_no_deducible", None) or 0))
             applied = Decimal(str(total_val)) - tip
             net_base = (
-                Decimal(str(cfdi_rec.subtotal or 0))
+                capture_taxes.subtotal_captura
                 - Decimal(str(getattr(cfdi_rec, "descuento", None) or 0))
             )
             applied_base = (net_base * applied / fiscal_total).quantize(
@@ -35271,6 +35318,15 @@ def _informe_expense_export_amounts(
                 "total": total_val,
             }
     if cfdi_rec is not None:
+        if capture_taxes.ish:
+            tip = Decimal(str(getattr(expense, "propina_no_deducible", None) or 0))
+            return {
+                "importe_sin_iva": float(
+                    capture_taxes.subtotal_captura - capture_taxes.descuento + tip
+                ),
+                "iva": float(capture_taxes.impuestos_y_retenciones),
+                "total": total_val,
+            }
         subtotal = round(float(cfdi_rec.subtotal or 0), 2)
         traslados = round(float(cfdi_rec.total_impuestos_trasladados or 0), 2)
         if traslados == 0:
@@ -42637,7 +42693,9 @@ def _quick_expense_values(
         fecha_final = fecha_xml.strftime("%Y-%m-%d") if fecha_xml else (fecha or "").strip()
         numero_final = (xml_data.get("cfdi_uuid") or numero_factura or "").strip()
         taxes = quick_expense_tax_components_from_parsed(xml_data)
-        subtotal_amount = _quick_expense_decimal(str(taxes.subtotal), "Sub total")
+        subtotal_amount = _quick_expense_decimal(
+            str(taxes.subtotal_captura), "Sub total"
+        )
         descuento_amount = taxes.descuento.quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
