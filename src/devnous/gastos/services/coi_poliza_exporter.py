@@ -60,6 +60,7 @@ class ExpenseCFDI:
     poliza_group_key: Optional[str] = None
     poliza_reference: Optional[str] = None
     poliza_description: Optional[str] = None
+    posting_movements: Optional[List[Dict[str, Any]]] = None
 
 
 CoiCell = Union[str, int, float]
@@ -174,6 +175,8 @@ def _expense_base(
 
 
 def _expense_movements(expense: ExpenseCFDI) -> List[Dict[str, Any]]:
+    if expense.posting_movements is not None:
+        return [dict(movement) for movement in expense.posting_movements]
     desc = _expense_description(expense)
     retention_lines = _active_amount_lines(list(expense.retenciones or []))
     local_tax_lines = _active_amount_lines(list(expense.impuestos_locales or []))
