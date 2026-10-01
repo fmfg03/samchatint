@@ -1,0 +1,2 @@
+# Optional isolated tests only; not added to production runtime requirements.
+mcp==1.29.0
