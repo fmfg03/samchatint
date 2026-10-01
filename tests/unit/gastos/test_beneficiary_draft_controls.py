@@ -1,12 +1,14 @@
 """Authorization and rendering tests for beneficiaries and empty drafts."""
 
 import inspect
+import sqlite3
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.dialects import sqlite
 
 from devnous.gastos.routes import user_routes
 
@@ -567,6 +569,69 @@ def test_cancel_empty_draft_counts_only_active_expenses() -> None:
     source = inspect.getsource(user_routes.cancelar_informe_vacio_borrador)
 
     expense_count_query = source.split("expense_count = int(", 1)[1].split(
-        "solicitud_count = int(", 1
+        "solicitud_count = await", 1
     )[0]
     assert 'ExpenseReport.estado_gasto != "cancelado"' in expense_count_query
+
+
+@pytest.mark.parametrize(
+    ("estado", "paid_at", "effective_date", "advance", "blocked"),
+    [
+        ("rechazado", None, None, False, False),
+        ("cancelado", None, None, False, False),
+        ("borrador", None, None, False, True),
+        ("enviado", None, None, False, True),
+        ("control_presupuestal", None, None, False, True),
+        ("aprobado", None, None, False, True),
+        ("pagado", None, None, False, True),
+        (None, None, None, False, True),
+        ("cancelado", "2026-09-30", None, False, True),
+        ("rechazado", None, "2026-09-30", False, True),
+        ("cancelado", None, None, True, True),
+        ("rechazado", None, None, True, True),
+    ],
+)
+def test_empty_informe_solicitud_history_with_payment_evidence(
+    estado, paid_at, effective_date, advance, blocked
+):
+    """Run the real count query: terminal history may still carry payment evidence."""
+    cuenta_id = uuid4()
+    doc_id = uuid4()
+    with sqlite3.connect(":memory:") as db:
+        db.execute(
+            "CREATE TABLE documentos (id TEXT, cuenta_gastos_id TEXT, tipo TEXT, "
+            "estado TEXT, pagado_en TEXT, fecha_pago_efectiva TEXT)"
+        )
+        db.execute("CREATE TABLE anticipos (id TEXT, documento_id TEXT)")
+        db.execute(
+            "INSERT INTO documentos VALUES (?, ?, 'SOLICITUD', ?, ?, ?)",
+            (doc_id.hex, cuenta_id.hex, estado, paid_at, effective_date),
+        )
+        # Other accounts and the parent INFORME must never affect this count.
+        db.execute(
+            "INSERT INTO documentos VALUES (?, ?, 'SOLICITUD', 'pagado', NULL, NULL)",
+            (uuid4().hex, uuid4().hex),
+        )
+        db.execute(
+            "INSERT INTO documentos VALUES (?, ?, 'INFORME', 'borrador', NULL, NULL)",
+            (uuid4().hex, cuenta_id.hex),
+        )
+        if advance:
+            db.execute(
+                "INSERT INTO anticipos VALUES (?, ?)", (uuid4().hex, doc_id.hex)
+            )
+        query = user_routes._blocking_informe_solicitudes_query(cuenta_id)
+        sql = str(
+            query.compile(
+                dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}
+            )
+        )
+        assert db.execute(sql).fetchone()[0] == int(blocked)
+
+
+def test_cancel_empty_informe_form_uses_canonical_route_and_preserves_history():
+    cuenta_id = uuid4()
+    html = user_routes._cancel_empty_informe_form_html(cuenta_id)
+    assert f'/informes-de-gastos/{cuenta_id}/cancelar-borrador' in html
+    assert "Cancelar borrador vacío" in html
+    assert "auditoría" in html

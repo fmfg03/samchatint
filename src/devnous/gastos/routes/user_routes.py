@@ -10691,6 +10691,41 @@ def _empty_informe_cancel_error(
         return "El informe tiene archivos vinculados y no puede cancelarse como vacío."
     return None
 
+
+def _blocking_informe_solicitudes_query(cuenta_id: UUIDType):
+    """Terminal unpaid requests are history, not an outstanding obligation."""
+    return select(func.count(Documento.id)).where(
+        Documento.cuenta_gastos_id == cuenta_id,
+        Documento.tipo == "SOLICITUD",
+        or_(
+            Documento.estado.is_(None),
+            Documento.estado.notin_(["rechazado", "cancelado"]),
+            Documento.pagado_en.is_not(None),
+            Documento.fecha_pago_efectiva.is_not(None),
+            select(Anticipo.id)
+            .where(Anticipo.documento_id == Documento.id)
+            .exists(),
+        ),
+    )
+
+
+async def _count_blocking_informe_solicitudes(
+    session: AsyncSession, cuenta_id: UUIDType
+) -> int:
+    result = await session.execute(_blocking_informe_solicitudes_query(cuenta_id))
+    return int(result.scalar_one() or 0)
+
+
+def _cancel_empty_informe_form_html(cuenta_id: UUIDType) -> str:
+    return (
+        f'<form method="POST" action="/informes-de-gastos/{cuenta_id}/cancelar-borrador" '
+        'style="display:inline;">'
+        '<button type="submit" class="button danger" '
+        'onclick="return confirm(\'¿Cancelar este informe vacío? El registro se conservará para auditoría.\')">'
+        'Cancelar borrador vacío</button></form>'
+    )
+
+
 async def _active_regional_operator_beneficiaries(
     session: AsyncSession,
 ) -> List[ProveedorCliente]:
@@ -39065,6 +39100,22 @@ async def ver_documento(
         </form>
         """
 
+    cancel_linked_informe_html = ""
+    if (
+        documento.tipo == "INFORME"
+        and cuenta_vinculada is not None
+        and documento.estado == "borrador"
+        and cuenta_vinculada.estado == "abierta"
+        and not expenses
+        and not reembolsos
+        and not adjuntos_doc
+        and _can_cancel_empty_informe_draft(current_empleado, cuenta_vinculada)
+        and (
+            await _count_blocking_informe_solicitudes(session, cuenta_vinculada.id)
+        ) == 0
+    ):
+        cancel_linked_informe_html = _cancel_empty_informe_form_html(cuenta_vinculada.id)
+
     informe_settlement_html = ""
     if documento.tipo == "INFORME" and cuenta_vinculada is not None and cuenta_saldo_ctx:
         saldo_doc = float(cuenta_saldo_ctx["saldo_raw"] or 0)
@@ -39326,6 +39377,7 @@ async def ver_documento(
 
                 <!-- Cerrar informe / Enviar para aprobación -->
                 {close_linked_informe_html}
+                {cancel_linked_informe_html}
                 {f'''<form method="POST" action="/documentos/{documento_id}/enviar" class="inline-form">
                     {f'<input type="hidden" name="next" value="{return_url}">' if return_url else ''}
                     <button type="submit" class="button primary">Enviar para autorización</button>
@@ -41546,6 +41598,16 @@ async def cuentas_de_gastos_list(
             monto_solicitado = sum_active_solicitud_amounts(solicitudes_list)
             monto_entregado = sum_paid_solicitud_amounts(solicitudes_list)
             num_solicitudes = len(solicitudes_list)
+            blocking_solicitud_count = num_solicitudes
+            informe_for_cancel = informe_doc_by_cuenta_id.get(cuenta.id)
+            if (
+                informe_for_cancel
+                and informe_for_cancel.estado == "borrador"
+                and not expenses
+            ):
+                blocking_solicitud_count = await _count_blocking_informe_solicitudes(
+                    session, cuenta.id
+                )
 
             try:
                 settled_amount_list, settled_count_list = (
@@ -41571,6 +41633,7 @@ async def cuentas_de_gastos_list(
                 'saldo': saldo,
                 'num_expenses': len(expenses),
                 'num_solicitudes': num_solicitudes,
+                'blocking_solicitud_count': blocking_solicitud_count,
                 'settlement_count': settled_count_list,
                 'solicitudes': solicitudes_list,
                 'informe_doc': informe_doc_by_cuenta_id.get(cuenta.id),
@@ -41811,7 +41874,7 @@ async def cuentas_de_gastos_list(
             and informe_doc.estado == "borrador"
             and cuenta.estado == "abierta"
             and data['num_expenses'] == 0
-            and data['num_solicitudes'] == 0
+            and data['blocking_solicitud_count'] == 0
             and data['settlement_count'] == 0
             and _can_cancel_empty_informe_draft(current_empleado, cuenta)
         ):
@@ -42125,17 +42188,7 @@ async def cancelar_informe_vacio_borrador(
         ).scalar_one()
         or 0
     )
-    solicitud_count = int(
-        (
-            await session.execute(
-                select(func.count(Documento.id)).where(
-                    Documento.cuenta_gastos_id == cuenta.id,
-                    Documento.tipo == "SOLICITUD",
-                )
-            )
-        ).scalar_one()
-        or 0
-    )
+    solicitud_count = await _count_blocking_informe_solicitudes(session, cuenta.id)
     settlement_count = int(
         (
             await session.execute(
@@ -43417,17 +43470,11 @@ async def cuenta_de_gastos_detail(
         and informe_doc.estado == "borrador"
         and cuenta.estado == "abierta"
         and not expenses
-        and not solicitudes_list
         and not cuenta_reembolsos
         and _can_cancel_empty_informe_draft(current_empleado, cuenta)
+        and await _count_blocking_informe_solicitudes(session, cuenta.id) == 0
     ):
-        cancelar_borrador_form_html = (
-            f'<form method="POST" action="/informes-de-gastos/{cuenta.id}/cancelar-borrador" '
-            'style="display:inline;">'
-            '<button type="submit" class="button" style="background:#991b1b;" '
-            'onclick="return confirm(\'¿Cancelar este informe vacío? El registro se conservará para auditoría.\')">'
-            'Cancelar borrador vacío</button></form>'
-        )
+        cancelar_borrador_form_html = _cancel_empty_informe_form_html(cuenta.id)
 
     informe_not_approved_note = ""
     if saldo < 0 and not informe_doc_approved and not informe_doc_can_close:
