@@ -2072,6 +2072,14 @@ async def _run_contextual_turn(
     finance_rows_provider: Optional[FinanceRowsProvider] = None,
     live_evidence_rows_provider: Optional[LiveEvidenceRowsProvider] = None,
 ) -> Any:
+    # Explicit recovery command only; snapshots remain read-only and cannot confirm
+    # or recreate a preview. General questions still reach contextual interpretation.
+    resumed = await _build_operator_workspace_resume_response(
+        raw_message=raw_message, conversation=conversation, session=session,
+    )
+    if resumed is not None:
+        return resumed
+
     for builder in (_build_case_memory_response,):
         command_response = await builder(
             raw_message=raw_message,

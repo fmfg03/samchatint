@@ -43,10 +43,12 @@ async def _run_message(
     raw_message,
     *,
     finance_rows_provider=None,
+    contextual=False,
     executor=None,
     assistant_turn=_provider_must_not_be_called,
 ):
     return await run_message_turn_with_pending(
+        contextual=contextual,
         raw_message=raw_message,
         conversation=SimpleNamespace(id="conv-request", updated_at=None),
         current_empleado=SimpleNamespace(id="emp-1", rol="admin"),
@@ -921,7 +923,8 @@ async def test_case_memory_resume_without_memory_fails_closed(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_operator_workspace_resume_bypasses_provider_and_does_not_create_new_preview(monkeypatch):
+@pytest.mark.parametrize("contextual", [False, True])
+async def test_operator_workspace_resume_bypasses_provider_and_does_not_create_new_preview(monkeypatch, contextual):
     import samchat.assistant.conversation_service as conversation_service
     from samchat.assistant.operator_workspace_snapshot import build_operator_workspace_snapshot
 
@@ -978,6 +981,7 @@ async def test_operator_workspace_resume_bypasses_provider_and_does_not_create_n
 
     response = await _run_message(
         "Retoma el workspace anterior",
+        contextual=contextual,
         assistant_turn=provider,
     )
 

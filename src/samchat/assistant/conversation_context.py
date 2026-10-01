@@ -39,6 +39,22 @@ def interpretation_text(raw_message: str, history: list[dict[str, Any]]) -> str:
     return "\n".join([*prior[-10:], raw_message])
 
 
+def is_contextual_followup(message: str) -> bool:
+    """Only elliptical requests inherit a previous business subject."""
+    text = normalize_work_text(message).strip(" ¿?¡!.,")
+    if re.search(r"\b(?:redacta|escribe|cuentame|explica|crea|ayudame|hola)\b", text):
+        return False
+    return bool(
+        re.fullmatch(
+            r"(?:y(?: (?:en|para))? .{1,60}|por (?:proveedor(?:es)?|mes|empresa|entidad|categoria)|"
+            r"(?:por que|porque) (?:aumento|disminuyo|cambio|subio|bajo)|"
+            r"(?:desglosalo|comparalos|compara ambos|continua|sigue)|"
+            r"(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)(?: 20\d{2})?)",
+            text,
+        )
+    )
+
+
 def contextual_route(
     raw_message: str,
     history: list[dict[str, Any]],
@@ -47,12 +63,24 @@ def contextual_route(
 ) -> dict[str, Any]:
     """History may hint a domain, never upgrade the current turn to a write route."""
     route = dict(classify(raw_message))
-    if route.get("domain") == "generic" and not route.get("rag_only"):
+    if (
+        route.get("domain") == "generic"
+        and not route.get("rag_only")
+        and is_contextual_followup(raw_message)
+    ):
+        topical_history: list[dict[str, Any]] = []
+        for item in history:
+            if item.get("role") == "user":
+                if not is_contextual_followup(str(item.get("content") or "")):
+                    topical_history = []
+                topical_history.append(item)
+        previous = classify(interpretation_text(raw_message, topical_history))
+        if topical_history and previous.get("domain") == "generic":
+            return route
         if current_domain is not None:
             if current_domain in {"finance", "tournament"}:
                 route["domain"] = current_domain
             return route
-        previous = classify(interpretation_text(raw_message, history))
         if previous.get("domain") in {"finance", "tournament"}:
             route["domain"] = previous["domain"]
     return route
@@ -75,10 +103,14 @@ def contextual_read_frame(raw_message: str, history: list[dict[str, Any]]) -> Wo
     frame = build_work_frame("")
     # Fiscal vocabulary is not fully represented by the legacy classifier.
     fiscal = re.compile(r"\b(iva|impuestos?|gastos?|proveedor(?:es)?)\b")
-    for text in [
-        *[str(m.get("content") or "") for m in history if m.get("role") == "user"],
-        raw_message,
-    ]:
+    texts = (
+        [str(m.get("content") or "") for m in history if m.get("role") == "user"]
+        if is_contextual_followup(raw_message)
+        else []
+    )
+    for text in [*texts, raw_message]:
+        if not is_contextual_followup(text):
+            frame = build_work_frame("")
         candidate = build_work_frame(text)
         if fiscal.search(normalize_work_text(text)):
             candidate = replace(

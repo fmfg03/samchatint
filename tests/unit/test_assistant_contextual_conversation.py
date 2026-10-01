@@ -318,6 +318,14 @@ async def test_runtime_transports_snapshot_filters_and_isolates_cache(monkeypatc
     conv.id = uuid.uuid4()
     await router._assistant_turn(**kwargs)
     assert provider.call_args.kwargs["cache_key"] != key_one
+    # A new writing task uses the real router and its service finalizer without
+    # inheriting the financial evidence contract from history or current screen.
+    await router._assistant_turn(**{**kwargs, "raw_message": "Redacta un correo de agradecimiento"})
+    writing = provider.call_args.kwargs
+    assert writing["route_info"]["domain"] == "generic"
+    draft = "Hola, equipo. Les invito a nuestra reunión de trabajo. Saludos."
+    safe, _ = writing["finalize_response"](draft, [])
+    assert draft in safe
     loader.assert_awaited()
     # There are no business writes; only the user message is persisted by this layer.
     assert all(
@@ -680,6 +688,8 @@ def test_retrieval_cache_identity_includes_conversation_domain_and_full_query(
         "evidence",
         "confirm",
         "denied",
+        "reader_mismatch", "reader_valid", "reader_year", "reader_folio", "reader_derived",
+        "clarification_year", "clarification_folio", "clarification_assertion",
     ],
 )
 @pytest.mark.parametrize("raw_message", [QUESTION, "¿y agosto?", "¿por qué aumentó?"])
@@ -700,7 +710,17 @@ async def test_contextual_provider_gate_before_persistence(
     tool = (
         "finance_expense_create" if outcome == "confirm" else "assistant_finance_read"
     )
+    if outcome.startswith("reader_"):
+        tool = "finance_realtime_report"
     answer = {
+        "reader_mismatch": "El total es 99 MXN. Fuente: reporte de gastos.",
+        "reader_valid": "El total es 42 MXN. Fuente: reporte de gastos.",
+        "reader_year": "El total es 2026 MXN. Fuente: reporte de gastos.",
+        "reader_folio": "El total es 999 MXN. Fuente: folio SOL-999.",
+        "reader_derived": "El total es 84 MXN. Fuente: reporte de gastos.",
+        "clarification_year": "¿Septiembre 2025 o 2026?",
+        "clarification_folio": "¿Te refieres al folio SOL-999 o SOL-998?",
+        "clarification_assertion": "¿Confirmas que se pagaron 99 MXN?",
         "confirm": "En agosto se pagaron 42.000 MXN de IVA.",
         "denied": "En agosto se pagaron 42.000 MXN de IVA.",
         "invented": "En agosto se pagaron 42.000 MXN de IVA.",
@@ -728,7 +748,7 @@ async def test_contextual_provider_gate_before_persistence(
         evidence = await run_finance_read_adapter(
             AsyncMock(), intent="finance.vat_paid"
         )
-    has_tool = outcome in {"unavailable", "evidence", "confirm", "denied"}
+    has_tool = outcome.startswith("reader_") or outcome in {"unavailable", "evidence", "confirm", "denied"}
     history = [{"role": "user", "content": QUESTION}]
     frame = contextual_read_frame(raw_message, history)
 
@@ -742,6 +762,20 @@ async def test_contextual_provider_gate_before_persistence(
         )
 
     reader = AsyncMock(return_value=evidence)
+    if outcome.startswith("reader_"):
+        # Execute the actual reader and router envelope, replacing only SQL IO.
+        async def actual_read(name, args, **unused):
+            sql = AsyncMock()
+            sql.execute.side_effect = [
+                SimpleNamespace(one=lambda: SimpleNamespace(n=999, m=42)),
+                SimpleNamespace(all=lambda: []),
+                SimpleNamespace(all=lambda: [SimpleNamespace(k="SOL-999", n=999, m=42)]),
+            ]
+            return await router._run_read_tool(
+                name,
+                {"date_from": "2026-09-01", "date_to": "2026-09-30", "budget_source": "none", "compare_years": 0},
+                gastos_session=sql, current_role="admin", tournament_key_default=None)
+        reader = AsyncMock(side_effect=actual_read)
     calls = []
 
     def sync_call(**kwargs):
@@ -897,7 +931,7 @@ async def test_contextual_provider_gate_before_persistence(
             result.assistant_message
             == "Necesito confirmación explícita para continuar."
         )
-    elif outcome in {"clarification", "evidence"}:
+    elif outcome in {"clarification", "evidence", "reader_valid", "clarification_year", "clarification_folio"}:
         assert answer in result.assistant_message
     else:
         assert answer not in result.assistant_message

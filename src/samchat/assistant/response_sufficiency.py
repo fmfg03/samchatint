@@ -8,10 +8,10 @@ fail-closed for known semantic mismatches.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-import re
 from typing import Any, Iterable, Mapping
 
 from .direct_read_contracts import business_evidence_limit
+from .financial_claims import is_safe_clarification, validate_financial_claims
 from .read_evidence import validate_read_evidence
 from .tool_adjudicator import adjudicate_tool_candidate
 from .work_frame import WorkFrame, normalize_work_text
@@ -101,11 +101,7 @@ def evaluate_response_sufficiency(
     if work_frame.answer_contract.get("require_current_read_evidence"):
         # A question-only clarification is safe; appending a question to an
         # unsupported assertion is not. Do not accept figures in this fallback.
-        clarification = re.fullmatch(
-            r"¿(?:buscas|quieres|te refieres|que|cual|cuales|necesitas|puedes|debo) "
-            r"[^?¿.!\d]+\?",
-            message,
-        )
+        clarification = is_safe_clarification(message)
         if clarification:
             return ResponseSufficiencyResult(
                 True, "contextual_read_clarification", "allow", tool, diagnostics
@@ -160,6 +156,26 @@ def evaluate_response_sufficiency(
                 tool,
                 diagnostics,
             )
+
+        if work_frame.domain in {"finance", "mixed"}:
+            supported_reads = [
+                (name, payload)
+                for (name, payload), (supported, semantic) in zip(reads, validated)
+                if supported
+                and adjudicate_tool_candidate(
+                    work_frame=work_frame, tool=semantic
+                ).accepted
+            ]
+            claims_ok, bindings = validate_financial_claims(message, supported_reads)
+            diagnostics["financial_claim_bindings"] = bindings
+            if not claims_ok:
+                return ResponseSufficiencyResult(
+                    False,
+                    "financial_claim_not_bound_to_evidence",
+                    "replace_with_gap_answer",
+                    tool,
+                    diagnostics,
+                )
 
     if work_frame.needs_clarification and not tool:
         return ResponseSufficiencyResult(
@@ -302,6 +318,13 @@ def render_sufficiency_gap_answer(
             "Para IVA pagado hacen falta el desglose de IVA, evidencia y fecha de pago, "
             "y la asignación de CFDI compartidos y parcialidades sin duplicarlos. "
             "Aprobado no equivale a pagado. No ejecuté cambios."
+        )
+
+    if result.reason == "financial_claim_not_bound_to_evidence":
+        return (
+            "La cifra propuesta no está respaldada por un importe de la evidencia consultada. "
+            "Necesito verificar el importe y su alcance; no presentaré un cálculo sin soporte. "
+            "No ejecuté cambios."
         )
 
     if result.reason == "contextual_reader_scope_insufficient":
