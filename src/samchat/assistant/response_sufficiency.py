@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 import re
 from typing import Any, Iterable, Mapping
 
+from .read_evidence import validate_read_evidence
 from .tool_adjudicator import adjudicate_tool_candidate
 from .work_frame import WorkFrame, normalize_work_text
 
@@ -121,13 +122,13 @@ def evaluate_response_sufficiency(
             or payload.get("coverage") == "not_queried"
             for _, payload in reads
         )
+        validated = [validate_read_evidence(name, payload) for name, payload in reads]
+        diagnostics["read_contracts"] = [
+            {"tool": name, "valid": valid} for valid, name in validated
+        ]
         valid = any(
-            payload.get("ok") is True
-            and payload.get("read_only") is not False
-            and payload.get("coverage") != "not_queried"
-            and (payload.get("payload") or payload.get("evidence"))
-            and adjudicate_tool_candidate(work_frame=work_frame, tool=name).accepted
-            for name, payload in reads
+            supported and adjudicate_tool_candidate(work_frame=work_frame, tool=name).accepted
+            for supported, name in validated
         )
         if unavailable or not valid:
             return ResponseSufficiencyResult(

@@ -407,6 +407,7 @@ async def run_finance_read_adapter(
                 "+ build_finance_platform_snapshot"
             ),
             "payload": payload,
+            "source_status": source_snapshot.get("source_status"),
             "source_notes": _source_notes(
                 payload,
                 "finance platform snapshot is read-only",

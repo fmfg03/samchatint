@@ -712,7 +712,15 @@ async def test_contextual_provider_gate_before_persistence(
     evidence = {
         "ok": True,
         "read_only": True,
-        "payload": {"amount": 42, "folio": "TEST-42", "coverage": "complete"},
+        "intent": "budget.snapshot",
+        "source_function": "samchat.budgets.service.build_budget_snapshot",
+        "source_notes": ["budget authority stays in Presupuestos"],
+        "payload": {
+            "ok": True,
+            "source": "budget_db",
+            "version": {"id": "TEST-42", "edition_year": 2026},
+            "summary": {"budget_total": 42, "line_count": 1},
+        },
     }
     if outcome == "unavailable":
         from samchat.assistant.finance_read_adapter import run_finance_read_adapter
