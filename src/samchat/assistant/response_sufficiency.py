@@ -10,6 +10,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable, Mapping
 
+from .direct_read_contracts import business_evidence_limit
+from .financial_claims import is_safe_clarification, validate_financial_claims
+from .read_evidence import validate_read_evidence
 from .tool_adjudicator import adjudicate_tool_candidate
 from .work_frame import WorkFrame, normalize_work_text
 
@@ -38,7 +41,9 @@ def _primary_tool(tool_trace: Iterable[Mapping[str, Any]] | None) -> str:
     return ""
 
 
-def _result_payload(tool_trace: Iterable[Mapping[str, Any]] | None) -> Mapping[str, Any]:
+def _result_payload(
+    tool_trace: Iterable[Mapping[str, Any]] | None,
+) -> Mapping[str, Any]:
     for trace in tool_trace or []:
         result = trace.get("result")
         if isinstance(result, Mapping):
@@ -92,6 +97,88 @@ def evaluate_response_sufficiency(
             tool=tool or surface,
             diagnostics=diagnostics,
         )
+
+    if work_frame.answer_contract.get("require_current_read_evidence"):
+        # A question-only clarification is safe; appending a question to an
+        # unsupported assertion is not. Do not accept figures in this fallback.
+        clarification = is_safe_clarification(message)
+        if clarification:
+            return ResponseSufficiencyResult(
+                True, "contextual_read_clarification", "allow", tool, diagnostics
+            )
+        reads: list[tuple[str, Mapping[str, Any]]] = []
+        for step in tool_trace or []:
+            name = str(step.get("tool") or "")
+            payload = step.get("result")
+            if (
+                name
+                and not name.startswith("assistant.")
+                and isinstance(payload, Mapping)
+            ):
+                reads.append((name, payload))
+        unavailable = any(
+            payload.get("status") == "capability_unavailable"
+            or payload.get("coverage") == "not_queried"
+            for _, payload in reads
+        )
+        limits = {
+            name: business_evidence_limit(name, message, work_frame.domain)
+            for name, _ in reads
+        }
+        diagnostics["read_scope_limits"] = {
+            name: reason for name, reason in limits.items() if reason
+        }
+        validated = [
+            (False, name) if limits[name] else validate_read_evidence(name, payload)
+            for name, payload in reads
+        ]
+        diagnostics["read_contracts"] = [
+            {"tool": name, "valid": valid} for valid, name in validated
+        ]
+        valid = any(
+            supported
+            and adjudicate_tool_candidate(work_frame=work_frame, tool=name).accepted
+            for supported, name in validated
+        )
+        if unavailable or not valid:
+            return ResponseSufficiencyResult(
+                False,
+                (
+                    "contextual_capability_unavailable"
+                    if unavailable
+                    else (
+                        "contextual_reader_scope_insufficient"
+                        if any(limits.values())
+                        else "contextual_read_requires_current_successful_evidence"
+                    )
+                ),
+                "replace_with_gap_answer",
+                tool,
+                diagnostics,
+            )
+
+        if work_frame.domain in {"finance", "mixed"}:
+            supported_reads = [
+                (name, payload)
+                for (name, payload), (supported, semantic) in zip(reads, validated)
+                if supported
+                and adjudicate_tool_candidate(
+                    work_frame=work_frame, tool=semantic
+                ).accepted
+            ]
+            claim_text = "\n".join(
+                normalize_work_text(line) for line in assistant_message.splitlines()
+            )
+            claims_ok, bindings = validate_financial_claims(claim_text, supported_reads)
+            diagnostics["financial_claim_bindings"] = bindings
+            if not claims_ok:
+                return ResponseSufficiencyResult(
+                    False,
+                    "financial_claim_not_bound_to_evidence",
+                    "replace_with_gap_answer",
+                    tool,
+                    diagnostics,
+                )
 
     if work_frame.needs_clarification and not tool:
         return ResponseSufficiencyResult(
@@ -167,7 +254,11 @@ def evaluate_response_sufficiency(
                 diagnostics=diagnostics,
             )
 
-    if work_frame.domain == "finance" and work_frame.task_kind in {"status", "diagnostic", "evidence"}:
+    if work_frame.domain == "finance" and work_frame.task_kind in {
+        "status",
+        "diagnostic",
+        "evidence",
+    }:
         if tool == "receipts.pending_payment_overview" and any(
             token in message for token in ("pagos pendientes", "solicitudes pendientes")
         ):
@@ -188,7 +279,16 @@ def evaluate_response_sufficiency(
                 tool=tool,
                 diagnostics=diagnostics,
             )
-        if not any(token in message for token in ("fuente", "ruta", "snapshot", "evidencia", "no pude consultar")):
+        if not any(
+            token in message
+            for token in (
+                "fuente",
+                "ruta",
+                "snapshot",
+                "evidencia",
+                "no pude consultar",
+            )
+        ):
             return ResponseSufficiencyResult(
                 ok=False,
                 reason="finance_answer_missing_source_or_route",
@@ -212,6 +312,32 @@ def render_sufficiency_gap_answer(
     result: ResponseSufficiencyResult,
 ) -> str:
     """Render a safe executive answer when the selected path was insufficient."""
+
+    if result.reason == "contextual_capability_unavailable":
+        return (
+            "No puedo determinar ese importe con la capacidad de consulta disponible. "
+            "No se consultó una población completa ni se obtuvo evidencia suficiente "
+            "para calcularlo; esto no significa que el importe sea cero. "
+            "Para IVA pagado hacen falta el desglose de IVA, evidencia y fecha de pago, "
+            "y la asignación de CFDI compartidos y parcialidades sin duplicarlos. "
+            "Aprobado no equivale a pagado. No ejecuté cambios."
+        )
+
+    if result.reason == "financial_claim_not_bound_to_evidence":
+        return (
+            "La cifra propuesta no está respaldada por un importe de la evidencia consultada. "
+            "Necesito verificar el importe y su alcance; no presentaré un cálculo sin soporte. "
+            "No ejecuté cambios."
+        )
+
+    if result.reason == "contextual_reader_scope_insufficient":
+        return (
+            "El resultado consultado no acredita la conclusión solicitada. "
+            "Un inventario, borrador o diagnóstico técnico no prueba hechos financieros; "
+            "una lista limitada de documentos solo permite un estimado de esos registros, "
+            "no un total completo ni un desglose de IVA. "
+            "Necesito evidencia canónica para ese alcance. No ejecuté cambios."
+        )
 
     evidence = ", ".join(work_frame.required_evidence) or "evidencia canónica"
     forbidden = ", ".join(work_frame.forbidden_interpretations) or "atajos sin soporte"
