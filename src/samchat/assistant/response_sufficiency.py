@@ -166,7 +166,10 @@ def evaluate_response_sufficiency(
                     work_frame=work_frame, tool=semantic
                 ).accepted
             ]
-            claims_ok, bindings = validate_financial_claims(message, supported_reads)
+            claim_text = "\n".join(
+                normalize_work_text(line) for line in assistant_message.splitlines()
+            )
+            claims_ok, bindings = validate_financial_claims(claim_text, supported_reads)
             diagnostics["financial_claim_bindings"] = bindings
             if not claims_ok:
                 return ResponseSufficiencyResult(

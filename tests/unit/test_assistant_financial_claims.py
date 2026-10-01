@@ -196,3 +196,79 @@ def test_supported_count_is_not_confused_with_money():
     assert validate_financial_claims("999 registros", reads)[0]
     assert not validate_financial_claims("42 registros", reads)[0]
     assert not validate_financial_claims("999 mxn", reads)[0]
+
+
+@pytest.mark.parametrize(
+    "reference,expected", [("SOL-999", True), ("SOL-123", False), ("999", False)]
+)
+def test_cited_folio_exists_and_is_bound_to_same_row(reference, expected):
+    reads = [
+        (
+            "finance_expense_search",
+            {
+                "monto_total": 59,
+                "gastos": [
+                    {"numero_referencia": "SOL-999", "monto": 42},
+                    {"numero_referencia": "SOL-123", "monto": 17},
+                ],
+            },
+        )
+    ]
+    valid, _ = validate_financial_claims(
+        f"importe 42 mxn. fuente: folio {reference.lower()}", reads
+    )
+    assert valid is expected
+
+
+def test_reference_cannot_cross_same_tool_results_or_come_from_context():
+    reads = [
+        (
+            "assistant_canonical_query",
+            {
+                "context": {"folio": "SOL-555"},
+                "data": {"documentos": [{"folio": "SOL-999", "monto": 42}]},
+            },
+        ),
+        (
+            "assistant_canonical_query",
+            {"data": {"documentos": [{"folio": "SOL-123", "monto": 17}]}},
+        ),
+    ]
+    for reference in ("sol-123", "sol-555"):
+        assert not validate_financial_claims(
+            f"importe 42 mxn. fuente: folio {reference}", reads
+        )[0]
+    assert validate_financial_claims("importe 42 mxn. fuente: folio sol-999", reads)[0]
+    assert validate_financial_claims(
+        "importe 42 mxn. fuente: folio sol-999\nimporte 17 mxn. fuente: folio sol-123",
+        reads,
+    )[0]
+
+
+def test_numeric_reference_must_exist_not_just_be_removed():
+    reads = [
+        (
+            "finance_expense_search",
+            {"gastos": [{"numero_referencia": "999", "monto": 42}]},
+        )
+    ]
+    assert validate_financial_claims("importe 42 mxn. fuente: folio 999", reads)[0]
+    assert not validate_financial_claims("importe 42 mxn. fuente: folio 123", reads)[0]
+    assert not validate_financial_claims("importe 999 mxn. fuente: folio 999", reads)[0]
+
+
+def test_unattached_source_line_cannot_change_document_attribution():
+    reads = [
+        (
+            "finance_expense_search",
+            {
+                "gastos": [
+                    {"numero_referencia": "SOL-999", "monto": 42},
+                    {"numero_referencia": "SOL-123", "monto": 17},
+                ]
+            },
+        )
+    ]
+    assert not validate_financial_claims(
+        "importe 42 mxn, folio sol-999\nfuente: folio sol-123", reads
+    )[0]

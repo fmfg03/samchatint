@@ -688,6 +688,7 @@ def test_retrieval_cache_identity_includes_conversation_domain_and_full_query(
         "evidence",
         "confirm",
         "denied",
+        "reader_reference_valid", "reader_reference_multiple", "reader_reference_invented", "reader_reference_other_row", "reader_reference_other_result",
         "reader_mismatch", "reader_valid", "reader_year", "reader_folio", "reader_derived",
         "clarification_year", "clarification_folio", "clarification_assertion",
     ],
@@ -712,7 +713,14 @@ async def test_contextual_provider_gate_before_persistence(
     )
     if outcome.startswith("reader_"):
         tool = "finance_realtime_report"
+    if outcome.startswith("reader_reference_"):
+        tool = "finance_expense_search"
     answer = {
+        "reader_reference_multiple": "Estimado de los registros consultados: importe 42 MXN. Fuente: folio SOL-999.\nImporte 17 MXN. Fuente: folio SOL-123.",
+        "reader_reference_valid": "Estimado de los registros consultados: importe 42 MXN. Fuente: folio SOL-999.",
+        "reader_reference_invented": "Estimado de los registros consultados: importe 42 MXN. Fuente: folio SOL-555.",
+        "reader_reference_other_row": "Estimado de los registros consultados: importe 42 MXN. Fuente: folio SOL-123.",
+        "reader_reference_other_result": "Estimado de los registros consultados: importe 42 MXN. Fuente: folio SOL-123.",
         "reader_mismatch": "El total es 99 MXN. Fuente: reporte de gastos.",
         "reader_valid": "El total es 42 MXN. Fuente: reporte de gastos.",
         "reader_year": "El total es 2026 MXN. Fuente: reporte de gastos.",
@@ -750,6 +758,8 @@ async def test_contextual_provider_gate_before_persistence(
         )
     has_tool = outcome.startswith("reader_") or outcome in {"unavailable", "evidence", "confirm", "denied"}
     history = [{"role": "user", "content": QUESTION}]
+    if outcome == "clarification_folio":
+        history[0]["content"] += " Folios SOL-999 y SOL-998."
     frame = contextual_read_frame(raw_message, history)
 
     def finalize(answer, trace, *, pending=False):
@@ -766,6 +776,23 @@ async def test_contextual_provider_gate_before_persistence(
         # Execute the actual reader and router envelope, replacing only SQL IO.
         async def actual_read(name, args, **unused):
             sql = AsyncMock()
+            if outcome.startswith("reader_reference_"):
+                def expense(ref, amount):
+                    return SimpleNamespace(
+                        id=ref, numero_referencia=ref,
+                        gasto_cantidad=amount, fecha=None, proyecto="Local",
+                        concepto="Hotel", metodo_pago="transferencia",
+                        estado_reembolso="pendiente", nombre_enviador="Local")
+                rows = [expense("SOL-999", 42)]
+                if outcome in {"reader_reference_other_row", "reader_reference_multiple"}:
+                    rows.append(expense("SOL-123", 17))
+                if args.get("query") == "other":
+                    rows = [expense("SOL-123", 17)]
+                sql.execute.return_value = SimpleNamespace(
+                    scalars=lambda: SimpleNamespace(all=lambda: rows))
+                return await router._run_read_tool(
+                    name, args, gastos_session=sql,
+                    current_role="admin", tournament_key_default=None)
             sql.execute.side_effect = [
                 SimpleNamespace(one=lambda: SimpleNamespace(n=999, m=42)),
                 SimpleNamespace(all=lambda: []),
@@ -795,24 +822,33 @@ async def test_contextual_provider_gate_before_persistence(
                     else []
                 ),
             )
+            if first and outcome == "reader_reference_other_result":
+                choice.tool_calls.append(SimpleNamespace(id="call2", function=SimpleNamespace(
+                    name=tool, arguments='{"query":"other"}')))
             return SimpleNamespace(choices=[SimpleNamespace(message=choice)])
-        return SimpleNamespace(
+        response = SimpleNamespace(
             content=(
                 [SimpleNamespace(type="tool_use", id="call1", name=tool, input={})]
                 if first
                 else [SimpleNamespace(type="text", text=answer)]
             )
         )
+        if first and outcome == "reader_reference_other_result":
+            response.content.append(SimpleNamespace(type="tool_use", id="call2", name=tool, input={"query": "other"}))
+        return response
 
     async def ollama_call(**kwargs):
         calls.append(copy.deepcopy(kwargs))
         first = len(calls) == 1 and has_tool
-        return {
+        response = {
             "content": "" if first else answer,
             "tool_calls": (
                 [{"function": {"name": tool, "arguments": {}}}] if first else []
             ),
         }
+        if first and outcome == "reader_reference_other_result":
+            response["tool_calls"].append({"function": {"name": tool, "arguments": {"query": "other"}}})
+        return response
 
     session = AsyncMock()
     session.add = MagicMock()
@@ -931,7 +967,7 @@ async def test_contextual_provider_gate_before_persistence(
             result.assistant_message
             == "Necesito confirmación explícita para continuar."
         )
-    elif outcome in {"clarification", "evidence", "reader_valid", "clarification_year", "clarification_folio"}:
+    elif outcome in {"clarification", "evidence", "reader_valid", "clarification_year", "clarification_folio", "reader_reference_valid", "reader_reference_multiple"}:
         assert answer in result.assistant_message
     else:
         assert answer not in result.assistant_message
@@ -964,6 +1000,8 @@ async def test_contextual_provider_gate_before_persistence(
     assert reloaded == [{"role": "assistant", "content": result.assistant_message}]
     if not has_tool or outcome == "confirm":
         reader.assert_not_awaited()
+    elif outcome == "reader_reference_other_result":
+        assert reader.await_count == 2
     else:
         reader.assert_awaited_once()
 

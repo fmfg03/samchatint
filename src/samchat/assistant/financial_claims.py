@@ -57,6 +57,27 @@ MONEY = re.compile(
 )
 
 
+REFERENCE_KEYS = {
+    "numero_referencia",
+    "folio",
+    "reference",
+    "documento_id",
+    "expense_id",
+}
+IDENTIFIER = re.compile(r"\b[a-z]+[-/]?\d+(?:[-/]\d+)*\b", re.IGNORECASE)
+EXPLICIT_REFERENCE = re.compile(
+    r"\b(?:folio|referencia|comprobante)\s*:?\s*([a-z0-9]+(?:[-/][a-z0-9]+)*)\b",
+    re.IGNORECASE,
+)
+
+
+def cited_references(text: str) -> set[str]:
+    explicit = {
+        match.group(1).casefold() for match in EXPLICIT_REFERENCE.finditer(text)
+    }
+    return explicit | {match.group().casefold() for match in IDENTIFIER.finditer(text)}
+
+
 def decimal_value(value: Any) -> Decimal | None:
     if isinstance(value, bool):
         return None
@@ -124,20 +145,28 @@ def validate_financial_claims(
         return False, []
     values: dict[Decimal, list[str]] = {}
     counts: dict[tuple[str, Decimal], str] = {}
+    references: dict[str, set[str]] = {}
+    value_scopes: dict[str, str] = {}
 
-    def visit(value: Any, path: str) -> None:
+    def visit(value: Any, path: str, scope: str) -> None:
         if isinstance(value, Mapping):
             for key, child in value.items():
                 child_path = f"{path}.{key}"
+                if key in REFERENCE_KEYS and isinstance(child, (str, int)):
+                    references.setdefault(str(child).casefold(), set()).add(scope)
+                if key == "version" and isinstance(child, Mapping) and child.get("id"):
+                    references.setdefault(str(child["id"]).casefold(), set()).add(scope)
                 for noun, keys in COUNT_FIELDS.items():
                     if key in keys:
                         count = decimal_value(child)
                         if count is not None:
                             counts[(noun, count)] = child_path
+                            value_scopes[child_path] = scope
                 if key in MONEY_KEYS:
                     number = decimal_value(child)
                     if number is not None:
                         values.setdefault(number, []).append(child_path)
+                        value_scopes[child_path] = scope
                 if key in {
                     "summary",
                     "totals",
@@ -154,18 +183,39 @@ def validate_financial_claims(
                     "blockers",
                     "reports",
                 } and isinstance(child, (Mapping, list)):
-                    visit(child, child_path)
+                    visit(child, child_path, scope)
         elif isinstance(value, list):
             for index, child in enumerate(value):
-                visit(child, f"{path}[{index}]")
+                visit(child, f"{path}[{index}]", f"{path}[{index}]")
 
+    seen: dict[str, int] = {}
     for tool, payload in reads:
+        seen[tool] = seen.get(tool, 0) + 1
+        root = tool if seen[tool] == 1 else f"{tool}#{seen[tool]}"
         if tool == "assistant_canonical_query":
-            visit(payload.get("data", {}), tool + ".data")
+            visit(payload.get("data", {}), root + ".data", root)
         elif tool == "assistant_finance_read":
-            visit(payload.get("payload", {}), tool + ".payload")
+            visit(payload.get("payload", {}), root + ".payload", root)
         else:
-            visit(payload, tool)
+            visit(payload, root, root)
+    cited = cited_references(message)
+    if any(ref not in references for ref in cited):
+        return False, []
+
+    bound_references: set[str] = set()
+
+    def same_scope(path: str, position: int) -> bool:
+        # A line is an attribution unit. Multi-row responses can use one line
+        # per document; ambiguous mixed attributions abstain rather than guess.
+        start = message.rfind("\n", 0, position) + 1
+        end = message.find("\n", position)
+        local = cited_references(message[start : end if end >= 0 else len(message)])
+        applicable = local or cited
+        matched = all(value_scopes[path] in references[ref] for ref in applicable)
+        if matched:
+            bound_references.update(applicable)
+        return matched
+
     bindings = []
     for match in MONEY.finditer(message):
         raw = next(value for value in match.groupdict().values() if value is not None)
@@ -183,12 +233,13 @@ def validate_financial_claims(
                 if "[" not in path
                 and ("total" in path.rsplit(".", 1)[-1] or ".totals." in path)
             ]
+        paths = [path for path in paths if same_scope(path, match.start())]
         if not paths:
             return False, []
         bindings.append({"claim": match.group(), "source_path": paths[0]})
     # Fail closed on numeric assertions outside the monetary grammar. A bare
     # number or an unfamiliar monetary phrase must not bypass source binding.
-    remainder = MONEY.sub(" ", message)
+    remainder = MONEY.sub(lambda match: " " * len(match.group()), message)
     count_matches = list(
         re.finditer(
             r"\b(\d+)\s+(registros|lineas|bloqueos|polizas|documentos)\b", remainder
@@ -196,7 +247,7 @@ def validate_financial_claims(
     )
     for match in count_matches:
         key = (match.group(2), Decimal(match.group(1)))
-        if key not in counts:
+        if key not in counts or not same_scope(counts[key], match.start()):
             return False, []
         bindings.append({"claim": match.group(), "source_path": counts[key]})
     remainder = re.sub(
@@ -211,6 +262,8 @@ def validate_financial_claims(
         remainder,
     )
     if re.search(r"\d", remainder):
+        return False, []
+    if bindings and cited - bound_references:
         return False, []
     # No deterministic derivation contract exists for comparative percentages.
     if re.search(r"\d[\d.,]*\s*%", message):
