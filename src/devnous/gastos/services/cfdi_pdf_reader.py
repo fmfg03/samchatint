@@ -521,7 +521,8 @@ def _parse_from_text(text: str) -> Dict[str, Any]:
         _find_labeled_amount(
             text,
             [
-                rf"(?i)\b(?:i\.?\s*s\.?\s*h\.?|impuesto\s+(?:sobre\s+(?:el\s+)?|al\s+)hospedaje)"
+                rf"(?i)\b(?:i\.?\s*s\.?\s*h\.?|impuesto\s+"
+                rf"(?:sobre\s+(?:el\s+)?|al\s+)hospedaje)"
                 rf"\s*(?:\d{{1,2}}(?:\.\d+)?\s*%)?\s*[:\-]?"
                 rf"\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
             ],
