@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "ci" / "check-pr-quality-gate.py"
 
@@ -83,3 +82,38 @@ def test_pr_quality_gate_rejects_a_rule_wide_bandit_skip() -> None:
     errors = module.validate(document, workflow_text + "\n--skip B324\n")
 
     assert "workflow skips Bandit B324 instead of enforcing its baseline" in errors
+
+
+@pytest.mark.parametrize(
+    "job,label", [("unit-tests", "unit"), ("integration-tests", "integration")]
+)
+def test_private_plugin_tests_cannot_be_excluded_without_the_isolated_runner(
+    job, label
+):
+    module = _load_gate_module()
+    workflow_text = module.WORKFLOW.read_text(encoding="utf-8")
+    document = deepcopy(yaml.safe_load(workflow_text))
+    steps = document["jobs"][job]["steps"]
+    document["jobs"][job]["steps"] = [
+        step
+        for step in steps
+        if "scripts/private_plugin/run_" not in step.get("run", "")
+    ]
+    assert f"{label} tests omit the isolated private-plugin runner" in module.validate(
+        document, workflow_text
+    )
+
+
+@pytest.mark.parametrize(
+    "job,label", [("unit-tests", "unit"), ("integration-tests", "integration")]
+)
+def test_private_plugin_coverage_must_be_combined(job, label):
+    module = _load_gate_module()
+    workflow_text = module.WORKFLOW.read_text(encoding="utf-8")
+    document = deepcopy(yaml.safe_load(workflow_text))
+    for step in document["jobs"][job]["steps"]:
+        if "coverage combine" in step.get("run", ""):
+            step["run"] = "python -m coverage combine .coverage.repository"
+    assert f"{label} coverage omits isolated private-plugin results" in module.validate(
+        document, workflow_text
+    )

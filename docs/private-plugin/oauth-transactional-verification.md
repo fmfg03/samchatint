@@ -62,6 +62,17 @@ Los runners impiden efectos externos y lectura de secretos; el runner PostgreSQL
 permite sólo comandos exactos de su cluster descartable. No se llaman modelos,
 servicios pagados o datos reales. El cluster se destruye al terminar.
 
+## Integración en checks del PR
+
+El PR #446 ejecuta ambos runners en entornos de dependencias privados dentro de
+los jobs obligatorios unit/integration. Pytest mantiene todas las pruebas del
+repositorio fuera de esas carpetas; esas carpetas se ejecutan completas con sus
+runners aislados, sin importación del runtime ni conexión al servicio de CI.
+Se combina su cobertura con la de pytest antes del gate de líneas cambiadas (85%).
+El contrato de CI rechaza omitir cualquiera de los runners o su cobertura;
+11 pruebas del contrato aprobadas localmente. No se añadieron fallos aceptados,
+skips de seguridad ni continue-on-error.
+
 ## Revisión y pendientes
 
 Regla de trabajo de Francisco: **Code retrieves and calculates. Sol interprets.
