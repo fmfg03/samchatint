@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 from copy import deepcopy
 from pathlib import Path
 
@@ -117,3 +118,28 @@ def test_private_plugin_coverage_must_be_combined(job, label):
     assert f"{label} coverage omits isolated private-plugin results" in module.validate(
         document, workflow_text
     )
+
+
+@pytest.mark.parametrize("job", ["unit-tests", "integration-tests"])
+def test_private_coverage_survives_pytest_cov_parallel_cleanup(tmp_path, job):
+    import coverage
+
+    module = _load_gate_module()
+    document = yaml.safe_load(module.WORKFLOW.read_text(encoding="utf-8"))
+    private_step = next(
+        step["run"]
+        for step in document["jobs"][job]["steps"]
+        if "scripts/private_plugin/run_" in step.get("run", "")
+    )
+    relative = re.search(r"COVERAGE_FILE=([^\s]+)", private_step).group(1)
+    private = tmp_path / relative
+    private.parent.mkdir(parents=True, exist_ok=True)
+    data = coverage.CoverageData(basename=str(private))
+    data.add_lines({__file__: {1}})
+    data.write()
+    # pytest-cov starts with data_suffix=True and erases parallel siblings.
+    coverage.Coverage(data_file=str(tmp_path / ".coverage"), data_suffix=True).erase()
+    restored = coverage.CoverageData(basename=str(private))
+    restored.read()
+    assert private.is_file()
+    assert restored.lines(__file__) == [1]

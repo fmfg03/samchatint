@@ -89,7 +89,8 @@ jobs:
         run: |
           python -m venv .venv-private-plugin
           .venv-private-plugin/bin/python -m pip install -r requirements-private-plugin-test.txt coverage
-          COVERAGE_FILE=.coverage.private.unit .venv-private-plugin/bin/python -m coverage run \
+          mkdir -p reports/private-plugin
+          COVERAGE_FILE=reports/private-plugin/unit.coverage .venv-private-plugin/bin/python -m coverage run \
             --source=src/samchat/private_plugin scripts/private_plugin/run_offline_tests.py
 
       - name: Run unit tests
@@ -120,7 +121,7 @@ jobs:
       - name: Combine unit coverage including isolated plugin tests
         run: |
           mv .coverage .coverage.repository.unit
-          python -m coverage combine .coverage.repository.unit .coverage.private.unit
+          python -m coverage combine .coverage.repository.unit reports/private-plugin/unit.coverage
 
       - name: Upload unit-test report
         if: always()
@@ -183,7 +184,8 @@ jobs:
         run: |
           python -m venv .venv-private-plugin
           .venv-private-plugin/bin/python -m pip install -r requirements-private-plugin-postgres.txt coverage
-          COVERAGE_FILE=.coverage.private.integration .venv-private-plugin/bin/python -m coverage run \
+          mkdir -p reports/private-plugin
+          COVERAGE_FILE=reports/private-plugin/integration.coverage .venv-private-plugin/bin/python -m coverage run \
             --source=src/samchat/private_plugin scripts/private_plugin/run_postgres_tests.py
 
       - name: Run integration tests
@@ -201,7 +203,7 @@ jobs:
       - name: Combine integration coverage including isolated plugin tests
         run: |
           mv .coverage .coverage.repository.integration
-          python -m coverage combine .coverage.repository.integration .coverage.private.integration
+          python -m coverage combine .coverage.repository.integration reports/private-plugin/integration.coverage
 
       - name: Upload integration-test report
         if: always()

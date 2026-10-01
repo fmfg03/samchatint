@@ -68,9 +68,12 @@ El PR #446 ejecuta ambos runners en entornos de dependencias privados dentro de
 los jobs obligatorios unit/integration. Pytest mantiene todas las pruebas del
 repositorio fuera de esas carpetas; esas carpetas se ejecutan completas con sus
 runners aislados, sin importación del runtime ni conexión al servicio de CI.
-Se combina su cobertura con la de pytest antes del gate de líneas cambiadas (85%).
+La cobertura privada se guarda en `reports/private-plugin/`, fuera de los
+archivos paralelos que pytest-cov borra o consume. Dos regresiones comprueban
+que sobrevive a esa limpieza. Se combina con la de pytest antes del gate de
+líneas cambiadas (85%).
 El contrato de CI rechaza omitir cualquiera de los runners o su cobertura;
-11 pruebas del contrato aprobadas localmente. No se añadieron fallos aceptados,
+13 pruebas del contrato aprobadas localmente. No se añadieron fallos aceptados,
 skips de seguridad ni continue-on-error.
 
 ## Revisión y pendientes

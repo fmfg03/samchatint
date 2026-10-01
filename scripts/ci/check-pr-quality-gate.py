@@ -62,12 +62,12 @@ def validate(document: dict, workflow_text: str) -> list[str]:
             "integration-tests does not invoke pytest directly on tests/integration"
         )
     for label, blocks, runner, coverage_file in (
-        ("unit", unit, "run_offline_tests.py", ".coverage.private.unit"),
+        ("unit", unit, "run_offline_tests.py", "reports/private-plugin/unit.coverage"),
         (
             "integration",
             integration,
             "run_postgres_tests.py",
-            ".coverage.private.integration",
+            "reports/private-plugin/integration.coverage",
         ),
     ):
         if f"scripts/private_plugin/{runner}" not in blocks:
