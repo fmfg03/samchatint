@@ -516,27 +516,50 @@ def _parse_from_text(text: str) -> Dict[str, Any]:
     fecha_raw = _find_fecha(text)
     concepto = _find_concepto(text)
 
-    # Read an explicit local-tax amount; never calculate it from a hotel/rate.
-    ish = (
-        _find_labeled_amount(
-            text,
-            [
-                rf"(?i)\b(?:i\.?\s*s\.?\s*h\.?|impuesto\s+"
-                rf"(?:sobre\s+(?:el\s+)?|al\s+)hospedaje)"
-                rf"\s*(?:\d{{1,2}}(?:\.\d+)?\s*%)?\s*[:\-]?"
-                rf"\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
-            ],
-        )
-        or 0.0
+    # A percentage alone is not money; keep local withholding direction.
+    ish_pattern = (
+        rf"(?i)\b(?:i\.?[ \t]*s\.?[ \t]*h\.?|impuesto[ \t]+"
+        rf"(?:sobre[ \t]+(?:el[ \t]+)?|al[ \t]+)hospedaje)"
+        rf"(?:[ \t]+retenid[oa]s?)?"
+        rf"[ \t]*(?:\d{{1,2}}(?:\.\d+)?[ \t]*%)?[ \t]*[:\-]?"
+        rf"[ \t]*{_MONEY_PREFIX}[ \t]*{_AMOUNT_CAPTURE}"
+        rf"(?![\d.,]|[ \t]*%)"
     )
+    locales: List[Dict[str, Any]] = []
+    for match in re.finditer(ish_pattern, text):
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        line_end = text.find("\n", match.end())
+        line = text[line_start : line_end if line_end >= 0 else len(text)]
+        retained = re.search(r"(?i)retenc(?:i[oó]n|iones)|retenid[oa]", line)
+        locales.append(
+            {
+                "tipo": "retencion" if retained else "traslado",
+                "impuesto": "ISH",
+                "importe": float(match.group(1).replace(",", "")),
+            }
+        )
+    ish = sum(item["importe"] for item in locales if item["tipo"] == "traslado")
+    ish_ret = sum(item["importe"] for item in locales if item["tipo"] == "retencion")
+    subtotal = _find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["subtotal"])
+    descuento = _find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["descuento"])
+    traslados = _find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["traslados"])
+    retenciones = _find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["retenciones"])
+    total = _find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["total"])
+    aggregate = _find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["traslados"][:2])
+    # Remove local ISH only when the printed aggregate balances inclusively.
+    if ish and aggregate is not None and subtotal is not None and total is not None:
+        inclusive_total = subtotal - (descuento or 0) + aggregate
+        inclusive_total -= (retenciones or 0) + ish_ret
+        if aggregate >= ish and round(inclusive_total - total, 2) == 0:
+            traslados = aggregate - ish
 
     amounts = _normalize_text_parsed_amounts(
-        subtotal=_find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["subtotal"]),
-        descuento=_find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["descuento"]),
-        traslados=_find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["traslados"]),
-        retenciones=_find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["retenciones"]),
-        total=_find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["total"]),
-        ish=ish,
+        subtotal=subtotal,
+        descuento=descuento,
+        traslados=traslados,
+        retenciones=retenciones,
+        total=total,
+        ish=ish - ish_ret,
     )
 
     traslados_list: List[Dict[str, Any]] = []
@@ -577,9 +600,7 @@ def _parse_from_text(text: str) -> Dict[str, Any]:
         "impuestos_detalle": {
             "traslados": traslados_list,
             "retenciones": retenciones_list,
-            "locales": (
-                [{"tipo": "traslado", "impuesto": "ISH", "importe": ish}] if ish else []
-            ),
+            "locales": locales,
         },
     }
 

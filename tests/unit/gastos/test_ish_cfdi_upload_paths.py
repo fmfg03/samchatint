@@ -114,3 +114,33 @@ def test_text_explicit_ish_is_not_inferred_into_federal_tax_when_iva_absent():
     parsed = _parse_from_text(TEXT.replace("IVA 16% 704.00\n", ""))
     assert parsed["total_impuestos_trasladados"] == 704
     assert parsed["impuestos_detalle"]["locales"][0]["importe"] == 176
+
+
+@pytest.mark.parametrize("label", ["ISH 4.00%", "ISH 4.00 %", "ISH 14.00%"])
+def test_rate_without_distinct_money_does_not_create_local_tax(label):
+    parsed = _parse_from_text(TEXT.replace("ISH 4% 176.00", label))
+    assert parsed["impuestos_detalle"]["locales"] == []
+    assert quick_expense_tax_components_from_parsed(parsed).ish == 0
+
+
+@pytest.mark.parametrize("label", ["Retención ISH", "ISH retenido"])
+def test_text_preserves_local_withholding_direction(label):
+    text = TEXT.replace("ISH 4% 176.00", f"{label} 3% 30.00")
+    parsed = _parse_from_text(text.replace("Total 5280.00", "Total 5074.00"))
+    taxes = quick_expense_tax_components_from_parsed(parsed)
+    assert taxes.ish == 0
+    assert taxes.subtotal_captura == Decimal("4400")
+    assert taxes.impuestos_locales_retenidos == Decimal("30")
+    assert taxes.impuestos_y_retenciones == Decimal("674")
+    assert taxes.calculated_total == Decimal("5074")
+
+
+@pytest.mark.parametrize("aggregate", ["880.00", "704.00"])
+def test_explicit_aggregate_does_not_count_local_transfer_twice(aggregate):
+    text = TEXT.replace("IVA 16% 704.00", f"Total impuestos trasladados {aggregate}")
+    parsed = _parse_from_text(text)
+    taxes = quick_expense_tax_components_from_parsed(parsed)
+    assert taxes.iva == Decimal("704")
+    assert taxes.ish == Decimal("176")
+    assert taxes.subtotal_captura == Decimal("4576")
+    assert taxes.calculated_total == Decimal("5280")

@@ -118,3 +118,23 @@ using existing domain owners and leaves canonical product, architecture,
 authority, accounting grouping and release invariants unchanged. No additional
 canonical decision is needed for implementation. Francisco subsequently
 authorized PR and merge; deployment and production actions remain outside scope.
+
+## Server PR review correction — 2026-10-02
+
+PR #447 review identified three PDF extraction defects: a percentage without a
+separate monetary amount could be read as ISH money; a local ISH withholding
+could be classified as a transfer; and a printed transferred-tax aggregate
+already including ISH could count ISH twice. These are corrected in the existing
+PDF parser with seven additional cases. Percentage matches require distinct
+money, local withholding direction is preserved, and an inclusive aggregate is
+adjusted only when the printed fiscal amounts balance with it.
+
+The required CI inventory test also requires regeneration of
+`docs/private-plugin/route-inventory.json` and `route-matrix.csv` after changes
+to route source hashes and line numbers. The generator was run without changing
+its policy, baseline, permission mapping or plugin activation.
+
+Server verification: 62 tests and 8 subtests passed, including nine existing
+inventory tests. Flake8 with the repository's 88-character limit and Black
+E203 compatibility, plus diff hygiene, passed. Original commits are retained;
+this follow-up corrects the reviewed ISH implementation within its scope.
