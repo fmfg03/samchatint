@@ -166,6 +166,7 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
+          - 55471:5432
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -189,6 +190,8 @@ jobs:
             --source=src/samchat/private_plugin scripts/private_plugin/run_postgres_tests.py
 
       - name: Run integration tests
+        env:
+          TEST_AMEX_DATABASE_URL: postgresql+asyncpg://test_user:test_password@127.0.0.1:55471/devnous_test
         run: |
           python -m pytest tests/integration \
             --ignore=tests/integration/private_plugin \

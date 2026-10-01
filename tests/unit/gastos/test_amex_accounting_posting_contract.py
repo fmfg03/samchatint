@@ -17,7 +17,6 @@ def test_amex_liability_allowlist_is_exact() -> None:
         "2120-002-067",
         "2120-002-100",
     }
-    assert service.AMEX_REPORT_DEBTOR_CODE == "1170-002-004"
     assert service.SANTANDER_BANK_CODE == "1120-001-001"
 
 

@@ -13,7 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..models import AmexCardAccount, Aprobacion, Documento, Empleado
-from .amex_accounting_posting_service import amex_payment_card_marker
+from .amex_accounting_posting_service import (
+    ALLOWED_AMEX_LIABILITY_CODES,
+    amex_payment_card_marker,
+)
 from .amex_expense_service import FINANCE_AMEX_ROLES
 from .documento_service import generate_documento_reference_number
 from .payment_run_service import parse_payment_run_date, PaymentRunValidationError
@@ -129,6 +132,18 @@ async def create_amex_card_payment_request(
             "Por ahora los pagos AMEX del Payment Run se programan en MXN.",
         )
 
+    liability = getattr(card, "liability_cuenta_contable", None)
+    if (
+        liability is None
+        or not getattr(liability, "activo", False)
+        or getattr(liability, "id", None) is None
+        or liability.codigo not in ALLOWED_AMEX_LIABILITY_CODES
+    ):
+        raise AmexCardPaymentError(
+            "invalid_amex_liability",
+            "Configura una cuenta de pasivo AMEX activa para esta tarjeta.",
+        )
+
     numero_referencia = await generate_documento_reference_number(
         session,
         "SOLICITUD",
@@ -155,7 +170,7 @@ async def create_amex_card_payment_request(
         notas=(
             "Solicitud generada desde Conciliación AMEX para Payment Run. "
             f"Tarjeta: {label}; terminación: {card.last4}; cuenta pasivo: {liability_code}."
-            f"\n{amex_payment_card_marker(card.id)}"
+            f"\n{amex_payment_card_marker(card.id, liability_account_id=liability.id)}"
         ),
         enviado_en=now,
         aprobado_en=now,

@@ -142,6 +142,10 @@ from ..services.amex_cfdi_matching_service import (
     validate_pase_monthly_cfdi_suggestion,
 )
 from ..services.amex_statement_matcher import find_amex_cfdi_match
+from ..services.amex_recognition_service import bind_amex_consumption
+from ..services.amex_expense_service import company_amex_sql_condition
+from ..services.amex_cut_export_service import cut_expense_cfdis
+from ..models import AmexAccountingCut
 from ..services.authorization_profile_service import (
     copy_authorization_profile,
     list_authorization_profiles,
@@ -420,6 +424,7 @@ from ..utils.receipt_bytes import (
     resolve_media_type,
 )
 from .dependencies import get_current_empleado, get_db_session, has_permission, require_admin_finanzas
+from .admin_amex_accounting_routes import router as amex_accounting_router
 from ..services.payment_run_service import (
     PaymentRunPermissionError,
     require_payment_run_access,
@@ -532,6 +537,9 @@ async def _active_cfdi_project_assignment_ids(
 
 
 router = APIRouter()
+
+
+router.include_router(amex_accounting_router)
 
 # This will be set by the app that includes these routes
 _db_session_maker = None
@@ -4603,6 +4611,18 @@ def _coi_exportable_matches_search(
     return any(token in _normalize_filter_value(value) for value in haystack)
 
 
+async def _load_initial_amex_cut(
+    session: AsyncSession, informe_id: UUIDType
+) -> Optional[AmexAccountingCut]:
+    result = await session.execute(
+        select(AmexAccountingCut).where(
+            AmexAccountingCut.informe_id == informe_id,
+            AmexAccountingCut.kind == "initial",
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 async def _build_coi_exportable_lote_rows(
     session: AsyncSession,
     *,
@@ -4679,13 +4699,23 @@ async def _build_coi_exportable_lote_rows(
                         }
                     )
                 continue
-            for expense in expenses:
-                ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
-                if not ready:
-                    reference = expense.numero_referencia or str(expense.id)[:8]
-                    block_reasons.append(
-                        f"{reference}: {'; '.join(issues) or 'preparación COI incompleta'}"
-                    )
+            if any(is_company_amex_expense(expense) for expense in expenses):
+                cut = await _load_initial_amex_cut(session, documento.id)
+                if cut is None:
+                    block_reasons.append("Completa la revisión AMEX y el corte contable del informe.")
+                else:
+                    try:
+                        cut_expense_cfdis(cut)
+                    except ValueError as exc:
+                        block_reasons.append(str(exc))
+            else:
+                for expense in expenses:
+                    ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
+                    if not ready:
+                        reference = expense.numero_referencia or str(expense.id)[:8]
+                        block_reasons.append(
+                            f"{reference}: {'; '.join(issues) or 'preparación COI incompleta'}"
+                        )
             if not _coi_exportable_matches_search(
                 documento=documento,
                 expenses=expenses,
@@ -4875,10 +4905,22 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
             if row.get("can_export")
             else '<span title="Póliza bloqueada">⛔</span>'
         )
+        if is_report and any(is_company_amex_expense(expense) for expense in expenses):
+            coi_action += (
+                f' <a href="/admin/contabilidad/amex/informes/{documento_id}">'
+                "Revisar partidas y cortes AMEX</a>"
+            )
         action = (
             coi_action
             if row.get("can_export")
-            else f'<span class="muted">Bloqueada: {block_reason}</span>'
+            else (
+                f'<span class="muted">Bloqueada: {block_reason}</span>'
+                + (
+                    f' <a href="/admin/contabilidad/amex/informes/{documento_id}">Revisar AMEX</a>'
+                    if is_report and any(is_company_amex_expense(expense) for expense in expenses)
+                    else ""
+                )
+            )
         )
 
         rendered.append(
@@ -4925,6 +4967,21 @@ async def _collect_coi_lote_expense_cfdis(
     for row in exportable_rows:
         documento = row["documento"]
         tipo_lote = row["tipo_lote"]
+        if tipo_lote == "INFORME" and any(
+            is_company_amex_expense(expense) for expense in row.get("expenses") or []
+        ):
+            cut = await _load_initial_amex_cut(session, documento.id)
+            if cut is None:
+                raise ValueError("El informe AMEX necesita su corte contable antes de exportar.")
+            expense_cfdis.extend(cut_expense_cfdis(cut))
+            for index, item in enumerate(cut.snapshot_json["partidas"], start=1):
+                exported_ids.add(UUIDType(item["expense_id"]))
+                manifest_rows.append([
+                    item["expense_id"], str(documento.id), tipo_lote,
+                    item.get("reference") or "", documento.numero_referencia or "",
+                    str(index), "exportado", f"corte:{cut.id}",
+                ])
+            continue
         document_cfdis: List[ExpenseCFDI] = []
         for expense_index, expense in enumerate(row.get("expenses") or [], start=1):
             try:
@@ -20632,6 +20689,65 @@ async def amex_card_accounts_save(
     )
 
 
+@router.post("/admin/gastos/amex/conciliacion/vincular-consumo")
+async def amex_conciliacion_bind_consumption(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    imported_expense_id: str = Form(...),
+    report_expense_ids: List[str] = Form([]),
+    statement_only: bool = Form(False),
+    year: Optional[int] = Form(None),
+    month: Optional[int] = Form(None),
+) -> RedirectResponse:
+    """Confirm which report items and statement charge are one consumption."""
+    redirect_base = (
+        f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}"
+        f"&month={month or datetime.utcnow().month}#consumos"
+    )
+    try:
+        imported_id = UUIDType(imported_expense_id)
+        report_ids = [UUIDType(value) for value in report_expense_ids]
+    except (TypeError, ValueError):
+        return RedirectResponse(
+            url=redirect_base.replace(
+                "#consumos", "&error_msg=" + quote("Selección de consumo inválida.")
+                + "#consumos",
+            ),
+            status_code=303,
+        )
+    if (not report_ids and not statement_only) or (report_ids and statement_only):
+        message = (
+            "Selecciona las partidas del informe o confirma que el cargo "
+            "no está registrado en un informe."
+        )
+        return RedirectResponse(
+            url=redirect_base.replace(
+                "#consumos", "&error_msg=" + quote(message) + "#consumos"
+            ),
+            status_code=303,
+        )
+    result = await bind_amex_consumption(
+        session,
+        imported_expense_id=imported_id,
+        report_expense_ids=report_ids,
+        actor_id=UUIDType(str(current_empleado.id)),
+    )
+    if result.status == "pending":
+        await session.rollback()
+        message = f"No se pudo vincular el consumo ({result.reason})."
+        parameter = "error_msg"
+    else:
+        await session.commit()
+        message = "Consumo vinculado. Informe y conciliación compartirán su registro contable."
+        parameter = "msg"
+    return RedirectResponse(
+        url=redirect_base.replace(
+            "#consumos", f"&{parameter}=" + quote(message) + "#consumos"
+        ),
+        status_code=303,
+    )
+
+
 @router.post("/admin/gastos/amex/conciliacion/vincular-cfdi")
 async def amex_conciliacion_link_cfdi(
     session: AsyncSession = Depends(get_db_session),
@@ -20966,6 +21082,51 @@ async def amex_conciliacion_view(
     )
     expenses = expenses_result.scalars().all()
     amex_card_accounts = await list_amex_card_accounts(session)
+
+    report_result = await session.execute(
+        select(ExpenseReport)
+        .where(
+            company_amex_sql_condition(),
+            or_(ExpenseReport.origen.is_(None), ExpenseReport.origen != "amex_batch"),
+            ExpenseReport.estado_gasto == "activo",
+            ExpenseReport.cuenta_gastos_id.isnot(None),
+            ExpenseReport.fecha >= start_dt - timedelta(days=10),
+            ExpenseReport.fecha < end_dt + timedelta(days=10),
+        )
+        .order_by(ExpenseReport.fecha.asc(), ExpenseReport.id.asc())
+    )
+    report_candidates = list(report_result.scalars().all())
+    consumption_rows_html = ""
+    for charge in expenses:
+        options = "".join(
+            f'<option value="{item.id}">'
+            f'{escape(str(item.numero_referencia or "Partida de informe"))} · '
+            f'{escape(str(item.concepto or ""))} · '
+            f'${float(item.gasto_cantidad or 0):,.2f}</option>'
+            for item in report_candidates
+            if item.ultimos_4_digitos == charge.ultimos_4_digitos
+        )
+        consumption_rows_html += f"""
+            <tr>
+                <td>{escape(str(charge.numero_referencia or 'Cargo AMEX'))}</td>
+                <td>{escape(str(charge.concepto or ''))}</td>
+                <td>${float(charge.gasto_cantidad or 0):,.2f}</td>
+                <td>
+                    <form method="POST" action="/admin/gastos/amex/conciliacion/vincular-consumo">
+                        <input type="hidden" name="imported_expense_id" value="{charge.id}">
+                        <input type="hidden" name="year" value="{selected_year}">
+                        <input type="hidden" name="month" value="{selected_month}">
+                        <label>Partidas del informe correspondientes al mismo consumo
+                            <select name="report_expense_ids" multiple>{options}</select>
+                        </label>
+                        <label><input type="checkbox" name="statement_only" value="true">
+                            Confirmo que este cargo no está registrado en un informe
+                        </label>
+                        <button type="submit" class="button">Confirmar vínculo</button>
+                    </form>
+                </td>
+            </tr>
+        """
 
     linked_groups: Dict[tuple, Dict[str, Any]] = {}
     pending_groups: Dict[tuple, Dict[str, Any]] = {}
@@ -21304,6 +21465,18 @@ async def amex_conciliacion_view(
                         <tbody>
                             {pase_rows_html if pase_rows_html else '<tr><td colspan="8" class="section-note">Sin factura PASE mensual sugerida para este periodo.</td></tr>'}
                         </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section id="consumos" class="surface">
+                <h2>Consumos e informes</h2>
+                <p>Relaciona cada cargo con todas las partidas que lo representan en un informe.
+                Esta confirmación evita contabilizar el mismo consumo dos veces; no genera una póliza.</p>
+                <div class="table-shell">
+                    <table>
+                        <thead><tr><th>Cargo</th><th>Concepto</th><th>Importe</th><th>Vínculo</th></tr></thead>
+                        <tbody>{consumption_rows_html or '<tr><td colspan="4">Sin cargos en este período.</td></tr>'}</tbody>
                     </table>
                 </div>
             </section>
@@ -34281,6 +34454,17 @@ async def _build_documento_coi_bundle(
         )
 
     if documento.tipo == "INFORME" and require_complete_informe:
+        if any(is_company_amex_expense(expense) for expense in expenses):
+            cut = await _load_initial_amex_cut(session, documento.id)
+            if cut is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Completa la revisión de partidas y el corte contable AMEX antes de exportar.",
+                )
+            try:
+                return documento, expenses, cut_expense_cfdis(cut)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         accounting_periods = {
             (expense.fecha.year, expense.fecha.month)
             for expense in expenses
@@ -34749,6 +34933,16 @@ async def exportar_coi_poliza_gasto_excel(
     if informe_documento is not None:
         return RedirectResponse(
             url=f"/documentos/{informe_documento.id}/exportar-coi.xlsx",
+            status_code=303,
+        )
+
+    if is_company_amex_expense(expense):
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/gastos/{gasto_id}",
+                error="amex_accounting_cut_required",
+                error_msg="Vincula el consumo a su informe y completa el corte contable AMEX.",
+            ),
             status_code=303,
         )
 
