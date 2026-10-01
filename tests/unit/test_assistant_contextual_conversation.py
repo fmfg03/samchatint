@@ -301,6 +301,14 @@ async def test_runtime_transports_snapshot_filters_and_isolates_cache(monkeypatc
     assert call["bi_year"] == 2026
     assert call["route_info"]["domain"] == "finance"
     assert call["deterministic_tool_answer"] is None
+    safe, trace = call["finalize_response"](
+        "En agosto se pagaron 42.000 MXN de IVA.", []
+    )
+    assert "42.000" not in safe
+    assert any(
+        step.get("assistant_work_frame", {}).get("domain") == "finance"
+        for step in trace
+    )
     assert call["response_cache_enabled"] is False
     assert retrieval.call_args.kwargs["use_cache"] is False
     assert await call["history_messages"]() == history
@@ -658,3 +666,294 @@ def test_retrieval_cache_identity_includes_conversation_domain_and_full_query(
     assert key != _cache_key_for_query(
         "x" * 1200 + "other", conversation_id="one", domain="finance"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai", "anthropic", "ollama"])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "invented",
+        "causal",
+        "clarification",
+        "unavailable",
+        "evidence",
+        "confirm",
+        "denied",
+    ],
+)
+@pytest.mark.parametrize("raw_message", [QUESTION, "¿y agosto?", "¿por qué aumentó?"])
+async def test_contextual_provider_gate_before_persistence(
+    monkeypatch, provider, outcome, raw_message
+):
+    import copy
+    import inspect
+    from unittest.mock import MagicMock
+
+    from fastapi import HTTPException
+
+    from samchat.assistant import provider_execution as execution
+
+    from samchat.assistant import conversation_service as service, router
+    from samchat.assistant.conversation_context import contextual_read_frame
+
+    tool = (
+        "finance_expense_create" if outcome == "confirm" else "assistant_finance_read"
+    )
+    answer = {
+        "confirm": "En agosto se pagaron 42.000 MXN de IVA.",
+        "denied": "En agosto se pagaron 42.000 MXN de IVA.",
+        "invented": "En agosto se pagaron 42.000 MXN de IVA.",
+        "causal": "El IVA aumentó porque se contrataron más proveedores.",
+        "clarification": "¿Buscas documentos aprobados o pagos efectivamente realizados?",
+        "unavailable": "IVA pagado: 0 MXN. Fuente: solicitudes.",
+        "evidence": "El importe consultado es 42 MXN. Fuente: folio TEST-42.",
+    }[outcome]
+    evidence = {
+        "ok": True,
+        "read_only": True,
+        "payload": {"amount": 42, "folio": "TEST-42", "coverage": "complete"},
+    }
+    if outcome == "unavailable":
+        from samchat.assistant.finance_read_adapter import run_finance_read_adapter
+
+        evidence = await run_finance_read_adapter(
+            AsyncMock(), intent="finance.vat_paid"
+        )
+    has_tool = outcome in {"unavailable", "evidence", "confirm", "denied"}
+    history = [{"role": "user", "content": QUESTION}]
+    frame = contextual_read_frame(raw_message, history)
+
+    def finalize(answer, trace, *, pending=False):
+        return service.finalize_contextual_response(
+            answer,
+            trace,
+            work_frame=frame,
+            maybe_append_export_prompt=lambda text, trace: text,
+            pending=pending,
+        )
+
+    reader = AsyncMock(return_value=evidence)
+    calls = []
+
+    def sync_call(**kwargs):
+        calls.append(copy.deepcopy(kwargs))
+        first = len(calls) == 1 and has_tool
+        if provider == "openai":
+            choice = SimpleNamespace(
+                content="" if first else answer,
+                tool_calls=(
+                    [
+                        SimpleNamespace(
+                            id="call1",
+                            function=SimpleNamespace(name=tool, arguments="{}"),
+                        )
+                    ]
+                    if first
+                    else []
+                ),
+            )
+            return SimpleNamespace(choices=[SimpleNamespace(message=choice)])
+        return SimpleNamespace(
+            content=(
+                [SimpleNamespace(type="tool_use", id="call1", name=tool, input={})]
+                if first
+                else [SimpleNamespace(type="text", text=answer)]
+            )
+        )
+
+    async def ollama_call(**kwargs):
+        calls.append(copy.deepcopy(kwargs))
+        first = len(calls) == 1 and has_tool
+        return {
+            "content": "" if first else answer,
+            "tool_calls": (
+                [{"function": {"name": tool, "arguments": {}}}] if first else []
+            ),
+        }
+
+    session = AsyncMock()
+    session.add = MagicMock()
+    common = dict(
+        model="mock",
+        normalized_mode="balanceado",
+        route_info={"route": "lookup_sql"},
+        raw_message=raw_message,
+        conversation=conversation(),
+        current_empleado=SimpleNamespace(id="u", rol="admin"),
+        session=session,
+        tool_trace=[],
+        tool_defs=[],
+        max_tokens=100,
+        retrieval_sources=[],
+        response_cache_enabled=False,
+        cache_key="context",
+        tournament_key_default=None,
+        bi_year=2026,
+        bi_scope="all",
+        messages=[{"role": "user", "content": "consulta"}],
+        write_tools={"finance_expense_create"},
+        run_read_tool=reader,
+        ensure_citations=lambda answer, sources: answer,
+        tool_trace_has_write_intent=lambda trace: False,
+        assistant_response_cache_set=lambda **kw: None,
+        pending_confirmation_cls=SimpleNamespace,
+        assistant_run_cls=SimpleNamespace,
+        assistant_message_cls=SimpleNamespace,
+        message_response_cls=SimpleNamespace,
+        tool_policy_evaluator=lambda *args: {
+            "decision": "deny" if outcome == "denied" else "allow",
+            "reason": "fixture",
+        },
+        deterministic_tool_answer=None,
+        openai_api_key=None,
+        get_openai_client=lambda key: SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=sync_call))
+        ),
+        get_anthropic_client=lambda: SimpleNamespace(
+            messages=SimpleNamespace(create=sync_call)
+        ),
+        route_prompt="read",
+        language_prompt="es",
+        hermes_profile_prompt=None,
+        workspace_context=None,
+        module_key_default="finance",
+        module_label_default=None,
+        module_context_default=None,
+        retrieval_context=None,
+        assistant_system_prompt=lambda: "system",
+        history_messages=AsyncMock(return_value=history),
+        finalize_response=finalize,
+        tool_defs_anthropic=lambda defs: defs,
+        anthropic_text_from_blocks=lambda blocks: (
+            "" if blocks[0].type == "tool_use" else blocks[0].text
+        ),
+        anthropic_message_from_blocks=lambda blocks: [vars(b) for b in blocks],
+        get_model=lambda *a, **kw: "mock",
+        ollama_chat=ollama_call,
+        ollama_message_content=lambda p: p["content"],
+        ollama_tool_calls=lambda p: p["tool_calls"],
+        ollama_assistant_message=lambda p: {
+            "role": "assistant",
+            "content": p["content"],
+        },
+    )
+    execute = getattr(execution, f"execute_{provider}_provider")
+    kwargs = {
+        k: v for k, v in common.items() if k in inspect.signature(execute).parameters
+    }
+    saved = []
+    session.add.side_effect = saved.append
+    commits = []
+
+    async def commit():
+        commits.append(copy.deepcopy(saved))
+
+    session.commit.side_effect = commit
+
+    async def turn(**unused):
+        return await execute(**kwargs)
+
+    for name in (
+        "_build_document_upload_response",
+        "_build_document_confirmation_response",
+        "_build_case_memory_response",
+    ):
+        monkeypatch.setattr(service, name, AsyncMock(return_value=None))
+    if outcome == "denied":
+        with pytest.raises(HTTPException) as exc:
+            await execute(**kwargs)
+        assert exc.value.status_code == 403
+        assert not saved and not commits
+        reader.assert_not_awaited()
+        return
+    result = await service.run_conversation_turn(
+        raw_message=raw_message,
+        conversation=common["conversation"],
+        current_empleado=common["current_empleado"],
+        session=session,
+        request=None,
+        tournament_key=None,
+        bi_year=None,
+        bi_scope=None,
+        bi_segment=None,
+        assistant_mode=None,
+        openai_api_key=None,
+        assistant_turn=turn,
+        maybe_append_export_prompt=lambda text, trace: text,
+        contextual=True,
+    )
+    if outcome == "confirm":
+        assert result.pending_confirmation.tool_name == tool
+        assert (
+            result.assistant_message
+            == "Necesito confirmación explícita para continuar."
+        )
+    elif outcome in {"clarification", "evidence"}:
+        assert answer in result.assistant_message
+    else:
+        assert answer not in result.assistant_message
+        assert "42.000" not in result.assistant_message
+        assert "0 MXN" not in result.assistant_message
+        assert "porque se contrataron" not in result.assistant_message
+        assert any(
+            step.get("assistant_response_sufficiency_gate", {}).get("ok") is False
+            for step in result.tool_trace
+        )
+    if outcome == "unavailable":
+        assert "no significa que el importe sea cero" in result.assistant_message
+    messages = [obj for obj in saved if getattr(obj, "role", None) == "assistant"]
+    runs = [obj for obj in saved if hasattr(obj, "assistant_message")]
+    assert len(messages) == len(runs) == 1
+    assert messages[0].content == runs[0].assistant_message == result.assistant_message
+    assert runs[0].tool_trace == result.tool_trace
+    assert commits
+    for snapshot in commits:
+        for row in snapshot:
+            if getattr(row, "role", None) == "assistant":
+                assert row.content == result.assistant_message
+            if hasattr(row, "assistant_message"):
+                assert row.assistant_message == result.assistant_message
+    # Reload through the real history reader; rejected text must never return.
+    session.execute.return_value = SimpleNamespace(
+        scalars=lambda: SimpleNamespace(all=lambda: list(reversed(messages)))
+    )
+    reloaded = await router._history_messages(session, conversation_id="one")
+    assert reloaded == [{"role": "assistant", "content": result.assistant_message}]
+    if not has_tool or outcome == "confirm":
+        reader.assert_not_awaited()
+    else:
+        reader.assert_awaited_once()
+
+
+def test_contextual_read_frame_never_inherits_write_authority():
+    from samchat.assistant.conversation_context import contextual_read_frame
+
+    frame = contextual_read_frame(
+        "¿y agosto?",
+        [
+            {"role": "user", "content": "Paga el IVA al proveedor y confirma el pago"},
+        ],
+    )
+    assert frame.domain == "finance"
+    assert frame.authority_boundary == "read_only"
+    assert frame.task_kind == "evidence"
+    assert frame.user_message == "¿y agosto?"
+    assert frame.temporal_scope["month"] == "08"
+    assert frame.answer_contract["require_current_read_evidence"] is True
+
+
+def test_contextual_read_frame_retains_period_across_grouping_followup():
+    from samchat.assistant.conversation_context import contextual_read_frame
+
+    history = [
+        {"role": "user", "content": QUESTION},
+        {"role": "user", "content": "¿y agosto?"},
+    ]
+    frame = contextual_read_frame("por proveedor", history)
+    assert frame.temporal_scope == {
+        "year": 2026,
+        "month": "08",
+        "month_label": "agosto",
+    }
+    assert frame.authority_boundary == "read_only"

@@ -100,6 +100,7 @@ from .bi_scope import AssistantBIScope, bi_scope_terms, text_matches_bi_scope
 from .capability_negotiation import capability_registry_hash
 from .context import AssistantContext
 from .conversation_service import (
+    finalize_contextual_response,
     run_conversation_turn,
     run_message_turn_with_pending,
 )
@@ -146,7 +147,7 @@ from .closeout_diagnostics import build_finance_closeout_diagnostics
 from .executive_answer_renderer import render_executive_tool_result
 from .finance_read_answer import render_finance_read_answer
 from .finance_read_adapter import run_finance_read_adapter
-from .conversation_context import context_digest, contextual_route, update_context
+from .conversation_context import context_digest, contextual_read_frame, contextual_route, update_context
 from .historical_accounting_precedent import query_historical_accounting_precedents
 from .institutional_artifact_registry import (
     build_institutional_artifact_registry_report,
@@ -10425,6 +10426,14 @@ async def _assistant_turn(
         kwargs["current_conversation_id"] = str(conversation.id)
         return await _run_read_tool(tool_name, args, **kwargs)
 
+    read_frame = contextual_read_frame(raw_message, history)
+
+    def finalize_response(answer, trace, *, pending=False):
+        return finalize_contextual_response(
+            answer, trace, work_frame=read_frame,
+            maybe_append_export_prompt=_maybe_append_export_prompt, pending=pending,
+        )
+
     for provider in _assistant_provider_order(
         normalized_mode,
         route_info=route_info,
@@ -10483,6 +10492,7 @@ async def _assistant_turn(
                 message_response_cls=MessageResponse,
                 tool_policy_evaluator=tool_policy_evaluator,
                 deterministic_tool_answer=None,
+                finalize_response=finalize_response,
             )
 
         except HTTPException as exc:

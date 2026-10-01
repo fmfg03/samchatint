@@ -159,6 +159,7 @@ async def _provider_controlled_failure_response(
     assistant_message_cls: Any,
     message_response_cls: Any,
     deterministic_tool_answer: Optional[DeterministicToolAnswerFn] = None,
+    finalize_response: Optional[Callable[..., Any]] = None,
 ) -> Any:
     fallback_answer = _latest_deterministic_tool_trace_answer(
         tool_trace=tool_trace,
@@ -168,6 +169,8 @@ async def _provider_controlled_failure_response(
         "El proveedor del asistente tardó demasiado en responder. "
         "No ejecuté acciones ni cambios; intenta de nuevo con una consulta más corta."
     )
+    if finalize_response:
+        message, tool_trace = finalize_response(message, tool_trace)
     assistant_msg = assistant_message_cls(
         conversation_id=conversation.id,
         role="assistant",
@@ -243,7 +246,10 @@ async def _provider_deterministic_tool_response(
     assistant_run_cls: Any,
     assistant_message_cls: Any,
     message_response_cls: Any,
+    finalize_response: Optional[Callable[..., Any]] = None,
 ) -> Any:
+    if finalize_response:
+        answer, tool_trace = finalize_response(answer, tool_trace)
     assistant_msg = assistant_message_cls(
         conversation_id=conversation.id,
         role="assistant",
@@ -317,6 +323,7 @@ async def execute_ollama_provider(
     message_response_cls: Any,
     tool_policy_evaluator: Optional[ToolPolicyEvaluatorFn] = None,
     deterministic_tool_answer: Optional[DeterministicToolAnswerFn] = None,
+    finalize_response: Optional[Callable[..., Any]] = None,
 ) -> Any:
     run_id = __import__("uuid").uuid4()
     ollama_messages = list(messages)
@@ -375,6 +382,10 @@ async def execute_ollama_provider(
                         tool_args=args,
                         summary=_pending_summary(tool_name, args),
                     )
+                    if finalize_response:
+                        assistant_text, tool_trace = finalize_response(
+                            assistant_text or "", tool_trace, pending=True
+                        )
                     run = assistant_run_cls(
                         id=run_id,
                         conversation_id=conversation.id,
@@ -444,6 +455,7 @@ async def execute_ollama_provider(
                         assistant_run_cls=assistant_run_cls,
                         assistant_message_cls=assistant_message_cls,
                         message_response_cls=message_response_cls,
+                        finalize_response=finalize_response,
                     )
                 ollama_messages.append(
                     {
@@ -460,6 +472,8 @@ async def execute_ollama_provider(
             )
 
         answer = ensure_citations(assistant_text, retrieval_sources)
+        if finalize_response:
+            answer, tool_trace = finalize_response(answer, tool_trace)
         assistant_msg = assistant_message_cls(
             conversation_id=conversation.id,
             role="assistant",
@@ -543,6 +557,7 @@ async def execute_anthropic_provider(
     message_response_cls: Any,
     tool_policy_evaluator: Optional[ToolPolicyEvaluatorFn] = None,
     deterministic_tool_answer: Optional[DeterministicToolAnswerFn] = None,
+    finalize_response: Optional[Callable[..., Any]] = None,
 ) -> Any:
     run_id = __import__("uuid").uuid4()
     client = get_anthropic_client()
@@ -602,6 +617,7 @@ async def execute_anthropic_provider(
                 assistant_run_cls=assistant_run_cls,
                 assistant_message_cls=assistant_message_cls,
                 message_response_cls=message_response_cls,
+                finalize_response=finalize_response,
                 deterministic_tool_answer=deterministic_tool_answer,
             )
         call_timeout = min(provider_timeout_seconds, remaining_budget)
@@ -659,6 +675,7 @@ async def execute_anthropic_provider(
                     assistant_run_cls=assistant_run_cls,
                     assistant_message_cls=assistant_message_cls,
                     message_response_cls=message_response_cls,
+                    finalize_response=finalize_response,
                     deterministic_tool_answer=deterministic_tool_answer,
                 )
             raise
@@ -695,6 +712,10 @@ async def execute_anthropic_provider(
                         tool_args=args,
                         summary=_pending_summary(tool_name, args),
                     )
+                    if finalize_response:
+                        assistant_text, tool_trace = finalize_response(
+                            assistant_text or "", tool_trace, pending=True
+                        )
                     run = assistant_run_cls(
                         id=run_id,
                         conversation_id=conversation.id,
@@ -767,6 +788,7 @@ async def execute_anthropic_provider(
                         assistant_run_cls=assistant_run_cls,
                         assistant_message_cls=assistant_message_cls,
                         message_response_cls=message_response_cls,
+                        finalize_response=finalize_response,
                     )
                 tool_result_blocks.append(
                     {
@@ -782,6 +804,8 @@ async def execute_anthropic_provider(
             continue
 
         answer = ensure_citations(assistant_text or "", retrieval_sources)
+        if finalize_response:
+            answer, tool_trace = finalize_response(answer, tool_trace)
         assistant_msg = assistant_message_cls(
             conversation_id=conversation.id,
             role="assistant",
@@ -854,6 +878,7 @@ async def execute_openai_provider(
     message_response_cls: Any,
     tool_policy_evaluator: Optional[ToolPolicyEvaluatorFn] = None,
     deterministic_tool_answer: Optional[DeterministicToolAnswerFn] = None,
+    finalize_response: Optional[Callable[..., Any]] = None,
 ) -> Any:
     run_id = __import__("uuid").uuid4()
     client = get_openai_client(openai_api_key)
@@ -899,6 +924,13 @@ async def execute_openai_provider(
                         tool_args=args,
                         summary=_pending_summary(tool_name, args),
                     )
+                    pending_answer = (
+                        choice.content or "Necesito confirmacion para continuar."
+                    )
+                    if finalize_response:
+                        pending_answer, tool_trace = finalize_response(
+                            pending_answer, tool_trace, pending=True
+                        )
                     run = assistant_run_cls(
                         id=run_id,
                         conversation_id=conversation.id,
@@ -906,7 +938,7 @@ async def execute_openai_provider(
                         status="pending_confirmation",
                         model=f"openai:{model}:{route_info['route']}:{normalized_mode}",
                         user_message=raw_message,
-                        assistant_message=choice.content or "",
+                        assistant_message=pending_answer,
                         tool_trace=tool_trace,
                         pending_tool_name=tool_name,
                         pending_tool_args=args,
@@ -917,8 +949,7 @@ async def execute_openai_provider(
                     assistant_msg = assistant_message_cls(
                         conversation_id=conversation.id,
                         role="assistant",
-                        content=choice.content
-                        or "Necesito confirmacion para continuar.",
+                        content=pending_answer,
                         tool_name=None,
                         tool_payload=None,
                     )
@@ -966,6 +997,7 @@ async def execute_openai_provider(
                         assistant_run_cls=assistant_run_cls,
                         assistant_message_cls=assistant_message_cls,
                         message_response_cls=message_response_cls,
+                        finalize_response=finalize_response,
                     )
                 openai_messages.append(
                     {
@@ -977,6 +1009,8 @@ async def execute_openai_provider(
             continue
 
         answer = ensure_citations(choice.content or "", retrieval_sources)
+        if finalize_response:
+            answer, tool_trace = finalize_response(answer, tool_trace)
         assistant_msg = assistant_message_cls(
             conversation_id=conversation.id,
             role="assistant",
@@ -1069,6 +1103,7 @@ async def execute_provider(
     message_response_cls: Any,
     tool_policy_evaluator: Optional[ToolPolicyEvaluatorFn] = None,
     deterministic_tool_answer: Optional[DeterministicToolAnswerFn] = None,
+    finalize_response: Optional[Callable[..., Any]] = None,
 ) -> Any:
     if provider == "ollama":
         return await execute_ollama_provider(
@@ -1103,6 +1138,7 @@ async def execute_provider(
             assistant_run_cls=assistant_run_cls,
             assistant_message_cls=assistant_message_cls,
             message_response_cls=message_response_cls,
+            finalize_response=finalize_response,
             tool_policy_evaluator=tool_policy_evaluator,
             deterministic_tool_answer=deterministic_tool_answer,
         )
@@ -1147,6 +1183,7 @@ async def execute_provider(
             assistant_run_cls=assistant_run_cls,
             assistant_message_cls=assistant_message_cls,
             message_response_cls=message_response_cls,
+            finalize_response=finalize_response,
             tool_policy_evaluator=tool_policy_evaluator,
             deterministic_tool_answer=deterministic_tool_answer,
         )
@@ -1179,6 +1216,7 @@ async def execute_provider(
         assistant_run_cls=assistant_run_cls,
         assistant_message_cls=assistant_message_cls,
         message_response_cls=message_response_cls,
+        finalize_response=finalize_response,
         tool_policy_evaluator=tool_policy_evaluator,
         deterministic_tool_answer=deterministic_tool_answer,
     )

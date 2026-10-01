@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+from dataclasses import replace
 from typing import Any, Callable
+
+from .work_frame import WorkFrame, build_work_frame, normalize_work_text
 
 CONTEXT_POLICY = """Interpreta el mensaje actual dentro de la conversación completa.
 Conserva entidad/empresa, métrica, criterio de estados, periodo/corte y desglose
@@ -63,6 +67,52 @@ def context_digest(*, conversation_id: Any, history: Any, metadata: Any) -> str:
         default=str,
     )
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def contextual_read_frame(raw_message: str, history: list[dict[str, Any]]) -> WorkFrame:
+    """Resolve evidence requirements only; never infer execution authority."""
+    current = build_work_frame(raw_message)
+    frame = build_work_frame("")
+    # Fiscal vocabulary is not fully represented by the legacy classifier.
+    fiscal = re.compile(r"\b(iva|impuestos?|gastos?|proveedores?)\b")
+    for text in [
+        *[str(m.get("content") or "") for m in history if m.get("role") == "user"],
+        raw_message,
+    ]:
+        candidate = build_work_frame(text)
+        if fiscal.search(normalize_work_text(text)):
+            candidate = replace(
+                candidate,
+                domain="finance",
+                task_kind="evidence",
+                audience="finance",
+                interpreted_goal="Answer the financial question from current canonical evidence.",
+                needs_clarification=False,
+                required_evidence=("current_canonical_financial_read",),
+            )
+        if candidate.domain == "unknown":
+            frame = replace(
+                frame,
+                temporal_scope={**frame.temporal_scope, **candidate.temporal_scope},
+            )
+        else:
+            previous_scope = (
+                frame.temporal_scope if candidate.domain == frame.domain else {}
+            )
+            frame = replace(
+                candidate, temporal_scope={**previous_scope, **candidate.temporal_scope}
+            )
+    return replace(
+        frame,
+        frame_id=current.frame_id,
+        user_message=raw_message,
+        temporal_scope={**frame.temporal_scope, **current.temporal_scope},
+        authority_boundary="read_only",
+        answer_contract={
+            **frame.answer_contract,
+            "require_current_read_evidence": frame.domain != "unknown",
+        },
+    )
 
 
 def update_context(

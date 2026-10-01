@@ -272,6 +272,8 @@ def _primary_tool_name(tool_trace: list[dict[str, Any]]) -> str:
 
 def _with_work_frame_trace(response: Any, work_frame: WorkFrame) -> Any:
     tool_trace = list(getattr(response, "tool_trace", []) or [])
+    if any(step.get("assistant_response_finalized") for step in tool_trace):
+        return response
     primary_tool = _primary_tool_name(tool_trace)
     adjudication_trace: dict[str, Any] | None = None
     if primary_tool:
@@ -2093,6 +2095,18 @@ async def _run_contextual_turn(
         assistant_mode=assistant_mode,
         openai_api_key=openai_api_key,
     )
+    if any(
+        step.get("assistant_response_finalized") for step in response.tool_trace or []
+    ):
+        return response
+    return _apply_response_quality(response, raw_message, maybe_append_export_prompt)
+
+
+def _apply_response_quality(
+    response: Any,
+    raw_message: str,
+    maybe_append_export_prompt: AppendExportPromptFn,
+) -> Any:
     response.assistant_message = maybe_append_export_prompt(
         response.assistant_message,
         response.tool_trace,
@@ -2124,6 +2138,24 @@ async def _run_contextual_turn(
             response.tool_trace,
         )
     return response
+
+
+def finalize_contextual_response(
+    answer: str, tool_trace: list[dict[str, Any]], *, work_frame: WorkFrame,
+    maybe_append_export_prompt: AppendExportPromptFn, pending: bool = False,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Finalize once BEFORE providers persist message/run or expose an answer."""
+    response = SimpleNamespace(assistant_message=answer, tool_trace=list(tool_trace))
+    if pending:
+        # Never persist unvalidated provider prose accompanying a proposed write.
+        response.assistant_message = "Necesito confirmación explícita para continuar."
+    else:
+        response = _apply_response_quality(
+            response, work_frame.user_message, maybe_append_export_prompt
+        )
+        response = _with_work_frame_trace(response, work_frame)
+    response.tool_trace.append({"assistant_response_finalized": True})
+    return response.assistant_message, response.tool_trace
 
 
 async def run_conversation_turn(

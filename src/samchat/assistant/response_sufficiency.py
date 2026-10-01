@@ -8,6 +8,7 @@ fail-closed for known semantic mismatches.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import re
 from typing import Any, Iterable, Mapping
 
 from .tool_adjudicator import adjudicate_tool_candidate
@@ -92,6 +93,54 @@ def evaluate_response_sufficiency(
             tool=tool or surface,
             diagnostics=diagnostics,
         )
+
+    if work_frame.answer_contract.get("require_current_read_evidence"):
+        # A question-only clarification is safe; appending a question to an
+        # unsupported assertion is not. Do not accept figures in this fallback.
+        clarification = re.fullmatch(
+            r"¿(?:buscas|quieres|te refieres|que|cual|cuales|necesitas|puedes|debo) "
+            r"[^?¿.!\d]+\?",
+            message,
+        )
+        if clarification:
+            return ResponseSufficiencyResult(
+                True, "contextual_read_clarification", "allow", tool, diagnostics
+            )
+        reads: list[tuple[str, Mapping[str, Any]]] = []
+        for step in tool_trace or []:
+            name = str(step.get("tool") or "")
+            payload = step.get("result")
+            if (
+                name
+                and not name.startswith("assistant.")
+                and isinstance(payload, Mapping)
+            ):
+                reads.append((name, payload))
+        unavailable = any(
+            payload.get("status") == "capability_unavailable"
+            or payload.get("coverage") == "not_queried"
+            for _, payload in reads
+        )
+        valid = any(
+            payload.get("ok") is True
+            and payload.get("read_only") is not False
+            and payload.get("coverage") != "not_queried"
+            and (payload.get("payload") or payload.get("evidence"))
+            and adjudicate_tool_candidate(work_frame=work_frame, tool=name).accepted
+            for name, payload in reads
+        )
+        if unavailable or not valid:
+            return ResponseSufficiencyResult(
+                False,
+                (
+                    "contextual_capability_unavailable"
+                    if unavailable
+                    else "contextual_read_requires_current_successful_evidence"
+                ),
+                "replace_with_gap_answer",
+                tool,
+                diagnostics,
+            )
 
     if work_frame.needs_clarification and not tool:
         return ResponseSufficiencyResult(
@@ -212,6 +261,16 @@ def render_sufficiency_gap_answer(
     result: ResponseSufficiencyResult,
 ) -> str:
     """Render a safe executive answer when the selected path was insufficient."""
+
+    if result.reason == "contextual_capability_unavailable":
+        return (
+            "No puedo determinar ese importe con la capacidad de consulta disponible. "
+            "No se consultó una población completa ni se obtuvo evidencia suficiente "
+            "para calcularlo; esto no significa que el importe sea cero. "
+            "Para IVA pagado hacen falta el desglose de IVA, evidencia y fecha de pago, "
+            "y la asignación de CFDI compartidos y parcialidades sin duplicarlos. "
+            "Aprobado no equivale a pagado. No ejecuté cambios."
+        )
 
     evidence = ", ".join(work_frame.required_evidence) or "evidencia canónica"
     forbidden = ", ".join(work_frame.forbidden_interpretations) or "atajos sin soporte"
