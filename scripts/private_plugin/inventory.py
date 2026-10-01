@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs/private-plugin"
-BASELINE = "d83cd104ae6106978e40d61de33c98139de145bb"
+BASELINE = "6cd122f1030ab39631d77e706a9f5a1a7192231d"
 METHODS = {
     "get",
     "post",

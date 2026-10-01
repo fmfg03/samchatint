@@ -24,6 +24,9 @@ class Identity:
     oauth_scopes: frozenset[str]
     active: bool
     revoked: bool
+    # Stable opaque account ID from the server-side link, never email/employee ID
+    # or a newly generated value per token, reconnect, or invocation.
+    profile_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,9 @@ class IdentityProvider(Protocol):
         Resolve an active local employee from the per-user connection on EVERY
         attempt. Never accept actor, scopes or roles from tool arguments. The
         reference comes from authenticated transport context, never the model.
+        Resolve profile_id from a stable opaque existing account link; never
+        generate it per login/grant or derive it from mutable email. Do not
+        provision, reactivate, promote or impersonate an employee as a side effect.
         Do not store/log the bearer credential. No implementation is wired yet.
         """
 

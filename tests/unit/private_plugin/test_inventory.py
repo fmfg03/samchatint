@@ -152,7 +152,7 @@ class MountEvidenceTest(unittest.TestCase):
         self.assertIn("frontend", exclusions)
         self.assertIn("transitive authority", exclusions)
         self.assertEqual(
-            self.data["baseline"], "d83cd104ae6106978e40d61de33c98139de145bb"
+            self.data["baseline"], "6cd122f1030ab39631d77e706a9f5a1a7192231d"
         )
 
 

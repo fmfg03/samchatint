@@ -1,6 +1,7 @@
 # SamChat privado: inventario y perímetro revisable
 
-Fecha: 2026-10-01. Base inspeccionada: `d83cd104ae6106978e40d61de33c98139de145bb`.
+Fecha: 2026-10-01. Base de negocio actual: `6cd122f1030ab39631d77e706a9f5a1a7192231d` (PR445 integrada).
+El commit inicial `120a4117925e` permanece en el historial.
 Rama: `feat/private-plugin-review-20261001`. Runtime objetivo: `copa_telmex_dashboard.py`;
 dominios Gastos/Finance/Operations/Assistant/Registration; datos híbridos Postgres
 más puentes Supabase. Evidencia de este cambio: **código local, no conectado**.
@@ -8,7 +9,11 @@ más puentes Supabase. Evidencia de este cambio: **código local, no conectado**
 **La paridad completa es el requisito final. No está implementada ni demostrada.**
 Este entregable no reduce el producto a cuatro tools: registra cada declaración
 HTTP localizada y las 44 acciones de `action_router.py`, sin convertirlas en
-facultades. Ninguna operación de negocio está habilitada o anunciada por MCP.
+facultades. Ninguna operación de negocio está habilitada en producción. La
+fábrica original sigue inerte; una composición local separada prueba perfil y
+lectura Direction con fixtures y guards canónicos, sin HTTP/OAuth ni conexiones.
+Ver [avance de roundtrips](local-read-verification.md) y
+[mapa de identidad/autoridad](identity-authority-map.md).
 
 ## Entregables y cómo verificarlos
 
@@ -89,12 +94,12 @@ T = trazabilidad/cifras/estado y lectura sin escritura de negocio.
 
 ## Decisiones precisas para el padre (sin detener trabajo independiente)
 
-1. **Instalación y distribución privada.** Elegir instalación personal por usuario
-   o distribución restringida a workspace administrado y su lista autorizada.
-   La documentación actual distingue conexión personal y publicación pública;
-   la disponibilidad de developer mode depende de cuenta/política. El target
-   comercial inicial son cuentas de paga, no promesa universal por plan ni Free.
-   No se necesita esta decisión para pruebas locales; sí antes de registrar MCP.
+1. **Instalación y distribución privada.** El objetivo indicado es conexión
+   personal con cuenta de paga y uso web/Android/Windows, sin asumir Enterprise.
+   La ruta documentada es registrar la app MCP privada antes de empaquetar su
+   referencia. Su disponibilidad concreta por cuenta/cliente sigue pendiente de
+   validación autorizada; no prometer elegibilidad universal por plan o Free.
+   No se registra ni inventa app ID, endpoint ni grant en este trabajo.
 2. **Frontera multiempresa.** `tenant_id` del contrato Agent Action no prueba una
    organización real. Definir mapping canónico instalación → organización →
    empleado → razones sociales → cartera/torneo; negar ambigüedad y no asumir que
@@ -127,9 +132,10 @@ T = trazabilidad/cifras/estado y lectura sin escritura de negocio.
   de nacimiento en `router.py`. No se importa ni se envuelve. Adopción de campos
   canónicos sólo modifica draft; commit separado recalcula roster, fotos,
   incidentes, faltantes y duplicados. Reusar el rollout shadow, no activarlo.
-- **PR445_CONTEXT_DEPENDENCY:** rutas/adaptadores de assistant/contexto pueden
-  cambiar en #445. Ningún archivo suyo se modifica aquí. Rebasar y regenerar
-  matriz y pruebas de los 44 adapters tras merge, sin duplicar correcciones.
+- **PR445_INTEGRATED:** `6cd122f` incorporado en esta rama aislada conservando
+  `120a411`; matriz regenerada y regresiones puras ejecutadas. No se modificaron
+  sus archivos ni duplicaron sus correcciones. La integración no prueba autoridad
+  nueva para los 44 adapters.
 - **PERSISTENCE_UNPROVEN:** no auditoría/idempotencia productivas del plugin,
   migración, transaction adapter ni prueba de crash de negocio. Un replay puro
   exacto no prueba once-only commit. Nuevas capturas no son posibles en esta base.

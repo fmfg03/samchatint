@@ -1,4 +1,7 @@
-# Evidencia local y entrega al padre
+# Evidencia del hito inicial 120a411
+
+Histórico: los resultados actuales tras PR445 están en
+[local-read-verification.md](local-read-verification.md).
 
 Fecha: 2026-10-01. Rama `feat/private-plugin-review-20261001`, worktree
 `/workspace/samchat-plugin-review`, base `d83cd104ae6106978e40d61de33c98139de145bb`.
