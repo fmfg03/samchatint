@@ -25,9 +25,7 @@ _RFC_PATTERN = re.compile(
     r"\b([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3})\b",
     re.IGNORECASE,
 )
-_MONEDA_PATTERN = re.compile(
-    r"(?i)(?:moneda|currency)\s*[:\-]?\s*([A-Z]{3})\b"
-)
+_MONEDA_PATTERN = re.compile(r"(?i)(?:moneda|currency)\s*[:\-]?\s*([A-Z]{3})\b")
 _AMOUNT_CAPTURE = r"([\d]{1,3}(?:,\d{3})*(?:\.\d{2})|\d+\.\d{2})"
 
 _MONEY_PREFIX = r"(?:\$|MXN\s*)?"
@@ -67,8 +65,7 @@ _LABELED_AMOUNT_PATTERNS: Dict[str, List[str]] = {
         rf"(?i)(?<![\w/])(?<!sub\s)(?<!sub-)total"
         rf"(?:\s+a\s+pagar|\s+del\s+comprobante|\s+con\s+letra)?"
         rf"\s*[:\-]?\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
-        rf"(?i)importe\s+total\s*[:\-]?"
-        rf"\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
+        rf"(?i)importe\s+total\s*[:\-]?" rf"\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
         rf"(?i)monto\s+total\s*[:\-]?\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
     ],
 }
@@ -359,8 +356,7 @@ _EMISOR_NOMBRE_LABELED_PATTERNS = [
     rf"(?i)(?:nombre|raz[oó]n\s+social)"
     rf"(?:\s+(?:o\s+raz[oó]n\s+social\s+)?del?\s+)?"
     rf"[ \t]*emisor\s*[:\-]?\s*{_NOMBRE_CAPTURE}",
-    rf"(?i)(?:nombre|raz[oó]n\s+social)[ \t]+emisor\s*[:\-]?"
-    rf"\s*{_NOMBRE_CAPTURE}",
+    rf"(?i)(?:nombre|raz[oó]n\s+social)[ \t]+emisor\s*[:\-]?" rf"\s*{_NOMBRE_CAPTURE}",
     rf"(?im)^[^\n]*\bemisor[ \t]+(?:nombre|raz[oó]n\s+social)"
     rf"\s*[:\-]?\s*{_NOMBRE_CAPTURE}",
     rf"(?i)(?:nombre|raz[oó]n\s+social)\s*(?:del\s+)?emisor"
@@ -479,6 +475,7 @@ def _normalize_text_parsed_amounts(
     traslados: Optional[float],
     retenciones: Optional[float],
     total: Optional[float],
+    ish: float = 0.0,
 ) -> Dict[str, float]:
     desc = descuento or 0.0
     tras = traslados or 0.0
@@ -487,17 +484,17 @@ def _normalize_text_parsed_amounts(
     tot = total
 
     if tot is not None and sub is not None and tras == 0.0 and ret == 0.0:
-        net = round(tot - sub + desc, 2)
+        net = round(tot - sub + desc - ish, 2)
         if net > 0:
             tras = net
         elif net < 0:
             ret = round(abs(net), 2)
 
     if tot is None and sub is not None:
-        tot = round(sub - desc + tras - ret, 2)
+        tot = round(sub - desc + tras - ret + ish, 2)
 
     if sub is None and tot is not None:
-        sub = round(tot - tras + ret + desc, 2)
+        sub = round(tot - tras + ret + desc - ish, 2)
 
     return {
         "subtotal": max(sub or 0.0, 0.0),
@@ -519,12 +516,26 @@ def _parse_from_text(text: str) -> Dict[str, Any]:
     fecha_raw = _find_fecha(text)
     concepto = _find_concepto(text)
 
+    # Read an explicit local-tax amount; never calculate it from a hotel/rate.
+    ish = (
+        _find_labeled_amount(
+            text,
+            [
+                rf"(?i)\b(?:i\.?\s*s\.?\s*h\.?|impuesto\s+(?:sobre\s+(?:el\s+)?|al\s+)hospedaje)"
+                rf"\s*(?:\d{{1,2}}(?:\.\d+)?\s*%)?\s*[:\-]?"
+                rf"\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
+            ],
+        )
+        or 0.0
+    )
+
     amounts = _normalize_text_parsed_amounts(
         subtotal=_find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["subtotal"]),
         descuento=_find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["descuento"]),
         traslados=_find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["traslados"]),
         retenciones=_find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["retenciones"]),
         total=_find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["total"]),
+        ish=ish,
     )
 
     traslados_list: List[Dict[str, Any]] = []
@@ -565,6 +576,9 @@ def _parse_from_text(text: str) -> Dict[str, Any]:
         "impuestos_detalle": {
             "traslados": traslados_list,
             "retenciones": retenciones_list,
+            "locales": (
+                [{"tipo": "traslado", "impuesto": "ISH", "importe": ish}] if ish else []
+            ),
         },
     }
 

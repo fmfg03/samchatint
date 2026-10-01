@@ -43,19 +43,59 @@ No inference from hotel names, expense text, location or rates is introduced.
   parallel budget persistence or query path was introduced.
 - Accounting policy generation and fiscal/COI tax components are unchanged.
 
-## Original references: visual blocker
+## Original references: coordinated visual evidence
 
 Library references `libfile_a13cf7331c048191bfd3c4a9812cbe98` and
 `libfile_1fdc51a39284819180ecc045ec8e9a78` were resolved with the current Library
 skill and its resolved-reference materialization flow. The official helper
 failed for both on this Windows executor with `AttributeError: module 'os' has
 no attribute 'setxattr'`. No readable JPEG was installed at the local destination.
-Neither capture was inspected; no visual claims are made. References and helper
-inputs were kept outside the repository. Tests contain synthetic evidence.
+Neither JPEG was inspected by this Windows executor. Coordination subsequently
+reported successful inspection of both originals through supported cloud Library
+access. The first capture shows the quick-expense Sub total / Impuestos y
+retenciones columns with an empty row; it does not demonstrate erroneous
+prefilled amounts. The second invoice shows fiscal subtotal 4400.00, IVA 16%
+704.00, ISH 4% 176.00 and total 5280.00 MXN. These visual observations are
+attributed to coordination, not local JPEG inspection.
+
+Synthetic fixtures reproduce only those amounts, with invented identities and
+UUIDs. Capture classification is 4576.00 / 704.00 / 5280.00; fiscal amounts
+remain 4400.00 / 704.00 / 176.00. References and helper inputs remain outside
+the repository.
+
+## XML / PDF and coverage limits
+
+The resolver prioritizes uploaded XML, then XML embedded in PDF, then PDF text.
+All three byte-level paths are tested with synthetic inputs. The text PDF reader
+previously omitted local taxes; it now extracts explicit ISH label/amount pairs
+into local-tax detail, preserving the printed fiscal subtotal and IVA. When
+existing text heuristics derive missing totals/base/federal tax, they now exclude
+the separately identified ISH from the federal component. They never apply IVA
+16% to the adjusted capture subtotal. pypdf is declared in both dependency lists
+because this existing PDF extraction path needs it.
+
+This is not authenticated browser-to-database E2E or OCR UAT. Scanned PDFs need
+the configured OCR/text extraction path to produce a readable explicit ISH
+amount; that external parser was not exercised. Unsupported tax labels remain
+unclassified rather than being inferred from total differences.
+
+The exact-reference fixture verifies quick capture, the unchanged total/IVA
+write inputs, Python/SQL budget amount, approved INFORME snapshot, export and
+two-way sharing: 4576 budget base / 704 IVA / 5280 total, or 2288 / 352 / 2640
+per equal share. No second ISH amount is persisted.
+
+Existing budget branches for rows without IVA use fiscal subtotal plus explicit
+lodging amount, and rows with IVA also add any explicit lodging amount. Those
+older paths can omit ISH if only CFDI local detail is present, or count it twice
+if an explicit amount was separately saved although it is already in the total.
+They are outside the proven quick-capture path and remain a disclosed gap; this
+change neither repairs nor rewrites historical records.
 
 ## Validation
 
 - Three canon Git-blob SHA-256 values match the convergence register.
+- Final additional tests: 21 passed (13 capture/budget/export tests including
+  the coordinated reference amounts, and 8 XML/PDF byte/text tests).
 - 11 new ISH regressions passed: labels, no ISH, IVA plus federal withholding,
   unchanged fiscal fields and total, other local taxes, and shared invoice
   rounding / allocation.
@@ -76,5 +116,5 @@ inputs were kept outside the repository. Tests contain synthetic evidence.
 Canon unchanged: this implements the approved narrow capture classification
 using existing domain owners and leaves canonical product, architecture,
 authority, accounting grouping and release invariants unchanged. No additional
-canonical decision is needed for local implementation. Publication and
-production actions remain outside this request.
+canonical decision is needed for implementation. Francisco subsequently
+authorized PR and merge; deployment and production actions remain outside scope.

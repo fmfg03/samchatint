@@ -6,6 +6,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from functools import lru_cache
 import sys
+import sqlite3
 
 import pytest
 
@@ -58,7 +59,6 @@ def test_capture_and_export_preserve_fiscal_fields_and_total(ish, label):
     assert values["iva"] == Decimal("144")
     assert taxes.calculated_total == values["total"] == Decimal(parsed["total"])
     assert parsed == original
-    # ISH path reconciles the export including the invoice discount.
     if Decimal(ish):
         row = scope["_informe_expense_export_amounts"](
             SimpleNamespace(gasto_cantidad=values["total"], iva=144),
@@ -68,6 +68,78 @@ def test_capture_and_export_preserve_fiscal_fields_and_total(ish, label):
         assert Decimal(str(row["importe_sin_iva"])) == Decimal("900") + Decimal(ish)
         assert row["iva"] == 104
         assert row["importe_sin_iva"] + row["iva"] == row["total"]
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_reference_amounts_flow_to_capture_budget_and_export(shared):
+    from samchat.budgets.service import (
+        _budget_expense_base_amount_sql,
+        budget_document_effect_snapshot,
+        budget_expense_effect_amount,
+    )
+
+    scope = _scope()
+    parsed = fiscal("176.00")
+    parsed.update(
+        subtotal="4400.00",
+        descuento="0",
+        total="5280.00",
+        total_impuestos_trasladados="704.00",
+    )
+    parsed["impuestos_detalle"]["traslados"][0]["importe"] = "704.00"
+    parsed["impuestos_detalle"]["retenciones"] = []
+    original = deepcopy(parsed)
+    autofill = sys.modules[
+        "_shared_invoice_autofill"
+    ].autofill_quick_expense_from_parsed_cfdi(parsed)
+    assert autofill.to_dict()["subtotal"] == "4576.00"
+    assert autofill.to_dict()["impuestos_y_retenciones"] == "704.00"
+    assert autofill.to_dict()["total"] == "5280.00"
+    report = SimpleNamespace(**parsed)
+    expenses, rows = [], []
+    for _ in range(2 if shared else 1):
+        values = scope["_quick_expense_values"](
+            concepto="Hospedaje sintético",
+            fecha="2026-10-01",
+            numero_factura=None,
+            subtotal="2288.00" if shared else None,
+            descuento="0",
+            impuestos_y_retenciones="352.00" if shared else None,
+            xml_data=parsed,
+            factura_compartida=shared,
+        )
+        expected = Decimal("2288.00" if shared else "4576.00")
+        expense = SimpleNamespace(
+            gasto_cantidad=values["total"],
+            iva=values["iva"],
+            cfdi_compartido_confirmado=shared,
+            estado_gasto="pendiente",
+            budget_concept_id="synthetic",
+            cfdi_report=report,
+        )
+        assert budget_expense_effect_amount(expense, report) == expected
+        with sqlite3.connect(":memory:") as db:
+            db.create_function("GREATEST", -1, max)
+            db.create_function("LEAST", -1, min)
+            db.execute("CREATE TABLE adjuntos (gasto_id, categoria, activo)")
+            amount = db.execute(
+                f"SELECT {_budget_expense_base_amount_sql()} "
+                "FROM (SELECT 1 id, ? gasto_cantidad, ? iva, "
+                "0 propina_no_deducible, NULL hospedaje_impuesto_monto) e "
+                "CROSS JOIN (SELECT 4400 subtotal, 0 descuento, 5280 total) cfdi",
+                (float(values["total"]), float(values["iva"])),
+            ).fetchone()[0]
+        assert Decimal(str(amount)) == expected
+        row = scope["_informe_expense_export_amounts"](expense, report, None)
+        assert Decimal(str(row["importe_sin_iva"])) == expected
+        assert row["iva"] == float(values["impuestos_y_retenciones"])
+        assert row["importe_sin_iva"] + row["iva"] == row["total"]
+        expenses.append(expense)
+        rows.append(row)
+    document = SimpleNamespace(tipo="INFORME", estado="aprobado", gastos=expenses)
+    assert budget_document_effect_snapshot(document)["amount"] == Decimal("4576")
+    assert sum(Decimal(str(row["total"])) for row in rows) == Decimal("5280")
+    assert parsed == original
 
 
 def test_other_local_taxes_and_local_withholdings_keep_their_classification():
