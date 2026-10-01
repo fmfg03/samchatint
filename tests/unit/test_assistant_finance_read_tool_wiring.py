@@ -56,6 +56,7 @@ def test_assistant_finance_read_schema_is_bounded_to_approved_intents() -> None:
         "budget.vs_actual",
         "finance.platform",
         "finance.exports",
+        "finance.vat_paid",
     ]
     assert schema["properties"]["month"]["minimum"] == 1
     assert schema["properties"]["month"]["maximum"] == 12
