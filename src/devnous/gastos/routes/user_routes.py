@@ -35087,19 +35087,32 @@ def _informe_expense_export_amounts(
     """
     Build informe Excel row amounts.
 
-    importe_sin_iva maps to CFDI SubTotal when available.
+    importe_sin_iva includes identified ISH in the capture base, not fiscal data.
     iva column stores net tax effect (trasladados - retenciones) for template math.
     ExpenseReport.iva remains IVA 002 only for accounting compatibility.
     """
     total_val = round(float(expense.gasto_cantidad or 0), 2)
     cfdi_rec = cfdi_linked or cfdi
+    capture_taxes = None
+    if cfdi_rec is not None:
+        capture_taxes = quick_expense_tax_components_from_parsed(
+            {
+                "subtotal": cfdi_rec.subtotal,
+                "descuento": getattr(cfdi_rec, "descuento", None),
+                "total": cfdi_rec.total,
+                "total_impuestos_trasladados": getattr(
+                    cfdi_rec, "total_impuestos_trasladados", None
+                ),
+                "impuestos_detalle": getattr(cfdi_rec, "impuestos_detalle", None),
+            }
+        )
     if cfdi_rec is not None and getattr(expense, "cfdi_compartido_confirmado", False):
         fiscal_total = Decimal(str(cfdi_rec.total or 0))
         if fiscal_total > 0:
             tip = Decimal(str(getattr(expense, "propina_no_deducible", None) or 0))
             applied = Decimal(str(total_val)) - tip
             net_base = (
-                Decimal(str(cfdi_rec.subtotal or 0))
+                capture_taxes.subtotal_captura
                 - Decimal(str(getattr(cfdi_rec, "descuento", None) or 0))
             )
             applied_base = (net_base * applied / fiscal_total).quantize(
@@ -35111,6 +35124,15 @@ def _informe_expense_export_amounts(
                 "total": total_val,
             }
     if cfdi_rec is not None:
+        if capture_taxes.ish:
+            tip = Decimal(str(getattr(expense, "propina_no_deducible", None) or 0))
+            return {
+                "importe_sin_iva": float(
+                    capture_taxes.subtotal_captura - capture_taxes.descuento + tip
+                ),
+                "iva": float(capture_taxes.impuestos_y_retenciones),
+                "total": total_val,
+            }
         subtotal = round(float(cfdi_rec.subtotal or 0), 2)
         traslados = round(float(cfdi_rec.total_impuestos_trasladados or 0), 2)
         if traslados == 0:
@@ -42477,7 +42499,9 @@ def _quick_expense_values(
         fecha_final = fecha_xml.strftime("%Y-%m-%d") if fecha_xml else (fecha or "").strip()
         numero_final = (xml_data.get("cfdi_uuid") or numero_factura or "").strip()
         taxes = quick_expense_tax_components_from_parsed(xml_data)
-        subtotal_amount = _quick_expense_decimal(str(taxes.subtotal), "Sub total")
+        subtotal_amount = _quick_expense_decimal(
+            str(taxes.subtotal_captura), "Sub total"
+        )
         descuento_amount = taxes.descuento.quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
