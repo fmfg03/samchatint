@@ -12,7 +12,8 @@ HTTP localizada y las 44 acciones de `action_router.py`, sin convertirlas en
 facultades. Ninguna operación de negocio está habilitada en producción. La
 fábrica original sigue inerte; una composición local separada prueba perfil y
 lectura Direction con fixtures y guards canónicos, sin HTTP/OAuth ni conexiones.
-Ver [OAuth y recibos locales](oauth-local-verification.md),
+Ver [autorización sobre la sesión actual y revisión adversarial](session-authorization-review.md),
+[OAuth y recibos locales](oauth-local-verification.md),
 [avance de roundtrips](local-read-verification.md) y
 [mapa de identidad/autoridad](identity-authority-map.md).
 

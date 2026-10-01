@@ -16,6 +16,11 @@ class SQLiteExistingIdentityRecords:
         self._connection = connection
 
     def _one(self, query, values):
+        # A caller-held read transaction can retain revoked grants indefinitely
+        # in its SQLite snapshot, even though every method issues another SELECT.
+        # Do not commit/rollback a transaction owned by somebody else.
+        if self._connection.in_transaction:
+            raise ValueError("IDENTITY_TRANSACTION_ACTIVE")
         rows = self._connection.execute(query, values).fetchmany(2)
         if len(rows) > 1:
             raise ValueError("IDENTITY_RECORD_AMBIGUOUS")
@@ -24,7 +29,8 @@ class SQLiteExistingIdentityRecords:
     def read_grant(self, issuer, subject, token_id):
         row = self._one(
             "SELECT grant_id, issuer, subject, token_id, client_id, "
-            "installation_id, link_id, scopes_json, expires_at, active, revoked "
+            "installation_id, link_id, scopes_json, expires_at, active, revoked, "
+            "employee_id, organization_id, profile_id "
             "FROM local_identity_grants WHERE issuer=? AND subject=? AND token_id=?",
             (issuer, subject, token_id),
         )
@@ -39,7 +45,12 @@ class SQLiteExistingIdentityRecords:
         ):
             raise ValueError("IDENTITY_RECORD_INVALID")
         return ExistingGrant(
-            *row[:7], frozenset(scopes), row[8], _boolean(row[9]), _boolean(row[10])
+            *row[:7],
+            frozenset(scopes),
+            row[8],
+            _boolean(row[9]),
+            _boolean(row[10]),
+            *row[11:14],
         )
 
     def read_link(self, link_id):

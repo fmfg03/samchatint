@@ -232,6 +232,72 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
             all(q.strip().startswith("SELECT") for q, _ in self.session.queries)
         )
 
+    async def test_scope_listing_reuses_guards_without_report_reads(self):
+        result = await self.adapter.list_scopes(identity=self.identity)
+        self.assertEqual(
+            result["portfolios"], [{"id": PORTFOLIO, "label": "Fixture portfolio"}]
+        )
+        self.assertEqual(
+            result["tournaments"], [{"id": TOURNAMENT, "label": "Fixture tournament"}]
+        )
+        self.assertEqual(self.context.await_count, 2)
+        self.build.assert_not_awaited()
+        self.budget.assert_not_awaited()
+        self.payments.assert_not_awaited()
+        self.receivables.assert_not_awaited()
+
+    async def test_scope_listing_denies_role_company_and_current_revocation(self):
+        self.portfolios.return_value = []
+        with self.assertRaisesRegex(Denied, "FORBIDDEN"):
+            await self.adapter.list_scopes(identity=self.identity)
+        self.portfolios.return_value = [PORTFOLIO]
+        self.mapping.return_value = "foreign-organization"
+        with self.assertRaisesRegex(Denied, "ORGANIZATION_UNPROVEN"):
+            await self.adapter.list_scopes(identity=self.identity)
+        self.mapping.return_value = "organization"
+
+        async def revoke(*_):
+            self.decisions["direccion.tableros_ejecutivos"] = False
+            return "organization"
+
+        self.mapping.side_effect = revoke
+        with self.assertRaisesRegex(Denied, "FORBIDDEN"):
+            await self.adapter.list_scopes(identity=self.identity)
+        self.build.assert_not_awaited()
+
+    async def test_scope_listing_bounds_duplicates_and_foreign_ids_fail_closed(self):
+        for malformed in (
+            "duplicate_portfolio",
+            "duplicate_tournament",
+            "long_label",
+            "foreign_portfolio",
+            "too_many",
+        ):
+            with self.subTest(malformed=malformed):
+                self.setUp()
+                canonical = self.adapter._owners.resolve_scope
+
+                async def bad_scope(*args, **kwargs):
+                    scope = await canonical(*args, **kwargs)
+                    if malformed == "duplicate_portfolio":
+                        scope["portfolios"].append(dict(scope["portfolios"][0]))
+                    elif malformed == "duplicate_tournament":
+                        scope["selected"].append(dict(scope["selected"][0]))
+                    elif malformed == "long_label":
+                        scope["portfolios"][0]["label"] = "x" * 201
+                    elif malformed == "foreign_portfolio":
+                        scope["portfolios"][0]["id"] = FOREIGN
+                    else:
+                        scope["portfolios"] *= 1001
+                    return scope
+
+                self.adapter._owners = replace(
+                    self.adapter._owners, resolve_scope=bad_scope
+                )
+                with self.assertRaisesRegex(Denied, "SOURCE_UNAVAILABLE"):
+                    await self.adapter.list_scopes(identity=self.identity)
+                self.build.assert_not_awaited()
+
     async def test_specific_denials_skip_sources_and_keep_missing_values(self):
         for denied_tool in ("admin.presupuestos", "admin.finanzas"):
             with self.subTest(tool=denied_tool):
@@ -346,6 +412,50 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
         self.build.side_effect = RuntimeError("private-source-detail")
         with self.assertRaisesRegex(Denied, "^SOURCE_UNAVAILABLE$"):
             await self.read()
+
+    async def test_authority_changes_during_read_suppress_result(self):
+        for change in (
+            "finance",
+            "budget",
+            "direction",
+            "position",
+            "employee",
+            "organization",
+            "superadmin",
+            "identity",
+        ):
+            with self.subTest(change=change):
+                self.setUp()
+                canonical = self.build._mock_wraps
+
+                async def changed(*args, **kwargs):
+                    result = await canonical(*args, **kwargs)
+                    if change in {"finance", "budget", "direction"}:
+                        key = {
+                            "finance": "admin.finanzas",
+                            "budget": "admin.presupuestos",
+                            "direction": "direccion.tableros_ejecutivos",
+                        }[change]
+                        self.decisions[key] = False
+                    elif change == "position":
+                        self.portfolios.return_value = []
+                    elif change == "employee":
+                        self.employee.activo = False
+                    elif change == "organization":
+                        self.mapping.return_value = "other-organization"
+                    elif change == "superadmin":
+                        self.employee.rol = "superadmin"
+                    else:
+                        self.context.return_value = DirectionContext(
+                            replace(self.identity, grant_id="different"),
+                            self.employee,
+                            self.session,
+                        )
+                    return result
+
+                self.build.side_effect = changed
+                with self.assertRaises(Denied):
+                    await self.read()
 
     async def test_malformed_nested_evidence_is_rejected(self):
         canonical = self.build._mock_wraps

@@ -18,7 +18,7 @@ from mcp.server.lowlevel import Server
 from mcp.shared.exceptions import McpError
 
 from .contracts import AuditSink, Denied, Identity, IdentityProvider
-from .direction_read import DIRECTION_OUTPUT_SCHEMA
+from .direction_read import DIRECTION_OUTPUT_SCHEMA, DIRECTION_SCOPES_OUTPUT_SCHEMA
 from .perimeter import digest
 
 
@@ -34,6 +34,9 @@ class ReadAuditSink(AuditSink, Protocol):
 
 
 class DirectionReader(Protocol):
+    async def list_scopes(self, *, identity: Identity) -> dict:
+        """List current canonical portfolio/tournament selectors only."""
+
     async def read(
         self,
         *,
@@ -98,6 +101,15 @@ def descriptors(identity: Identity) -> list[types.Tool]:
         )
         direction.outputSchema = DIRECTION_OUTPUT_SCHEMA
         result.append(direction)
+        scopes = _descriptor(
+            "direction_list_scopes",
+            "List IDs and labels of portfolios and tournaments currently "
+            "authorized for this employee. No report or personal record data.",
+            EMPTY_INPUT,
+            ["direction:read"],
+        )
+        scopes.outputSchema = DIRECTION_SCOPES_OUTPUT_SCHEMA
+        result.append(scopes)
     return result
 
 
@@ -206,7 +218,11 @@ def create_local_read_server(
         action = "unregistered"
         try:
             identity = authenticate()
-            if request.params.name not in {"get_profile", "direction_read_summary"}:
+            if request.params.name not in {
+                "get_profile",
+                "direction_read_summary",
+                "direction_list_scopes",
+            }:
                 raise Denied("CAPABILITY_DISABLED")
             action = request.params.name
             arguments = request.params.arguments
@@ -221,13 +237,23 @@ def create_local_read_server(
             else:
                 if "direction:read" not in identity.oauth_scopes:
                     raise Denied("FORBIDDEN")
-                selectors = _selectors(arguments)
+                if action == "direction_list_scopes":
+                    if arguments:
+                        raise Denied("INVALID_ARGUMENTS")
+                    selectors = {}
+                else:
+                    selectors = _selectors(arguments)
                 record(identity, action, "READ_REQUESTED")
-                data = await direction.read(identity=identity, **selectors)
+                if action == "direction_list_scopes":
+                    data = await direction.list_scopes(identity=identity)
+                    output_schema = DIRECTION_SCOPES_OUTPUT_SCHEMA
+                else:
+                    data = await direction.read(identity=identity, **selectors)
+                    output_schema = DIRECTION_OUTPUT_SCHEMA
                 # No cross-user connection switch or revocation during the read.
                 if authenticate() != identity:
                     raise Denied("UNAUTHENTICATED")
-                if not Draft202012Validator(DIRECTION_OUTPUT_SCHEMA).is_valid(data):
+                if not Draft202012Validator(output_schema).is_valid(data):
                     raise Denied("CANONICAL_RESULT_INVALID")
             encoded = json.dumps(data, ensure_ascii=False, allow_nan=False)
             if len(encoded.encode()) > 65536:
@@ -244,6 +270,10 @@ def create_local_read_server(
                             "actor": identity.actor_id,
                             "grant": identity.grant_id,
                             "scope": data.get("scope", {}),
+                            "tournament_ids": data.get(
+                                "tournament_ids",
+                                [row["id"] for row in data.get("tournaments", [])],
+                            ),
                         }
                     ),
                 )

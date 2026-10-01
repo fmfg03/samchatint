@@ -84,7 +84,8 @@ class LocalReadTests(unittest.IsolatedAsyncioTestCase):
         async with create_connected_server_and_client_session(self.server) as client:
             tools = (await client.list_tools()).tools
             self.assertEqual(
-                [t.name for t in tools], ["get_profile", "direction_read_summary"]
+                [t.name for t in tools],
+                ["get_profile", "direction_read_summary", "direction_list_scopes"],
             )
             profile = tools[0].model_dump(by_alias=True, exclude_none=True)
             self.assertIs(profile["_meta"]["openai/profile"], True)
@@ -245,7 +246,7 @@ class CanonicalMCPReadTests(unittest.IsolatedAsyncioTestCase):
     async def test_handshake_discovery_actual_canonical_read_and_retry(self):
         async with create_connected_server_and_client_session(self.server) as client:
             tools = (await client.list_tools()).tools
-            self.assertEqual(len(tools), 2)
+            self.assertEqual(len(tools), 3)
             self.assertTrue(all(t.annotations.readOnlyHint for t in tools))
             for _ in range(2):
                 result = await client.call_tool(
@@ -302,6 +303,37 @@ class CanonicalMCPReadTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.content[0].text, "FORBIDDEN")
         self.fixture.build.assert_not_awaited()
 
+    async def test_scope_listing_sdk_receipt_and_strict_noargs(self):
+        async with create_connected_server_and_client_session(self.server) as client:
+            await client.list_tools()
+            result = await client.call_tool("direction_list_scopes", {})
+            self.assertFalse(result.isError, result)
+            self.assertEqual(
+                result.structuredContent["tournaments"],
+                [
+                    {
+                        "id": direction_fixture.TOURNAMENT,
+                        "label": "Fixture tournament",
+                    }
+                ],
+            )
+            self.assertEqual(
+                self.audit.rows[-1]["evidence_digest"], digest(result.structuredContent)
+            )
+            for arguments in (
+                {"actor_id": "other"},
+                {"year": 2026},
+                {"portfolio_id": direction_fixture.PORTFOLIO},
+            ):
+                denied = await client.call_tool("direction_list_scopes", arguments)
+                self.assertEqual(denied.content[0].text, "INVALID_ARGUMENTS")
+            self.audit.append_read = lambda **_: ""
+            failed = await client.call_tool("direction_list_scopes", {})
+            self.assertEqual(failed.content[0].text, "AUDIT_UNAVAILABLE")
+            self.assertIsNone(failed.structuredContent)
+        self.fixture.build.assert_not_awaited()
+        self.fixture.budget.assert_not_awaited()
+
     async def test_source_denial_uses_canonical_gaps_without_zero_or_data(self):
         self.fixture.decisions["admin.finanzas"] = False
         self.fixture.decisions["admin.presupuestos"] = False
@@ -328,6 +360,22 @@ class CanonicalMCPReadTests(unittest.IsolatedAsyncioTestCase):
             result = await client.call_tool("direction_read_summary", {"year": 2026})
             self.assertTrue(result.isError)
             self.assertEqual(result.content[0].text, "UNAUTHENTICATED")
+            self.assertIsNone(result.structuredContent)
+        self.assertNotIn("READ_VERIFIED", str(self.audit.rows))
+
+    async def test_canonical_source_revocation_during_read_discards_result(self):
+        canonical = self.fixture.build._mock_wraps
+
+        async def revoke_source(*args, **kwargs):
+            data = await canonical(*args, **kwargs)
+            self.fixture.decisions["admin.finanzas"] = False
+            return data
+
+        self.fixture.build.side_effect = revoke_source
+        async with create_connected_server_and_client_session(self.server) as client:
+            result = await client.call_tool("direction_read_summary", {"year": 2026})
+            self.assertTrue(result.isError)
+            self.assertEqual(result.content[0].text, "SCOPE_CHANGED")
             self.assertIsNone(result.structuredContent)
         self.assertNotIn("READ_VERIFIED", str(self.audit.rows))
 

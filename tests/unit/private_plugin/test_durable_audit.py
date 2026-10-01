@@ -132,6 +132,68 @@ class DurableAuditTest(unittest.TestCase):
             0,
         )
 
+    def test_silently_ignored_insert_never_acknowledges_a_receipt(self):
+        self.connection.execute(
+            """CREATE TRIGGER silently_ignore BEFORE INSERT ON local_audit_receipts
+            BEGIN SELECT RAISE(IGNORE); END"""
+        )
+        with self.assertRaisesRegex(AuditStorageError, "^AUDIT_UNAVAILABLE$"):
+            self.read_receipt()
+        self.assertFalse(self.connection.in_transaction)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT count(*) FROM local_audit_receipts"
+            ).fetchone()[0],
+            0,
+        )
+
+    def test_after_insert_delete_or_change_never_acknowledges_a_receipt(self):
+        # A privileged schema change can retain required trigger names while
+        # bypassing their behavior. Verify actual row content, not just names.
+        for effect in ("delete", "change"):
+            with self.subTest(effect=effect):
+                guard = (
+                    "local_audit_no_delete"
+                    if effect == "delete"
+                    else "local_audit_no_update"
+                )
+                guard_sql = self.connection.execute(
+                    "SELECT sql FROM sqlite_master WHERE name=?", (guard,)
+                ).fetchone()[0]
+                self.connection.execute("DROP TRIGGER " + guard)
+                event = "DELETE" if effect == "delete" else "UPDATE"
+                self.connection.execute(
+                    "CREATE TRIGGER "
+                    + guard
+                    + " BEFORE "
+                    + event
+                    + " ON local_audit_receipts BEGIN SELECT 1; END"
+                )
+                statement = (
+                    "DELETE FROM local_audit_receipts WHERE receipt_id=NEW.receipt_id;"
+                    if effect == "delete"
+                    else "UPDATE local_audit_receipts SET scope_digest='"
+                    + "c" * 64
+                    + "' WHERE receipt_id=NEW.receipt_id;"
+                )
+                self.connection.execute(
+                    "CREATE TRIGGER corrupt_receipt AFTER INSERT "
+                    "ON local_audit_receipts "
+                    "BEGIN " + statement + " END"
+                )
+                with self.assertRaisesRegex(AuditStorageError, "^AUDIT_UNAVAILABLE$"):
+                    self.read_receipt()
+                self.assertFalse(self.connection.in_transaction)
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT count(*) FROM local_audit_receipts"
+                    ).fetchone()[0],
+                    0,
+                )
+                self.connection.execute("DROP TRIGGER corrupt_receipt")
+                self.connection.execute("DROP TRIGGER " + guard)
+                self.connection.execute(guard_sql)
+
     def test_commit_failure_does_not_acknowledge_or_leave_partial_receipt(self):
         class FailCommit(sqlite3.Connection):
             fail = False

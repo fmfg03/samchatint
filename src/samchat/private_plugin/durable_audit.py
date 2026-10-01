@@ -21,6 +21,7 @@ from .catalog import operations
 ACTIONS = frozenset(op.action for op in operations()) | {
     "get_profile",
     "direction_read_summary",
+    "direction_list_scopes",
     "mcp.tools.list",
     "mcp.tools.call",
     "unregistered",
@@ -254,10 +255,23 @@ class SQLiteAudit:
                 self._validate_store()
                 self._connection.execute("BEGIN IMMEDIATE")
                 started = True
-                self._connection.execute(
+                expected = tuple(fields[c] for c in COLUMNS)
+                cursor = self._connection.execute(
                     "INSERT INTO local_audit_receipts VALUES (?,?,?,?,?,?,?,?)",
-                    tuple(fields[c] for c in COLUMNS),
+                    expected,
                 )
+                # SQLite triggers can silently ignore INSERT or delete/change the
+                # inserted row. Successful execute alone is not a stored receipt.
+                if cursor.rowcount != 1:
+                    raise AuditStorageError("AUDIT_UNAVAILABLE")
+                persisted = self._connection.execute(
+                    "SELECT receipt_id,actor_id,action,outcome,evidence_digest,"
+                    "scope_digest,created_at_ns,record_digest "
+                    "FROM local_audit_receipts WHERE receipt_id=?",
+                    (fields["receipt_id"],),
+                ).fetchone()
+                if persisted is None or tuple(persisted) != expected:
+                    raise AuditStorageError("AUDIT_UNAVAILABLE")
                 self._connection.commit()
                 return fields["receipt_id"]
             except Exception as exc:

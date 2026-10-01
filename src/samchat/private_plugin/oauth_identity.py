@@ -79,6 +79,11 @@ class ExistingGrant:
     expires_at: int
     active: bool
     revoked: bool
+    # Immutable account binding captured with this existing grant. A mutable
+    # link must never redirect an old bearer to another employee or partition.
+    employee_id: str
+    organization_id: str
+    profile_id: str
 
 
 @dataclass(frozen=True)
@@ -275,6 +280,9 @@ class OAuthIdentityProvider:
             or link.issuer != config.issuer
             or link.subject != claims["sub"]
             or link.installation_id != config.installation_id
+            or link.employee_id != grant.employee_id
+            or link.organization_id != grant.organization_id
+            or link.profile_id != grant.profile_id
             or not all(
                 _identifier(v)
                 for v in (link.employee_id, link.organization_id, link.profile_id)

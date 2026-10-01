@@ -24,8 +24,9 @@ from .contracts import Denied, Identity
 class DirectionContext:
     """Trusted request-local context, never constructed from model arguments.
 
-    session must be a read-only, request-owned database session; composition
-    must provide a consistent authorization/read snapshot. No session is opened
+    session must be a read-only, request-owned database session. Each context
+    resolution must refresh employee and authorization from current sources,
+    not reuse an ORM cache or an old transaction snapshot. No session is opened
     by this module. Cross-store atomicity is not claimed.
     """
 
@@ -178,6 +179,27 @@ DIRECTION_OUTPUT_SCHEMA = _object(
     }
 )
 _OUTPUT_VALIDATOR = Draft202012Validator(DIRECTION_OUTPUT_SCHEMA)
+DIRECTION_SCOPES_OUTPUT_SCHEMA = _object(
+    {
+        "schema": {"const": "samchat.private.direction.scopes.v1"},
+        "read_only": {"const": True},
+        "scope": DIRECTION_OUTPUT_SCHEMA["properties"]["scope"],
+        **{
+            key: {
+                "type": "array",
+                "maxItems": 1000,
+                "items": _object(
+                    {
+                        "id": _UUID,
+                        "label": {"type": "string", "maxLength": 200},
+                    }
+                ),
+            }
+            for key in ("portfolios", "tournaments")
+        },
+    }
+)
+_SCOPES_VALIDATOR = Draft202012Validator(DIRECTION_SCOPES_OUTPUT_SCHEMA)
 
 
 def _selection(value: str | None) -> str | None:
@@ -253,6 +275,112 @@ class DirectionReadAdapter:
         self._owners = owners
         self._now = now
 
+    async def _current(self, identity: Identity) -> DirectionContext:
+        context = await self._context()
+        employee = context.employee
+        if (
+            context.identity != identity
+            or identity.active is not True
+            or identity.revoked is not False
+            or type(identity.expires_at) is not int
+            or identity.expires_at <= self._now()
+            or not identity.organization_id
+            or not identity.actor_id
+            or not identity.grant_id
+            or "direction:read" not in identity.oauth_scopes
+            or getattr(employee, "activo", None) is not True
+            or str(getattr(employee, "id", "")) != identity.actor_id
+        ):
+            raise Denied("UNAUTHENTICATED")
+        return context
+
+    async def _authorize(self, identity, portfolio_id, tournament_id):
+        context = await self._current(identity)
+        employee, owners = context.employee, self._owners
+        assigned = await owners.assigned_portfolios(context.session, employee)
+        if not assigned:
+            raise Denied("FORBIDDEN")
+        args = dict(
+            actor=identity.actor_id,
+            superadmin=owners.is_superadmin(employee),
+            portfolio_id=portfolio_id,
+            tournament_id=tournament_id,
+        )
+        scope = await owners.resolve_scope(context.session, **args)
+        if not set(scope["portfolio_ids"]).issubset(assigned):
+            raise Denied("FORBIDDEN")
+        organization = await self._organization(context, scope)
+        if not organization or organization != identity.organization_id:
+            raise Denied("ORGANIZATION_UNPROVEN")
+        access = await owners.source_access(context.session, employee)
+        if set(access) != {"budget", "finance"} or any(
+            type(value) is not bool for value in access.values()
+        ):
+            raise Denied("FORBIDDEN")
+        return context, args, scope, access, organization
+
+    async def list_scopes(self, *, identity: Identity) -> dict:
+        """List authorized current selectors; never load financial/roster data."""
+        try:
+            _, args, scope, access, organization = await self._authorize(
+                identity, None, None
+            )
+            result = {
+                "schema": "samchat.private.direction.scopes.v1",
+                "read_only": True,
+                "scope": {
+                    k: scope[k]
+                    for k in ("portfolio_ids", "portfolio_id", "tournament_id")
+                },
+                "portfolios": [
+                    {"id": row["id"], "label": row["label"]}
+                    for row in scope["portfolios"]
+                ],
+                "tournaments": [
+                    {"id": row["id"], "label": row["name"]} for row in scope["selected"]
+                ],
+            }
+            _SCOPES_VALIDATOR.validate(result)
+            if (
+                {row["id"] for row in result["portfolios"]}
+                != set(scope["portfolio_ids"])
+                or len({row["id"] for row in result["portfolios"]})
+                != len(result["portfolios"])
+                or len({row["id"] for row in result["tournaments"]})
+                != len(result["tournaments"])
+                or len(json.dumps(result, ensure_ascii=False).encode()) > 65536
+            ):
+                raise Denied("SOURCE_UNAVAILABLE")
+            _, current_args, current_scope, current_access, current_org = (
+                await self._authorize(identity, None, None)
+            )
+            if (
+                current_args != args
+                or _scope_key(current_scope) != _scope_key(scope)
+                or current_access != access
+                or current_org != organization
+            ):
+                raise Denied("SCOPE_CHANGED")
+            return result
+        except Exception as exc:
+            raise self._safe_error(exc) from None
+
+    def _safe_error(self, exc: Exception) -> Denied:
+        if isinstance(exc, Denied):
+            allowed = {
+                "UNAUTHENTICATED",
+                "FORBIDDEN",
+                "ORGANIZATION_UNPROVEN",
+                "SCOPE_CHANGED",
+            }
+            return Denied(str(exc) if str(exc) in allowed else "SOURCE_UNAVAILABLE")
+        if (
+            isinstance(exc, self._owners.access_errors)
+            and getattr(exc, "status_code", 403) == 403
+        ):
+            return Denied("FORBIDDEN")
+        return Denied("SOURCE_UNAVAILABLE")
+
     async def read(
         self,
         *,
@@ -268,45 +396,10 @@ class DirectionReadAdapter:
         if type(year) is not int or not 2000 <= year <= 2100:
             raise Denied("INVALID_SELECTOR")
         try:
-            context = await self._context()
-            employee = context.employee
-            if (
-                context.identity != identity
-                or identity.active is not True
-                or identity.revoked is not False
-                or type(identity.expires_at) is not int
-                or identity.expires_at <= self._now()
-                or not identity.organization_id
-                or not identity.actor_id
-                or not identity.grant_id
-                or "direction:read" not in identity.oauth_scopes
-                or getattr(employee, "activo", None) is not True
-                or str(getattr(employee, "id", "")) != identity.actor_id
-            ):
-                raise Denied("UNAUTHENTICATED")
-            owners = self._owners
-            assigned = await owners.assigned_portfolios(context.session, employee)
-            if not assigned:
-                raise Denied("FORBIDDEN")
-            superadmin = owners.is_superadmin(employee)
-            args = dict(
-                actor=identity.actor_id,
-                superadmin=superadmin,
-                portfolio_id=portfolio_id,
-                tournament_id=tournament_id,
+            context, args, scope, access, organization = await self._authorize(
+                identity, portfolio_id, tournament_id
             )
-            scope = await owners.resolve_scope(context.session, **args)
-            if not set(scope["portfolio_ids"]).issubset(assigned):
-                raise Denied("FORBIDDEN")
-            organization = await self._organization(context, scope)
-            if not organization or organization != identity.organization_id:
-                raise Denied("ORGANIZATION_UNPROVEN")
-            access = await owners.source_access(context.session, employee)
-            if set(access) != {"budget", "finance"} or any(
-                type(value) is not bool for value in access.values()
-            ):
-                raise Denied("FORBIDDEN")
-            snapshot, final_scope = await owners.build_home(
+            snapshot, final_scope = await self._owners.build_home(
                 context.session, year=year, source_access=access, **args
             )
             if (
@@ -322,6 +415,18 @@ class DirectionReadAdapter:
                 }
             ):
                 raise Denied("SCOPE_CHANGED")
+            # JWT identity does not encode current employee positions or source
+            # denials. Refresh canonical authority after the awaited read too.
+            _, current_args, current_scope, current_access, current_organization = (
+                await self._authorize(identity, portfolio_id, tournament_id)
+            )
+            if (
+                current_args != args
+                or _scope_key(current_scope) != _scope_key(scope)
+                or current_access != access
+                or current_organization != organization
+            ):
+                raise Denied("SCOPE_CHANGED")
             result = _minimize(snapshot)
             _OUTPUT_VALIDATOR.validate(result)
             if {row["id"] for row in result["indicators"]} != _METRICS or any(
@@ -332,21 +437,5 @@ class DirectionReadAdapter:
             if len(json.dumps(result, ensure_ascii=False).encode()) > 128_000:
                 raise Denied("SOURCE_UNAVAILABLE")
             return result
-        except Denied as exc:
-            allowed = {
-                "UNAUTHENTICATED",
-                "FORBIDDEN",
-                "ORGANIZATION_UNPROVEN",
-                "SCOPE_CHANGED",
-            }
-            raise Denied(
-                str(exc) if str(exc) in allowed else "SOURCE_UNAVAILABLE"
-            ) from None
         except Exception as exc:
-            # Canonical access exceptions and source errors never expose details.
-            if (
-                isinstance(exc, self._owners.access_errors)
-                and getattr(exc, "status_code", 403) == 403
-            ):
-                raise Denied("FORBIDDEN") from None
-            raise Denied("SOURCE_UNAVAILABLE") from None
+            raise self._safe_error(exc) from None

@@ -18,13 +18,14 @@ class IdentityRecordsTests(unittest.TestCase):
         self.addCleanup(self.writer.close)
         self.writer.executescript(
             "CREATE TABLE local_identity_grants(grant_id,issuer,subject,token_id,"
-            "client_id,installation_id,link_id,scopes_json,expires_at,active,revoked);"
+            "client_id,installation_id,link_id,scopes_json,expires_at,active,revoked,"
+            "employee_id,organization_id,profile_id);"
             "CREATE TABLE local_identity_links(link_id,issuer,subject,installation_id,"
             "employee_id,organization_id,profile_id,active);"
             "CREATE TABLE local_existing_employees(employee_id,active);"
         )
         self.writer.execute(
-            "INSERT INTO local_identity_grants VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO local_identity_grants VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 "grant",
                 "issuer",
@@ -37,6 +38,9 @@ class IdentityRecordsTests(unittest.TestCase):
                 200,
                 1,
                 0,
+                "employee",
+                "org",
+                "opaque",
             ),
         )
         self.writer.execute(
@@ -66,6 +70,25 @@ class IdentityRecordsTests(unittest.TestCase):
         self.assertIsNone(self.records.read_grant("other", "subject", "jti"))
         self.assertIsNone(self.records.read_link("' OR 1=1 --"))
         self.assertIsNone(self.records.read_employee("other"))
+
+    def test_caller_snapshot_cannot_hide_committed_revocation(self):
+        self.writer.execute("PRAGMA journal_mode=WAL")
+        self.reader.execute("BEGIN")
+        # Establish a stale snapshot outside the adapter, then revoke in a
+        # separate connection. Adapter must not trust this caller transaction.
+        self.reader.execute("SELECT revoked FROM local_identity_grants").fetchall()
+        self.writer.execute("UPDATE local_identity_grants SET revoked=1")
+        self.writer.commit()
+        for read in (
+            lambda: self.records.read_grant("issuer", "subject", "jti"),
+            lambda: self.records.read_link("link"),
+            lambda: self.records.read_employee("employee"),
+        ):
+            with self.assertRaisesRegex(ValueError, "IDENTITY_TRANSACTION_ACTIVE"):
+                read()
+        self.assertTrue(self.reader.in_transaction)
+        self.reader.rollback()
+        self.assertTrue(self.records.read_grant("issuer", "subject", "jti").revoked)
 
     def test_ambiguous_or_corrupt_records_rejected(self):
         self.writer.execute("INSERT INTO local_existing_employees VALUES('employee',1)")

@@ -37,6 +37,9 @@ class RecordsFixture:
             expires_at=180,
             active=True,
             revoked=False,
+            employee_id="existing-employee",
+            organization_id="installation-partition",
+            profile_id="opaque-existing-profile",
         )
         self.link = ExistingLink(
             link_id="existing-link",
@@ -303,6 +306,18 @@ class OAuthIdentityTests(unittest.TestCase):
         )
         second = self.provider.resolve_current("transport-reference")
         self.assertEqual(first.profile_id, second.profile_id)
+
+    def test_existing_bearer_cannot_follow_reassigned_link(self):
+        self.provider.resolve_current("transport-reference")
+        original = self.records.link
+        for changes in (
+            {"employee_id": "second-employee"},
+            {"organization_id": "second-organization"},
+            {"profile_id": "second-profile"},
+        ):
+            self.records.link = replace(original, **changes)
+            self.records.employee = CurrentEmployee(self.records.link.employee_id, True)
+            self.denied()
 
     def test_sanitized_errors_and_no_tokens_in_logs(self):
         def failed(_):

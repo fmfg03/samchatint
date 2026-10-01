@@ -28,6 +28,12 @@ class AuthenticatedReceiptTests(unittest.IsolatedAsyncioTestCase):
             employee_id=fixture.identity.actor_id,
             organization_id=fixture.identity.organization_id,
         )
+        auth.records.grant = replace(
+            auth.records.grant,
+            employee_id=auth.records.link.employee_id,
+            organization_id=auth.records.link.organization_id,
+            profile_id=auth.records.link.profile_id,
+        )
         auth.records.employee = replace(
             auth.records.employee, employee_id=fixture.identity.actor_id
         )
@@ -52,6 +58,10 @@ class AuthenticatedReceiptTests(unittest.IsolatedAsyncioTestCase):
             )
             try:
                 async with create_connected_server_and_client_session(server) as client:
+                    scoped = await client.call_tool("direction_list_scopes", {})
+                    self.assertFalse(scoped.isError, scoped)
+                    scoped_receipt_id = scoped.meta["samchat/receipt"]
+                    scoped_evidence = digest(scoped.structuredContent)
                     result = await client.call_tool(
                         "direction_read_summary", {"year": 2026}
                     )
@@ -72,6 +82,11 @@ class AuthenticatedReceiptTests(unittest.IsolatedAsyncioTestCase):
                 restored = SQLiteAudit(reopened)
                 receipt = restored.get_for_actor(receipt_id, actor_id=identity.actor_id)
                 self.assertEqual(receipt.evidence_digest, evidence)
+                scope_receipt = restored.get_for_actor(
+                    scoped_receipt_id, actor_id=identity.actor_id
+                )
+                self.assertEqual(scope_receipt.evidence_digest, scoped_evidence)
+                self.assertEqual(scope_receipt.action, "direction_list_scopes")
                 self.assertIsNone(restored.get_for_actor(receipt_id, actor_id="other"))
             finally:
                 reopened.close()
