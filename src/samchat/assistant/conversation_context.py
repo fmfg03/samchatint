@@ -74,7 +74,7 @@ def contextual_read_frame(raw_message: str, history: list[dict[str, Any]]) -> Wo
     current = build_work_frame(raw_message)
     frame = build_work_frame("")
     # Fiscal vocabulary is not fully represented by the legacy classifier.
-    fiscal = re.compile(r"\b(iva|impuestos?|gastos?|proveedores?)\b")
+    fiscal = re.compile(r"\b(iva|impuestos?|gastos?|proveedor(?:es)?)\b")
     for text in [
         *[str(m.get("content") or "") for m in history if m.get("role") == "user"],
         raw_message,

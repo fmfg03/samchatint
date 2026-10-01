@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, TypeGuard
 
+from .direct_read_contracts import validate_direct_read
+
 
 def _map(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
@@ -262,4 +264,4 @@ def validate_read_evidence(tool: str, result: Mapping[str, Any]) -> tuple[bool, 
         ):
             return False, tool
         return _payload_matches(intent, _map(result.get("payload"))), tool
-    return _payload_matches(tool, result), tool
+    return (_payload_matches(tool, result) or validate_direct_read(tool, result)), tool

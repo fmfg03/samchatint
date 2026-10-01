@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 import re
 from typing import Any, Iterable, Mapping
 
+from .direct_read_contracts import business_evidence_limit
 from .read_evidence import validate_read_evidence
 from .tool_adjudicator import adjudicate_tool_candidate
 from .work_frame import WorkFrame, normalize_work_text
@@ -40,7 +41,9 @@ def _primary_tool(tool_trace: Iterable[Mapping[str, Any]] | None) -> str:
     return ""
 
 
-def _result_payload(tool_trace: Iterable[Mapping[str, Any]] | None) -> Mapping[str, Any]:
+def _result_payload(
+    tool_trace: Iterable[Mapping[str, Any]] | None,
+) -> Mapping[str, Any]:
     for trace in tool_trace or []:
         result = trace.get("result")
         if isinstance(result, Mapping):
@@ -122,12 +125,23 @@ def evaluate_response_sufficiency(
             or payload.get("coverage") == "not_queried"
             for _, payload in reads
         )
-        validated = [validate_read_evidence(name, payload) for name, payload in reads]
+        limits = {
+            name: business_evidence_limit(name, message, work_frame.domain)
+            for name, _ in reads
+        }
+        diagnostics["read_scope_limits"] = {
+            name: reason for name, reason in limits.items() if reason
+        }
+        validated = [
+            (False, name) if limits[name] else validate_read_evidence(name, payload)
+            for name, payload in reads
+        ]
         diagnostics["read_contracts"] = [
             {"tool": name, "valid": valid} for valid, name in validated
         ]
         valid = any(
-            supported and adjudicate_tool_candidate(work_frame=work_frame, tool=name).accepted
+            supported
+            and adjudicate_tool_candidate(work_frame=work_frame, tool=name).accepted
             for supported, name in validated
         )
         if unavailable or not valid:
@@ -136,7 +150,11 @@ def evaluate_response_sufficiency(
                 (
                     "contextual_capability_unavailable"
                     if unavailable
-                    else "contextual_read_requires_current_successful_evidence"
+                    else (
+                        "contextual_reader_scope_insufficient"
+                        if any(limits.values())
+                        else "contextual_read_requires_current_successful_evidence"
+                    )
                 ),
                 "replace_with_gap_answer",
                 tool,
@@ -217,7 +235,11 @@ def evaluate_response_sufficiency(
                 diagnostics=diagnostics,
             )
 
-    if work_frame.domain == "finance" and work_frame.task_kind in {"status", "diagnostic", "evidence"}:
+    if work_frame.domain == "finance" and work_frame.task_kind in {
+        "status",
+        "diagnostic",
+        "evidence",
+    }:
         if tool == "receipts.pending_payment_overview" and any(
             token in message for token in ("pagos pendientes", "solicitudes pendientes")
         ):
@@ -238,7 +260,16 @@ def evaluate_response_sufficiency(
                 tool=tool,
                 diagnostics=diagnostics,
             )
-        if not any(token in message for token in ("fuente", "ruta", "snapshot", "evidencia", "no pude consultar")):
+        if not any(
+            token in message
+            for token in (
+                "fuente",
+                "ruta",
+                "snapshot",
+                "evidencia",
+                "no pude consultar",
+            )
+        ):
             return ResponseSufficiencyResult(
                 ok=False,
                 reason="finance_answer_missing_source_or_route",
@@ -271,6 +302,15 @@ def render_sufficiency_gap_answer(
             "Para IVA pagado hacen falta el desglose de IVA, evidencia y fecha de pago, "
             "y la asignación de CFDI compartidos y parcialidades sin duplicarlos. "
             "Aprobado no equivale a pagado. No ejecuté cambios."
+        )
+
+    if result.reason == "contextual_reader_scope_insufficient":
+        return (
+            "El resultado consultado no acredita la conclusión solicitada. "
+            "Un inventario, borrador o diagnóstico técnico no prueba hechos financieros; "
+            "una lista limitada de documentos solo permite un estimado de esos registros, "
+            "no un total completo ni un desglose de IVA. "
+            "Necesito evidencia canónica para ese alcance. No ejecuté cambios."
         )
 
     evidence = ", ".join(work_frame.required_evidence) or "evidencia canónica"
