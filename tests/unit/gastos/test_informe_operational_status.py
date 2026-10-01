@@ -173,6 +173,67 @@ def _rows(items):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("blocking_count", [0, 1])
+async def test_empty_informe_list_cancellation_with_historical_requests(
+    monkeypatch, blocking_count
+):
+    """Render the real list: terminal history must not hide safe draft cleanup."""
+    cuenta_id, informe_id, solicitud_id = (uuid4() for _ in range(3))
+    actor = SimpleNamespace(
+        id=uuid4(), rol="finanzas", nombre="Finanzas", departamento="Finanzas"
+    )
+    empleado = SimpleNamespace(id=uuid4(), nombre="Paulina", aprobador=None)
+    cuenta = SimpleNamespace(
+        id=cuenta_id, empleado_id=empleado.id, empleado=empleado,
+        beneficiario_empleado=None, beneficiario_proveedor_cliente=None,
+        nombre="Informe vacío", referencia_base="376361", estado="abierta",
+        created_at=datetime(2026, 9, 30), currency="MXN", torneo=None,
+        torneo_id=None, fase=None, tipo_cuenta=None, proyecto=None,
+        motivo_gasto=None, descripcion=None, tipo_gasto=None,
+    )
+    informe = SimpleNamespace(
+        id=informe_id, cuenta_gastos_id=cuenta_id, tipo="INFORME",
+        estado="borrador", aprobado_en=None,
+        numero_referencia="I-376361", referencia_operaciones=None,
+    )
+    solicitud = SimpleNamespace(
+        id=solicitud_id, concepto_pago="Reembolso de saldo a favor — I-376361",
+        estado="cancelado", pagado_en=None,
+        numero_referencia="S-371", monto_solicitado=2058.25,
+        currency="MXN", creado_en=datetime(2026, 9, 30),
+    )
+    count_result = MagicMock()
+    count_result.scalar_one.return_value = blocking_count
+    session = AsyncMock()
+    session.execute.side_effect = [
+        _rows([cuenta]), _rows([informe]), _rows([]),
+        _rows([]), _rows([solicitud]), count_result,
+    ]
+    monkeypatch.setattr(user_routes, "_can_view_all_cuentas_de_gastos", lambda *_: True)
+    monkeypatch.setattr(user_routes, "empleado_list_view_department_scope", lambda *_: None)
+    monkeypatch.setattr(
+        user_routes, "compute_cuenta_saldo_adjustments", AsyncMock(return_value=(0, 0))
+    )
+    monkeypatch.setattr(user_routes, "calculate_informe_expense_totals", lambda *_: SimpleNamespace(
+        total_reported=0, company_amex=0, employee_paid=0
+    ))
+    monkeypatch.setattr(user_routes, "fetch_documento_adjuntos_meta_batch", AsyncMock(return_value={}))
+    monkeypatch.setattr(user_routes, "fetch_reembolso_adjuntos_meta_batch", AsyncMock(return_value={}))
+    monkeypatch.setattr(user_routes, "render_top_navigation", lambda *_: "")
+    monkeypatch.setattr(user_routes, "_gastos_workspace_nav_html", lambda *_: "")
+
+    html = await user_routes.cuentas_de_gastos_list(
+        request=SimpleNamespace(query_params={}), session=session,
+        current_empleado=actor, q=None, estado=None, reembolso=None,
+        empleado_nombre=None, torneo_nombre=None,
+    )
+    assert "I-376361" in html
+    assert ('>Cancelar borrador</button>' in html) == (blocking_count == 0)
+    assert (f'/informes-de-gastos/{cuenta_id}/cancelar-borrador' in html) == (blocking_count == 0)
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("paid", [False, True])
 async def test_informes_list_shows_reimbursement_payment_and_proof(monkeypatch, paid):
     cuenta_id, informe_id, solicitud_id, proof_id = (uuid4() for _ in range(4))
