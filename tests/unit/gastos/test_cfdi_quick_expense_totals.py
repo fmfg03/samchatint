@@ -205,12 +205,14 @@ def test_quick_expense_xml_with_local_lodging_tax_accepts_total() -> None:
     assert taxes.subtotal == Decimal('1000')
     assert taxes.impuestos_trasladados == Decimal('160')
     assert taxes.impuestos_locales_trasladados == Decimal('36')
-    assert taxes.impuestos_y_retenciones == Decimal('196.00')
+    assert taxes.impuestos_y_retenciones == Decimal('160.00')
     assert taxes.calculated_total == Decimal('1196.00')
     assert taxes.total == Decimal('1196')
     assert autofill is not None
-    assert autofill.impuestos_y_retenciones == '196.00'
+    assert autofill.subtotal == '1036.00'
+    assert values['subtotal'] == Decimal('1036.00')
+    assert autofill.impuestos_y_retenciones == '160.00'
     assert autofill.total == '1196.00'
-    assert values['impuestos_y_retenciones'] == Decimal('196.00')
+    assert values['impuestos_y_retenciones'] == Decimal('160.00')
     assert values['iva'] == Decimal('160.00')
     assert values['total'] == Decimal('1196.00')
