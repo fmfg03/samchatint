@@ -137,6 +137,12 @@ async def test_set_scoped_reader_uses_canonical_base_no_budget_gate_or_global_fa
     )
     assert data["by_tournament"][T1]["values"]["actual"] == "100.00"
     assert len(session.calls) == 2
+    expense_sql = str(session.calls[0][0])
+    assert "report.id = e.informe_documento_id" in expense_sql
+    assert "report.id = e.documento_id" in expense_sql
+    assert "account_report.cuenta_gastos_id = e.cuenta_gastos_id" in expense_sql
+    assert "SELECT COUNT(*)" in expense_sql
+    assert session.calls[1][1]["committed_states"] == sorted(facts.COMMITTED)
     for statement, params in session.calls:
         assert "d.torneo_id = ANY(CAST(:ids AS uuid[]))" in str(statement)
         assert params["ids"] == sorted([T1, T2])
@@ -231,6 +237,7 @@ async def test_draft_budget_preserves_documentary_facts_and_scenario(monkeypatch
         for key in ("budget", "forecast", "deviation", "liquidity")
     )
     assert metrics["actual"]["source"] == facts.SOURCE
+    assert not any("no concilia" in gap for gap in metrics["forecast"]["gaps"])
     scenario = calculate_scenario(
         data,
         {"kind": "expense_reduction", "basis": "observed_expense", "percent": "10"},
@@ -460,3 +467,12 @@ async def test_scope_counts_distinguish_portfolio_filter_from_accessible_univers
     assert "1 seleccionados · 1 en el filtro · 2 accesibles" in html
     assert "Todos los torneos activos de la instalación" in html
     assert "Todos los 1 de este filtro" in html
+
+
+@pytest.mark.parametrize(
+    "state", ["pagado", "cerrado", "reembolsado", "aplicado", "liquidado"]
+)
+def test_terminal_document_without_paid_date_counts_both_stages(state):
+    data = project(documents=[document(estado=state, pagado_en=None)])[T1]
+    assert data["values"]["committed"] == "75.00"
+    assert data["values"]["paid"] == "75.00"

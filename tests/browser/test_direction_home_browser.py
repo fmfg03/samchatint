@@ -66,9 +66,18 @@ def test_report_tabs_multiselect_and_dialog_keyboard_access(page: Page):
         r["id"] for r in scope()["tournaments"]
     ]
     page.set_viewport_size({"width": 390, "height": 844})
+    first_value = page.locator(".home-metric strong").first
+    assert first_value.bounding_box()["y"] < 800
+    page.locator(".metric-details summary").first.click()
+    assert page.locator(".metric-details").first.get_attribute("open") is not None
     for tab in ("summary", "budget", "cashflow"):
         page.locator(f"#{tab}-tab").click()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        if tab == "budget":
+            assert page.locator(".scroll-hint").is_visible()
+            assert page.locator("#budget-legend").evaluate(
+                "el => el.scrollWidth <= el.clientWidth"
+            )
 
 
 def test_desktop_mobile_context_and_filter_navigation(page: Page):

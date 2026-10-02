@@ -16,12 +16,15 @@ from sqlalchemy import text
 from devnous.gastos.services.document_amount_service import (
     resolve_payable_document_amount,
 )
+from devnous.gastos.services.documento_workflow_service import (
+    FINANCIAL_TERMINAL_DOCUMENT_STATES,
+)
 from samchat.budgets.service import _budget_expense_base_amount_sql
 
 SOURCE = "samchat.budgets.executive_facts.build_executive_facts"
 SCAN_LIMIT = 10000
 KEYS = ("actual", "committed", "paid")
-COMMITTED = {"aprobado", "en_proceso_pago", "pagado", "cerrado"}
+COMMITTED = {"aprobado", "en_proceso_pago"} | FINANCIAL_TERMINAL_DOCUMENT_STATES
 
 
 def _money(value: Any) -> Decimal | None:
@@ -84,7 +87,9 @@ def project_facts(
                 state = record.get("estado")
                 if state in COMMITTED or record.get("pagado_en"):
                     keys.append("committed")
-                if state in {"pagado", "cerrado"} or record.get("pagado_en"):
+                if state in FINANCIAL_TERMINAL_DOCUMENT_STATES or record.get(
+                    "pagado_en"
+                ):
                     keys.append("paid")
             issues = []
             if observed is None:
@@ -165,7 +170,13 @@ async def build_executive_facts(
         raise ValueError("Invalid documentary period")
     if not ids:
         return project_facts([], [], [], start=start, end=end)
-    params = {"ids": ids, "start": start, "end": end, "limit": SCAN_LIMIT + 1}
+    params = {
+        "ids": ids,
+        "start": start,
+        "end": end,
+        "limit": SCAN_LIMIT + 1,
+        "committed_states": sorted(COMMITTED),
+    }
     expense_rows = (
         (
             await session.execute(
@@ -179,7 +190,22 @@ async def build_executive_facts(
                   AND sibling.id <> e.id AND sibling.estado_gasto <> 'cancelado'
             )) AS shared_cfdi
         FROM expense_reports e
-        JOIN documentos d ON d.id = e.documento_id
+        JOIN LATERAL (
+            SELECT report.* FROM documentos report
+            WHERE report.tipo = 'INFORME' AND (
+                report.id = e.informe_documento_id
+                OR report.id = e.documento_id
+                OR (e.cuenta_gastos_id IS NOT NULL
+                    AND report.cuenta_gastos_id = e.cuenta_gastos_id
+                    AND 1 = (SELECT COUNT(*) FROM documentos account_report
+                        WHERE account_report.tipo = 'INFORME'
+                        AND account_report.cuenta_gastos_id = e.cuenta_gastos_id))
+            )
+            ORDER BY CASE WHEN report.id = e.informe_documento_id THEN 0
+                          WHEN report.id = e.documento_id THEN 1 ELSE 2 END,
+                     report.creado_en ASC
+            LIMIT 1
+        ) d ON TRUE
         LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
         WHERE d.torneo_id = ANY(CAST(:ids AS uuid[]))
           AND e.estado_gasto <> 'cancelado'
@@ -201,7 +227,7 @@ async def build_executive_facts(
             d.monto_total, d.monto_solicitado, d.concepto_pago
         FROM documentos d
         WHERE d.torneo_id = ANY(CAST(:ids AS uuid[])) AND d.tipo = 'SOLICITUD'
-          AND (d.estado IN ('aprobado', 'en_proceso_pago', 'pagado', 'cerrado')
+          AND (d.estado = ANY(CAST(:committed_states AS text[]))
                OR d.pagado_en IS NOT NULL)
           AND d.estado NOT IN ('cancelado', 'rechazado')
           AND (d.creado_en IS NULL OR DATE(d.creado_en) BETWEEN :start AND :end)

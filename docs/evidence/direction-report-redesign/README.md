@@ -108,7 +108,7 @@ Una ejecución conjunta de browser + pruebas async produjo 23 errores del runner
 Playwright síncrono mantiene su loop durante la sesión. Se ejecutan en procesos
 separados como indican los comandos de abajo; no se atribuye ese fallo al producto.
 
-- 171 unitarias/regresiones enfocadas aprobadas; 97% de cobertura combinada en
+- 176 unitarias/regresiones enfocadas aprobadas; 97% de cobertura combinada en
   `executive_facts.py` y `report_layouts.py`. Advertencias existentes de deprecación.
 - 3 pruebas de navegador aprobadas: filtros múltiples, autorización contextual,
   escenarios/exportes, tabs, diálogo, foco y móvil.
@@ -125,3 +125,24 @@ PYTHONPATH=src python scripts/direction_report_visual_qa.py
 Rollback de código: revertir el PR. No hay migraciones ni escrituras financieras
 que revertir. El estado de CI remoto se registra en el PR; pruebas locales no
 equivalen a despliegue, reconciliación productiva o aceptación del negocio.
+
+## Correcciones posteriores a revisión
+
+- CI del candidato ce0534e: todos los gates aprobados y 98% de cobertura de cambios.
+  Se reparó compatibilidad de alcance y fuente con el plugin privado, conservando
+  validaciones: 130 pruebas offline y 20 PostgreSQL aisladas aprobadas.
+- Revisión Codex: estados terminales canónicos sin fecha de pago ya cuentan en
+  compromiso/pagado; resolución de informe por enlace explícito, legado o cuenta
+  con informe único. [Verificación SQL sintética](sql-link-checks.json) ejecuta
+  el SQL real y la base fiscal en PostgreSQL efímero, comprueba precedencia,
+  exclusión de cuentas ambiguas y de torneos ajenos. Reproducir con
+  `python scripts/direction_report_sql_qa.py` y dependencias PostgreSQL opcionales.
+- Revisión CodeRabbit: sin proyección válida no se emite una falsa brecha de
+  conciliación. Un desfase real sigue anulando la proyección.
+- Revisión móvil: cabecera compacta, procedencia y detalle de tarjetas desplegables,
+  leyenda fuera del scroll y aviso visible de deslizamiento. Prueba a 390px exige
+  primera cifra antes de y=800, leyenda legible, detalles expandibles y sin overflow.
+  Se regeneraron e inspeccionaron capturas; axe-core permanece sin infracciones.
+
+El SHA posterior a estas correcciones necesita su propio CI/revisión; consultar
+la conclusión más reciente del PR, no extrapolar el verde de ce0534e.

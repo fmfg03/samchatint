@@ -769,7 +769,10 @@ async def build_home(
         factual_values = factual.get("values") or {}
         # A forecast calibrated on budget-classified expenses cannot describe
         # the broader documentary population unless both bases reconcile.
-        if amount(factual_values.get("actual")) != values["actual"]:
+        if (
+            values["forecast"] is not None
+            and amount(factual_values.get("actual")) != values["actual"]
+        ):
             values.update(forecast=None, deviation=None)
             budget_gaps.append(
                 "La base documental no concilia con la base de la proyección presupuestal."

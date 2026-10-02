@@ -95,7 +95,7 @@ def _report_panels(snapshot: dict) -> str:
       <p>Mes de corte {snapshot['period']['end'][:7]} · acumulado desde enero. Variación = presupuesto − real.</p>
       <p class="notice">{escape(budget.get('gap') or 'Fuente validada para las partidas mostradas.')}</p>
       <p class="muted">Finanzas: vincular cada partida con su concepto y plan mensual aprobado. Los hechos documentales independientes siguen disponibles en Resumen.</p>
-      <div class="table-wrap" tabindex="0" role="region" aria-label="Tabla de presupuesto con desplazamiento horizontal"><table class="financial-table"><caption>26 renglones · expandir grupos para ver partidas · — = sin fuente · porcentaje sin base: N/A</caption>
+      <p class="table-legend" id="budget-legend">26 renglones · expandir grupos para ver partidas · — = sin fuente · porcentaje sin base: N/A</p><p class="scroll-hint">↔ Desliza para ver importes</p><div class="table-wrap" tabindex="0" role="region" aria-label="Tabla de presupuesto con desplazamiento horizontal" aria-describedby="budget-legend"><table class="financial-table"><caption class="sr-only">Presupuesto vs Real</caption>
       <thead><tr><th rowspan="2">Concepto</th><th colspan="2">Presupuesto</th><th colspan="2">Real</th><th colspan="2">Variación</th></tr><tr><th>Mes</th><th>Acumulado</th><th>Mes</th><th>Acumulado</th><th>Mes</th><th>Acumulado</th></tr></thead><tbody>{rows}</tbody></table></div>
       <p class="source-note">Fuente: {escape(budget['source'])}. El remanente resta costos directos, transmisión y patrocinios una sola vez.</p></div></section>
       <section id="cashflow-panel" role="tabpanel" aria-labelledby="cashflow-tab" hidden><div class="panel report-panel"><div class="section-heading"><div><p class="eyebrow">TESORERÍA</p><h2>Flujo de efectivo</h2></div><span class="unit">Miles de MXN</span></div>
@@ -164,11 +164,11 @@ def render_home(snapshot: dict, scope: dict, *, token: str, csrf: str) -> str:
                 else "Fuente disponible · validación pendiente"
             )
         )
-        cards += f"""<button type="button" class="home-metric" data-metric="{metric['id']}" aria-pressed="false">
+        cards += f"""<article class="home-metric"><button type="button" class="metric-action" data-metric="{metric['id']}" aria-pressed="false">
             <span>{escape(metric['label'])}</span><strong>{escape(format_money(metric['value']))}</strong>
             <span class="coverage">{qualifier} · {coverage['covered']}/{coverage['total']} torneos</span>
-            <small>{escape(metric['period'])}</small><small>Corte: {escape(metric['as_of'])}</small>
-            <small>{escape(metric['definition'])}</small><span class="ask-hint">Consultar esta cifra con Sam →</span></button>"""
+            <span class="ask-hint">Consultar esta cifra con Sam →</span></button>
+            <details class="metric-details"><summary>Periodo, corte y definición</summary><small>{escape(metric['period'])}</small><small>Corte: {escape(metric['as_of'])}</small><small>{escape(metric['definition'])}</small></details></article>"""
     comparisons = ""
     for row in snapshot["tournaments"]:
         budget, actual = row["values"].get("budget"), row["values"].get("actual")
@@ -236,8 +236,8 @@ def render_home(snapshot: dict, scope: dict, *, token: str, csrf: str) -> str:
     <details class="tournament-select"><summary>Torneos · {selected_count} de {filtered} del filtro</summary><div class="tournament-menu"><p>Este filtro contiene {filtered} de los {universe} torneos accesibles. Sin selección individual se incluyen solo los {filtered} de este filtro.</p><button type="button" id="select-all-tournaments">Todos los {filtered} de este filtro</button>{tournament_options}</div></details>
     <label>Desde<input type="date" name="date_from" value="{period['start']}"></label><label>Hasta<input type="date" name="date_to" value="{period['end']}"></label><button class="primary">Actualizar contexto</button></form>
     <p id="selection-note" class="source-note" aria-live="polite">Contexto vigente: {selected_count} seleccionados · {filtered} en el filtro · {universe} accesibles. Filtro: {escape(filter_label)}.</p>
-    <section class="hero"><p class="eyebrow">VISIÓN EJECUTIVA</p><h1>El panorama, con claridad.</h1><p>{escape(snapshot['headline'])}</p><p class="muted">Periodo de registros: {period['start']} a {period['end']} · {selected_count} torneos seleccionados de {universe} accesibles · MXN</p><p class="source-note">Alcance: {escape(', '.join(row['name'] for row in snapshot['tournaments']) or 'Sin torneos')} · Corte: {escape(snapshot['as_of'])}</p>
-    <p class="notice">Validación de negocio pendiente. Los indicadores ausentes conservan su brecha. Los saldos actuales y el presupuesto anual muestran su propio periodo.</p></section>
+    <section class="hero"><p class="eyebrow">VISIÓN EJECUTIVA</p><h1>El panorama, con claridad.</h1><p>{escape(snapshot['headline'])}</p><details class="report-provenance"><summary>Periodo, fuentes y validación · MXN</summary><p class="muted">Periodo de registros: {period['start']} a {period['end']} · {selected_count} torneos seleccionados de {universe} accesibles · MXN</p><p class="source-note">Alcance: {escape(', '.join(row['name'] for row in snapshot['tournaments']) or 'Sin torneos')} · Corte: {escape(snapshot['as_of'])}</p>
+    <p class="notice">Validación de negocio pendiente. Los indicadores ausentes conservan su brecha. Los saldos actuales y el presupuesto anual muestran su propio periodo.</p></details></section>
     <div class="report-toolbar"><div role="tablist" aria-label="Reportes ejecutivos"><button role="tab" id="summary-tab" aria-controls="summary-panel" aria-selected="true">Resumen</button><button role="tab" id="budget-tab" aria-controls="budget-panel" aria-selected="false" tabindex="-1">Presupuesto vs Real</button><button role="tab" id="cashflow-tab" aria-controls="cashflow-panel" aria-selected="false" tabindex="-1">Flujo de efectivo</button></div><div class="actions"><button type="button" data-export="pdf">PDF</button><button type="button" data-export="xlsx">Excel</button><button type="button" id="open-sam" class="primary">Consultar con Sam</button></div></div><p id="home-report-status" aria-live="polite"></p>
     <section id="summary-panel" role="tabpanel" aria-labelledby="summary-tab"><section aria-label="Indicadores ejecutivos" class="home-metrics">{cards}</section>
     <details class="source-gaps"><summary>Fuentes por completar · {sum(m['value'] is None for m in metrics)} indicadores</summary><p>Selecciona un indicador para revisar su fuente, alcance y siguiente paso con Sam.</p><ul>{missing}</ul></details>
