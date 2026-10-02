@@ -122,9 +122,9 @@ async def mark_outbox_entry(
 ) -> None:
     entry.status = status
     entry.error_message = (error_message or "").strip() or None
-    entry.updated_at = _outbox_now(entry.notification_type)
+    entry.updated_at = _outbox_now(getattr(entry, "notification_type", ""))
     if status == "sent":
-        entry.sent_at = _outbox_now(entry.notification_type)
+        entry.sent_at = _outbox_now(getattr(entry, "notification_type", ""))
         entry.next_retry_at = None
 
 
@@ -145,9 +145,9 @@ async def _mark_outbox_failed(
         error_message=error_message,
     )
     if retry_count == 0 and entry.telegram_chat_id is not None:
-        entry.next_retry_at = _outbox_now(entry.notification_type) + timedelta(
-            seconds=OUTBOX_RETRY_DELAY_SECONDS
-        )
+        entry.next_retry_at = _outbox_now(
+            getattr(entry, "notification_type", "")
+        ) + timedelta(seconds=OUTBOX_RETRY_DELAY_SECONDS)
         await session.flush()
         schedule_outbox_retry(entry.id)
     else:

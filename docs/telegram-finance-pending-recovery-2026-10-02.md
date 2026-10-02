@@ -136,3 +136,35 @@ la historia/especificación. La lectura de reintentos vencidos en el monitor es
 la implementación del límite ya aprobado de un reintento a las dos horas en
 un proceso de corta duración, con los campos persistidos existentes. No hay
 fallos funcionales conocidos causados por la corrección.
+
+## Corrección de compatibilidad detectada en CI
+
+El primer CI del PR #451 pasó integración (95 passed, 2 skips ajenos a estas
+pruebas) pero falló una prueba unitaria existente de reenvío forzado de Control
+Presupuestal: su objeto simulado no contiene `notification_type`. Fue una
+regresión causada por el nuevo acceso al campo para clasificar las fechas;
+se reprodujo antes de corregirla, sin modificar ni debilitar la prueba existente.
+
+Los caminos de marcado usan un valor por defecto cuando el campo está ausente,
+conservando el comportamiento previo de los objetos antiguos. Los registros
+reales de Finanzas mantienen sus fechas UTC. Se agregaron dos regresiones de
+marcado para `sent` y `failed`.
+
+Verificación ampliada: **124 pruebas pasaron**, sin skips, en 27.43 segundos,
+incluyendo la suite de Control Presupuestal, los avisos de aprobación, la
+recuperación de Finanzas y las 25 pruebas de PostgreSQL. Comando:
+
+```bash
+PYTHONPATH=src:. /root/samchat/.venv/bin/pytest -q \
+  tests/unit/gastos/test_budget_control_gate.py \
+  tests/unit/gastos/test_telegram_finance_recovery.py \
+  tests/unit/gastos/test_telegram_document_approvals.py \
+  tests/unit/gastos/test_telegram_pending_payment_backfill.py \
+  tests/integration/test_telegram_finance_recovery_postgres.py
+```
+
+Flake8, isort y `git diff --check` pasaron; la revisión independiente de lectura
+no encontró hallazgos críticos, importantes ni menores en este ajuste. La
+autorización de merge queda sujeta al nuevo CI del commit corregido; no se
+omite ninguna protección. Este ajuste conserva el alcance y comportamiento
+aprobados y no requiere cambios de esquema, dependencias ni autoridad.

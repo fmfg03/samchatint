@@ -441,3 +441,25 @@ async def test_older_sleeping_retry_cannot_ignore_rescheduled_due_time(monkeypat
     )
     assert row.retry_count == 0
     outbox.send_telegram_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["sent", "failed"])
+async def test_legacy_outbox_marking_preserves_timestamp_compatibility(
+    monkeypatch, status
+):
+    row = entry()
+    del row.notification_type
+    session = SimpleNamespace(flush=AsyncMock())
+    scheduled = []
+    monkeypatch.setattr(outbox, "schedule_outbox_retry", scheduled.append)
+    if status == "sent":
+        await outbox.mark_outbox_entry(session, row, status=status)
+        assert row.sent_at.tzinfo is None
+        assert row.next_retry_at is None
+    else:
+        await outbox._mark_outbox_failed(session, row, "delivery failed")
+        assert row.next_retry_at.tzinfo is None
+        assert scheduled == [row.id]
+    assert row.status == status
+    assert row.updated_at.tzinfo is None
