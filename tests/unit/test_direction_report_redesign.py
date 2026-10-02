@@ -148,7 +148,8 @@ async def test_set_scoped_reader_uses_canonical_base_no_budget_gate_or_global_fa
         assert params["ids"] == sorted([T1, T2])
         assert "budget_versions" not in str(statement)
         assert "budget_concept_id IS NOT NULL" not in str(statement)
-        assert "LIMIT :limit" in str(statement)
+        assert "PARTITION BY tournament_id" in str(statement)
+        assert "source_rank <= :limit" in str(statement)
     from samchat.budgets.service import _budget_expense_base_amount_sql
 
     assert _budget_expense_base_amount_sql("e", "cfdi") in str(session.calls[0][0])
@@ -483,6 +484,24 @@ def test_paid_evidence_survives_stale_state(state):
     data = project(documents=[document(estado=state, pagado_en="2026-06-15")])[T1]
     assert data["values"]["paid"] == "75.00"
     assert data["values"]["committed"] == "75.00"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["expense", "document"])
+async def test_documentary_completeness_is_per_source_and_tournament(monkeypatch, kind):
+    monkeypatch.setattr(facts, "SCAN_LIMIT", 2)
+    expenses = [expense(T1, f"e{i}") for i in range(3 if kind == "expense" else 2)]
+    documents = [document(T1, f"d{i}") for i in range(3 if kind == "document" else 2)]
+    expenses.append(expense(T2, "e-other"))
+    documents.append(document(T2, "d-other"))
+    result = await facts.build_executive_facts(
+        Session([expenses, documents]), tournament_ids=[T1, T2], start=START, end=END
+    )
+    a, b = (result["by_tournament"][tid]["values"] for tid in [T1, T2])
+    assert b == {"actual": "100.00", "committed": "75.00", "paid": "75.00"}
+    assert a["actual"] == (None if kind == "expense" else "200.00")
+    assert a["paid"] == (None if kind == "document" else "150.00")
+    assert a["committed"] == a["paid"]
 
 
 @pytest.mark.asyncio

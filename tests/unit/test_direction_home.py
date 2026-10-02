@@ -501,7 +501,7 @@ async def test_scoped_finance_source_never_reads_global_expenses_or_polizas():
         session, tournament_ids=[T1], documents_only=True
     )
     sql = str(session.calls[0][0].compile(dialect=postgresql.dialect()))
-    assert "documentos.torneo_id IN" in sql
+    assert "coalesce(documentos.torneo_id, cuentas_de_gastos.torneo_id) IN" in sql
     assert len(session.calls) == 1
     assert result["source_status"]["polizas_available"] is False
     with pytest.raises(ValueError):
@@ -540,8 +540,11 @@ async def test_payment_scan_completeness_is_per_tournament(
         session, tournament_ids=[T1, T2], documents_only=True, limit=2
     )
     sql = str(session.calls[0][0].compile(dialect=postgresql.dialect()))
-    assert "PARTITION BY documentos.torneo_id" in sql
-    assert "documentos.torneo_id IN" in sql
+    assert (
+        "PARTITION BY coalesce(documentos.torneo_id, cuentas_de_gastos.torneo_id)"
+        in sql
+    )
+    assert "coalesce(documentos.torneo_id, cuentas_de_gastos.torneo_id) IN" in sql
     assert len(session.calls) == 1
     assert len(source["documents"]) == min(a_count, 2) + b_count
     monkeypatch.setattr(home, "_optional_read", AsyncMock(return_value=source))
@@ -553,6 +556,39 @@ async def test_payment_scan_completeness_is_per_tournament(
     else:
         assert result["value"] == (a_count + b_count) * 10
         assert result["by_tournament"][T1]["value"] == a_count * 10
+
+
+@pytest.mark.asyncio
+async def test_obligations_inherit_account_tournament_without_overriding_direct_scope(
+    monkeypatch,
+):
+    rows = [
+        SimpleNamespace(
+            torneo_id=None, cuenta_gastos=SimpleNamespace(torneo_id=T1), currency="MXN"
+        ),
+        SimpleNamespace(
+            torneo_id=T2, cuenta_gastos=SimpleNamespace(torneo_id=T1), currency="MXN"
+        ),
+    ]
+    monkeypatch.setattr(
+        finance,
+        "_serialize_document",
+        lambda d: {
+            "tipo": "SOLICITUD",
+            "estado": "aprobado",
+            "monto_total": 10,
+            "fecha_pago": TODAY.isoformat(),
+        },
+    )
+    source = await finance.build_finance_source_snapshot(
+        Session([rows]), tournament_ids=[T1, T2], documents_only=True
+    )
+    assert [r["tournament_id"] for r in source["documents"]] == [T1, T2]
+    monkeypatch.setattr(home, "_optional_read", AsyncMock(return_value=source))
+    result = await home.payment_values(Session(), [T1, T2], TODAY)
+    assert result["value"] == 20
+    assert result["by_tournament"][T1]["value"] == 10
+    assert result["by_tournament"][T2]["value"] == 10
 
 
 @pytest.mark.asyncio

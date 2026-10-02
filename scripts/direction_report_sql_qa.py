@@ -4,6 +4,7 @@ Requires requirements-private-plugin-postgres.txt. No external DSN or credential
 """
 
 import ast
+from collections import Counter
 import importlib.util
 import json
 import pathlib
@@ -257,6 +258,25 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                 uid(55),
                 uid(57),
             }
+            for scoped_query in (query, document_query):
+                bounded = (
+                    c.execute(
+                        text(scoped_query),
+                        dict(
+                            ids=[uid(100), uid(200)],
+                            start="2026-06-01",
+                            end="2026-06-30",
+                            limit=2,
+                            committed_states=["enviado", "pagado"],
+                        ),
+                    )
+                    .mappings()
+                    .all()
+                )
+                assert Counter(r["tournament_id"] for r in bounded) == {
+                    uid(100): 2,
+                    uid(200): 2,
+                }
             print(
                 json.dumps(
                     {
@@ -271,6 +291,7 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                         "account_tournament_fallback": True,
                         "request_account_tournament_fallback": True,
                         "request_direct_scope_precedence": True,
+                        "documentary_partition_limits": True,
                         "paid_timestamp_overrides_stale_state": True,
                         "ambiguous_account_excluded": True,
                         "foreign_scope_excluded": True,

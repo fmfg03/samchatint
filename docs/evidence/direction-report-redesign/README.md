@@ -183,3 +183,10 @@ anula las cifras de otro completo; el agregado permanece incompleto. Regresiones
 con límite pequeño verifican truncado/completo, dos completos que exceden juntos
 el límite y torneo vacío. Pasan 245 pruebas de Dirección y lectores financieros
 relacionados; el cambio no modifica píxeles ni formatos de exportación.
+
+Séptima revisión: obligaciones usa el mismo torneo efectivo (documento o cuenta)
+en autorización, partición y resultado. Gastos y solicitudes documentales también
+particionan el límite por torneo; cada fuente conserva su propia completitud.
+Pasaron 248 pruebas relacionadas. PostgreSQL efímero ejecutó los dos SQL reales
+con dos torneos y límite reducido, verificando que ninguno consume el cupo del
+otro; la atribución por cuenta y prioridad del torneo directo tienen regresiones.

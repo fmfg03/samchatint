@@ -6,6 +6,7 @@ installation. No name matching, global fallback, DDL, or financial writes.
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -52,7 +53,7 @@ def project_facts(
     *,
     start: date,
     end: date,
-    truncated: bool | set[str] = False,
+    truncated: bool | set[str] | dict[str, set[str]] = False,
 ) -> dict:
     """Deduplicate identities, preserve source gaps, and never add stages together."""
     result = {}
@@ -129,12 +130,15 @@ def project_facts(
                 bucket["monthly"][month] = (
                     bucket["monthly"].get(month, Decimal("0")) + value
                 )
-    for bucket in result.values():
+    for tid, bucket in result.items():
+        bucket_truncated = (
+            truncated.get(tid, set()) if isinstance(truncated, dict) else truncated
+        )
         bucket["known_subtotals"] = {k: str(v) for k, v in bucket["values"].items()}
         for key in KEYS:
-            if truncated is True or (
-                isinstance(truncated, set)
-                and ("expense" if key == "actual" else "document") in truncated
+            if bucket_truncated is True or (
+                isinstance(bucket_truncated, set)
+                and ("expense" if key == "actual" else "document") in bucket_truncated
             ):
                 bucket["gaps"][key].append(
                     "Lectura documental truncada; total no acreditado."
@@ -187,6 +191,7 @@ async def build_executive_facts(
             (
                 await session.execute(
                     text(f"""
+        WITH scoped AS (
         SELECT e.id::text AS id,
             COALESCE(d.torneo_id, expense_cuenta.torneo_id)::text AS tournament_id,
             e.fecha AS observed_date, e.currency, e.gasto_cantidad,
@@ -225,7 +230,11 @@ async def build_executive_facts(
         WHERE COALESCE(d.torneo_id, expense_cuenta.torneo_id) = ANY(CAST(:ids AS uuid[]))
           AND e.estado_gasto <> 'cancelado'
           AND (e.fecha IS NULL OR DATE(e.fecha) BETWEEN :start AND :end)
-        ORDER BY e.id LIMIT :limit
+        ), ranked AS (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY tournament_id ORDER BY id) AS source_rank
+            FROM scoped
+        )
+        SELECT * FROM ranked WHERE source_rank <= :limit ORDER BY id
     """),
                     params,
                 )
@@ -241,6 +250,7 @@ async def build_executive_facts(
             (
                 await session.execute(
                     text("""
+        WITH scoped AS (
         SELECT d.id::text AS id,
             COALESCE(d.torneo_id, document_cuenta.torneo_id)::text AS tournament_id,
             d.creado_en AS observed_date, d.currency, d.estado, d.pagado_en,
@@ -251,7 +261,11 @@ async def build_executive_facts(
           AND (d.estado = ANY(CAST(:committed_states AS text[]))
                OR d.pagado_en IS NOT NULL)
           AND (d.creado_en IS NULL OR DATE(d.creado_en) BETWEEN :start AND :end)
-        ORDER BY d.id LIMIT :limit
+        ), ranked AS (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY tournament_id ORDER BY id) AS source_rank
+            FROM scoped
+        )
+        SELECT * FROM ranked WHERE source_rank <= :limit ORDER BY id
     """),
                     params,
                 )
@@ -262,20 +276,18 @@ async def build_executive_facts(
         if include_documents
         else []
     )
+    truncated = {tid: set() for tid in ids}
+    for kind, records in (("expense", expense_rows), ("document", document_rows)):
+        for tid, count in Counter(str(r["tournament_id"]) for r in records).items():
+            if count > SCAN_LIMIT:
+                truncated[tid].add(kind)
     result = project_facts(
         ids,
         [dict(r) for r in expense_rows],
         [dict(r) for r in document_rows],
         start=start,
         end=end,
-        truncated={
-            kind
-            for kind, records in (
-                ("expense", expense_rows),
-                ("document", document_rows),
-            )
-            if len(records) > SCAN_LIMIT
-        },
+        truncated=truncated,
     )
 
     for bucket in result["by_tournament"].values():

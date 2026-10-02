@@ -119,7 +119,12 @@ async def build_finance_source_snapshot(
     documents_only: bool = False,
 ) -> dict[str, Any]:
     """Read current finance source rows and normalize them for UI projections."""
-    from devnous.gastos.models import AccountingPoliza, Documento, ExpenseReport
+    from devnous.gastos.models import (
+        AccountingPoliza,
+        CuentaDeGastos,
+        Documento,
+        ExpenseReport,
+    )
 
     if documents_only and tournament_ids is None:
         raise ValueError("Document-only executive reads require explicit scope")
@@ -196,7 +201,15 @@ async def build_finance_source_snapshot(
 
     if tournament_ids is not None:
         # An empty authorized scope must return no rows, never a global read.
-        document_stmt = document_stmt.where(Documento.torneo_id.in_(tournament_ids))
+        effective_tournament = func.coalesce(
+            Documento.torneo_id, CuentaDeGastos.torneo_id
+        )
+        account_join = CuentaDeGastos.id == Documento.cuenta_gastos_id
+        document_stmt = (
+            document_stmt.outerjoin(CuentaDeGastos, account_join)
+            .options(selectinload(Documento.cuenta_gastos))
+            .where(effective_tournament.in_(tournament_ids))
+        )
         if not documents_only:
             raise ValueError("Scoped finance reads currently support documents only")
         # Preserve the per-tournament cap in one authorized query. A busy
@@ -206,12 +219,13 @@ async def build_finance_source_snapshot(
                 Documento.id,
                 func.row_number()
                 .over(
-                    partition_by=Documento.torneo_id,
+                    partition_by=effective_tournament,
                     order_by=(Documento.creado_en.desc(), Documento.id),
                 )
                 .label("scope_rank"),
             )
-            .where(document_filter, Documento.torneo_id.in_(tournament_ids))
+            .outerjoin(CuentaDeGastos, account_join)
+            .where(document_filter, effective_tournament.in_(tournament_ids))
             .subquery()
         )
         document_stmt = document_stmt.where(
@@ -224,10 +238,13 @@ async def build_finance_source_snapshot(
         counts = dict.fromkeys(tournament_ids, 0)
         kept = []
         for document in documents:
-            tid = str(document.torneo_id)
+            tid = str(
+                document.torneo_id
+                or getattr(getattr(document, "cuenta_gastos", None), "torneo_id", None)
+            )
             counts[tid] += 1
             if counts[tid] <= limit:
-                kept.append(document)
+                kept.append((document, tid))
         truncated = {tid: count > limit for tid, count in counts.items()}
         return {
             "period": {"year": period_year, "month": period_month},
@@ -235,9 +252,9 @@ async def build_finance_source_snapshot(
                 {
                     **_serialize_document(d),
                     "currency": getattr(d, "currency", None),
-                    "tournament_id": str(d.torneo_id),
+                    "tournament_id": tid,
                 }
-                for d in kept
+                for d, tid in kept
             ],
             "expenses": [],
             "polizas": [],
