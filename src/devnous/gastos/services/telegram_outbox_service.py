@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models import Documento, Empleado, TelegramNotificationOutbox
+from ..models import Adjunto, Documento, Empleado, TelegramNotificationOutbox
 from .telegram_notify import schedule_fire_and_forget, send_telegram_message
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ async def create_outbox_entry(
     telegram_chat_id: Optional[int] = None,
     error_message: Optional[str] = None,
 ) -> TelegramNotificationOutbox:
-    now = datetime.utcnow()
+    now = _outbox_now(notification_type)
     entry = TelegramNotificationOutbox(
         notification_type=notification_type,
         status=status,
@@ -122,9 +122,9 @@ async def mark_outbox_entry(
 ) -> None:
     entry.status = status
     entry.error_message = (error_message or "").strip() or None
-    entry.updated_at = datetime.utcnow()
+    entry.updated_at = _outbox_now(getattr(entry, "notification_type", ""))
     if status == "sent":
-        entry.sent_at = datetime.utcnow()
+        entry.sent_at = _outbox_now(getattr(entry, "notification_type", ""))
         entry.next_retry_at = None
 
 
@@ -145,16 +145,309 @@ async def _mark_outbox_failed(
         error_message=error_message,
     )
     if retry_count == 0 and entry.telegram_chat_id is not None:
-        entry.next_retry_at = datetime.utcnow() + timedelta(
-            seconds=OUTBOX_RETRY_DELAY_SECONDS
-        )
+        entry.next_retry_at = _outbox_now(
+            getattr(entry, "notification_type", "")
+        ) + timedelta(seconds=OUTBOX_RETRY_DELAY_SECONDS)
         await session.flush()
         schedule_outbox_retry(entry.id)
     else:
         entry.next_retry_at = None
 
 
-async def _send_outbox_entry(session: AsyncSession, entry: TelegramNotificationOutbox) -> bool:
+def _outbox_now(notification_type: str) -> datetime:
+    """Keep finance timestamps timezone-aware without changing other send paths."""
+    if notification_type == "finance_pending_payment":
+        return datetime.now(timezone.utc)
+    return datetime.utcnow()
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Interpret legacy naive timestamps as UTC."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
+async def _lock_finance_entry(
+    session: AsyncSession, entry_id: UUID
+) -> Optional[TelegramNotificationOutbox]:
+    result = await session.execute(
+        select(TelegramNotificationOutbox)
+        .where(
+            TelegramNotificationOutbox.id == entry_id,
+            TelegramNotificationOutbox.notification_type == "finance_pending_payment",
+        )
+        .with_for_update(skip_locked=True)
+        .execution_options(populate_existing=True)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _finance_skip_reason(
+    session: AsyncSession, entry: TelegramNotificationOutbox
+) -> Optional[str]:
+    result = await session.execute(
+        select(
+            Documento.tipo,
+            Documento.estado,
+            Documento.fecha_pago_efectiva,
+            Documento.pagado_en,
+        ).where(Documento.id == entry.documento_id)
+    )
+    documento = result.one_or_none()
+    if (
+        documento is None
+        or documento.tipo != "SOLICITUD"
+        or documento.estado != "aprobado"
+        or documento.fecha_pago_efectiva is not None
+        or documento.pagado_en is not None
+    ):
+        return "Solicitud ya no elegible para aviso de pago pendiente"
+    proof = await session.execute(
+        select(Adjunto.id)
+        .where(
+            Adjunto.documento_id == entry.documento_id,
+            Adjunto.categoria == "comprobante_pago",
+        )
+        .limit(1)
+    )
+    if proof.scalar_one_or_none() is not None:
+        return "Solicitud con evidencia de pago"
+    result = await session.execute(
+        select(Empleado.activo, Empleado.rol, Empleado.telegram_user_id).where(
+            Empleado.id == entry.recipient_empleado_id
+        )
+    )
+    recipient = result.one_or_none()
+    if recipient is None or not recipient.activo or recipient.rol != "finanzas":
+        return "Destinatario ya no es Finanzas activo"
+    if recipient.telegram_user_id is None:
+        entry.telegram_chat_id = None
+        return "Sin telegram_user_id vinculado"
+    entry.telegram_chat_id = int(recipient.telegram_user_id)
+    return None
+
+
+async def _send_finance_outbox_entry(
+    session: AsyncSession,
+    entry_id: UUID,
+    *,
+    mode: str = "pending",
+    stale_before: Optional[datetime] = None,
+    retry_due_before: Optional[datetime] = None,
+    force_resend: bool = False,
+    text: Optional[str] = None,
+    reply_markup: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Hold the canonical row lock through validation, HTTP, and result commit."""
+    force_resend = force_resend and mode == "delivery"
+    entry = await _lock_finance_entry(session, entry_id)
+    if entry is None:
+        await session.commit()
+        return "busy"
+    if entry.status == "sent" and not force_resend:
+        await session.commit()
+        return "already_sent"
+    if mode == "recovery":
+        if entry.status == "failed":
+            if (
+                entry.next_retry_at is None
+                or retry_due_before is None
+                or _as_utc(entry.next_retry_at) > _as_utc(retry_due_before)
+            ):
+                await session.commit()
+                return "skipped"
+            mode = "retry"
+        else:
+            mode = "pending"
+    allowed = {"failed"} if mode == "retry" else {"pending"}
+    if mode == "delivery":
+        allowed |= {"failed", "skipped"}
+        if force_resend:
+            allowed.add("sent")
+    if entry.status not in allowed:
+        await session.commit()
+        return "skipped"
+    if stale_before is not None and mode != "retry":
+        activity = entry.updated_at or entry.created_at
+        if _as_utc(activity) >= _as_utc(stale_before):
+            await session.commit()
+            return "skipped"
+    if mode == "retry":
+        retry_clock = _as_utc(retry_due_before or datetime.now(timezone.utc))
+        if (
+            entry.next_retry_at is not None
+            and _as_utc(entry.next_retry_at) > retry_clock
+        ):
+            await session.commit()
+            return "skipped"
+        if int(entry.retry_count or 0) >= 1:
+            await session.commit()
+            return "skipped"
+    original_status = entry.status
+    original_sent_at = getattr(entry, "sent_at", None)
+    original_updated_at = entry.updated_at
+    resend_ready = False
+    try:
+        document_lock = await session.execute(
+            select(Documento.id)
+            .where(Documento.id == entry.documento_id)
+            .with_for_update(skip_locked=True)
+        )
+        if document_lock.scalar_one_or_none() is None:
+            # Missing documents are ineligible; occupied ones are retried later.
+            exists = await session.execute(
+                select(Documento.id).where(Documento.id == entry.documento_id)
+            )
+            if exists.scalar_one_or_none() is not None:
+                if mode == "retry":
+                    entry.next_retry_at = _outbox_now(
+                        entry.notification_type
+                    ) + timedelta(seconds=OUTBOX_RETRY_DELAY_SECONDS)
+                await session.commit()
+                return "busy"
+        reason = await _finance_skip_reason(session, entry)
+        if reason is None and not force_resend:
+            duplicate = await session.execute(
+                select(TelegramNotificationOutbox.id)
+                .where(
+                    TelegramNotificationOutbox.notification_type
+                    == "finance_pending_payment",
+                    TelegramNotificationOutbox.documento_id == entry.documento_id,
+                    TelegramNotificationOutbox.id != entry.id,
+                    TelegramNotificationOutbox.telegram_chat_id
+                    == entry.telegram_chat_id,
+                    TelegramNotificationOutbox.status == "sent",
+                )
+                .limit(1)
+            )
+            if duplicate.scalar_one_or_none() is not None:
+                reason = "Aviso ya enviado al mismo chat para esta solicitud"
+        if reason:
+            if force_resend and entry.status == "sent":
+                # Preserve the historical delivery receipt when a manual resend
+                # is no longer eligible; audit the current rejection separately.
+                entry.error_message = reason
+                entry.updated_at = _outbox_now(entry.notification_type)
+            else:
+                await mark_outbox_entry(
+                    session, entry, status="skipped", error_message=reason
+                )
+                entry.next_retry_at = None
+            await session.commit()
+            return "skipped"
+        resend_ready = True
+        if force_resend:
+            entry.retry_count = 0
+            entry.sent_at = None
+            entry.next_retry_at = None
+        if mode == "retry":
+            entry.retry_count = 1
+        # Finance bodies always reflect the locked document's current data.
+        message = await rebuild_outbox_message_text(session, entry)
+        if not message:
+            raise ValueError("message rebuild failed")
+        ok = await send_telegram_message(
+            int(entry.telegram_chat_id), message, reply_markup=reply_markup
+        )
+    except Exception:
+        # Rebuild can fail in SQL; reacquire after rollback before persisting failure.
+        await session.rollback()
+        entry = await _lock_finance_entry(session, entry_id)
+        if entry is None:
+            await session.commit()
+            return "busy"
+        if entry.status == "sent" and (
+            not force_resend
+            or original_status != "sent"
+            or entry.sent_at != original_sent_at
+            or entry.updated_at != original_updated_at
+        ):
+            # Rollback released our locks. A newer delivery receipt belongs to
+            # the competing sender and must survive our failed resend attempt.
+            await session.commit()
+            return "already_sent"
+        if force_resend and entry.status == "sent" and not resend_ready:
+            entry.error_message = "Error al validar elegibilidad del reenvío"
+            entry.updated_at = _outbox_now(entry.notification_type)
+            await session.commit()
+            return "failed"
+        if force_resend:
+            entry.retry_count = 0
+            entry.sent_at = None
+            entry.next_retry_at = None
+        if mode == "retry":
+            entry.retry_count = 1
+        await _mark_outbox_failed(session, entry, "Error al reconstruir o enviar aviso")
+        await session.commit()
+        return "failed"
+    if ok:
+        await mark_outbox_entry(session, entry, status="sent")
+    else:
+        await _mark_outbox_failed(session, entry, "Telegram API no confirmó entrega")
+    await session.commit()
+    return "sent" if ok else "failed"
+
+
+async def recover_stale_finance_pending_notifications(
+    session: AsyncSession,
+    *,
+    older_than_minutes: int = 5,
+    limit: int = 100,
+    now: Optional[datetime] = None,
+) -> Dict[str, int]:
+    """Recover a bounded oldest-first batch of interrupted finance deliveries."""
+    current_time = _as_utc(now or datetime.now(timezone.utc))
+    cutoff = current_time - timedelta(minutes=max(5, older_than_minutes))
+    activity = func.coalesce(
+        TelegramNotificationOutbox.updated_at, TelegramNotificationOutbox.created_at
+    )
+    result = await session.execute(
+        select(TelegramNotificationOutbox.id)
+        .where(
+            TelegramNotificationOutbox.notification_type == "finance_pending_payment",
+            or_(
+                and_(
+                    TelegramNotificationOutbox.status == "pending",
+                    activity < cutoff,
+                ),
+                and_(
+                    TelegramNotificationOutbox.status == "failed",
+                    TelegramNotificationOutbox.retry_count == 0,
+                    TelegramNotificationOutbox.next_retry_at.isnot(None),
+                    TelegramNotificationOutbox.next_retry_at <= current_time,
+                ),
+            ),
+        )
+        .order_by(activity.asc(), TelegramNotificationOutbox.id.asc())
+        .limit(max(1, min(limit, 500)))
+    )
+    entry_ids = list(result.scalars().all())
+    await session.commit()
+    stats = dict(reviewed=0, recovered=0, skipped=0, busy=0, failed=0)
+    for entry_id in entry_ids:
+        stats["reviewed"] += 1
+        try:
+            outcome = await _send_finance_outbox_entry(
+                session,
+                entry_id,
+                mode="recovery",
+                stale_before=cutoff,
+                retry_due_before=current_time,
+            )
+        except Exception:
+            await session.rollback()
+            outcome = "failed"
+            logger.warning("Finance notification recovery failed for one row")
+        key = "recovered" if outcome == "sent" else outcome
+        stats["skipped" if key == "already_sent" else key] += 1
+    logger.info("Finance notification recovery: %s", stats)
+    return stats
+
+
+async def _send_outbox_entry(
+    session: AsyncSession, entry: TelegramNotificationOutbox
+) -> bool:
+    if entry.notification_type == "finance_pending_payment":
+        return await _send_finance_outbox_entry(session, entry.id) == "sent"
     text = await rebuild_outbox_message_text(session, entry)
     if not text:
         await _mark_outbox_failed(
@@ -204,6 +497,13 @@ async def _execute_outbox_retry(entry_id: UUID) -> None:
         entry = await session.get(TelegramNotificationOutbox, entry_id)
         if entry is None:
             return
+        if entry.notification_type == "finance_pending_payment":
+            outcome = await _send_finance_outbox_entry(session, entry.id, mode="retry")
+            if outcome == "busy":
+                # Contention is not a send attempt. Reuse the existing two-hour
+                # delay and recheck status rather than losing the scheduled retry.
+                schedule_outbox_retry(entry_id)
+            return
         if entry.status != "failed":
             return
         if int(entry.retry_count or 0) >= 1:
@@ -239,6 +539,43 @@ async def deliver_telegram_notification(
         documento_id=documento_id,
         recipient_empleado_id=recipient_empleado_id,
     )
+    if notification_type == "finance_pending_payment":
+        if existing is None:
+            try:
+                existing = await create_outbox_entry(
+                    session,
+                    notification_type=notification_type,
+                    status="pending",
+                    header_text=header_text,
+                    body_text=text,
+                    documento_id=documento_id,
+                    recipient_empleado_id=recipient_empleado_id,
+                    telegram_chat_id=chat_id,
+                )
+                entry_id = existing.id
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                existing = await find_outbox_entry(
+                    session,
+                    notification_type=notification_type,
+                    documento_id=documento_id,
+                    recipient_empleado_id=recipient_empleado_id,
+                )
+                if existing is None:
+                    raise
+                entry_id = existing.id
+        else:
+            entry_id = existing.id
+        outcome = await _send_finance_outbox_entry(
+            session,
+            entry_id,
+            mode="delivery",
+            text=text,
+            reply_markup=reply_markup,
+            force_resend=force_resend,
+        )
+        return outcome in {"sent", "already_sent"}
     if existing is not None and existing.status == "sent" and not force_resend:
         return True
     if chat_id is None:
@@ -403,7 +740,8 @@ async def enqueue_finance_pending_payment_outbox(
         except IntegrityError:
             await session.rollback()
             logger.info(
-                "Finance pending-payment outbox already exists for document %s recipient %s",
+                "Finance pending-payment outbox already exists "
+                "for document %s recipient %s",
                 documento.id,
                 recipient.id,
             )
@@ -415,7 +753,7 @@ async def enqueue_finance_pending_payment_outbox(
 
 
 async def _load_documento_for_outbox(
-    session: AsyncSession, documento_id: UUID
+    session: AsyncSession, documento_id: UUID, *, refresh: bool = False
 ) -> Optional[Documento]:
     result = await session.execute(
         select(Documento)
@@ -426,6 +764,7 @@ async def _load_documento_for_outbox(
         )
         .where(Documento.id == documento_id)
         .limit(1)
+        .execution_options(populate_existing=refresh)
     )
     return result.scalar_one_or_none()
 
@@ -446,7 +785,11 @@ async def rebuild_outbox_message_text(
             return f"{header}\n\n{entry.body_preview}"
         return entry.body_preview
 
-    documento = await _load_documento_for_outbox(session, entry.documento_id)
+    documento = await _load_documento_for_outbox(
+        session,
+        entry.documento_id,
+        refresh=entry.notification_type == "finance_pending_payment",
+    )
     if documento is None:
         return None
 
@@ -487,9 +830,23 @@ async def flush_pending_outbox_notifications(
 
     result = await session.execute(stmt)
     entries = list(result.scalars().all())
-    stats = {"attempted": 0, "sent": 0, "failed": 0, "skipped_rebuild": 0}
+    stats = {
+        "attempted": 0,
+        "sent": 0,
+        "failed": 0,
+        "skipped_rebuild": 0,
+        "busy": 0,
+        "skipped": 0,
+        "already_sent": 0,
+    }
 
     for entry in entries:
+        if entry.notification_type == "finance_pending_payment":
+            outcome = await _send_finance_outbox_entry(session, entry.id)
+            stats[outcome] += 1
+            if outcome in {"sent", "failed"}:
+                stats["attempted"] += 1
+            continue
         stats["attempted"] += 1
         ok = await _send_outbox_entry(session, entry)
         if ok:
