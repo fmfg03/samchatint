@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects.postgresql.asyncpg import dialect as asyncpg_dialect
 
 from devnous.gastos.routes import user_routes
 from devnous.gastos.services import documento_telegram, project_authorization_service
@@ -75,12 +75,15 @@ async def test_superadmin_queue_requires_operations_authority_for_reference(
 
     class Session:
         async def execute(self, query):
-            compiled = query._whereclause.compile(dialect=postgresql.dialect())
-            predicate = (
-                str(compiled)
-                .replace("::jsonb", "")
-                .replace("::text", "")
-                .replace("::UUID", "")
+            compiled = query._whereclause.compile(
+                dialect=asyncpg_dialect(paramstyle="named")
+            )
+            assert "::VARCHAR" in str(compiled)
+            predicate = re.sub(
+                r"::(?:jsonb|text|uuid|varchar)(?:\(\d+\))?",
+                "",
+                str(compiled),
+                flags=re.IGNORECASE,
             )
             predicate = predicate.replace(
                 "SELECT jsonb_array_elements_text(route.eligible_empleado_ids)",
