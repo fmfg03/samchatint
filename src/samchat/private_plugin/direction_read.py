@@ -9,6 +9,8 @@ Canon unchanged: this adapter consumes the established read authority only.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -96,6 +98,17 @@ _UUID = {"type": "string", "pattern": r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]
 _SELECTOR = {"anyOf": [_UUID, {"type": "null"}]}
 _DATE = {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"}
 _TEXT = {"type": "string", "maxLength": 2000}
+_PAGE_SIZE = 25
+_INLINE_IDS = 200
+_SCOPE_MANIFEST = _object(
+    {
+        "portfolio_count": {"type": "integer", "minimum": 0},
+        "tournament_count": {"type": "integer", "minimum": 0},
+        "portfolio_ids_complete": {"type": "boolean"},
+        "tournament_ids_complete": {"type": "boolean"},
+        "scope_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    }
+)
 _INDICATOR_SCHEMA = _object(
     {
         **{
@@ -131,10 +144,7 @@ _INDICATOR_SCHEMA = _object(
         "gaps": {"type": "array", "maxItems": 100, "items": _TEXT},
         "validation_status": {"const": "pending_business_validation"},
         "coverage": _object(
-            {
-                key: {"type": "integer", "minimum": 0, "maximum": 1000}
-                for key in ("covered", "total")
-            }
+            {key: {"type": "integer", "minimum": 0} for key in ("covered", "total")}
         ),
     }
 )
@@ -179,6 +189,7 @@ DIRECTION_OUTPUT_SCHEMA = _object(
         "business_acceptance": {"const": "pending"},
     }
 )
+DIRECTION_OUTPUT_SCHEMA["properties"]["scope_manifest"] = _SCOPE_MANIFEST
 _OUTPUT_VALIDATOR = Draft202012Validator(DIRECTION_OUTPUT_SCHEMA)
 DIRECTION_SCOPES_OUTPUT_SCHEMA = _object(
     {
@@ -200,7 +211,52 @@ DIRECTION_SCOPES_OUTPUT_SCHEMA = _object(
         },
     }
 )
+DIRECTION_SCOPES_OUTPUT_SCHEMA["properties"].update(
+    {
+        "scope_manifest": _SCOPE_MANIFEST,
+        "pagination": _object(
+            {
+                "next_cursor": {"type": ["string", "null"], "maxLength": 1024},
+                "page_size": {"const": _PAGE_SIZE},
+            }
+        ),
+    }
+)
 _SCOPES_VALIDATOR = Draft202012Validator(DIRECTION_SCOPES_OUTPUT_SCHEMA)
+
+
+def _bounded_scope(
+    scope: dict, tournament_ids: list[str]
+) -> tuple[dict, list[str], dict]:
+    """Omit long ID arrays explicitly; counts/digest still describe full authority.
+
+    Financial indicators always aggregate the full authorized snapshot. Fetch
+    catalog pages to enumerate IDs when the manifest marks an array incomplete.
+    """
+    for values in (scope["portfolio_ids"], tournament_ids):
+        if any(
+            type(value) is not str or _selection(value) != value for value in values
+        ) or len(set(values)) != len(values):
+            raise Denied("SOURCE_UNAVAILABLE")
+    portfolios, tournaments = sorted(scope["portfolio_ids"]), sorted(tournament_ids)
+    full = {
+        "portfolio_ids": portfolios,
+        "tournament_ids": tournaments,
+        "portfolio_id": scope["portfolio_id"],
+        "tournament_id": scope["tournament_id"],
+    }
+    manifest = {
+        "portfolio_count": len(portfolios),
+        "tournament_count": len(tournaments),
+        "portfolio_ids_complete": len(portfolios) <= _INLINE_IDS,
+        "tournament_ids_complete": len(tournaments) <= _INLINE_IDS,
+        "scope_digest": hashlib.sha256(
+            json.dumps(full, sort_keys=True).encode()
+        ).hexdigest(),
+    }
+    bounded = {k: full[k] for k in ("portfolio_id", "tournament_id")}
+    bounded["portfolio_ids"] = portfolios if manifest["portfolio_ids_complete"] else []
+    return bounded, tournaments if manifest["tournament_ids_complete"] else [], manifest
 
 
 def _selection(value: str | None) -> str | None:
@@ -234,6 +290,9 @@ def _minimize(snapshot: dict) -> dict:
             key: row["coverage"].get(key) for key in ("covered", "total")
         }
         indicators.append(indicator)
+    scope, tournament_ids, manifest = _bounded_scope(
+        snapshot["scope"], snapshot["tournament_ids"]
+    )
     return {
         "schema": "samchat.private.direction.read.v1",
         "read_only": True,
@@ -241,11 +300,9 @@ def _minimize(snapshot: dict) -> dict:
         "edition_year": snapshot["edition_year"],
         "as_of": snapshot["as_of"],
         "period": {k: snapshot["period"][k] for k in ("start", "end")},
-        "scope": {
-            k: snapshot["scope"][k]
-            for k in ("portfolio_ids", "portfolio_id", "tournament_id")
-        },
-        "tournament_ids": list(snapshot["tournament_ids"]),
+        "scope": scope,
+        "tournament_ids": tournament_ids,
+        "scope_manifest": manifest,
         "source_access": dict(snapshot["source_access"]),
         "indicators": indicators,
         "source_consistency": snapshot["source_consistency"],
@@ -320,37 +377,69 @@ class DirectionReadAdapter:
             raise Denied("FORBIDDEN")
         return context, args, scope, access, organization
 
-    async def list_scopes(self, *, identity: Identity) -> dict:
+    async def list_scopes(
+        self, *, identity: Identity, cursor: str | None = None
+    ) -> dict:
         """List authorized current selectors; never load financial/roster data."""
+        offset, expected_digest = 0, None
+        if cursor is not None:
+            try:
+                if type(cursor) is not str or len(cursor) > 1024:
+                    raise ValueError()
+                expected_digest, offset = json.loads(base64.urlsafe_b64decode(cursor))
+                if (
+                    type(offset) is not int
+                    or offset < 0
+                    or not isinstance(expected_digest, str)
+                ):
+                    raise ValueError()
+            except Exception:
+                raise Denied("INVALID_SELECTOR") from None
         try:
             _, args, scope, access, organization = await self._authorize(
                 identity, None, None
             )
+            portfolios = sorted(scope["portfolios"], key=lambda row: row["id"])
+            tournaments = sorted(scope["selected"], key=lambda row: row["id"])
+            bounded, _, manifest = _bounded_scope(
+                scope, [row["id"] for row in tournaments]
+            )
+            if (
+                expected_digest is not None
+                and expected_digest != manifest["scope_digest"]
+            ):
+                raise Denied("SCOPE_CHANGED")
+            if (
+                {row["id"] for row in portfolios} != set(scope["portfolio_ids"])
+                or len({row["id"] for row in portfolios}) != len(portfolios)
+                or len({row["id"] for row in tournaments}) != len(tournaments)
+            ):
+                raise Denied("SOURCE_UNAVAILABLE")
+            next_offset = offset + _PAGE_SIZE
+            next_cursor = (
+                base64.urlsafe_b64encode(
+                    json.dumps([manifest["scope_digest"], next_offset]).encode()
+                ).decode()
+                if next_offset < max(len(portfolios), len(tournaments))
+                else None
+            )
             result = {
                 "schema": "samchat.private.direction.scopes.v1",
                 "read_only": True,
-                "scope": {
-                    k: scope[k]
-                    for k in ("portfolio_ids", "portfolio_id", "tournament_id")
-                },
+                "scope": bounded,
+                "scope_manifest": manifest,
+                "pagination": {"next_cursor": next_cursor, "page_size": _PAGE_SIZE},
                 "portfolios": [
                     {"id": row["id"], "label": row["label"]}
-                    for row in scope["portfolios"]
+                    for row in portfolios[offset:next_offset]
                 ],
                 "tournaments": [
-                    {"id": row["id"], "label": row["name"]} for row in scope["selected"]
+                    {"id": row["id"], "label": row["name"]}
+                    for row in tournaments[offset:next_offset]
                 ],
             }
             _SCOPES_VALIDATOR.validate(result)
-            if (
-                {row["id"] for row in result["portfolios"]}
-                != set(scope["portfolio_ids"])
-                or len({row["id"] for row in result["portfolios"]})
-                != len(result["portfolios"])
-                or len({row["id"] for row in result["tournaments"]})
-                != len(result["tournaments"])
-                or len(json.dumps(result, ensure_ascii=False).encode()) > 65536
-            ):
+            if len(json.dumps(result, ensure_ascii=False).encode()) > 65536:
                 raise Denied("SOURCE_UNAVAILABLE")
             _, current_args, current_scope, current_access, current_org = (
                 await self._authorize(identity, None, None)

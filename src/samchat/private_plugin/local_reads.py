@@ -34,7 +34,9 @@ class ReadAuditSink(AuditSink, Protocol):
 
 
 class DirectionReader(Protocol):
-    async def list_scopes(self, *, identity: Identity) -> dict:
+    async def list_scopes(
+        self, *, identity: Identity, cursor: str | None = None
+    ) -> dict:
         """List current canonical portfolio/tournament selectors only."""
 
     async def read(
@@ -55,6 +57,11 @@ PROFILE_SCHEMA = {
     "additionalProperties": False,
 }
 EMPTY_INPUT = {"type": "object", "properties": {}, "additionalProperties": False}
+SCOPES_INPUT = {
+    "type": "object",
+    "properties": {"cursor": {"type": "string", "minLength": 1, "maxLength": 1024}},
+    "additionalProperties": False,
+}
 DIRECTION_INPUT = {
     "type": "object",
     "properties": {
@@ -94,7 +101,9 @@ def descriptors(identity: Identity) -> list[types.Tool]:
         direction = _descriptor(
             "direction_read_summary",
             "Read a minimized Direction summary in the current employee's "
-            "assigned portfolios and tournaments. Specific denials prevail. "
+            "authorized portfolios and tournaments. Specific denials prevail. "
+            "Indicators cover the full selected scope; scope_manifest identifies "
+            "large scopes whose ID arrays are omitted. Enumerate with direction_list_scopes. "
             "Unavailable facts remain gaps. Does not approve or pay anything.",
             DIRECTION_INPUT,
             ["direction:read"],
@@ -104,8 +113,10 @@ def descriptors(identity: Identity) -> list[types.Tool]:
         scopes = _descriptor(
             "direction_list_scopes",
             "List IDs and labels of portfolios and tournaments currently "
-            "authorized for this employee. No report or personal record data.",
-            EMPTY_INPUT,
+            "authorized for this employee. Follow pagination.next_cursor for all pages. "
+            "Summary indicators cover the full scope even when ID arrays are omitted; "
+            "scope_manifest records counts, completeness and digest. No personal records.",
+            SCOPES_INPUT,
             ["direction:read"],
         )
         scopes.outputSchema = DIRECTION_SCOPES_OUTPUT_SCHEMA
@@ -238,14 +249,14 @@ def create_local_read_server(
                 if "direction:read" not in identity.oauth_scopes:
                     raise Denied("FORBIDDEN")
                 if action == "direction_list_scopes":
-                    if arguments:
+                    if not Draft202012Validator(SCOPES_INPUT).is_valid(arguments):
                         raise Denied("INVALID_ARGUMENTS")
-                    selectors = {}
+                    selectors = arguments
                 else:
                     selectors = _selectors(arguments)
                 record(identity, action, "READ_REQUESTED")
                 if action == "direction_list_scopes":
-                    data = await direction.list_scopes(identity=identity)
+                    data = await direction.list_scopes(identity=identity, **selectors)
                     output_schema = DIRECTION_SCOPES_OUTPUT_SCHEMA
                 else:
                     data = await direction.read(identity=identity, **selectors)
@@ -270,6 +281,7 @@ def create_local_read_server(
                             "actor": identity.actor_id,
                             "grant": identity.grant_id,
                             "scope": data.get("scope", {}),
+                            "scope_manifest": data.get("scope_manifest"),
                             "tournament_ids": data.get(
                                 "tournament_ids",
                                 [row["id"] for row in data.get("tournaments", [])],

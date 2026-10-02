@@ -17,6 +17,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from samchat.private_plugin.contracts import Denied, Identity
@@ -279,6 +280,72 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
         self.budget.assert_not_awaited()
         self.payments.assert_not_awaited()
         self.receivables.assert_not_awaited()
+
+    async def test_large_superadmin_catalog_pages_and_aggregate_remain_complete(self):
+        snapshot, scope = await self.build(
+            self.session,
+            actor=ACTOR,
+            superadmin=False,
+            year=2026,
+            portfolio_id=None,
+            tournament_id=None,
+            source_access={"budget": True, "finance": True},
+        )
+        ids = [str(UUID(int=n)) for n in range(1, 1002)]
+        portfolios = [str(UUID(int=n)) for n in range(2001, 3002)]
+        scope.update(
+            portfolio_ids=portfolios,
+            portfolios=[
+                {"id": tid, "label": "Synthetic portfolio"} for tid in portfolios
+            ],
+            selected=[{"id": tid, "name": "Synthetic tournament"} for tid in ids],
+        )
+        snapshot["tournament_ids"] = ids
+        snapshot["scope"]["portfolio_ids"] = portfolios
+        for metric in snapshot["indicators"]:
+            metric["coverage"] = {
+                "covered": 1001 if metric["value"] is not None else 0,
+                "total": 1001,
+            }
+        self.employee.rol = "superadmin"
+        self.portfolios.return_value = portfolios
+        self.adapter._owners = replace(
+            self.adapter._owners,
+            resolve_scope=AsyncMock(return_value=scope),
+            build_home=AsyncMock(return_value=(snapshot, scope)),
+        )
+        first = await self.adapter.list_scopes(identity=self.identity)
+        found, found_portfolios = [], []
+        page = first
+        while True:
+            self.assertLessEqual(len(page["tournaments"]), 25)
+            self.assertLess(len(json.dumps(page).encode()), 65536)
+            found.extend(row["id"] for row in page["tournaments"])
+            found_portfolios.extend(row["id"] for row in page["portfolios"])
+            cursor = page["pagination"]["next_cursor"]
+            if cursor is None:
+                break
+            page = await self.adapter.list_scopes(identity=self.identity, cursor=cursor)
+        self.assertEqual(found, ids)
+        self.assertEqual(found_portfolios, portfolios)
+        result = await self.read()
+        self.assertEqual(result["tournament_ids"], [])
+        self.assertEqual(result["scope"]["portfolio_ids"], [])
+        self.assertEqual(result["scope_manifest"]["tournament_count"], 1001)
+        self.assertFalse(result["scope_manifest"]["tournament_ids_complete"])
+        self.assertEqual(
+            result["scope_manifest"]["scope_digest"],
+            first["scope_manifest"]["scope_digest"],
+        )
+        self.assertTrue(
+            all(row["coverage"]["total"] == 1001 for row in result["indicators"])
+        )
+        self.assertLess(len(json.dumps(result).encode()), 65536)
+        scope["selected"] = scope["selected"][:-1]
+        with self.assertRaisesRegex(Denied, "SCOPE_CHANGED"):
+            await self.adapter.list_scopes(
+                identity=self.identity, cursor=first["pagination"]["next_cursor"]
+            )
 
     async def test_scope_listing_denies_role_company_and_current_revocation(self):
         self.portfolios.return_value = []

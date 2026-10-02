@@ -200,3 +200,14 @@ y alcance actual antes de confiar en los datos; no se requiere un nuevo almacén
 Regresiones: contexto originalmente mayor de 100.000 caracteres, alteración,
 ausencia, vencimiento, Sam/escenario/PDF/XLSX y transporte intacto en navegador.
 Pasaron 252 pruebas funcionales, 4 de navegador, 131 del plugin y 20 PostgreSQL.
+
+Novena revisión: el enlace lateral del gasto es opcional; una cuenta con torneo
+acreditado aporta atribución aunque no exista informe/solicitud. SQL real verifica
+ese caso y excluye la cuenta ajena. El plugin pagina catálogos de 25 elementos por
+tipo con cursor ligado al digest del alcance; una modificación obliga a reiniciar.
+Los resúmenes conservan todos los indicadores y cobertura del conjunto completo.
+Listas de IDs grandes se omiten explícitamente, con conteos, flags de completitud
+y digest en `scope_manifest`; el recibo de auditoría incluye ese manifiesto.
+Se validan todos los UUIDs incluso cuando no se enumeran en la respuesta. La
+regresión recorre 1.001 torneos y 1.001 carteras sin pérdida ni duplicación.
+Pasaron 252 pruebas funcionales, 132 del plugin, 20 PostgreSQL y el fixture SQL.

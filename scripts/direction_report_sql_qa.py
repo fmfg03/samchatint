@@ -196,6 +196,34 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                 uid(n) for n in [11, 12, 13, 16, 17, 19, 21, 22]
             }, rows
             assert sum(r["base_amount"] for r in rows) == 800
+            for account, tid in [(60, 100), (70, 200)]:
+                c.execute(
+                    text("INSERT INTO cuentas_de_gastos VALUES (:id,:tid)"),
+                    dict(id=uid(account), tid=uid(tid)),
+                )
+                c.execute(
+                    text(
+                        "INSERT INTO expense_reports(id,cuenta_gastos_id,fecha,currency,gasto_cantidad,iva,estado_gasto) VALUES (:id,:account,'2026-06-10','MXN',116,16,'activo')"
+                    ),
+                    dict(id=uid(account + 1), account=uid(account)),
+                )
+            account_only = (
+                c.execute(
+                    text(query),
+                    dict(
+                        ids=[uid(100)],
+                        start="2026-06-01",
+                        end="2026-06-30",
+                        limit=10001,
+                    ),
+                )
+                .mappings()
+                .all()
+            )
+            assert {r["id"] for r in account_only} == {r["id"] for r in rows} | {
+                uid(61)
+            }
+            assert sum(r["base_amount"] for r in account_only) == 900
             for n, state, paid in [
                 (51, "rechazado", "2026-06-15"),
                 (52, "cancelado", "2026-06-15"),
@@ -292,11 +320,12 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                         "request_account_tournament_fallback": True,
                         "request_direct_scope_precedence": True,
                         "documentary_partition_limits": True,
+                        "account_only_expenses_and_foreign_exclusion": True,
                         "paid_timestamp_overrides_stale_state": True,
                         "ambiguous_account_excluded": True,
                         "foreign_scope_excluded": True,
                         "explicit_report_precedence": True,
-                        "fiscal_base_total": "800.00",
+                        "fiscal_base_total": "900.00",
                         "synthetic_only": True,
                     }
                 )

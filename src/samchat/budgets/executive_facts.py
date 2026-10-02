@@ -210,7 +210,7 @@ async def build_executive_facts(
                   AND sibling.id <> e.id AND sibling.estado_gasto <> 'cancelado'
             )) AS shared_cfdi
         FROM expense_reports e
-        JOIN LATERAL (
+        LEFT JOIN LATERAL (
             SELECT report.* FROM documentos report
             WHERE (report.tipo = 'INFORME' AND (
                 report.id = e.informe_documento_id
