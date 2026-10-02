@@ -163,6 +163,7 @@ class TelegramDocumentRuntime:
         await self.execute_reject(chat_id, empleado, doc_uuid, text.strip())
 
     async def send_pendientes(self, chat_id: int, user_id: int) -> None:
+        """Offer pending-document details without promising decision authority."""
         empleado = await self.gateway._get_authorized_empleado(user_id)
         if not empleado:
             await self.gateway.send_message(
@@ -193,7 +194,7 @@ class TelegramDocumentRuntime:
             )
         await self.gateway.send_message(
             chat_id,
-            f"📥 *Pendientes* ({len(docs)}). Toca un documento para ver el detalle y decidir.",
+            f"📥 *Pendientes* ({len(docs)}). Toca un documento para ver el detalle.",
             reply_markup={"inline_keyboard": rows},
         )
 
@@ -295,6 +296,7 @@ class TelegramDocumentRuntime:
             )
 
     async def handle_callback(self, callback_query: Dict[str, Any]) -> bool:
+        """Allow superadmin consultation while enforcing decision authority."""
         data = (callback_query.get("data") or "").strip()
         parsed = gastos_tg.parse_documento_callback(data)
         if not parsed:
@@ -335,19 +337,27 @@ class TelegramDocumentRuntime:
         if prefix == gastos_tg.CB_DETAIL_APPROVER:
             async with session_maker() as session:
                 doc = await gastos_tg.load_documento_for_telegram(session, doc_uuid)
-                if not doc or not await gastos_tg.approver_can_see_document_in_queue_live(
+                if not doc or doc.estado != "enviado":
+                    await self.gateway.answer_callback_query(callback_id, "No disponible")
+                    return True
+                can_decide = await gastos_tg.approver_can_see_document_in_queue_live(
                     session, empleado, doc
-                ):
+                )
+                is_superadmin = (
+                    (getattr(empleado, "rol", "") or "").strip().lower()
+                    in gastos_tg.SUPERADMIN_ROLES
+                )
+                if not can_decide and not is_superadmin:
                     await self.gateway.answer_callback_query(callback_id, "No disponible")
                     return True
                 ctx = await gastos_tg.build_documento_telegram_context(session, doc)
                 body = gastos_tg.format_documento_resumen_es(
                     doc,
                     context=ctx,
-                    include_actions_hint=True,
+                    include_actions_hint=can_decide,
                 )
                 msg = "📋 *Detalle para aprobación*\n\n" + body
-                kb = gastos_tg.approval_inline_keyboard(doc.id)
+                kb = gastos_tg.approval_inline_keyboard(doc.id) if can_decide else None
             await self.gateway.answer_callback_query(callback_id)
             await self.gateway.send_message(chat_id, msg, reply_markup=kb)
             return True

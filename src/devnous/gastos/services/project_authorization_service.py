@@ -12,10 +12,10 @@ import json
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Empleado
+from ..models import Documento, Empleado
 
 
 DIRECTOR_OPERACIONES = "director_operaciones"
@@ -364,6 +364,21 @@ async def prepare_document_authorization_route(
     return ProjectAuthorizationRoute(
         (DIRECTOR_OPERACIONES,), True, "operations_reference"
     )
+
+
+async def actor_route_approver_document_ids(
+    session: AsyncSession, *, actor_id: object, documento_ids: Iterable[Any]
+) -> set[Any]:
+    """Apply the canonical route policy to a queue in one database round trip."""
+    ids = list(documento_ids)
+    if not ids:
+        return set()
+    result = await session.execute(
+        select(Documento.id)
+        .where(Documento.id.in_(ids), text(document_route_approver_sql()))
+        .params(route_employee_id=str(actor_id))
+    )
+    return set(result.scalars().all())
 
 
 async def actor_is_route_approver(

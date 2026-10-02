@@ -906,6 +906,7 @@ async def query_pending_documentos_for_approver(
     *,
     limit: int = 30,
 ) -> List[Documento]:
+    """List visible pending documents, prioritizing a superadmin's decisions."""
     base_opts = (
         selectinload(Documento.empleado),
         selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
@@ -920,15 +921,15 @@ async def query_pending_documentos_for_approver(
         result = await session.execute(
             select(Documento)
             .options(*base_opts)
-            .where(
-                Documento.estado == "enviado",
+            .where(Documento.estado == "enviado")
+            .order_by(
                 or_(
-                    text("NULLIF(BTRIM(documentos.referencia_operaciones), '') IS NULL"),
+                    func.nullif(func.trim(Documento.referencia_operaciones), "").is_(None),
                     text(document_route_approver_sql()),
-                ),
+                ).desc(),
+                Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc(),
             )
             .params(route_employee_id=str(empleado.id))
-            .order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
             .limit(limit)
         )
         return list(result.scalars().all())

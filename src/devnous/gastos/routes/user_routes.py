@@ -228,6 +228,7 @@ from ..services.cfdi_income_bridge_service import (
 from ..services.documento_telegram import ensure_finance_pending_payment_notifications
 from ..services.project_authorization_service import (
     actor_is_route_approver,
+    actor_route_approver_document_ids,
     document_route_approver_sql,
     has_operations_reference,
     prepare_document_authorization_route,
@@ -30523,8 +30524,8 @@ async def documentos_pendientes(
     Show documentos in estado 'enviado' that are pending approval.
 
     Access control:
-    - Superadmin sees natural-flow documents and Operations documents within
-      their effective Operations approval authority.
+    - Superadmin sees all pending documents, including Operations references.
+      Visibility does not grant authority to approve or reject them.
     - Finanzas/admin and assigned approvers can access the inbox.
     - Non-superadmin users only see documents routed to their approval scope.
       If a document has no beneficiary employee, approval falls back to the
@@ -30586,14 +30587,7 @@ async def documentos_pendientes(
     )
 
     filters = [Documento.estado == 'enviado', ~already_actioned_by_current_user]
-    if current_empleado.rol in ('superadmin', 'super_admin'):
-        filters.append(
-            or_(
-                func.nullif(func.trim(Documento.referencia_operaciones), "").is_(None),
-                text(document_route_approver_sql()),
-            )
-        )
-    else:
+    if current_empleado.rol not in ('superadmin', 'super_admin'):
         has_no_project_route = and_(
             func.nullif(func.trim(Documento.referencia_operaciones), "").is_(None),
             text(
@@ -30671,6 +30665,13 @@ async def documentos_pendientes(
     documentos = result.scalars().unique().all()
     aprobador_by_doc = await fetch_documento_aprobador_display_batch(session, documentos)
 
+    operations_ids = {
+        documento.id for documento in documentos if has_operations_reference(documento)
+    } if current_empleado.rol in ("superadmin", "super_admin") else set()
+    actionable_operations_ids = await actor_route_approver_document_ids(
+        session, actor_id=current_empleado.id, documento_ids=operations_ids
+    ) if operations_ids else set()
+
     def _pending_torneo_display(documento: Documento) -> str:
         cuenta = getattr(documento, "cuenta_gastos", None)
         torneo = getattr(documento, "torneo", None) or getattr(cuenta, "torneo", None)
@@ -30692,7 +30693,15 @@ async def documentos_pendientes(
 
     rows_html = ""
     rejection_forms_html = ""
+    actionable_count = 0
     for documento in documentos:
+        can_decide = True
+        if (
+            current_empleado.rol in ("superadmin", "super_admin")
+            and has_operations_reference(documento)
+        ):
+            can_decide = documento.id in actionable_operations_ids
+        actionable_count += int(can_decide)
         row_values = _documentos_todos_reporting_row_values(
             documento,
             aprobador_nombre=aprobador_by_doc.get(documento.id, "\u2014"),
@@ -30732,15 +30741,21 @@ async def documentos_pendientes(
             f'<button type="submit" form="{rejection_form_id}" class="button danger">Confirmar rechazo</button>'
             '</details>'
             '</div>'
-        )
-        rejection_forms_html += (
-            f'<form id="{rejection_form_id}" method="POST" '
-            f'action="/documentos/{documento.id}/rechazar">'
-            f'<input type="hidden" name="next" value="{escape(next_path)}"></form>'
+        ) if can_decide else '<span class="muted">Solo consulta</span>'
+        if can_decide:
+            rejection_forms_html += (
+                f'<form id="{rejection_form_id}" method="POST" '
+                f'action="/documentos/{documento.id}/rechazar">'
+                f'<input type="hidden" name="next" value="{escape(next_path)}"></form>'
+            )
+        selection_html = (
+            f'<input type="checkbox" name="documento_ids" value="{documento.id}" '
+            f'aria-label="Seleccionar {escape(row_values["numero_referencia"])}">'
+            if can_decide else ""
         )
         rows_html += f"""
         <tr>
-            <td><input type="checkbox" name="documento_ids" value="{documento.id}" aria-label="Seleccionar {escape(row_values['numero_referencia'])}"></td>
+            <td>{selection_html}</td>
             <td>{doc_link}</td>
             <td data-sort-value="{escape(referencia_operaciones_sort)}">{referencia_operaciones}</td>
             <td>{escape(_pending_torneo_display(documento))}</td>
@@ -30818,7 +30833,7 @@ async def documentos_pendientes(
             <div class="meta-card">
                 <span>Pendientes</span>
                 <strong>{len(documentos)}</strong>
-                <small>Documentos esperando tu decisi\u00f3n con los filtros actuales.</small>
+                <small>Documentos pendientes de aprobaci\u00f3n con los filtros actuales.</small>
             </div>
             <div class="meta-card">
                 <span>Monto acumulado</span>
@@ -30834,9 +30849,7 @@ async def documentos_pendientes(
     """
 
     if rows_html:
-        table_html = f"""
-            <form method="POST" action="/documentos/pendientes/accion-lote">
-                <input type="hidden" name="next" value="{escape(next_path)}">
+        bulk_controls_html = """
                 <div class="table-actions" style="justify-content:flex-end;margin-bottom:12px;">
                     <button type="button" class="button secondary" data-select-all-approval>Seleccionar todo</button>
                     <button type="submit" name="action" value="approve" class="button primary">Aprobar seleccionados</button>
@@ -30845,6 +30858,11 @@ async def documentos_pendientes(
                 <label class="form-group">Motivo para rechazo masivo
                     <textarea name="comentario" id="comentario-rechazo-lote" rows="2" placeholder="Obligatorio al rechazar seleccionados"></textarea>
                 </label>
+        """ if actionable_count else ""
+        table_html = f"""
+            <form method="POST" action="/documentos/pendientes/accion-lote">
+                <input type="hidden" name="next" value="{escape(next_path)}">
+                {bulk_controls_html}
                 <div class="table-shell"><table class="approval-queue-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
                     <thead>
                         <tr>

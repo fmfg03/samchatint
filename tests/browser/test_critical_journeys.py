@@ -175,7 +175,7 @@ def test_approver_reaches_real_pending_queue_with_decision_context(
         page.get_by_role("button", name="Confirmar rechazo", exact=True)
     ).to_be_visible()
     expect(
-        page.get_by_text("Documentos esperando tu decisión", exact=False)
+        page.get_by_text("Documentos pendientes de aprobación", exact=False)
     ).to_be_visible()
     _capture(page, "approver-pending-queue")
 
