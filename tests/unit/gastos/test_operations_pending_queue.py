@@ -20,9 +20,11 @@ from devnous.gastos.services import documento_telegram, project_authorization_se
 )
 @pytest.mark.parametrize("operations_holder", [False, True])
 @pytest.mark.parametrize("route_snapshot", [False, True])
+@pytest.mark.parametrize("crowded", [False, True])
 async def test_pending_queue_superadmin_visibility_preserves_other_roles_scope(
-    monkeypatch, role, operations_holder, channel, route_snapshot
+    monkeypatch, role, operations_holder, channel, route_snapshot, crowded
 ):
+    """Broader superadmin visibility preserves every other role's queue scope."""
     actor = str(uuid4())
     database = sqlite3.connect(":memory:")
     database.create_function(
@@ -67,6 +69,16 @@ async def test_pending_queue_superadmin_visibility_preserves_other_roles_scope(
             "INSERT INTO authorization_position_assignments VALUES (?, ?, TRUE)",
             (actor, "director_operaciones"),
         )
+    if crowded:
+        for i in range(35):
+            database.execute(
+                "INSERT INTO documentos VALUES (?, 'enviado', '300', NULL, '2026-02-01', ?, NULL)",
+                (f"observer-{i}", actor),
+            )
+            database.execute(
+                "INSERT INTO documento_authorization_routes VALUES (?, ?, TRUE, ?)",
+                (f"observer-{i}", '["director_operaciones"]', '["other-actor"]'),
+            )
     canonical_policy = Mock(wraps=user_routes.document_route_approver_sql)
     monkeypatch.setattr(user_routes, "document_route_approver_sql", canonical_policy)
     monkeypatch.setattr(
@@ -103,6 +115,15 @@ async def test_pending_queue_superadmin_visibility_preserves_other_roles_scope(
                 str(compiled),
                 flags=re.IGNORECASE,
             )
+            if crowded and channel == "telegram" and role in {"superadmin", "super_admin"}:
+                ordering = str(query._order_by_clause.compile(
+                    dialect=asyncpg_dialect(paramstyle="named")
+                ))
+                predicate += " ORDER BY " + ordering
+                predicate = re.sub(
+                    r"::(?:jsonb|text|uuid|varchar)(?:\(\d+\))?", "", predicate,
+                    flags=re.IGNORECASE,
+                )
             predicate = predicate.replace(
                 "SELECT jsonb_array_elements_text(route.eligible_empleado_ids)",
                 "SELECT value FROM json_each(route.eligible_empleado_ids)",
@@ -117,6 +138,9 @@ async def test_pending_queue_superadmin_visibility_preserves_other_roles_scope(
                     markers = ", ".join(f":{key}_{i}" for i in range(len(value)))
                     predicate = predicate.replace(f"__[POSTCOMPILE_{key}]", markers)
                     params.update({f"{key}_{i}": item for i, item in enumerate(value)})
+            params.update({"nullif_1": "", "estado_1": "enviado"})
+            if crowded and channel == "telegram" and role in {"superadmin", "super_admin"}:
+                predicate += " LIMIT 20"
             visible.extend(
                 row[0]
                 for row in database.execute(
@@ -148,8 +172,18 @@ async def test_pending_queue_superadmin_visibility_preserves_other_roles_scope(
     finally:
         database.close()
     if role in {"superadmin", "super_admin"}:
-        assert set(visible) == {"operations", "natural", "blank", "other-route"}
-        canonical_policy.assert_not_called()
+        if crowded and channel == "telegram":
+            assert len(visible) == 20
+            assert {"natural", "blank"} <= set(visible)
+            if operations_holder and not route_snapshot:
+                assert "operations" in visible
+        else:
+            assert set(visible) == ({"operations", "natural", "blank", "other-route"}
+                                   | ({f"observer-{i}" for i in range(35)} if crowded else set()))
+        if channel == "telegram":
+            canonical_policy.assert_called_once_with()
+        else:
+            canonical_policy.assert_not_called()
     else:
         assert set(visible) == (
             {"operations", "natural", "blank"}

@@ -163,6 +163,7 @@ class TelegramDocumentRuntime:
         await self.execute_reject(chat_id, empleado, doc_uuid, text.strip())
 
     async def send_pendientes(self, chat_id: int, user_id: int) -> None:
+        """Offer pending-document details without promising decision authority."""
         empleado = await self.gateway._get_authorized_empleado(user_id)
         if not empleado:
             await self.gateway.send_message(
@@ -193,7 +194,7 @@ class TelegramDocumentRuntime:
             )
         await self.gateway.send_message(
             chat_id,
-            f"📥 *Pendientes* ({len(docs)}). Toca un documento para ver el detalle y decidir.",
+            f"📥 *Pendientes* ({len(docs)}). Toca un documento para ver el detalle.",
             reply_markup={"inline_keyboard": rows},
         )
 
@@ -295,6 +296,7 @@ class TelegramDocumentRuntime:
             )
 
     async def handle_callback(self, callback_query: Dict[str, Any]) -> bool:
+        """Allow superadmin consultation while enforcing decision authority."""
         data = (callback_query.get("data") or "").strip()
         parsed = gastos_tg.parse_documento_callback(data)
         if not parsed:

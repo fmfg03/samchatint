@@ -228,6 +228,7 @@ from ..services.cfdi_income_bridge_service import (
 from ..services.documento_telegram import ensure_finance_pending_payment_notifications
 from ..services.project_authorization_service import (
     actor_is_route_approver,
+    actor_route_approver_document_ids,
     document_route_approver_sql,
     has_operations_reference,
     prepare_document_authorization_route,
@@ -30664,6 +30665,13 @@ async def documentos_pendientes(
     documentos = result.scalars().unique().all()
     aprobador_by_doc = await fetch_documento_aprobador_display_batch(session, documentos)
 
+    operations_ids = {
+        documento.id for documento in documentos if has_operations_reference(documento)
+    } if current_empleado.rol in ("superadmin", "super_admin") else set()
+    actionable_operations_ids = await actor_route_approver_document_ids(
+        session, actor_id=current_empleado.id, documento_ids=operations_ids
+    ) if operations_ids else set()
+
     def _pending_torneo_display(documento: Documento) -> str:
         cuenta = getattr(documento, "cuenta_gastos", None)
         torneo = getattr(documento, "torneo", None) or getattr(cuenta, "torneo", None)
@@ -30692,9 +30700,7 @@ async def documentos_pendientes(
             current_empleado.rol in ("superadmin", "super_admin")
             and has_operations_reference(documento)
         ):
-            can_decide = await actor_is_route_approver(
-                session, actor_id=current_empleado.id, documento_id=documento.id
-            )
+            can_decide = documento.id in actionable_operations_ids
         actionable_count += int(can_decide)
         row_values = _documentos_todos_reporting_row_values(
             documento,
