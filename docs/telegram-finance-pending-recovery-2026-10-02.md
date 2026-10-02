@@ -168,3 +168,28 @@ no encontró hallazgos críticos, importantes ni menores en este ajuste. La
 autorización de merge queda sujeta al nuevo CI del commit corregido; no se
 omite ninguna protección. Este ajuste conserva el alcance y comportamiento
 aprobados y no requiere cambios de esquema, dependencias ni autoridad.
+
+## Correcciones de revisión y aceptación final
+
+La consola distingue `busy`, `skipped` y `already_sent` de un fallo real;
+estos resultados no aumentan el contador de fallos ni de intentos de envío.
+El reenvío manual explícito conserva `force_resend`, sujeto a la elegibilidad
+vigente. La recuperación automática sigue protegiendo los avisos enviados.
+Si ocurre un rollback durante el reenvío, se conserva cualquier acuse más
+reciente que haya persistido otro emisor; no se sobrescribe con un fallo.
+
+Las regresiones cubren estos resultados, el reenvío manual y la carrera de
+rollback con PostgreSQL real. Aceptación conjunta final: **140 passed**, sin
+skips, en **55.07 segundos**: 108 pruebas unitarias/existentes y 32 de PostgreSQL.
+Se ejecutó el comando de cobertura anterior incluyendo también
+`tests/unit/gastos/test_budget_control_gate.py`. Cobertura final de líneas
+ejecutables cambiadas contra `origin/main`: **178/191 (93.19%)**, superior al
+85% requerido; script 5/5 y outbox 173/186. El analizador de cobertura recibió
+`origin/main` como segundo argumento para incluir todos los commits del PR.
+
+Flake8, isort y `git diff --check` pasaron. La validación independiente no
+encontró hallazgos pendientes. Los ajustes restauran comportamiento existente
+dentro del alcance aprobado, sin desviaciones materiales. El CI del nuevo
+commit debe pasar antes del merge; no se omiten protecciones. No hay despliegue
+ni envíos externos de prueba. Los resultados anteriores se conservan como
+evidencia histórica y esta sección establece el corte final de aceptación.

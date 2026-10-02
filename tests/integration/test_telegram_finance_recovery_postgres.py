@@ -721,3 +721,168 @@ async def test_monitor_restart_recovers_due_failure_once_without_sleep_task(
     third = await _monitor(pg)
     assert third["reviewed"] == 0
     assert transport.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_explicit_force_resend_reuses_sent_row_and_resets_retry_budget(
+    pg, monkeypatch
+):
+    seed = await _seed(pg)
+    transport = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "send_telegram_message", transport)
+    assert await _deliver(pg, seed)
+    async with pg.factory.begin() as session:
+        entry = await session.get(models.TelegramNotificationOutbox, seed.entry)
+        original_sent_at = entry.sent_at
+        entry.retry_count = 1
+    assert await _deliver(pg, seed)
+    assert transport.await_count == 1
+    assert await _deliver(pg, seed, force=True)
+    assert transport.await_count == 2
+    async with pg.factory() as session:
+        rows = (await session.scalars(select(models.TelegramNotificationOutbox))).all()
+        assert len(rows) == 1 and rows[0].id == seed.entry
+        assert rows[0].status == "sent" and rows[0].retry_count == 0
+        assert rows[0].sent_at > original_sent_at
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["paid", "inactive"])
+async def test_explicit_force_resend_still_revalidates_eligibility(
+    pg, monkeypatch, change
+):
+    seed = await _seed(pg)
+    transport = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "send_telegram_message", transport)
+    assert await _deliver(pg, seed)
+    async with pg.factory.begin() as session:
+        original = await session.get(models.TelegramNotificationOutbox, seed.entry)
+        original_sent_at = original.sent_at
+        original.retry_count = 1
+        if change == "paid":
+            stmt = (
+                update(models.Documento)
+                .where(models.Documento.id == seed.document)
+                .values(pagado_en=datetime.now(timezone.utc))
+            )
+        else:
+            stmt = (
+                update(models.Empleado)
+                .where(models.Empleado.id == seed.employee)
+                .values(activo=False)
+            )
+        await session.execute(stmt)
+    assert not await _deliver(pg, seed, force=True)
+    assert transport.await_count == 1
+    async with pg.factory() as session:
+        preserved = await session.get(models.TelegramNotificationOutbox, seed.entry)
+        assert preserved.status == "sent" and preserved.sent_at == original_sent_at
+        assert preserved.retry_count == 1
+
+
+@pytest.mark.asyncio
+async def test_console_flush_reports_busy_without_counting_failed(pg, monkeypatch):
+    seed = await _seed(pg)
+    transport = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "send_telegram_message", transport)
+    async with pg.factory() as lock_session:
+        await lock_session.execute(
+            select(models.TelegramNotificationOutbox.id)
+            .where(models.TelegramNotificationOutbox.id == seed.entry)
+            .with_for_update()
+        )
+        async with pg.factory() as console_session:
+            result = await asyncio.wait_for(
+                service.flush_pending_outbox_notifications(console_session), timeout=3
+            )
+        assert result["attempted"] == 0 and result["busy"] == 1
+        assert result["failed"] == result["sent"] == 0
+        transport.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_console_flush_reports_ineligible_as_skipped_not_failed(pg, monkeypatch):
+    seed = await _seed(pg)
+    transport = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "send_telegram_message", transport)
+    async with pg.factory.begin() as session:
+        await session.execute(
+            update(models.Documento)
+            .where(models.Documento.id == seed.document)
+            .values(estado="rechazado")
+        )
+    async with pg.factory() as session:
+        result = await service.flush_pending_outbox_notifications(session)
+    assert result["attempted"] == 0 and result["skipped"] == 1
+    assert result["failed"] == result["sent"] == 0
+    transport.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_console_flush_reports_sent_race_as_already_sent_not_failed(
+    pg, monkeypatch
+):
+    await _seed(pg)
+    transport = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "send_telegram_message", transport)
+    original_send = service._send_finance_outbox_entry
+
+    async def concurrent_sender(session, entry_id, **kwargs):
+        # Console has selected its pending row; a separate sender wins first.
+        async with pg.factory() as winning_session:
+            assert await original_send(winning_session, entry_id) == "sent"
+        return await original_send(session, entry_id, **kwargs)
+
+    monkeypatch.setattr(service, "_send_finance_outbox_entry", concurrent_sender)
+    async with pg.factory() as session:
+        result = await service.flush_pending_outbox_notifications(session)
+    assert result["attempted"] == 0 and result["already_sent"] == 1
+    assert result["failed"] == result["sent"] == 0
+    transport.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_failed_force_rebuild_cannot_overwrite_newer_forced_sent_receipt(
+    pg, monkeypatch
+):
+    seed = await _seed(pg, status="sent")
+    async with pg.factory.begin() as session:
+        entry = await session.get(models.TelegramNotificationOutbox, seed.entry)
+        entry.sent_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+        entry.retry_count = 1
+    rollback_reached, allow_reacquire = asyncio.Event(), asyncio.Event()
+    original_lock = service._lock_finance_entry
+    lock_calls = 0
+
+    async def controlled_lock(session, entry_id):
+        nonlocal lock_calls
+        lock_calls += 1
+        if lock_calls == 2:
+            rollback_reached.set()
+            await asyncio.wait_for(allow_reacquire.wait(), timeout=10)
+        return await original_lock(session, entry_id)
+
+    monkeypatch.setattr(service, "_lock_finance_entry", controlled_lock)
+    monkeypatch.setattr(
+        service,
+        "rebuild_outbox_message_text",
+        AsyncMock(side_effect=[ValueError("Synthetic rebuild error"), "Fixture"]),
+    )
+    transport = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "send_telegram_message", transport)
+    first = asyncio.create_task(_deliver(pg, seed, force=True))
+    try:
+        await asyncio.wait_for(rollback_reached.wait(), timeout=10)
+        assert await asyncio.wait_for(_deliver(pg, seed, force=True), timeout=5)
+        async with pg.factory() as session:
+            winner = await session.get(models.TelegramNotificationOutbox, seed.entry)
+            newest_sent_at = winner.sent_at
+            assert winner.status == "sent" and winner.retry_count == 0
+    finally:
+        allow_reacquire.set()
+        await asyncio.wait_for(first, timeout=10)
+    transport.assert_awaited_once()
+    async with pg.factory() as session:
+        entry = await session.get(models.TelegramNotificationOutbox, seed.entry)
+        assert entry.status == "sent" and entry.sent_at == newest_sent_at
+        assert entry.retry_count == 0 and entry.next_retry_at is None

@@ -463,3 +463,132 @@ async def test_legacy_outbox_marking_preserves_timestamp_compatibility(
         assert scheduled == [row.id]
     assert row.status == status
     assert row.updated_at.tzinfo is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["busy", "already_sent", "skipped"])
+async def test_console_finance_nonsend_is_not_reported_failed(monkeypatch, outcome):
+    row = entry(error_message=None)
+    session = SimpleNamespace(execute=AsyncMock(return_value=Result([row])))
+    monkeypatch.setattr(
+        outbox, "_send_finance_outbox_entry", AsyncMock(return_value=outcome)
+    )
+    stats = await outbox.flush_pending_outbox_notifications(session)
+    assert stats["failed"] == 0
+    assert stats["attempted"] == 0
+    assert stats[outcome] == 1
+
+
+@pytest.mark.asyncio
+async def test_explicit_finance_force_resend_really_sends_and_resets_retry(monkeypatch):
+    row = entry(status="sent", retry_count=1, sent_at=object(), next_retry_at=object())
+    session = sender_session(monkeypatch, row)
+    monkeypatch.setattr(outbox, "find_outbox_entry", AsyncMock(return_value=row))
+    ok = await outbox.deliver_telegram_notification(
+        session,
+        notification_type="finance_pending_payment",
+        header_text="header",
+        text="old body",
+        chat_id=101,
+        documento_id=row.documento_id,
+        recipient_empleado_id=uuid4(),
+        force_resend=True,
+    )
+    assert ok is True
+    outbox.send_telegram_message.assert_awaited_once()
+    assert row.retry_count == 0
+    assert isinstance(row.sent_at, datetime)
+    assert row.next_retry_at is None
+
+
+@pytest.mark.asyncio
+async def test_forced_finance_still_revalidates_eligibility(monkeypatch):
+    row = entry(status="sent", retry_count=1, sent_at=object())
+    session = sender_session(monkeypatch, row)
+    old_receipt = row.sent_at
+    outbox._finance_skip_reason.return_value = "Solicitud ya pagada"
+    assert (
+        await outbox._send_finance_outbox_entry(
+            session, row.id, mode="delivery", force_resend=True
+        )
+        == "skipped"
+    )
+    outbox.send_telegram_message.assert_not_awaited()
+    assert row.status == "sent"
+    assert row.error_message == "Solicitud ya pagada"
+    assert row.retry_count == 1
+    assert row.sent_at is old_receipt
+
+
+@pytest.mark.asyncio
+async def test_force_cannot_enable_automatic_resend(monkeypatch):
+    row = entry(status="sent")
+    session = sender_session(monkeypatch, row)
+    assert (
+        await outbox._send_finance_outbox_entry(session, row.id, force_resend=True)
+        == "already_sent"
+    )
+    outbox.send_telegram_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_explicit_force_bypasses_shared_chat_dedup(monkeypatch):
+    row = entry(status="sent")
+    session = sender_session(monkeypatch, row)
+    session.execute.side_effect = [Result(row.documento_id)]
+    assert (
+        await outbox._send_finance_outbox_entry(
+            session, row.id, mode="delivery", force_resend=True
+        )
+        == "sent"
+    )
+    assert session.execute.await_count == 1
+    outbox.send_telegram_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_force_guard_exception_cannot_reset_sent_receipt(monkeypatch):
+    old_receipt = datetime.now(timezone.utc)
+    row = entry(status="sent", retry_count=1, sent_at=old_receipt)
+    session = sender_session(monkeypatch, row)
+    outbox._finance_skip_reason.side_effect = RuntimeError("guard query failed")
+    assert (
+        await outbox._send_finance_outbox_entry(
+            session, row.id, mode="delivery", force_resend=True
+        )
+        == "failed"
+    )
+    assert row.status == "sent"
+    assert row.sent_at is old_receipt
+    assert row.retry_count == 1
+    outbox.send_telegram_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_force_exception_preserves_competing_new_sent_receipt(monkeypatch):
+    original = datetime.now(timezone.utc)
+    new_receipt = original + timedelta(seconds=1)
+    row = entry(status="sent", sent_at=original, updated_at=original, retry_count=1)
+    session = sender_session(monkeypatch, row)
+    scheduled = []
+    monkeypatch.setattr(outbox, "schedule_outbox_retry", scheduled.append)
+
+    async def competing_delivery_during_rollback():
+        row.status = "sent"
+        row.sent_at = new_receipt
+        row.updated_at = new_receipt
+        row.retry_count = 0
+
+    session.rollback.side_effect = competing_delivery_during_rollback
+    outbox.rebuild_outbox_message_text.side_effect = RuntimeError("rebuild failed")
+    assert (
+        await outbox._send_finance_outbox_entry(
+            session, row.id, mode="delivery", force_resend=True
+        )
+        == "already_sent"
+    )
+    assert row.status == "sent"
+    assert row.sent_at == row.updated_at == new_receipt
+    assert row.retry_count == 0
+    assert scheduled == []
+    outbox.send_telegram_message.assert_not_awaited()

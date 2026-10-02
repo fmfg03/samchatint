@@ -233,15 +233,17 @@ async def _send_finance_outbox_entry(
     mode: str = "pending",
     stale_before: Optional[datetime] = None,
     retry_due_before: Optional[datetime] = None,
+    force_resend: bool = False,
     text: Optional[str] = None,
     reply_markup: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Hold the canonical row lock through validation, HTTP, and result commit."""
+    force_resend = force_resend and mode == "delivery"
     entry = await _lock_finance_entry(session, entry_id)
     if entry is None:
         await session.commit()
         return "busy"
-    if entry.status == "sent":
+    if entry.status == "sent" and not force_resend:
         await session.commit()
         return "already_sent"
     if mode == "recovery":
@@ -259,6 +261,8 @@ async def _send_finance_outbox_entry(
     allowed = {"failed"} if mode == "retry" else {"pending"}
     if mode == "delivery":
         allowed |= {"failed", "skipped"}
+        if force_resend:
+            allowed.add("sent")
     if entry.status not in allowed:
         await session.commit()
         return "skipped"
@@ -278,6 +282,10 @@ async def _send_finance_outbox_entry(
         if int(entry.retry_count or 0) >= 1:
             await session.commit()
             return "skipped"
+    original_status = entry.status
+    original_sent_at = getattr(entry, "sent_at", None)
+    original_updated_at = entry.updated_at
+    resend_ready = False
     try:
         document_lock = await session.execute(
             select(Documento.id)
@@ -297,7 +305,7 @@ async def _send_finance_outbox_entry(
                 await session.commit()
                 return "busy"
         reason = await _finance_skip_reason(session, entry)
-        if reason is None:
+        if reason is None and not force_resend:
             duplicate = await session.execute(
                 select(TelegramNotificationOutbox.id)
                 .where(
@@ -314,12 +322,23 @@ async def _send_finance_outbox_entry(
             if duplicate.scalar_one_or_none() is not None:
                 reason = "Aviso ya enviado al mismo chat para esta solicitud"
         if reason:
-            await mark_outbox_entry(
-                session, entry, status="skipped", error_message=reason
-            )
-            entry.next_retry_at = None
+            if force_resend and entry.status == "sent":
+                # Preserve the historical delivery receipt when a manual resend
+                # is no longer eligible; audit the current rejection separately.
+                entry.error_message = reason
+                entry.updated_at = _outbox_now(entry.notification_type)
+            else:
+                await mark_outbox_entry(
+                    session, entry, status="skipped", error_message=reason
+                )
+                entry.next_retry_at = None
             await session.commit()
             return "skipped"
+        resend_ready = True
+        if force_resend:
+            entry.retry_count = 0
+            entry.sent_at = None
+            entry.next_retry_at = None
         if mode == "retry":
             entry.retry_count = 1
         # Finance bodies always reflect the locked document's current data.
@@ -336,9 +355,25 @@ async def _send_finance_outbox_entry(
         if entry is None:
             await session.commit()
             return "busy"
-        if entry.status == "sent":
+        if entry.status == "sent" and (
+            not force_resend
+            or original_status != "sent"
+            or entry.sent_at != original_sent_at
+            or entry.updated_at != original_updated_at
+        ):
+            # Rollback released our locks. A newer delivery receipt belongs to
+            # the competing sender and must survive our failed resend attempt.
             await session.commit()
-            return "skipped"
+            return "already_sent"
+        if force_resend and entry.status == "sent" and not resend_ready:
+            entry.error_message = "Error al validar elegibilidad del reenvío"
+            entry.updated_at = _outbox_now(entry.notification_type)
+            await session.commit()
+            return "failed"
+        if force_resend:
+            entry.retry_count = 0
+            entry.sent_at = None
+            entry.next_retry_at = None
         if mode == "retry":
             entry.retry_count = 1
         await _mark_outbox_failed(session, entry, "Error al reconstruir o enviar aviso")
@@ -533,7 +568,12 @@ async def deliver_telegram_notification(
         else:
             entry_id = existing.id
         outcome = await _send_finance_outbox_entry(
-            session, entry_id, mode="delivery", text=text, reply_markup=reply_markup
+            session,
+            entry_id,
+            mode="delivery",
+            text=text,
+            reply_markup=reply_markup,
+            force_resend=force_resend,
         )
         return outcome in {"sent", "already_sent"}
     if existing is not None and existing.status == "sent" and not force_resend:
@@ -790,9 +830,23 @@ async def flush_pending_outbox_notifications(
 
     result = await session.execute(stmt)
     entries = list(result.scalars().all())
-    stats = {"attempted": 0, "sent": 0, "failed": 0, "skipped_rebuild": 0}
+    stats = {
+        "attempted": 0,
+        "sent": 0,
+        "failed": 0,
+        "skipped_rebuild": 0,
+        "busy": 0,
+        "skipped": 0,
+        "already_sent": 0,
+    }
 
     for entry in entries:
+        if entry.notification_type == "finance_pending_payment":
+            outcome = await _send_finance_outbox_entry(session, entry.id)
+            stats[outcome] += 1
+            if outcome in {"sent", "failed"}:
+                stats["attempted"] += 1
+            continue
         stats["attempted"] += 1
         ok = await _send_outbox_entry(session, entry)
         if ok:
