@@ -557,3 +557,10 @@ async def test_home_keeps_finance_documents_when_budget_is_denied(monkeypatch):
     assert values["committed"] == "75.00" and values["paid"] == "75.00"
     assert values["actual"] is None and values["budget"] is None
     assert len(session.calls) == 1
+
+
+def test_submitted_request_is_committed_but_not_paid():
+    data = project(documents=[document(estado="enviado", pagado_en=None)])[T1]
+    assert data["values"]["committed"] == "75.00"
+    assert data["values"]["paid"] == "0"
+    assert "enviado" in facts.COMMITTED

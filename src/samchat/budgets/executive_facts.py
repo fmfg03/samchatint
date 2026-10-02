@@ -19,12 +19,15 @@ from devnous.gastos.services.document_amount_service import (
 from devnous.gastos.services.documento_workflow_service import (
     FINANCIAL_TERMINAL_DOCUMENT_STATES,
 )
-from samchat.budgets.service import _budget_expense_base_amount_sql
+from samchat.budgets.service import (
+    _BUDGET_COMMITMENT_DOCUMENT_STATES,
+    _budget_expense_base_amount_sql,
+)
 
 SOURCE = "samchat.budgets.executive_facts.build_executive_facts"
 SCAN_LIMIT = 10000
 KEYS = ("actual", "committed", "paid")
-COMMITTED = {"aprobado", "en_proceso_pago"} | FINANCIAL_TERMINAL_DOCUMENT_STATES
+COMMITTED = _BUDGET_COMMITMENT_DOCUMENT_STATES | FINANCIAL_TERMINAL_DOCUMENT_STATES
 
 
 def _money(value: Any) -> Decimal | None:
@@ -204,11 +207,16 @@ async def build_executive_facts(
                     AND 1 = (SELECT COUNT(*) FROM documentos account_report
                         WHERE account_report.tipo = 'INFORME'
                         AND account_report.cuenta_gastos_id = e.cuenta_gastos_id))
-            )) OR (report.tipo = 'SOLICITUD' AND report.id = e.documento_id)
-            ORDER BY CASE WHEN report.tipo = 'SOLICITUD' THEN 3
+            )) OR (report.tipo = 'SOLICITUD' AND (
+                report.id = e.solicitud_documento_id OR report.id = e.documento_id
+                OR report.gasto_generado_id = e.id
+            ))
+            ORDER BY CASE WHEN report.tipo = 'SOLICITUD' THEN
+                              CASE WHEN report.id = e.solicitud_documento_id THEN 3
+                                   WHEN report.id = e.documento_id THEN 4 ELSE 5 END
                           WHEN report.id = e.informe_documento_id THEN 0
                           WHEN report.id = e.documento_id THEN 1 ELSE 2 END,
-                     report.creado_en ASC
+                     report.creado_en ASC, report.id ASC
             LIMIT 1
         ) d ON TRUE
         LEFT JOIN cuentas_de_gastos expense_cuenta

@@ -88,12 +88,12 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
         with eng.begin() as c:
             c.execute(
                 text(
-                    "CREATE TABLE documentos(id uuid primary key,torneo_id uuid,tipo text,cuenta_gastos_id uuid,creado_en timestamp,currency text,estado text,pagado_en timestamp,monto_total numeric,monto_solicitado numeric,concepto_pago text)"
+                    "CREATE TABLE documentos(id uuid primary key,torneo_id uuid,tipo text,cuenta_gastos_id uuid,creado_en timestamp,currency text,estado text,pagado_en timestamp,monto_total numeric,monto_solicitado numeric,concepto_pago text,gasto_generado_id uuid)"
                 )
             )
             c.execute(
                 text(
-                    "CREATE TABLE expense_reports(id uuid primary key,documento_id uuid,informe_documento_id uuid,cuenta_gastos_id uuid,fecha date,currency text,gasto_cantidad numeric,iva numeric,hospedaje_impuesto_monto numeric,propina_no_deducible numeric,cfdi_compartido_confirmado boolean,cfdi_report_id uuid,estado_gasto text)"
+                    "CREATE TABLE expense_reports(id uuid primary key,documento_id uuid,solicitud_documento_id uuid,informe_documento_id uuid,cuenta_gastos_id uuid,fecha date,currency text,gasto_cantidad numeric,iva numeric,hospedaje_impuesto_monto numeric,propina_no_deducible numeric,cfdi_compartido_confirmado boolean,cfdi_report_id uuid,estado_gasto text)"
                 )
             )
             c.execute(
@@ -157,6 +157,27 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                         acct=uid(acct) if acct else None,
                     ),
                 )
+            for n, tid in [(8, 100), (9, 200), (10, 100)]:
+                c.execute(
+                    text(
+                        "INSERT INTO documentos(id,torneo_id,tipo,creado_en,gasto_generado_id) VALUES (:id,:tid,'SOLICITUD','2026-06-01',:expense)"
+                    ),
+                    dict(id=uid(n), tid=uid(tid), expense=uid(21) if n == 10 else None),
+                )
+            for n, request in [(19, 8), (20, 9), (21, None)]:
+                c.execute(
+                    text(
+                        "INSERT INTO expense_reports(id,solicitud_documento_id,fecha,currency,gasto_cantidad,iva,estado_gasto) VALUES (:id,:request,'2026-06-10','MXN',116,16,'activo')"
+                    ),
+                    dict(id=uid(n), request=uid(request) if request else None),
+                )
+            for n, legacy, explicit in [(22, 7, 8), (23, 6, 9)]:
+                c.execute(
+                    text(
+                        "INSERT INTO expense_reports(id,documento_id,solicitud_documento_id,fecha,currency,gasto_cantidad,iva,estado_gasto) VALUES (:id,:legacy,:explicit,'2026-06-10','MXN',116,16,'activo')"
+                    ),
+                    dict(id=uid(n), legacy=uid(legacy), explicit=uid(explicit)),
+                )
             rows = (
                 c.execute(
                     text(query),
@@ -171,13 +192,14 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                 .all()
             )
             assert {r["id"] for r in rows} == {
-                uid(n) for n in [11, 12, 13, 16, 17]
+                uid(n) for n in [11, 12, 13, 16, 17, 19, 21, 22]
             }, rows
-            assert sum(r["base_amount"] for r in rows) == 500
+            assert sum(r["base_amount"] for r in rows) == 800
             for n, state, paid in [
                 (51, "rechazado", "2026-06-15"),
                 (52, "cancelado", "2026-06-15"),
                 (53, "rechazado", None),
+                (54, "enviado", None),
             ]:
                 c.execute(
                     text(
@@ -194,6 +216,7 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                         end="2026-06-30",
                         limit=10001,
                         committed_states=[
+                            "enviado",
                             "aprobado",
                             "en_proceso_pago",
                             "pagado",
@@ -207,12 +230,16 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                 .mappings()
                 .all()
             )
-            assert {r["id"] for r in paid_rows} == {uid(51), uid(52)}
+            assert {r["id"] for r in paid_rows} == {uid(51), uid(52), uid(54)}
             print(
                 json.dumps(
                     {
                         "legacy_link": True,
                         "direct_request_fallback": True,
+                        "explicit_request_link": True,
+                        "explicit_request_precedence_and_foreign_exclusion": True,
+                        "generated_expense_link": True,
+                        "submitted_request_commitment": True,
                         "report_link": True,
                         "unique_account": True,
                         "account_tournament_fallback": True,
@@ -220,7 +247,7 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                         "ambiguous_account_excluded": True,
                         "foreign_scope_excluded": True,
                         "explicit_report_precedence": True,
-                        "fiscal_base_total": "500.00",
+                        "fiscal_base_total": "800.00",
                         "synthetic_only": True,
                     }
                 )

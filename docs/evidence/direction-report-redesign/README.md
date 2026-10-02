@@ -108,7 +108,7 @@ Una ejecución conjunta de browser + pruebas async produjo 23 errores del runner
 Playwright síncrono mantiene su loop durante la sesión. Se ejecutan en procesos
 separados como indican los comandos de abajo; no se atribuye ese fallo al producto.
 
-- 187 unitarias/regresiones enfocadas aprobadas; 97% de cobertura combinada en
+- 188 unitarias/regresiones enfocadas aprobadas; 97% de cobertura combinada en
   `executive_facts.py` y `report_layouts.py`. Advertencias existentes de deprecación.
 - 3 pruebas de navegador aprobadas: filtros múltiples, autorización contextual,
   escenarios/exportes, tabs, diálogo, foco y móvil.
@@ -161,3 +161,10 @@ controla ejercido y Finanzas compromiso/pagado. Se verifican combinaciones de
 denegación en lector, home y plugin. Contextos legacy escalar+lista se revalidan
 con un único selector para Sam/PDF/XLSX. Las preguntas operativas sobre celdas
 pasan el mismo guard de intención y responden que no se ejecutó acción alguna.
+
+Cuarta revisión: el fallback de solicitud reconoce `solicitud_documento_id`,
+`documento_id` y `gasto_generado_id`, priorizando enlace explícito y conservando
+precedencia del informe. SQL PostgreSQL comprueba atribución, enlaces generados,
+precedencia y exclusión de solicitudes ajenas. Compromisos reutiliza el conjunto
+canónico `_BUDGET_COMMITMENT_DOCUMENT_STATES`, que incluye `enviado`; la solicitud
+enviada sin evidencia de pago cuenta como compromiso, nunca como pagada.
