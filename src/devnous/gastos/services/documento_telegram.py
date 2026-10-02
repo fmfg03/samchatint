@@ -843,10 +843,16 @@ async def load_documento_for_telegram(
     return result.scalar_one_or_none()
 
 
-def approver_can_see_document_in_queue(empleado: Empleado, documento: Documento) -> bool:
+def approver_can_see_document_in_queue(
+    empleado: Empleado, documento: Documento
+) -> bool:
     """Current actionable Telegram approval guard for stale inline buttons."""
     if documento.estado != "enviado":
         return False
+    from .project_authorization_service import has_operations_reference
+
+    if has_operations_reference(documento):
+        return False  # The live guard must resolve position-backed authority.
     role = (getattr(empleado, "rol", "") or "").strip().lower()
     if role in SUPERADMIN_ROLES:
         return True
@@ -862,9 +868,17 @@ async def approver_can_see_document_in_queue_live(
     """Apply a persisted project route before falling back to the legacy lane."""
     if documento.estado != "enviado":
         return False
+    from .project_authorization_service import (
+        actor_is_route_approver,
+        has_operations_reference,
+    )
+
+    if has_operations_reference(documento):
+        return await actor_is_route_approver(
+            session, actor_id=empleado.id, documento_id=documento.id
+        )
     if (getattr(empleado, "rol", "") or "").strip().lower() in SUPERADMIN_ROLES:
         return True
-    from .project_authorization_service import actor_is_route_approver
 
     route_exists = (
         await session.execute(
@@ -912,7 +926,11 @@ async def query_pending_documentos_for_approver(
 
     solicitante_alias = aliased(Empleado)
     beneficiario_alias = aliased(Empleado)
+    # Shared policy retains eligible_empleado_ids from valid route snapshots.
+    from .project_authorization_service import document_route_approver_sql
+
     has_no_project_route = text(
+        "NULLIF(BTRIM(documentos.referencia_operaciones), '') IS NULL AND "
         "NOT EXISTS (SELECT 1 FROM documento_authorization_routes route "
         "WHERE route.documento_id = documentos.id)"
     )
@@ -928,11 +946,7 @@ async def query_pending_documentos_for_approver(
             and_(
                 Documento.estado == "enviado",
                 or_(
-                    text(
-                        "EXISTS (SELECT 1 FROM documento_authorization_routes route "
-                        "WHERE route.documento_id = documentos.id "
-                        "AND :route_employee_id IN (SELECT jsonb_array_elements_text(route.eligible_empleado_ids)))"
-                    ),
+                    text(document_route_approver_sql()),
                     and_(
                         has_no_project_route,
                         beneficiario_alias.aprobador_id == empleado.id,

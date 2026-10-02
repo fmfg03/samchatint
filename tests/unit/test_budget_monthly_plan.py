@@ -2127,14 +2127,14 @@ def test_unbudgeted_expense_actuals_excludes_assigned_line_totals():
     assert actuals[1]["real_expense_cash"] == 200.0
 
 
-def test_budget_movement_key_prefers_stable_document_identity():
+def test_budget_movement_key_prefers_stable_accounting_line_identity():
     assert budgets_service.budget_movement_key(
         {
             "document_id": "document-1",
             "expense_id": "expense-1",
             "accounting_line_id": "accounting-1",
         }
-    ) == "document:document-1"
+    ) == "accounting:accounting-1"
 
 
 @pytest.mark.asyncio

@@ -1095,7 +1095,9 @@ def test_document_detail_approval_actions_prioritize_persisted_project_route() -
 
     assert "documento_authorization_routes" in block
     assert "await actor_is_route_approver(" in block
-    assert "if route_exists:" in block
+    assert (
+        "if route_exists or has_operations_reference(documento):" in block
+    )
     assert "approval_subject = approval_subject_empleado(documento) or empleado" in block
     assert "approval_subject.aprobador_id == current_empleado.id" in block
 

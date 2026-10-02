@@ -5329,7 +5329,10 @@ async def list_budget_audit_events(
 
 
 async def _link_budget_lines_to_tournaments(
-    session: AsyncSession, *, budget_version_id: str
+    session: AsyncSession,
+    *,
+    budget_version_id: str,
+    line_ids: Optional[list[str]] = None,
 ) -> None:
     tournament_rows = await _load_tournament_rows(session)
     if not tournament_rows:
@@ -5337,14 +5340,17 @@ async def _link_budget_lines_to_tournaments(
     line_rows = (
         (
             await session.execute(
-                text(
-                    """
+                text("""
                 SELECT id, tournament_code, tournament_name
                 FROM budget_lines
                 WHERE budget_version_id = :budget_version_id
-                """
-                ),
-                {"budget_version_id": budget_version_id},
+                  AND (:all_lines OR id::text = ANY(CAST(:line_ids AS text[])))
+                """),
+                {
+                    "budget_version_id": budget_version_id,
+                    "all_lines": line_ids is None,
+                    "line_ids": line_ids or [],
+                },
             )
         )
         .mappings()
@@ -5359,13 +5365,11 @@ async def _link_budget_lines_to_tournaments(
         if not tournament_id:
             continue
         await session.execute(
-            text(
-                """
+            text("""
                 UPDATE budget_lines
                 SET tournament_id = :tournament_id, updated_at = NOW()
                 WHERE id = :line_id
-                """
-            ),
+                """),
             {"line_id": row["id"], "tournament_id": tournament_id},
         )
 
@@ -5660,8 +5664,10 @@ async def create_budget_line(
     criteria_note: Optional[str] = None,
     observations: Optional[str] = None,
     commit: bool = True,
+    ensure_schema: bool = True,
 ) -> dict[str, Any]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     current = await get_budget_version(
         session, version_id=version_id, ensure_schema=False
     )
@@ -5686,8 +5692,7 @@ async def create_budget_line(
     reference = _safe_decimal(reference_amount)
     line_id = str(uuid.uuid4())
     await session.execute(
-        text(
-            """
+        text("""
             INSERT INTO budget_lines (
                 id, budget_version_id, budget_concept_id, tournament_code, tournament_name, phase,
                 concept_name, line_direction, account_code_suggested, account_code_final,
@@ -5701,8 +5706,7 @@ async def create_budget_line(
                 :owner_name, :criteria_note, :observations, CAST(:metadata AS jsonb),
                 NOW(), NOW()
             )
-            """
-        ),
+            """),
         {
             "id": line_id,
             "budget_version_id": version_id,
@@ -5725,7 +5729,9 @@ async def create_budget_line(
             "metadata": json.dumps({"created_from": "ui_manual"}, ensure_ascii=False),
         },
     )
-    await _link_budget_lines_to_tournaments(session, budget_version_id=version_id)
+    await _link_budget_lines_to_tournaments(
+        session, budget_version_id=version_id, line_ids=[line_id]
+    )
     await _audit_budget_event(
         session,
         budget_version_id=version_id,
@@ -7179,8 +7185,10 @@ async def upsert_budget_line_for_concept(
     monthly_allocations: Optional[dict[int, Any]] = None,
     commit: bool = True,
     preserve_existing: bool = False,
+    ensure_schema: bool = True,
 ) -> dict[str, Any]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     clean_direction = normalize_budget_line_direction(line_direction)
     concept = await resolve_budget_concept(
         session,
@@ -7193,16 +7201,14 @@ async def upsert_budget_line_for_concept(
     existing = (
         (
             await session.execute(
-                text(
-                    """
+                text("""
                 SELECT id
                 FROM budget_lines
                 WHERE budget_version_id = :version_id
                   AND budget_concept_id = :budget_concept_id
                   AND COALESCE(line_direction, 'expense') = :line_direction
                 LIMIT 1
-                """
-                ),
+                """),
                 {
                     "version_id": version_id,
                     "budget_concept_id": _safe_str(budget_concept_id),
@@ -7256,6 +7262,7 @@ async def upsert_budget_line_for_concept(
                 line_direction=clean_direction,
                 budget_amount=amount,
                 commit=commit,
+                ensure_schema=False,
             )
             line_id = line["id"]
 
@@ -7284,16 +7291,19 @@ async def upsert_budget_line_for_concept(
 
 
 def budget_movement_key(movement: dict[str, Any]) -> str:
-    """Return the stable source identity used for budget reconciliation."""
-    document_id = _safe_str(movement.get("document_id"))
-    if document_id:
-        return f"document:{document_id}"
-    expense_id = _safe_str(movement.get("expense_id"))
-    if expense_id:
-        return f"expense:{expense_id}"
+    """Identify a posting or expense without merging report concepts."""
     accounting_line_id = _safe_str(movement.get("accounting_line_id"))
     if accounting_line_id:
         return f"accounting:{accounting_line_id}"
+    expense_id = _safe_str(movement.get("expense_id"))
+    if expense_id:
+        return f"expense:{expense_id}"
+    document_id = _safe_str(movement.get("document_id"))
+    if document_id:
+        concept_id = _safe_str(movement.get("concept_key"))
+        if concept_id and concept_id != _UNASSIGNED_BUDGET_CONCEPT_KEY:
+            return f"document:{document_id}:concept:{concept_id}"
+        return f"document:{document_id}"
     return ""
 
 
@@ -7313,9 +7323,48 @@ async def assign_budget_movement_to_line(
         raise ValueError("Budget movement key is required")
     if ensure_schema:
         await ensure_budget_schema(session)
+    target_result = await session.execute(
+        text("""SELECT l.tournament_id::text AS tournament_id, v.edition_year,
+                      v.status AS version_status
+            FROM budget_lines l JOIN budget_versions v ON v.id=l.budget_version_id
+            WHERE l.id=CAST(:line_id AS uuid)
+              AND l.budget_version_id=CAST(:version_id AS uuid)
+              AND l.budget_concept_id=CAST(:concept_id AS uuid)
+              AND COALESCE(l.line_direction, 'expense')='expense'
+            """),
+        {
+            "line_id": _safe_str(budget_line_id),
+            "version_id": _safe_str(budget_version_id),
+            "concept_id": _safe_str(budget_concept_id),
+        },
+    )
+    target = target_result.mappings().first()
+    if target is None or not _editable_version_status(target["version_status"]):
+        raise ValueError("Partida inválida para esta versión o concepto presupuestal.")
+    snapshot = await build_budget_actuals_snapshot(
+        session,
+        edition_year=int(target["edition_year"]),
+        version_id=_safe_str(budget_version_id),
+        tournament_id=target["tournament_id"],
+    )
+    candidates = [
+        movement
+        for movement in snapshot["movements"]
+        if budget_movement_key(movement) == clean_key
+        or (
+            movement.get("document_id")
+            and clean_key == f"document:{movement['document_id']}"
+        )
+    ]
+    if not candidates or any(
+        _safe_str(movement.get("concept_key")) != _safe_str(budget_concept_id)
+        for movement in candidates
+    ):
+        raise ValueError(
+            "El movimiento no corresponde a esta partida; recarga el detalle."
+        )
     await session.execute(
-        text(
-            """
+        text("""
             INSERT INTO budget_movement_assignments (
                 id, budget_version_id, budget_concept_id, budget_line_id,
                 movement_key, assigned_by_empleado_id, created_at, updated_at
@@ -7328,8 +7377,7 @@ async def assign_budget_movement_to_line(
                 budget_line_id = EXCLUDED.budget_line_id,
                 assigned_by_empleado_id = EXCLUDED.assigned_by_empleado_id,
                 updated_at = NOW()
-            """
-        ),
+            """),
         {
             "id": str(uuid.uuid4()),
             "budget_version_id": _safe_str(budget_version_id),
@@ -7381,38 +7429,31 @@ async def _apply_explicit_movement_assignments(
     assignment_rows = (
         (
             await session.execute(
-                text(
-                    """
+                text("""
                     SELECT movement_key, budget_concept_id::text AS budget_concept_id,
                            budget_line_id::text AS budget_line_id
                     FROM budget_movement_assignments
                     WHERE budget_version_id = CAST(:budget_version_id AS uuid)
-                    """
-                ),
+                    """),
                 {"budget_version_id": _safe_str(budget_version_id)},
             )
         )
         .mappings()
         .all()
     )
-    assignments = {
-        _safe_str(row["movement_key"]): _safe_str(row["budget_line_id"])
-        for row in assignment_rows
-    }
+    assignments = {_safe_str(row["movement_key"]): row for row in assignment_rows}
     activated_concepts = {
         _safe_str(row["budget_concept_id"]) for row in assignment_rows
     }
     line_rows = (
         (
             await session.execute(
-                text(
-                    """
+                text("""
                     SELECT id::text AS id, budget_concept_id::text AS budget_concept_id
                     FROM budget_lines
                     WHERE budget_version_id = CAST(:budget_version_id AS uuid)
                       AND COALESCE(line_direction, 'expense') = 'expense'
-                    """
-                ),
+                    """),
                 {"budget_version_id": _safe_str(budget_version_id)},
             )
         )
@@ -7423,6 +7464,9 @@ async def _apply_explicit_movement_assignments(
         _safe_str(row["budget_concept_id"]): _safe_str(row["id"])
         for row in line_rows
         if _safe_str(row["budget_concept_id"])
+    }
+    line_concepts = {
+        _safe_str(row["id"]): _safe_str(row["budget_concept_id"]) for row in line_rows
     }
     # Lightweight unit seams and versions with no expense lines retain the
     # legacy concept-keyed actuals; there is nothing to reconcile to yet.
@@ -7440,7 +7484,25 @@ async def _apply_explicit_movement_assignments(
     for movement in movements:
         concept_id = _safe_str(movement.get("concept_key"))
         movement_key = budget_movement_key(movement)
-        line_id = assignments.get(movement_key)
+        # Old document-level assignments remain valid for their own concept.
+        # Never carry a hotel assignment onto food/transport in the same report.
+        candidate_keys = [movement_key]
+        if movement.get("expense_id"):
+            candidate_keys.append(f"expense:{movement['expense_id']}")
+        if movement.get("document_id"):
+            candidate_keys.append(f"document:{movement['document_id']}")
+        line_id = None
+        for candidate_key in candidate_keys:
+            assignment = assignments.get(candidate_key)
+            if assignment is None:
+                continue
+            assigned_line = _safe_str(assignment["budget_line_id"])
+            if (
+                _safe_str(assignment["budget_concept_id"]) == concept_id
+                and line_concepts.get(assigned_line) == concept_id
+            ):
+                line_id = assigned_line
+                break
         if not line_id and concept_id not in activated_concepts:
             line_id = legacy_lines.get(concept_id)
         movement["movement_key"] = movement_key or None
@@ -7704,6 +7766,117 @@ _BUDGET_TERMINAL_DOCUMENT_STATES = {
 }
 
 
+async def _load_paid_report_reimbursement_dates(
+    session: AsyncSession, *, report_ids: list[str]
+) -> dict[str, date | datetime]:
+    """Recognize full paid reimbursements using the canonical employee saldo.
+
+    This is read-only. A closed account, AMEX charge, partial transfer, or an
+    approved but unpaid request is never sufficient evidence of reimbursement.
+    Account-level matching requires exactly one INFORME to avoid ambiguity.
+    """
+    from types import SimpleNamespace
+
+    from devnous.gastos.services.amex_expense_service import (
+        calculate_informe_expense_totals,
+        compute_informe_saldo,
+        sum_paid_solicitud_amounts,
+    )
+
+    if not report_ids:
+        return {}
+    reports = (
+        (
+            await session.execute(
+                text("""/* budget_report_settlement_reports */
+                    SELECT report.id::text AS document_id,
+                           report.cuenta_gastos_id::text AS cuenta_gastos_id,
+                           (SELECT COUNT(*) FROM documentos sibling
+                            WHERE sibling.cuenta_gastos_id = report.cuenta_gastos_id
+                              AND sibling.tipo = 'INFORME') AS report_count
+                    FROM documentos report
+                    WHERE report.id::text = ANY(CAST(:report_ids AS text[]))
+                      AND report.tipo = 'INFORME' AND report.estado = 'aprobado'
+                      AND report.cuenta_gastos_id IS NOT NULL
+                    """),
+                {"report_ids": report_ids},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    reports = [row for row in reports if row["report_count"] == 1]
+    account_ids = list({row["cuenta_gastos_id"] for row in reports})
+    if not account_ids:
+        return {}
+
+    async def account_rows(query: str) -> list[dict[str, Any]]:
+        result = await session.execute(text(query), {"account_ids": account_ids})
+        return [dict(row) for row in result.mappings().all()]
+
+    requests = await account_rows("""/* budget_report_settlement_requests */
+        SELECT cuenta_gastos_id::text AS cuenta_gastos_id, tipo, estado,
+               monto_solicitado, concepto_pago, pagado_en, fecha_pago
+        FROM documentos
+        WHERE cuenta_gastos_id::text = ANY(CAST(:account_ids AS text[]))
+          AND tipo = 'SOLICITUD'
+        """)
+    expenses = await account_rows("""/* budget_report_settlement_expenses */
+        SELECT cuenta_gastos_id::text AS cuenta_gastos_id, gasto_cantidad,
+               pagado_con_amex_empresa, origen, estado_gasto
+        FROM expense_reports
+        WHERE cuenta_gastos_id::text = ANY(CAST(:account_ids AS text[]))
+        """)
+    adjustments = await account_rows("""/* budget_report_settlement_adjustments */
+        SELECT cuenta_gastos_id::text AS cuenta_gastos_id, monto
+        FROM reembolsos
+        WHERE cuenta_gastos_id::text = ANY(CAST(:account_ids AS text[]))
+          AND estado <> 'cancelado'
+        """)
+    dates: dict[str, date | datetime] = {}
+    for report in reports:
+        account_id = report["cuenta_gastos_id"]
+        account_requests = [
+            SimpleNamespace(**row)
+            for row in requests
+            if row["cuenta_gastos_id"] == account_id
+        ]
+        paid_refunds = [
+            row
+            for row in account_requests
+            if _safe_str(row.estado).lower() == "pagado"
+            and _safe_str(row.concepto_pago)
+            .lower()
+            .startswith("reembolso de saldo a favor")
+            and _safe_decimal(row.monto_solicitado) > 0
+            and (row.pagado_en or row.fecha_pago) is not None
+        ]
+        if not paid_refunds:
+            continue
+        totals = calculate_informe_expense_totals(
+            [
+                SimpleNamespace(**row)
+                for row in expenses
+                if row["cuenta_gastos_id"] == account_id
+            ]
+        )
+        saldo = compute_informe_saldo(
+            employee_paid=totals.employee_paid,
+            monto_entregado=sum_paid_solicitud_amounts(account_requests),
+            settled_amount=sum(
+                _safe_decimal(row["monto"])
+                for row in adjustments
+                if row["cuenta_gastos_id"] == account_id
+            ),
+        )
+        if totals.employee_paid > 0 and saldo.saldo == 0:
+            dates[report["document_id"]] = max(
+                (row.pagado_en or row.fecha_pago for row in paid_refunds),
+                key=lambda value: value.isoformat(),
+            )
+    return dates
+
+
 async def build_budget_actuals_snapshot(
     session: AsyncSession,
     *,
@@ -7769,8 +7942,7 @@ async def build_budget_actuals_snapshot(
     ledger_rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                     WITH candidate_lines AS (
                         SELECT
                             apl.*,
@@ -8039,8 +8211,7 @@ async def build_budget_actuals_snapshot(
                       )
                       {phase_clause}
                     ORDER BY scoped.fecha_poliza, scoped.numero_poliza, scoped.line_no
-                    """
-                ),
+                    """),
                 params,
             )
         )
@@ -8048,12 +8219,28 @@ async def build_budget_actuals_snapshot(
         .all()
     )
 
+    reimbursement_dates = await _load_paid_report_reimbursement_dates(
+        session,
+        report_ids=list(
+            {
+                _safe_str(row.get("document_id"))
+                for row in ledger_rows
+                if _safe_str(row.get("document_type")).upper() == "INFORME"
+                and _safe_str(row.get("document_state")).lower() == "aprobado"
+                and row.get("settlement_at") is None
+            }
+        ),
+    )
     store = _monthly_actual_store()
     movements: list[dict[str, Any]] = []
     ledger_document_ids: set[str] = set()
     included_document_ids: set[str] = set()
     for raw_row in ledger_rows:
         row = dict(raw_row)
+        if row.get("settlement_at") is None:
+            row["settlement_at"] = reimbursement_dates.get(
+                _safe_str(row.get("document_id"))
+            )
         account_code = _safe_str(row.get("cuenta_codigo"))
         is_income = account_code == "4100" or account_code.startswith("4100-")
         amount = (
@@ -8285,8 +8472,7 @@ async def build_budget_actuals_snapshot(
     report_expense_rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                     SELECT
                         e.id::text AS expense_id,
                         e.fecha AS expense_date,
@@ -8369,16 +8555,33 @@ async def build_budget_actuals_snapshot(
                           'aplicado', 'liquidado'
                       )
                     ORDER BY d.creado_en, d.numero_referencia, e.fecha, e.id
-                    """
-                ),
+                    """),
                 document_params,
             )
         )
         .mappings()
         .all()
     )
+    reimbursement_dates.update(
+        await _load_paid_report_reimbursement_dates(
+            session,
+            report_ids=list(
+                {
+                    _safe_str(row.get("document_id"))
+                    for row in report_expense_rows
+                    if _safe_str(row.get("document_id")) not in ledger_document_ids
+                    and _safe_str(row.get("document_state")).lower() == "aprobado"
+                    and row.get("settlement_at") is None
+                }
+            ),
+        )
+    )
     for raw_row in report_expense_rows:
         row = dict(raw_row)
+        if row.get("settlement_at") is None:
+            row["settlement_at"] = reimbursement_dates.get(
+                _safe_str(row.get("document_id"))
+            )
         document_id = _safe_str(row.get("document_id"))
         if document_id in ledger_document_ids:
             continue

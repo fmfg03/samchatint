@@ -41,14 +41,14 @@ from .documento_semantics import (
     approval_subject_empleado,
 )
 from .documento_service import (
-    allocate_next_referencia_operaciones,
     validate_shared_cfdi_payment_amount,
 )
 from .cfdi_ingestion_service import find_blocking_cfdi_usage
 from .project_authorization_service import (
     actor_is_route_approver,
     invalidate_document_route,
-    resolve_and_snapshot_document_route,
+    prepare_document_authorization_route,
+    has_operations_reference,
 )
 
 logger = logging.getLogger(__name__)
@@ -300,6 +300,11 @@ async def approve_reimbursement_solicitud_for_approved_informe(
         return None
     aprobador_id = await _linked_informe_approval_actor_id(session, documento)
     if aprobador_id is None:
+        return None
+    await prepare_document_authorization_route(session, documento)
+    if has_operations_reference(documento) and not await actor_is_route_approver(
+        session, actor_id=aprobador_id, documento_id=documento.id
+    ):
         return None
     aprobacion = _auto_approve_solicitud_with_approved_informe(
         documento=documento,
@@ -642,6 +647,9 @@ async def transition_documento_workflow(
                 "pasará a Programación de Pago cuando se apruebe el informe "
                 "de gastos vinculado.",
             )
+        if not has_operations_reference(documento):
+            await invalidate_document_route(session, documento.id)
+        await prepare_document_authorization_route(session, documento)
         if documento_requires_budget_control(documento):
             documento.estado = BUDGET_CONTROL_STATE
             documento.enviado_en = None
@@ -659,16 +667,17 @@ async def transition_documento_workflow(
             informe_aprobador_id = await _linked_informe_approval_actor_id(
                 session, documento
             )
-            if informe_aprobador_id is not None:
+            if informe_aprobador_id is not None and (
+                not has_operations_reference(documento)
+                or await actor_is_route_approver(
+                    session, actor_id=informe_aprobador_id, documento_id=documento.id
+                )
+            ):
                 auto_aprobacion = _auto_approve_solicitud_with_approved_informe(
                     documento=documento,
                     aprobador_id=informe_aprobador_id,
                     now=now,
                 )
-        await invalidate_document_route(session, documento.id)
-        route = await resolve_and_snapshot_document_route(session, documento)
-        if route and route.requires_operations_reference and not documento.referencia_operaciones:
-            documento.referencia_operaciones = await allocate_next_referencia_operaciones(session)
 
     elif normalized_action == "approve":
         if documento.estado != "enviado":
@@ -689,23 +698,20 @@ async def transition_documento_workflow(
             await _document_has_recorded_approval(session, documento_uuid)
         )
         route_exists = (
-            (
-                await session.execute(
-                    text(
-                        "SELECT 1 FROM documento_authorization_routes "
-                        "WHERE documento_id = :documento_id"
-                    ),
-                    {"documento_id": str(documento.id)},
-                )
-            ).scalar_one_or_none()
-            is not None
-        )
-        if route_exists:
-            if (
-                not await actor_is_route_approver(
-                    session, actor_id=actor.id, documento_id=documento.id
-                )
-                and actor.rol not in {"superadmin", "super_admin"}
+            await session.execute(
+                text(
+                    "SELECT 1 FROM documento_authorization_routes "
+                    "WHERE documento_id = :documento_id"
+                ),
+                {"documento_id": str(documento.id)},
+            )
+        ).scalar_one_or_none() is not None
+        if route_exists or has_operations_reference(documento):
+            if not await actor_is_route_approver(
+                session, actor_id=actor.id, documento_id=documento.id
+            ) and (
+                has_operations_reference(documento)
+                or actor.rol not in {"superadmin", "super_admin"}
             ):
                 raise DocumentoWorkflowValidationError(
                     "not_route_approver",
@@ -817,12 +823,12 @@ async def transition_documento_workflow(
             ).scalar_one_or_none()
             is not None
         )
-        if route_exists:
-            if (
-                not await actor_is_route_approver(
-                    session, actor_id=actor.id, documento_id=documento.id
-                )
-                and actor.rol not in {"superadmin", "super_admin"}
+        if route_exists or has_operations_reference(documento):
+            if not await actor_is_route_approver(
+                session, actor_id=actor.id, documento_id=documento.id
+            ) and (
+                has_operations_reference(documento)
+                or actor.rol not in {"superadmin", "super_admin"}
             ):
                 raise DocumentoWorkflowValidationError(
                     "not_route_approver",
