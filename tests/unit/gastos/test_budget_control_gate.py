@@ -729,6 +729,9 @@ async def test_forced_outbox_resend_bypasses_sent_suppression_and_resets_retry_s
 @pytest.mark.asyncio
 async def test_informe_with_prior_budget_but_unassigned_line_returns_to_budget_control(monkeypatch):
     monkeypatch.setattr(
+        user_routes, "prepare_document_authorization_route", AsyncMock()
+    )
+    monkeypatch.setattr(
         user_routes, "validate_informe_surplus_before_submission", AsyncMock()
     )
     documento = SimpleNamespace(
@@ -769,6 +772,9 @@ async def test_informe_with_prior_budget_but_unassigned_line_returns_to_budget_c
 
 @pytest.mark.asyncio
 async def test_informe_with_all_lines_assigned_goes_to_approval(monkeypatch):
+    monkeypatch.setattr(
+        user_routes, "prepare_document_authorization_route", AsyncMock()
+    )
     monkeypatch.setattr(
         user_routes, "validate_informe_surplus_before_submission", AsyncMock()
     )
@@ -1063,7 +1069,7 @@ def test_bulk_pending_approval_endpoint_uses_canonical_workflow_gate():
 async def test_pending_approval_page_renders_rejection_forms(monkeypatch) -> None:
     documento = SimpleNamespace(
         id="f4f97ca4-8e9b-4d4b-b8a2-80e6f4540d1f",
-        referencia_operaciones="OP-1",
+        referencia_operaciones=None,
         monto_total=100,
         monto_solicitado=None,
         enviado_en=None,

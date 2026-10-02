@@ -775,6 +775,12 @@ class _MutationResult:
     def __init__(self, rows=()):
         self._rows = list(rows)
 
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
     def scalars(self):
         return _FakeScalarRows(self._rows)
 

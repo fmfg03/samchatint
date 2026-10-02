@@ -226,7 +226,12 @@ from ..services.cfdi_income_bridge_service import (
     list_psp_cfdi_income_candidates,
 )
 from ..services.documento_telegram import ensure_finance_pending_payment_notifications
-from ..services.project_authorization_service import actor_is_route_approver
+from ..services.project_authorization_service import (
+    actor_is_route_approver,
+    document_route_approver_sql,
+    has_operations_reference,
+    prepare_document_authorization_route,
+)
 from ..services.beneficiary_onboarding_service import (
     BENEFICIARY_ATTACHMENT_LABELS,
     BENEFICIARY_TARGET_TYPE_LABELS,
@@ -30079,6 +30084,7 @@ async def _apply_control_presupuestal_assignment(
             if not getattr(expense, "budget_concept_id", None):
                 expense.budget_concept_id = concept_uuid
 
+    await prepare_document_authorization_route(session, documento)
     session.add(
         Aprobacion(
             tipo_entidad="documento",
@@ -30218,6 +30224,7 @@ async def _apply_control_presupuestal_expense_assignment(
         documento.budget_concept_id = concept_uuid
         documento.estado = "enviado"
         documento.enviado_en = now
+        await prepare_document_authorization_route(session, documento)
         session.add(
             Aprobacion(
                 tipo_entidad="documento",
@@ -30516,7 +30523,8 @@ async def documentos_pendientes(
     Show documentos in estado 'enviado' that are pending approval.
 
     Access control:
-    - Superadmin sees ALL documentos with estado 'enviado'.
+    - Superadmin sees natural-flow documents and Operations documents within
+      their effective Operations approval authority.
     - Finanzas/admin and assigned approvers can access the inbox.
     - Non-superadmin users only see documents routed to their approval scope.
       If a document has no beneficiary employee, approval falls back to the
@@ -30578,20 +30586,24 @@ async def documentos_pendientes(
     )
 
     filters = [Documento.estado == 'enviado', ~already_actioned_by_current_user]
-    if current_empleado.rol not in ('superadmin', 'super_admin'):
-        has_no_project_route = text(
-            "NOT EXISTS (SELECT 1 FROM documento_authorization_routes route "
-            "WHERE route.documento_id = documentos.id)"
+    if current_empleado.rol in ('superadmin', 'super_admin'):
+        filters.append(
+            or_(
+                func.nullif(func.trim(Documento.referencia_operaciones), "").is_(None),
+                text(document_route_approver_sql()),
+            )
+        )
+    else:
+        has_no_project_route = and_(
+            func.nullif(func.trim(Documento.referencia_operaciones), "").is_(None),
+            text(
+                "NOT EXISTS (SELECT 1 FROM documento_authorization_routes route "
+                "WHERE route.documento_id = documentos.id)"
+            ),
         )
         filters.append(
             or_(
-                text(
-                    "EXISTS (SELECT 1 FROM documento_authorization_routes route "
-                    "WHERE route.documento_id = documentos.id "
-                    "AND :route_employee_id IN ("
-                    "SELECT jsonb_array_elements_text(route.eligible_empleado_ids)"
-                    "))"
-                ),
+                text(document_route_approver_sql()),
                 and_(
                     has_no_project_route,
                     beneficiario_alias.aprobador_id == current_empleado.id,
@@ -30653,8 +30665,7 @@ async def documentos_pendientes(
         query.where(and_(*filters))
         .order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
     )
-    if current_empleado.rol not in ('superadmin', 'super_admin'):
-        query = query.params(route_employee_id=str(current_empleado.id))
+    query = query.params(route_employee_id=str(current_empleado.id))
 
     result = await session.execute(query)
     documentos = result.scalars().unique().all()
@@ -38549,14 +38560,17 @@ async def ver_documento(
             ).scalar_one_or_none()
             is not None
         )
-        if route_exists:
+        if route_exists or has_operations_reference(documento):
             can_approve_or_reject = (
                 await actor_is_route_approver(
                     session,
                     actor_id=current_empleado.id,
                     documento_id=documento.id,
                 )
-                or current_empleado.rol in ("superadmin", "super_admin")
+                or (
+                    not has_operations_reference(documento)
+                    and current_empleado.rol in ("superadmin", "super_admin")
+                )
             )
         else:
             approval_subject = approval_subject_empleado(documento) or empleado
@@ -40599,6 +40613,7 @@ async def _sync_informe_documento_to_enviado(
         aprobacion_comentario = (
             "Enviado automaticamente al cerrar el informe de gastos."
         )
+    await prepare_document_authorization_route(session, informe_doc)
     session.add(
         Aprobacion(
             tipo_entidad="documento",

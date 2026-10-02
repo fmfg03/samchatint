@@ -364,6 +364,9 @@ async def test_read_only_user_cannot_open_return_form(setup_return, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_report_can_go_to_approval_after_return(setup_return, monkeypatch):
+    monkeypatch.setattr(
+        user_routes, "prepare_document_authorization_route", AsyncMock()
+    )
     session, actor, cuenta, informe = setup_return
     informe.budget_concept_id = uuid4()
     monkeypatch.setattr(
@@ -630,6 +633,9 @@ async def test_return_totals_select_only_non_cancelled_devoluciones():
 async def test_budget_release_cannot_bypass_surplus_guard(
     setup_return, monkeypatch, expense_assignment, returned
 ):
+    monkeypatch.setattr(
+        user_routes, "prepare_document_authorization_route", AsyncMock()
+    )
     session, actor, cuenta, informe = setup_return
     informe.estado = "control_presupuestal"
     informe.cuenta_gastos = None
