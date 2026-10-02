@@ -30523,7 +30523,8 @@ async def documentos_pendientes(
     Show documentos in estado 'enviado' that are pending approval.
 
     Access control:
-    - Superadmin sees ALL documentos with estado 'enviado'.
+    - Superadmin sees natural-flow documents and Operations documents within
+      their effective Operations approval authority.
     - Finanzas/admin and assigned approvers can access the inbox.
     - Non-superadmin users only see documents routed to their approval scope.
       If a document has no beneficiary employee, approval falls back to the
@@ -30585,7 +30586,14 @@ async def documentos_pendientes(
     )
 
     filters = [Documento.estado == 'enviado', ~already_actioned_by_current_user]
-    if current_empleado.rol not in ('superadmin', 'super_admin'):
+    if current_empleado.rol in ('superadmin', 'super_admin'):
+        filters.append(
+            or_(
+                func.nullif(func.trim(Documento.referencia_operaciones), "").is_(None),
+                text(document_route_approver_sql()),
+            )
+        )
+    else:
         has_no_project_route = and_(
             func.nullif(func.trim(Documento.referencia_operaciones), "").is_(None),
             text(
@@ -30657,8 +30665,7 @@ async def documentos_pendientes(
         query.where(and_(*filters))
         .order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
     )
-    if current_empleado.rol not in ('superadmin', 'super_admin'):
-        query = query.params(route_employee_id=str(current_empleado.id))
+    query = query.params(route_employee_id=str(current_empleado.id))
 
     result = await session.execute(query)
     documentos = result.scalars().unique().all()

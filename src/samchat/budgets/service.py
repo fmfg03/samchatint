@@ -8258,12 +8258,10 @@ async def build_budget_actuals_snapshot(
         ).lower().startswith("reembolso de saldo a favor")
         is_settled_report = (
             _safe_str(row.get("document_type")).upper() == "INFORME"
-            and row.get("settlement_at") is not None
+            and _date_in_edition_year(row.get("settlement_at"), edition_year)
         )
         recognition_date = row.get("fecha_poliza")
-        if is_settled_report and _date_in_edition_year(
-            row.get("settlement_at"), edition_year
-        ):
+        if is_settled_report:
             recognition_date = row.get("settlement_at")
         elif document_id and document_state in _BUDGET_COMMITMENT_DOCUMENT_STATES:
             commitment_at = row.get("document_commitment_at")
@@ -8589,7 +8587,7 @@ async def build_budget_actuals_snapshot(
         if solicitud_documento_id in included_document_ids:
             continue
         state = _safe_str(row.get("document_state")).lower()
-        is_settled = row.get("settlement_at") is not None
+        is_settled = _date_in_edition_year(row.get("settlement_at"), edition_year)
         amount = _safe_decimal(row.get("amount"))
         concept_key = (
             _safe_str(row.get("budget_concept_id"))

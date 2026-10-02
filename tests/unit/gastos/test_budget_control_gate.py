@@ -1069,7 +1069,7 @@ def test_bulk_pending_approval_endpoint_uses_canonical_workflow_gate():
 async def test_pending_approval_page_renders_rejection_forms(monkeypatch) -> None:
     documento = SimpleNamespace(
         id="f4f97ca4-8e9b-4d4b-b8a2-80e6f4540d1f",
-        referencia_operaciones="OP-1",
+        referencia_operaciones=None,
         monto_total=100,
         monto_solicitado=None,
         enviado_en=None,

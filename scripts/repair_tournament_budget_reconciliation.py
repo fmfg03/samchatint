@@ -140,10 +140,210 @@ async def route_state(session, document_id):
     return normalized_route(result[0]) if len(result) == 1 else None
 
 
+async def active_route_holder_ids(session, route):
+    """Validate snapshot identities against active employees and Operations position."""
+    if (
+        route["eligible_position_keys"] != ["director_operaciones"]
+        or not route["requires_operations_reference"]
+    ):
+        raise ValueError("Reviewed route must require Operations authorization")
+    positions = await rows(
+        session,
+        "SELECT position_key FROM authorization_positions "
+        "WHERE position_key='director_operaciones' AND active=TRUE",
+    )
+    expected = sorted(route["eligible_empleado_ids"])
+    if not positions or not expected:
+        raise ValueError("Operations position and holders must be active")
+    employees = await rows(
+        session,
+        "SELECT id::text FROM empleados WHERE activo=TRUE "
+        "AND id::text=ANY(CAST(:ids AS text[])) ORDER BY id",
+        {"ids": expected},
+    )
+    actual = sorted(row["id"] for row in employees)
+    if actual != expected:
+        raise ValueError("Reviewed Operations holder is inactive or missing")
+    return actual
+
+
+async def lock_repair_sources(session, args):
+    """Lock selected source records in stable order; SERIALIZABLE guards phantoms."""
+    selectors = {
+        "routing_refs": sorted(
+            [args.informe_ref, *getattr(args, "also_informe_ref", [])]
+        ),
+        "ops_refs": sorted(set(args.ops_refs)),
+    }
+    selected = await rows(
+        session,
+        """
+        SELECT id::text, cuenta_gastos_id::text, empleado_id::text,
+               beneficiario_empleado_id::text, torneo_id::text
+        FROM documentos
+        WHERE tipo='INFORME' AND (
+            numero_referencia=ANY(CAST(:routing_refs AS text[]))
+            OR referencia_operaciones=ANY(CAST(:ops_refs AS text[]))
+        ) ORDER BY id
+    """,
+        selectors,
+    )
+    document_ids = sorted({row["id"] for row in selected})
+    account_ids = sorted(
+        {row["cuenta_gastos_id"] for row in selected if row["cuenta_gastos_id"]}
+    )
+    await session.execute(
+        text("SELECT id FROM budget_versions WHERE id=:id FOR UPDATE"),
+        {"id": args.version_id},
+    )
+    accounts = await rows(
+        session,
+        """
+        SELECT id::text, torneo_id::text FROM cuentas_de_gastos
+        WHERE id::text=ANY(CAST(:accounts AS text[])) ORDER BY id FOR UPDATE
+    """,
+        {"accounts": account_ids},
+    )
+    documents = await rows(
+        session,
+        """
+        SELECT id::text, empleado_id::text, beneficiario_empleado_id::text,
+               cfdi_report_id::text FROM documentos
+        WHERE id::text=ANY(CAST(:documents AS text[]))
+           OR cuenta_gastos_id::text=ANY(CAST(:accounts AS text[]))
+        ORDER BY id FOR UPDATE
+    """,
+        {"documents": document_ids, "accounts": account_ids},
+    )
+    document_ids = sorted({row["id"] for row in documents})
+    scoped = {"documents": document_ids, "accounts": account_ids}
+    expenses = await rows(
+        session,
+        """
+        SELECT id::text, cfdi_report_id::text FROM expense_reports
+        WHERE cuenta_gastos_id::text=ANY(CAST(:accounts AS text[]))
+           OR documento_id::text=ANY(CAST(:documents AS text[]))
+           OR informe_documento_id::text=ANY(CAST(:documents AS text[]))
+           OR solicitud_documento_id::text=ANY(CAST(:documents AS text[]))
+        ORDER BY id FOR UPDATE
+    """,
+        scoped,
+    )
+    for query in (
+        "SELECT id FROM anticipos WHERE documento_id::text="
+        "ANY(CAST(:documents AS text[])) ORDER BY id FOR UPDATE",
+        "SELECT id FROM reembolsos WHERE documento_id::text="
+        "ANY(CAST(:documents AS text[])) OR cuenta_gastos_id::text="
+        "ANY(CAST(:accounts AS text[])) ORDER BY id FOR UPDATE",
+        "SELECT id FROM aprobaciones WHERE tipo_entidad='documento' "
+        "AND entidad_id::text=ANY(CAST(:documents AS text[])) "
+        "ORDER BY id FOR UPDATE",
+        "SELECT id FROM payment_run_closure_items WHERE documento_id::text="
+        "ANY(CAST(:documents AS text[])) ORDER BY id FOR UPDATE",
+    ):
+        await session.execute(text(query), scoped)
+    cfdi_ids = sorted(
+        {
+            row["cfdi_report_id"]
+            for row in [*documents, *expenses]
+            if row["cfdi_report_id"]
+        }
+    )
+    accounting_scope = {
+        "documents": document_ids,
+        "expenses": sorted(row["id"] for row in expenses),
+        "cfdis": cfdi_ids,
+    }
+    policies = await rows(
+        session,
+        """
+        SELECT p.id::text FROM accounting_polizas p
+        WHERE p.cfdi_report_id::text=ANY(CAST(:cfdis AS text[]))
+           OR EXISTS (SELECT 1 FROM accounting_poliza_lines l
+               WHERE l.poliza_id=p.id AND (
+                   COALESCE(l.raw_row_json->>'documento_id',
+                            l.raw_row_json->>'document_id')
+                       =ANY(CAST(:documents AS text[]))
+                   OR l.raw_row_json->>'expense_id'=ANY(CAST(:expenses AS text[]))
+               )) ORDER BY p.id FOR UPDATE OF p
+    """,
+        accounting_scope,
+    )
+    await session.execute(
+        text(
+            "SELECT id FROM accounting_poliza_lines WHERE poliza_id::text="
+            "ANY(CAST(:policies AS text[])) ORDER BY id FOR UPDATE"
+        ),
+        {"policies": sorted(row["id"] for row in policies)},
+    )
+    routes = await rows(
+        session,
+        """
+        SELECT eligible_empleado_ids FROM documento_authorization_routes
+        WHERE documento_id::text=ANY(CAST(:documents AS text[]))
+        ORDER BY documento_id FOR UPDATE
+    """,
+        scoped,
+    )
+    await session.execute(
+        text(
+            "SELECT position_key FROM authorization_positions "
+            "WHERE position_key='director_operaciones' ORDER BY position_key FOR UPDATE"
+        )
+    )
+    employee_ids = {
+        value
+        for row in documents
+        for value in (row["empleado_id"], row["beneficiario_empleado_id"])
+        if value
+    }
+    employee_ids.add(str(args.actor_id))
+    for route in routes:
+        employee_ids.update(str(value) for value in route["eligible_empleado_ids"])
+    assignments = await rows(
+        session,
+        """
+        SELECT empleado_id::text FROM authorization_position_assignments
+        WHERE position_key='director_operaciones'
+           OR empleado_id::text=ANY(CAST(:employees AS text[]))
+        ORDER BY position_key, empleado_id FOR UPDATE
+    """,
+        {"employees": sorted(employee_ids)},
+    )
+    employee_ids.update(row["empleado_id"] for row in assignments)
+    await session.execute(
+        text(
+            "SELECT id FROM empleados WHERE id::text=ANY(CAST(:employees AS text[])) "
+            "ORDER BY id FOR UPDATE"
+        ),
+        {"employees": sorted(employee_ids)},
+    )
+    tournaments = sorted(
+        {row["torneo_id"] for row in [*selected, *accounts] if row["torneo_id"]}
+    )
+    await session.execute(
+        text(
+            "SELECT tournament_id FROM project_authorization_rules "
+            "WHERE tournament_id::text=ANY(CAST(:tournaments AS text[])) "
+            "ORDER BY tournament_id FOR UPDATE"
+        ),
+        {"tournaments": tournaments},
+    )
+    return {
+        "account_ids": account_ids,
+        "document_ids": document_ids,
+        "expense_ids": accounting_scope["expenses"],
+        "policy_ids": sorted(row["id"] for row in policies),
+    }
+
+
 async def verify_route(session, plan):
     actual = await route_state(session, plan["routing_document"]["id"])
     if actual is None or actual != plan["expected_route"]:
         raise ValueError("Authorization route changed from the reviewed plan")
+    active_ids = await active_route_holder_ids(session, actual)
+    if active_ids != plan["active_eligible_empleado_ids"]:
+        raise ValueError("Active Operations authority changed from reviewed plan")
     return actual
 
 
@@ -188,8 +388,10 @@ async def build_routing_plan(session, reference):
         expected_route = await route_state(session, report[0]["id"])
     if expected_route is None or not expected_route["eligible_empleado_ids"]:
         raise ValueError("Configured route has no active position holder")
+    active_ids = await active_route_holder_ids(session, expected_route)
     return {
         "routing_document": report[0],
+        "active_eligible_empleado_ids": active_ids,
         "route_insert": preview.proposed,
         "expected_route": expected_route,
         "eligible_positions": list(route.eligible_position_keys),
@@ -401,26 +603,15 @@ async def run(args):
     try:
         async with AsyncSession(engine) as session:
             async with session.begin():
-                if not args.apply:
+                if args.apply:
+                    await session.execute(
+                        text("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+                    )
+                else:
                     await session.execute(text("SET TRANSACTION READ ONLY"))
                 await session.execute(text("SET LOCAL statement_timeout='30s'"))
                 if args.apply:
-                    await session.execute(
-                        text("SELECT id FROM budget_versions WHERE id=:id FOR UPDATE"),
-                        {"id": args.version_id},
-                    )
-                    await session.execute(
-                        text(
-                            "SELECT id FROM documentos WHERE numero_referencia "
-                            "= ANY(CAST(:refs AS text[])) ORDER BY id FOR UPDATE"
-                        ),
-                        {
-                            "refs": [
-                                args.informe_ref,
-                                *getattr(args, "also_informe_ref", []),
-                            ]
-                        },
-                    )
+                    receipt["locked_sources"] = await lock_repair_sources(session, args)
                 plan, before = await build_plan(session, args)
                 digest = plan_sha(plan)
                 receipt.update(

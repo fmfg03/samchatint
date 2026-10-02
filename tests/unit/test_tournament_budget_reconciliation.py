@@ -481,3 +481,74 @@ async def test_no_account_and_no_tournament_does_not_invent_route():
     )
     assert route is None
     assert not session.writes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("settlement_source", ["paid_request", "recorded_reembolso"])
+@pytest.mark.parametrize("posting_present", [True, False])
+@pytest.mark.parametrize("payment_year", [2026, 2027])
+async def test_report_settlement_is_recognized_only_in_snapshot_edition(
+    settlement_source, posting_present, payment_year
+):
+    payment_date = date(2026, 9, 24) if payment_year == 2026 else date(2027, 1, 5)
+    commitment_date = date(2026, 9, 1)
+
+    class Session(SettlementSession):
+        async def execute(self, statement, params=None):
+            sql = str(statement)
+            if "budget_report_settlement_" in sql:
+                result = await super().execute(statement, params)
+                if "budget_report_settlement_requests" in sql:
+                    result.rows[0]["pagado_en"] = payment_date
+                return result
+            ledger_query = "WITH candidate_lines AS" in sql
+            report_query = "e.id::text AS expense_id" in sql and "JOIN LATERAL" in sql
+            if (posting_present and ledger_query) or (
+                not posting_present and report_query
+            ):
+                row = {
+                    "document_id": "report",
+                    "document_type": "INFORME",
+                    "document_state": "aprobado",
+                    "document_commitment_at": commitment_date,
+                    "aprobado_en": commitment_date,
+                    "concept_key": "food",
+                    "budget_concept_id": "food",
+                    "accounting_line_id": "posting",
+                    "expense_id": "expense",
+                    "cuenta_codigo": "5300-001",
+                    "debe": 100,
+                    "haber": 0,
+                    "amount": 100,
+                    "fecha_poliza": commitment_date,
+                    "settlement_at": (
+                        payment_date
+                        if settlement_source == "recorded_reembolso"
+                        else None
+                    ),
+                }
+                return Result([row])
+            return Result([])
+
+    snapshot = await budgets.build_budget_actuals_snapshot(
+        Session(), edition_year=2026, version_id="version"
+    )
+    movement = snapshot["movements"][0]
+    settled_in_edition = payment_year == 2026
+    expected_kind = (
+        ("ledger_expense" if posting_present else "pending_accounting")
+        if settled_in_edition
+        else "commitment"
+    )
+    expected_date = payment_date if settled_in_edition else commitment_date
+    week = budgets._budget_week_number(expected_date, 2026)
+    assert movement["kind"] == expected_kind
+    assert movement["month_number"] == week
+    assert movement["document_state"] == "aprobado"
+    assert movement["amount"] == 100
+    assert movement["settlement_at"] == payment_date
+    bucket = snapshot["monthly"].get("food", {}).get(week, {})
+    assert bucket.get("real_expense_cash", 0) == (
+        100 if settled_in_edition and posting_present else 0
+    )
+    assert bucket.get("committed_unpaid", 0) == (0 if settled_in_edition else 100)

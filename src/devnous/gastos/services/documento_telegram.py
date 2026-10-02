@@ -913,12 +913,21 @@ async def query_pending_documentos_for_approver(
         selectinload(Documento.torneo),
         selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
     )
+    from .project_authorization_service import document_route_approver_sql
+
     role = (getattr(empleado, "rol", "") or "").strip().lower()
     if role in SUPERADMIN_ROLES:
         result = await session.execute(
             select(Documento)
             .options(*base_opts)
-            .where(Documento.estado == "enviado")
+            .where(
+                Documento.estado == "enviado",
+                or_(
+                    text("NULLIF(BTRIM(documentos.referencia_operaciones), '') IS NULL"),
+                    text(document_route_approver_sql()),
+                ),
+            )
+            .params(route_employee_id=str(empleado.id))
             .order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
             .limit(limit)
         )
@@ -927,7 +936,6 @@ async def query_pending_documentos_for_approver(
     solicitante_alias = aliased(Empleado)
     beneficiario_alias = aliased(Empleado)
     # Shared policy retains eligible_empleado_ids from valid route snapshots.
-    from .project_authorization_service import document_route_approver_sql
 
     has_no_project_route = text(
         "NULLIF(BTRIM(documentos.referencia_operaciones), '') IS NULL AND "

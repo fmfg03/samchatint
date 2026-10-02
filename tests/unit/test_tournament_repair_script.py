@@ -163,6 +163,10 @@ async def test_build_plan_validates_all_selectors_and_tournament_scope(
     }
 
     async def fake_rows(session, sql, params=None):
+        if "FROM authorization_positions" in sql:
+            return [{"position_key": "director_operaciones"}]
+        if "FROM empleados" in sql:
+            return [{"id": "holder"}]
         if "FROM budget_versions" in sql:
             return (
                 []
@@ -334,6 +338,8 @@ async def test_transaction_commits_only_the_reviewed_and_verified_plan(
     if mode == "payment_changed":
         after_docs[1]["estado"] = "aprobado"
     outcomes = []
+    transaction_sql = []
+    preparation_steps = []
 
     class Transaction:
         async def __aenter__(self):
@@ -353,6 +359,7 @@ async def test_transaction_commits_only_the_reviewed_and_verified_plan(
             return Transaction()
 
         async def execute(self, statement, params=None):
+            transaction_sql.append(str(statement))
             return None
 
     engine = SimpleNamespace(sync_engine=object(), dispose=AsyncMock())
@@ -406,9 +413,19 @@ async def test_transaction_commits_only_the_reviewed_and_verified_plan(
     monkeypatch.setattr(repair, "create_async_engine", lambda *a, **k: engine)
     monkeypatch.setattr(repair.event, "listens_for", listener)
     monkeypatch.setattr(repair, "AsyncSession", lambda *a: Session())
-    monkeypatch.setattr(
-        repair, "build_plan", AsyncMock(return_value=(plan, {"movements": baseline}))
-    )
+
+    async def prepared_plan(session, options):
+        preparation_steps.append("build")
+        return plan, {"movements": baseline}
+
+    async def locked_sources(session, options):
+        preparation_steps.append("lock")
+        assert transaction_sql[0] == "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"
+        return {}
+
+    monkeypatch.setattr(repair, "build_plan", AsyncMock(side_effect=prepared_plan))
+    lock = AsyncMock(side_effect=locked_sources)
+    monkeypatch.setattr(repair, "lock_repair_sources", lock)
     apply = AsyncMock(
         return_value={"line_map": {"hotel": "new"}, "operations_reference": "999"}
     )
@@ -440,6 +457,14 @@ async def test_transaction_commits_only_the_reviewed_and_verified_plan(
         assert outcomes == ["commit"]
     assert apply.await_count == (0 if mode in {"dry_run", "drift"} else 1)
     engine.dispose.assert_awaited_once()
+    assert preparation_steps == (["build"] if mode == "dry_run" else ["lock", "build"])
+    assert lock.await_count == int(mode != "dry_run")
+    assert transaction_sql[0] == (
+        "SET TRANSACTION READ ONLY"
+        if mode == "dry_run"
+        else "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"
+    )
+    assert transaction_sql[1] == "SET LOCAL statement_timeout='30s'"
     with pytest.raises(ValueError):
         guards[0](None, None, "ALTER TABLE financial_records", None, None, False)
     guards[0](None, None, "SELECT 1", None, None, False)
@@ -502,7 +527,14 @@ async def test_route_evidence_must_match_reviewed_plan(monkeypatch, mutation):
         "rows",
         AsyncMock(return_value=[] if mutation == "missing" else [actual]),
     )
-    plan = {"routing_document": {"id": "doc"}, "expected_route": expected}
+    monkeypatch.setattr(
+        repair, "active_route_holder_ids", AsyncMock(return_value=["holder"])
+    )
+    plan = {
+        "routing_document": {"id": "doc"},
+        "expected_route": expected,
+        "active_eligible_empleado_ids": ["holder"],
+    }
     if mutation:
         with pytest.raises(ValueError, match="Authorization route changed"):
             await repair.verify_route(None, plan)
@@ -593,4 +625,151 @@ async def test_apply_audits_both_selected_routes(monkeypatch, tmp_path):
     assert (
         audit.call_args.kwargs["payload"]["additional_routes"][0]["document_id"]
         == "mike"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "active_position,active_ids",
+    [(False, ["holder"]), (True, []), (True, ["replacement"]), (True, ["holder"])],
+)
+async def test_snapshot_holders_must_be_active_without_reassignment_requirement(
+    monkeypatch, active_position, active_ids
+):
+    queried = []
+
+    async def current_rows(session, sql, params=None):
+        queried.append((sql, params))
+        if "authorization_positions" in sql:
+            return [{"position_key": "director_operaciones"}] if active_position else []
+        if "FROM empleados" in sql:
+            return [{"id": value} for value in active_ids]
+        raise AssertionError(sql)
+
+    monkeypatch.setattr(repair, "rows", current_rows)
+    route = {
+        "eligible_position_keys": ["director_operaciones"],
+        "requires_operations_reference": True,
+        "eligible_empleado_ids": ["holder"],
+    }
+    if active_position and active_ids == ["holder"]:
+        assert await repair.active_route_holder_ids(None, route) == ["holder"]
+    else:
+        with pytest.raises(ValueError, match="active|inactive"):
+            await repair.active_route_holder_ids(None, route)
+    assert "active=TRUE" in queried[0][0]
+    if len(queried) > 1:
+        assert "activo=TRUE" in queried[1][0]
+        assert queried[1][1] == {"ids": ["holder"]}
+    assert all("authorization_position_assignments" not in sql for sql, _ in queried)
+
+
+@pytest.mark.asyncio
+async def test_verify_route_rechecks_active_authority_before_commit(monkeypatch):
+    route = {
+        "eligible_position_keys": ["director_operaciones"],
+        "requires_operations_reference": True,
+        "eligible_empleado_ids": ["holder"],
+        "source": "snapshot",
+    }
+    monkeypatch.setattr(repair, "route_state", AsyncMock(return_value=route))
+
+    async def current_rows(session, sql, params=None):
+        if "authorization_positions" in sql:
+            return [{"position_key": "director_operaciones"}]
+        if "FROM empleados" in sql:
+            return []  # Holder revoked after the reviewed snapshot.
+        raise AssertionError(sql)
+
+    monkeypatch.setattr(repair, "rows", current_rows)
+    with pytest.raises(ValueError, match="inactive"):
+        await repair.verify_route(
+            None,
+            {
+                "routing_document": {"id": "doc"},
+                "expected_route": route,
+                "active_eligible_empleado_ids": ["holder"],
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_apply_locks_selected_reports_accounts_and_all_policy_lines_before_plan(
+    monkeypatch, tmp_path
+):
+    recorded = []
+    report = {
+        "id": "report",
+        "cuenta_gastos_id": "account",
+        "empleado_id": "creator",
+        "beneficiario_empleado_id": None,
+        "torneo_id": "tournament",
+    }
+
+    async def source_rows(session, sql, params=None):
+        recorded.append((sql, params))
+        if "WHERE tipo='INFORME'" in sql:
+            return [report]
+        if "FROM cuentas_de_gastos" in sql:
+            return [{"id": "account", "torneo_id": "tournament"}]
+        if "FROM documentos" in sql:
+            return [
+                {
+                    "id": "report",
+                    "empleado_id": "creator",
+                    "beneficiario_empleado_id": None,
+                    "cfdi_report_id": None,
+                },
+                {
+                    "id": "paid-request",
+                    "empleado_id": "creator",
+                    "beneficiario_empleado_id": None,
+                    "cfdi_report_id": None,
+                },
+            ]
+        if "FROM expense_reports" in sql:
+            return [{"id": "expense", "cfdi_report_id": "cfdi"}]
+        if "FROM accounting_polizas" in sql:
+            return [{"id": "policy"}]
+        if "FROM documento_authorization_routes" in sql:
+            return [{"eligible_empleado_ids": ["snapshot-holder"]}]
+        if "FROM authorization_position_assignments" in sql:
+            return [{"empleado_id": "current-holder"}]
+        raise AssertionError(sql)
+
+    async def execute(statement, params=None):
+        recorded.append((str(statement), params))
+
+    monkeypatch.setattr(repair, "rows", source_rows)
+    session = SimpleNamespace(execute=execute)
+    options = args(tmp_path, True)
+    options.also_informe_ref = ["I-Mike"]
+    scope = await repair.lock_repair_sources(session, options)
+    assert recorded[0][1]["ops_refs"] == options.ops_refs
+    assert recorded[0][1]["routing_refs"] == sorted(["I-report", "I-Mike"])
+    assert scope == {
+        "account_ids": ["account"],
+        "document_ids": ["paid-request", "report"],
+        "expense_ids": ["expense"],
+        "policy_ids": ["policy"],
+    }
+    assert all("FOR UPDATE" in sql and "ORDER BY" in sql for sql, _ in recorded[2:])
+    # Header first, then every line, including the balancing counterpart.
+    policy_index = next(
+        i for i, (sql, _) in enumerate(recorded) if "FROM accounting_polizas" in sql
+    )
+    sql, bindings = recorded[policy_index + 1]
+    assert "FROM accounting_poliza_lines" in sql and "cuenta_codigo" not in sql
+    assert bindings == {"policies": ["policy"]}
+    policy_bindings = recorded[policy_index][1]
+    assert policy_bindings["documents"] == ["paid-request", "report"]
+    assert policy_bindings["expenses"] == ["expense"]
+    assert policy_bindings["cfdis"] == ["cfdi"]
+    assert any("FROM reembolsos" in sql for sql, _ in recorded)
+    assert any("FROM payment_run_closure_items" in sql for sql, _ in recorded)
+    employee_binding = next(
+        params for sql, params in recorded if "FROM empleados" in sql
+    )
+    assert employee_binding["employees"] == sorted(
+        ["creator", "snapshot-holder", "current-holder", str(options.actor_id)]
     )
