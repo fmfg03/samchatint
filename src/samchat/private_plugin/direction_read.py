@@ -299,7 +299,7 @@ class DirectionReadAdapter:
         context = await self._current(identity)
         employee, owners = context.employee, self._owners
         assigned = await owners.assigned_portfolios(context.session, employee)
-        if not assigned:
+        if not assigned and not owners.is_superadmin(employee):
             raise Denied("FORBIDDEN")
         args = dict(
             actor=identity.actor_id,

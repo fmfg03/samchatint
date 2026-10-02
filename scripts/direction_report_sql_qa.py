@@ -207,6 +207,26 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                     ),
                     dict(id=uid(n), tid=uid(100), state=state, paid=paid),
                 )
+            c.execute(
+                text("INSERT INTO cuentas_de_gastos VALUES (:id,:tid)"),
+                dict(id=uid(50), tid=uid(200)),
+            )
+            for n, account, direct in [
+                (55, 20, None),
+                (56, 50, None),
+                (57, 50, 100),
+                (58, 20, 200),
+            ]:
+                c.execute(
+                    text(
+                        "INSERT INTO documentos(id,torneo_id,cuenta_gastos_id,tipo,creado_en,currency,estado,monto_total) VALUES (:id,:direct,:account,'SOLICITUD','2026-06-01','MXN','pagado',75)"
+                    ),
+                    dict(
+                        id=uid(n),
+                        direct=uid(direct) if direct else None,
+                        account=uid(account),
+                    ),
+                )
             paid_rows = (
                 c.execute(
                     text(document_query),
@@ -230,7 +250,13 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                 .mappings()
                 .all()
             )
-            assert {r["id"] for r in paid_rows} == {uid(51), uid(52), uid(54)}
+            assert {r["id"] for r in paid_rows} == {
+                uid(51),
+                uid(52),
+                uid(54),
+                uid(55),
+                uid(57),
+            }
             print(
                 json.dumps(
                     {
@@ -243,6 +269,8 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                         "report_link": True,
                         "unique_account": True,
                         "account_tournament_fallback": True,
+                        "request_account_tournament_fallback": True,
+                        "request_direct_scope_precedence": True,
                         "paid_timestamp_overrides_stale_state": True,
                         "ambiguous_account_excluded": True,
                         "foreign_scope_excluded": True,

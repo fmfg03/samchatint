@@ -371,6 +371,35 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
             await self.read()
         self.build.assert_not_awaited()
 
+    async def test_superadmin_without_portfolios_can_read_but_still_needs_organization(
+        self,
+    ):
+        self.employee.rol = "superadmin"
+        self.portfolios.return_value = []
+
+        class NoPortfolios(Session):
+            async def execute(self, query, params):
+                if "FROM client_executive_portfolios" in query:
+                    return Result([])
+                return await super().execute(query, params)
+
+        self.context.return_value = DirectionContext(
+            self.identity, self.employee, NoPortfolios()
+        )
+        listed = await self.adapter.list_scopes(identity=self.identity)
+        self.assertEqual(listed["portfolios"], [])
+        self.assertEqual(listed["tournaments"][0]["id"], TOURNAMENT)
+        result = await self.read()
+        self.assertEqual(result["tournament_ids"], [TOURNAMENT])
+        self.assertEqual(result["scope"]["portfolio_ids"], [])
+        self.mapping.return_value = "foreign-organization"
+        with self.assertRaisesRegex(Denied, "ORGANIZATION_UNPROVEN"):
+            await self.read()
+        self.mapping.return_value = "organization"
+        self.decisions["direccion.tableros_ejecutivos"] = False
+        with self.assertRaisesRegex(Denied, "FORBIDDEN"):
+            await self.read()
+
     async def test_foreign_selectors_denied_by_actual_scope_resolver(self):
         for selectors in ({"portfolio_id": FOREIGN}, {"tournament_id": FOREIGN}):
             with self.assertRaisesRegex(Denied, "FORBIDDEN"):

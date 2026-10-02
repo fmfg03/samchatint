@@ -241,11 +241,13 @@ async def build_executive_facts(
             (
                 await session.execute(
                     text("""
-        SELECT d.id::text AS id, d.torneo_id::text AS tournament_id,
+        SELECT d.id::text AS id,
+            COALESCE(d.torneo_id, document_cuenta.torneo_id)::text AS tournament_id,
             d.creado_en AS observed_date, d.currency, d.estado, d.pagado_en,
             d.monto_total, d.monto_solicitado, d.concepto_pago
         FROM documentos d
-        WHERE d.torneo_id = ANY(CAST(:ids AS uuid[])) AND d.tipo = 'SOLICITUD'
+        LEFT JOIN cuentas_de_gastos document_cuenta ON document_cuenta.id = d.cuenta_gastos_id
+        WHERE COALESCE(d.torneo_id, document_cuenta.torneo_id) = ANY(CAST(:ids AS uuid[])) AND d.tipo = 'SOLICITUD'
           AND (d.estado = ANY(CAST(:committed_states AS text[]))
                OR d.pagado_en IS NOT NULL)
           AND (d.creado_en IS NULL OR DATE(d.creado_en) BETWEEN :start AND :end)

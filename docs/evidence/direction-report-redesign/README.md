@@ -130,7 +130,7 @@ equivalen a despliegue, reconciliación productiva o aceptación del negocio.
 
 - CI del candidato ce0534e: todos los gates aprobados y 98% de cobertura de cambios.
   Se reparó compatibilidad de alcance y fuente con el plugin privado, conservando
-  validaciones: 130 pruebas offline y 20 PostgreSQL aisladas aprobadas.
+  validaciones: 131 pruebas offline y 20 PostgreSQL aisladas aprobadas.
 - Revisión Codex: estados terminales canónicos sin fecha de pago ya cuentan en
   compromiso/pagado; resolución de informe por enlace explícito, legado o cuenta
   con informe único. [Verificación SQL sintética](sql-link-checks.json) ejecuta
@@ -168,3 +168,11 @@ precedencia del informe. SQL PostgreSQL comprueba atribución, enlaces generados
 precedencia y exclusión de solicitudes ajenas. Compromisos reutiliza el conjunto
 canónico `_BUDGET_COMMITMENT_DOCUMENT_STATES`, que incluye `enviado`; la solicitud
 enviada sin evidencia de pago cuenta como compromiso, nunca como pagada.
+
+Quinta revisión: solicitudes heredan torneo de su cuenta canónica solo cuando
+no tienen torneo directo; selección y filtro comparten exactamente la expresión.
+SQL sintético verifica precedencia y exclusión de cuentas ajenas. El plugin admite
+SUPERADMIN sin carteras configuradas, conservando organización acreditada y
+denegaciones explícitas (131 pruebas offline). Los exportes describen el ejercido
+como base fiscal canónica documental, sin atribuirlo a un presupuesto; PDF/XLSX
+verifican ese texto y sus artefactos fueron regenerados.

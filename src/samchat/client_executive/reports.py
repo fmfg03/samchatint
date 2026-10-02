@@ -11,7 +11,7 @@ from .home import format_money
 
 SOURCE_NAMES = {
     "budget": "Presupuesto aprobado · versión de cada torneo",
-    "actual": "Gastos activos · base presupuestal del intervalo",
+    "actual": "Gastos activos · base fiscal canónica documental del intervalo",
     "committed": "Solicitudes · estados de compromiso documental",
     "paid": "Solicitudes · pago documental; no saldo bancario",
     "forecast": "Proyección mecánica del servicio de presupuestos",
