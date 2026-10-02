@@ -8,6 +8,7 @@ not an adapter facility and accepts no user-supplied code.
 
 import ast
 import hashlib
+import importlib.util
 import json
 import unittest
 from dataclasses import replace
@@ -26,6 +27,14 @@ from samchat.private_plugin.direction_read import (
 )
 
 ROOT = Path(__file__).resolve().parents[3]
+_layout_spec = importlib.util.spec_from_file_location(
+    "direction_report_layouts_fixture",
+    ROOT / "src/samchat/client_executive/report_layouts.py",
+)
+_layout_module = importlib.util.module_from_spec(_layout_spec)
+_layout_spec.loader.exec_module(_layout_module)
+report_layouts = _layout_module.report_layouts
+
 ACTOR = "10000000-0000-0000-0000-000000000001"
 PORTFOLIO = "20000000-0000-0000-0000-000000000001"
 TOURNAMENT = "30000000-0000-0000-0000-000000000001"
@@ -177,6 +186,22 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
             None,
             {
                 "service": service,
+                "FACT_SOURCE": "samchat.budgets.executive_facts.build_executive_facts",
+                "report_layouts": report_layouts,
+                "build_executive_facts": AsyncMock(
+                    return_value={
+                        "by_tournament": {
+                            TOURNAMENT: {
+                                "values": {
+                                    "actual": "40",
+                                    "committed": "50",
+                                    "paid": "20",
+                                },
+                                "gaps": {},
+                            }
+                        }
+                    }
+                ),
                 "text": lambda value: value,
                 "date": date,
                 "datetime": datetime,
@@ -190,7 +215,11 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
             },
             constants=True,
         )
-        self.payments = AsyncMock(return_value={"value": Decimal("7"), "gaps": []})
+        self.payments = AsyncMock(
+            return_value={
+                "by_tournament": {TOURNAMENT: {"value": Decimal("7"), "gaps": []}}
+            }
+        )
         self.receivables = AsyncMock(
             return_value={"value": None, "gaps": ["Fixture missing collections"]}
         )
@@ -219,7 +248,8 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
         values = {row["id"]: row for row in result["indicators"]}
         self.assertEqual(values["actual"]["value"], "40.00")
         self.assertEqual(
-            values["actual"]["source"], "samchat.budgets.service.build_budget_snapshot"
+            values["actual"]["source"],
+            "samchat.budgets.executive_facts.build_executive_facts",
         )
         self.assertIsNone(values["receivables"]["value"])
         self.assertIn("Fixture missing collections", values["receivables"]["gaps"])

@@ -122,6 +122,7 @@ _INDICATOR_SCHEMA = _object(
         "source": {
             "enum": [
                 "samchat.budgets.service.build_budget_snapshot",
+                "samchat.budgets.executive_facts.build_executive_facts",
                 "samchat.finance_platform.service.build_finance_source_snapshot",
                 "samchat.ar.service.build_ar_read_model",
                 "bank_balance_source_unavailable",
@@ -410,8 +411,11 @@ class DirectionReadAdapter:
                 != {t["id"] for t in scope["selected"]}
                 or snapshot["scope"]
                 != {
-                    k: scope[k]
-                    for k in ("portfolio_ids", "portfolio_id", "tournament_id")
+                    "tournament_ids": scope.get("tournament_ids", []),
+                    **{
+                        k: scope[k]
+                        for k in ("portfolio_ids", "portfolio_id", "tournament_id")
+                    },
                 }
             ):
                 raise Denied("SCOPE_CHANGED")
