@@ -47,3 +47,16 @@ on the PR. No merge/deploy. Rollback: revert this code-only PR.
 
 Canon unchanged: this read-only projection uses existing canonical classifications
 and ownership; it does not change domain rules, persistence, authority or states.
+
+Review corrections (Codex, 2026-10-02):
+- Account-only legacy expenses resolve to one primary report using the existing
+  oldest-created account-report rule. Explicit report links take precedence.
+  One bounded owner-ID query resolves against the complete account even when
+  filters hide its primary report; no catalog or unauthorized labels are returned.
+  Regression executes the owner SQL on synthetic in-memory SQLite, including
+  primary reports outside the visible subset, direct report/request links and
+  explicit conflicting links. Production Postgres remains untested locally.
+- Multi-item detail links use the same read authorization as existing document
+  detail/attachments; route approvers without detail access see compact text.
+  No authority was expanded.
+- Budget-item sort keys contain actual labels, while displayed text stays compact.

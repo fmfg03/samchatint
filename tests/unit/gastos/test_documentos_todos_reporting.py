@@ -21,6 +21,7 @@ from devnous.gastos.services.documento_semantics import (
 def _doc(**overrides):
     values = {
         "id": uuid4(),
+        "empleado_id": uuid4(),
         "tipo": "SOLICITUD",
         "numero_referencia": "S-26000123",
         "estado": "aprobado",
@@ -1983,6 +1984,9 @@ class _FakeResult:
     def __init__(self, rows):
         self._rows = rows
 
+    def all(self):
+        return self._rows
+
     def scalars(self):
         return _FakeScalars(self._rows)
 
@@ -2225,17 +2229,20 @@ async def test_report_lines_batch_preserves_explicit_ownership_and_legacy_accoun
     unrelated = _report_line(_doc(tipo="INFORME", cuenta_gastos_id=uuid4()))
     session = SimpleNamespace(
         execute=AsyncMock(
-            return_value=_FakeResult(
-                [
-                    explicit,
-                    direct,
-                    direct,
-                    legacy,
-                    conflict,
-                    cancelled,
-                    unrelated,
-                ]
-            )
+            side_effect=[
+                _FakeResult(
+                    [
+                        explicit,
+                        direct,
+                        direct,
+                        legacy,
+                        conflict,
+                        cancelled,
+                        unrelated,
+                    ]
+                ),
+                _FakeResult([(legacy.id, informe.id), (unrelated.id, None)]),
+            ]
         )
     )
 
@@ -2244,10 +2251,10 @@ async def test_report_lines_batch_preserves_explicit_ownership_and_legacy_accoun
     )
 
     assert [e.id for e in loaded[informe.id]] == [explicit.id, direct.id, legacy.id]
-    assert [e.id for e in loaded[other.id]] == [direct.id, legacy.id, conflict.id]
+    assert [e.id for e in loaded[other.id]] == [conflict.id]
     assert informe.gastos == []
-    session.execute.assert_awaited_once()
-    statement = session.execute.call_args.args[0]
+    assert session.execute.await_count == 2
+    statement = session.execute.call_args_list[0].args[0]
     assert any("ExpenseReport.adjuntos" in str(o.path) for o in statement._with_options)
     assert any(
         "ExpenseReport.cfdi_report" in str(o.path) for o in statement._with_options
@@ -2539,7 +2546,7 @@ def test_reporting_budget_item_html_is_compact_and_accessible(count):
     ]
     return_url = "/documentos/historial-aprobador?torneo=Proyecto+QA&estado=aprobado"
     html = user_routes._document_reporting_budget_items_html(
-        document, expenses=lines, return_url=return_url
+        document, expenses=lines, return_url=return_url, can_view_detail=True
     )
     if count == 0:
         assert html == "Sin partida"
@@ -2583,4 +2590,145 @@ def test_reporting_detail_uses_same_report_ownership_and_existing_section():
 
     detail = Path(source).read_text().split("async def ver_documento(", 1)[1]
     assert 'id="gastos-asociados"' in detail
-    assert "or_(*_active_informe_expense_filters(documento))" in detail
+    assert "await _document_informe_expenses_by_id(session, [documento])" in detail
+
+
+@pytest.mark.asyncio
+async def test_legacy_report_owner_resolution_executes_sql_without_scope_reassignment():
+    from sqlalchemy import (
+        Column,
+        DateTime,
+        MetaData,
+        String,
+        Table,
+        Uuid,
+        create_engine,
+    )
+
+    account = uuid4()
+    old = _doc(tipo="INFORME", cuenta_gastos_id=account, creado_en=datetime(2026, 1, 1))
+    newer = _doc(
+        tipo="INFORME", cuenta_gastos_id=account, creado_en=datetime(2026, 2, 1)
+    )
+    request = _doc(cuenta_gastos_id=account, creado_en=datetime(2025, 1, 1))
+    legacy = _report_line(newer, informe_documento_id=None)
+    direct = _report_line(newer, informe_documento_id=None, documento_id=newer.id)
+    request_line = _report_line(
+        newer, informe_documento_id=None, documento_id=request.id
+    )
+    explicit = _report_line(newer, documento_id=old.id)
+    cancelled = _report_line(newer, estado_gasto="cancelado")
+    lines = [legacy, direct, request_line, explicit, cancelled]
+    meta = MetaData()
+    documents = Table(
+        "documentos",
+        meta,
+        Column("id", Uuid, primary_key=True),
+        Column("tipo", String),
+        Column("cuenta_gastos_id", Uuid),
+        Column("creado_en", DateTime),
+    )
+    expenses = Table(
+        "expense_reports",
+        meta,
+        Column("id", Uuid, primary_key=True),
+        Column("documento_id", Uuid),
+        Column("cuenta_gastos_id", Uuid),
+    )
+    engine = create_engine("sqlite://")
+    meta.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            documents.insert(),
+            [
+                {
+                    key: getattr(d, key)
+                    for key in ("id", "tipo", "cuenta_gastos_id", "creado_en")
+                }
+                for d in (old, newer, request)
+            ],
+        )
+        connection.execute(
+            expenses.insert(),
+            [
+                {
+                    key: getattr(e, key)
+                    for key in ("id", "documento_id", "cuenta_gastos_id")
+                }
+                for e in lines
+            ],
+        )
+
+        class OwnerSession:
+            def __init__(self):
+                self.calls = 0
+
+            async def execute(self, statement):
+                self.calls += 1
+                if self.calls == 1:
+                    return _FakeResult(lines)
+                # Execute the actual correlated owner query, not a mocked answer.
+                return connection.execute(statement)
+
+        both = await user_routes._document_informe_expenses_by_id(
+            OwnerSession(), [old, newer]
+        )
+        assert {e.id for e in both[old.id]} == {legacy.id, request_line.id}
+        assert {e.id for e in both[newer.id]} == {direct.id, explicit.id}
+        assert sum(len(values) for values in both.values()) == 4
+        newer_only = await user_routes._document_informe_expenses_by_id(
+            OwnerSession(), [newer]
+        )
+        assert {e.id for e in newer_only[newer.id]} == {direct.id, explicit.id}
+        old_only = await user_routes._document_informe_expenses_by_id(
+            OwnerSession(), [old]
+        )
+        assert {e.id for e in old_only[old.id]} == {legacy.id, request_line.id}
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_route_approver_history_keeps_compact_text_without_unauthorized_detail_link(
+    monkeypatch,
+):
+    from starlette.datastructures import QueryParams
+
+    actor = SimpleNamespace(
+        id=uuid4(), nombre="Approver QA", correo="qa@example.invalid", rol="empleado"
+    )
+    document = _doc(tipo="INFORME")
+    lines = [
+        _report_line(document, budget_concept=SimpleNamespace(concept_name=name))
+        for name in ("Hospedaje", "Transporte")
+    ]
+    approval = SimpleNamespace(
+        entidad_id=document.id,
+        fecha=datetime(2026, 10, 2),
+        accion="aprobar",
+        comentario="QA",
+        aprobador=actor,
+    )
+    monkeypatch.setattr(
+        user_routes, "_can_review_pending_approvals", AsyncMock(return_value=True)
+    )
+    page = await user_routes.historial_aprobador(
+        SimpleNamespace(query_params=QueryParams()),
+        _SequenceSession([approval], [document], lines),
+        actor,
+        torneo=None,
+        concepto=None,
+        beneficiario=None,
+        tipo=None,
+        estado=None,
+    )
+    assert "Varias partidas · 2" in page
+    assert "#gastos-asociados" not in page
+    assert 'data-sort-value="Hospedaje; Transporte"' in page
+    # Ownership is sufficient under the existing detail guard; no new role authority.
+    document.empleado_id = actor.id
+    assert user_routes._can_access_documento_adjunto(document, actor)
+    assert "#gastos-asociados" in user_routes._document_reporting_budget_items_html(
+        document,
+        expenses=lines,
+        can_view_detail=user_routes._can_access_documento_adjunto(document, actor),
+    )

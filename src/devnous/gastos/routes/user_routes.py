@@ -31641,7 +31641,7 @@ async def historial_aprobador(
             <td data-sort-value="{escape(monto_total_sort)}">{escape(monto_total_display)}</td>
             <td data-sort-value="{escape(monto_presupuestal_sort)}">{escape(monto_presupuestal_display)}<br><small>{escape(row_values["asignacion_presupuestal"])}</small></td>
             <td>{escape(row_values["categorias"])}</td>
-            <td>{_document_reporting_budget_items_html(documento, expenses=informe_expenses_by_id.get(documento.id), return_url=reporting_return_url)}</td>
+            <td data-sort-value="{escape(row_values["partidas_presupuestales"])}">{_document_reporting_budget_items_html(documento, expenses=informe_expenses_by_id.get(documento.id), return_url=reporting_return_url, can_view_detail=_can_access_documento_adjunto(documento, current_empleado))}</td>
             <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{comentario_safe}">{comentario_safe}</td>
         </tr>
         """
@@ -31975,28 +31975,54 @@ async def _document_informe_expenses_by_id(
         .where(or_(*filters), ExpenseReport.estado_gasto != "cancelado")
         .order_by(ExpenseReport.numero_referencia.asc(), ExpenseReport.id.asc())
     )
-    by_id = {doc_id: [] for doc_id in informes}
-    account_reports: dict[Any, list[Any]] = {}
-    for documento in informes.values():
-        if getattr(documento, "cuenta_gastos_id", None):
-            account_reports.setdefault(documento.cuenta_gastos_id, []).append(
-                documento.id
+    expenses = list(result.scalars().all())
+    legacy_ids = {
+        expense.id
+        for expense in expenses
+        if not getattr(expense, "informe_documento_id", None)
+        and getattr(expense, "documento_id", None) not in informes
+    }
+    legacy_owners = {}
+    if legacy_ids:
+        # Resolve against all reports, not only the visible/filtered subset.
+        # An explicit direct report wins; account-only lines use the primary
+        # report (oldest creado_en), as _informe_documento_for_cuenta does.
+        direct_report = (
+            select(Documento.id)
+            .where(
+                Documento.id == ExpenseReport.documento_id,
+                Documento.tipo == "INFORME",
             )
-    for expense in result.scalars().all():
+            .correlate(ExpenseReport)
+            .scalar_subquery()
+        )
+        primary_report = (
+            select(Documento.id)
+            .where(
+                Documento.cuenta_gastos_id == ExpenseReport.cuenta_gastos_id,
+                Documento.tipo == "INFORME",
+            )
+            .order_by(Documento.creado_en.asc(), Documento.id.asc())
+            .limit(1)
+            .correlate(ExpenseReport)
+            .scalar_subquery()
+        )
+        owner_rows = await session.execute(
+            select(
+                ExpenseReport.id, func.coalesce(direct_report, primary_report)
+            ).where(ExpenseReport.id.in_(legacy_ids))
+        )
+        legacy_owners = dict(owner_rows.all())
+    by_id = {doc_id: [] for doc_id in informes}
+    for expense in expenses:
         if getattr(expense, "estado_gasto", None) == "cancelado":
             continue
         explicit = getattr(expense, "informe_documento_id", None)
         direct = getattr(expense, "documento_id", None)
-        owners = set()
-        if explicit in informes:
-            owners.add(explicit)
-        if direct in informes and (explicit is None or explicit == direct):
-            owners.add(direct)
-        if explicit is None:
-            owners.update(
-                account_reports.get(getattr(expense, "cuenta_gastos_id", None), [])
-            )
-        for owner in owners:
+        owner = explicit or (
+            direct if direct in informes else legacy_owners.get(expense.id)
+        )
+        if owner in informes:
             by_id[owner].append(expense)
     return {doc_id: _unique_expenses(expenses) for doc_id, expenses in by_id.items()}
 
@@ -32076,12 +32102,15 @@ def _document_reporting_budget_items_html(
     *,
     expenses: Optional[list[ExpenseReport]] = None,
     return_url: str = "/documentos/todos",
+    can_view_detail: bool = False,
 ) -> str:
     """Compact read-only display; reuse the authorized document detail."""
     labels = _document_reporting_budget_item_labels(documento, expenses=expenses)
     if len(labels) < 2:
         return escape(labels[0] if labels else "Sin partida")
     label = f"Varias partidas · {len(labels)}"
+    if not can_view_detail:
+        return label
     reference = escape(
         str(getattr(documento, "numero_referencia", None) or documento.id)
     )
@@ -32116,9 +32145,7 @@ def _documentos_todos_reporting_row_values(
     torneo = getattr(documento, "torneo", None) or getattr(cuenta, "torneo", None)
     torneo_display = documento_project_name(documento, torneo) or "—"
     fase_display = (
-        getattr(documento, "fase", None)
-        or getattr(cuenta, "fase", None)
-        or "—"
+        getattr(documento, "fase", None) or getattr(cuenta, "fase", None) or "—"
     )
     budget_effect = budget_document_effect_snapshot(
         documento, cfdi_report, expenses=expenses
@@ -32420,7 +32447,7 @@ async def documentos_todos(
             <td data-sort-value="{escape(aprobado_sort)}">{row_values["aprobado"]}</td>
             <td data-sort-value="{escape(pagado_sort)}">{row_values["pagado"]}</td>
             <td>{escape(row_values["categorias"])}</td>
-            <td>{_document_reporting_budget_items_html(documento, expenses=informe_expenses_by_id.get(documento.id), return_url=reporting_return_url)}</td>
+            <td data-sort-value="{escape(row_values["partidas_presupuestales"])}">{_document_reporting_budget_items_html(documento, expenses=informe_expenses_by_id.get(documento.id), return_url=reporting_return_url, can_view_detail=_can_access_documento_adjunto(documento, current_empleado))}</td>
             <td>{action_link}</td>
         </tr>
         """
@@ -38752,16 +38779,11 @@ async def ver_documento(
     # Load related expenses (exclude cancelled).
     # For INFORME: also include expenses linked via informe_documento_id (cuenta-based attach).
     if documento.tipo == 'INFORME':
-        expenses_result = await session.execute(
-            select(ExpenseReport)
-            .options(selectinload(ExpenseReport.budget_concept))
-            .where(
-                and_(
-                    or_(*_active_informe_expense_filters(documento)),
-                    ExpenseReport.estado_gasto != 'cancelado'
-                )
-            )
-            .order_by(ExpenseReport.fecha.desc())
+        report_expenses = await _document_informe_expenses_by_id(session, [documento])
+        expenses = sorted(
+            report_expenses[documento.id],
+            key=lambda expense: _datetime_sort_timestamp(expense.fecha),
+            reverse=True,
         )
     else:
         expenses_result = await session.execute(
@@ -38775,7 +38797,7 @@ async def ver_documento(
             )
             .order_by(ExpenseReport.fecha.desc())
         )
-    expenses = expenses_result.scalars().all()
+        expenses = expenses_result.scalars().all()
 
     ids_with_comprobante_doc = await fetch_expense_ids_with_archivo_data(
         session, [e.id for e in expenses]
