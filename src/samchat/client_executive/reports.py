@@ -65,7 +65,7 @@ def build_report(snapshot: dict, analysis: dict | None = None) -> dict:
         "scenario": (analysis or {}).get("scenario"),
         "gaps": gaps,
         "validation": "Validación de negocio pendiente. Subtotales parciales no representan toda la cartera.",
-        "method": "Lecturas secuenciales con cortes individuales. Proyección mecánica, sin causalidad acreditada. Pagado documental no equivale a salida de caja.",
+        "method": "Lecturas independientes con cortes individuales. Proyección mecánica, sin causalidad acreditada. Pagado documental no equivale a salida de caja.",
         "read_only": True,
         "layouts": snapshot.get("reports", {}),
     }

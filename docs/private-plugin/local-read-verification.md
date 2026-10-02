@@ -37,7 +37,7 @@ fuente, fórmula, corte, cobertura y brechas; omite filas de pagos, contactos y
 rosters. Conserva las denegaciones específicas de Finanzas y Presupuestos. Los
 campos desconocidos no se reenvían y los tipos/tamaños inválidos bloquean la
 respuesta. No calcula reglas financieras nuevas ni convierte aprobación en pago.
-El builder declara sus cortes secuenciales; no se promete atomicidad entre fuentes.
+El builder declara sus cortes independientes; no se promete atomicidad entre fuentes.
 
 El recibo de lectura liga hashes del resultado exacto y del ámbito autorizado.
 Si `append_read` falla o no devuelve ID, se suprime el resultado. Es contrato de

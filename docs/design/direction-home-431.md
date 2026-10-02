@@ -29,7 +29,7 @@ continúan en #432; exportación para consejo continúa en #433.
 Todos los importes publicados son MXN. Cobertura significa torneos con fuente
 acreditada / torneos seleccionados; un subtotal parcial nunca representa la cartera
 completa. La disponibilidad técnica no equivale a validación de negocio.
-El corte es el instante de consulta, con observación por torneo; las lecturas secuenciales
+El corte es el instante de consulta, con observación por torneo; las lecturas independientes
 entre Postgres/Supabase no constituyen un snapshot atómico entre sistemas.
 
 | Indicador | Definición / fórmula | Fuente canónica | Cobertura y periodo | Validación propuesta / dependencia |

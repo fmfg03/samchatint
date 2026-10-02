@@ -22,6 +22,8 @@ from zoneinfo import ZoneInfo
 
 from samchat.private_plugin.contracts import Denied, Identity
 from samchat.private_plugin.direction_read import (
+    DIRECTION_OUTPUT_SCHEMA,
+    DIRECTION_SCOPES_OUTPUT_SCHEMA,
     DirectionContext,
     DirectionOwners,
     DirectionReadAdapter,
@@ -280,6 +282,19 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
         self.budget.assert_not_awaited()
         self.payments.assert_not_awaited()
         self.receivables.assert_not_awaited()
+
+    async def test_scope_completeness_metadata_is_required_by_output_contracts(self):
+        from jsonschema import Draft202012Validator
+
+        summary = await self.read()
+        scopes = await self.adapter.list_scopes(identity=self.identity)
+        for result, schema, keys in (
+            (summary, DIRECTION_OUTPUT_SCHEMA, ["scope_manifest"]),
+            (scopes, DIRECTION_SCOPES_OUTPUT_SCHEMA, ["scope_manifest", "pagination"]),
+        ):
+            for key in keys:
+                incomplete = {k: v for k, v in result.items() if k != key}
+                self.assertFalse(Draft202012Validator(schema).is_valid(incomplete))
 
     async def test_large_superadmin_catalog_pages_and_aggregate_remain_complete(self):
         snapshot, scope = await self.build(

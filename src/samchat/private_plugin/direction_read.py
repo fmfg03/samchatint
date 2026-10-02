@@ -184,12 +184,13 @@ DIRECTION_OUTPUT_SCHEMA = _object(
             "items": _INDICATOR_SCHEMA,
         },
         "source_consistency": {
-            "const": "sequential_reads_with_individual_cuts_not_cross_store_atomic"
+            "const": "independent_reads_with_individual_cuts_not_cross_store_atomic"
         },
         "business_acceptance": {"const": "pending"},
     }
 )
 DIRECTION_OUTPUT_SCHEMA["properties"]["scope_manifest"] = _SCOPE_MANIFEST
+DIRECTION_OUTPUT_SCHEMA["required"].append("scope_manifest")
 _OUTPUT_VALIDATOR = Draft202012Validator(DIRECTION_OUTPUT_SCHEMA)
 DIRECTION_SCOPES_OUTPUT_SCHEMA = _object(
     {
@@ -222,6 +223,7 @@ DIRECTION_SCOPES_OUTPUT_SCHEMA["properties"].update(
         ),
     }
 )
+DIRECTION_SCOPES_OUTPUT_SCHEMA["required"].extend(["scope_manifest", "pagination"])
 _SCOPES_VALIDATOR = Draft202012Validator(DIRECTION_SCOPES_OUTPUT_SCHEMA)
 
 

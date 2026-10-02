@@ -211,3 +211,16 @@ y digest en `scope_manifest`; el recibo de auditoría incluye ese manifiesto.
 Se validan todos los UUIDs incluso cuando no se enumeran en la respuesta. La
 regresión recorre 1.001 torneos y 1.001 carteras sin pérdida ni duplicación.
 Pasaron 252 pruebas funcionales, 132 del plugin, 20 PostgreSQL y el fixture SQL.
+
+Décima revisión: las proyecciones canónicas por torneo se ejecutan con concurrencia
+acotada a cuatro sesiones independientes, transacciones de solo lectura y el motor
+ya configurado. No comparten AsyncSession ni crean conexión/configuración nueva.
+Se mantienen cálculos, orden y permisos; un fallo de sesión conserva los hechos
+independientes. Es concurrencia acotada de lectores existentes, no una consulta SQL
+vectorizada ni una medición de latencia productiva. La regresión de 1.001 torneos
+verifica paridad con ejecución serial, límite, cierre, fallo y denegación de fuente.
+`scope_manifest` y `pagination` son obligatorios en sus contratos de salida.
+Pasaron 255 pruebas funcionales (97,35% de cobertura de los módulos medidos), 133
+del plugin y 20 PostgreSQL. QA visual/exportes sintéticos pasó sus 11 comprobaciones,
+sin errores JS; ambos PDF de cuatro páginas conservan texto dentro del papel.
+Los reportes explicitan lecturas independientes con cortes individuales.

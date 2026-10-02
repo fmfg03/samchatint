@@ -5,6 +5,7 @@ No financial records, permissions, budgets or bank balances are created here.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from datetime import date, datetime, timedelta, timezone
@@ -247,6 +248,23 @@ async def _optional_read(session: Any, loader: Any, **kwargs: Any) -> dict | Non
     except Exception:
         # Do not leak query text, source contacts, connection strings or errors.
         return None
+
+
+# Independent canonical per-tournament readers must never concurrently share an
+# AsyncSession. Bound connection use while removing the serial portfolio waterfall.
+TOURNAMENT_READ_CONCURRENCY = 4
+
+
+def _tournament_read_factory(session: Any):
+    bind = getattr(session, "bind", None)
+    if bind is None:
+        return None
+    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, async_sessionmaker
+
+    engine = bind.engine if isinstance(bind, AsyncConnection) else bind
+    if not isinstance(engine, AsyncEngine):
+        return None
+    return async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
 
 
 async def payment_values(session: Any, tournament_ids: list[str], today: date) -> dict:
@@ -696,7 +714,7 @@ def build_snapshot(
         "tournaments": rows,
         "priorities": concerns[:3],
         "headline": headline,
-        "source_consistency": "sequential_reads_with_individual_cuts_not_cross_store_atomic",
+        "source_consistency": "independent_reads_with_individual_cuts_not_cross_store_atomic",
         "business_acceptance": "pending",
         "reports": report_layouts({"start": start.isoformat(), "end": end.isoformat()}),
     }
@@ -766,10 +784,11 @@ async def build_home(
         if source_access["finance"]
         else {}
     )
-    for tournament in scope["selected"]:
+
+    async def project_row(row_session, tournament):
         snapshot = (
             await _optional_read(
-                session,
+                row_session,
                 service._build_direction_budget_snapshot,
                 tournament=tournament,
                 edition_year=year,
@@ -820,7 +839,7 @@ async def build_home(
         )
         version = str((snapshot.get("version") or {}).get("id") or "")
         ar = (
-            await receivable_values(session, tournament["id"], version, year)
+            await receivable_values(row_session, tournament["id"], version, year)
             if version and source_access["finance"]
             else {
                 "value": None,
@@ -844,63 +863,85 @@ async def build_home(
             if dossier.get("source_status") == "available"
             else None
         )
-        rows.append(
-            {
-                "id": tournament["id"],
-                "name": tournament["name"],
-                "version_id": version or None,
-                "documentary_evidence": {
-                    **factual,
-                    "source": FACT_SOURCE,
-                    "as_of": facts.get("as_of"),
+        return {
+            "id": tournament["id"],
+            "name": tournament["name"],
+            "version_id": version or None,
+            "documentary_evidence": {
+                **factual,
+                "source": FACT_SOURCE,
+                "as_of": facts.get("as_of"),
+            },
+            "concepts": concepts,
+            "previous_period": previous,
+            "forecast_method": {
+                k: (snapshot.get("forecast") or {}).get(k)
+                for k in ("elapsed_days", "total_days", "as_of_date")
+            },
+            "values": {k: str(v) if v is not None else None for k, v in values.items()},
+            "as_of": datetime.now(timezone.utc).isoformat(),
+            "gaps": {
+                **{
+                    key: budget_gaps or ["Importe presupuestal no acreditado."]
+                    for key in (
+                        "budget",
+                        "actual",
+                        "committed",
+                        "paid",
+                        "forecast",
+                        "deviation",
+                    )
+                    if values[key] is None
                 },
-                "concepts": concepts,
-                "previous_period": previous,
-                "forecast_method": {
-                    k: (snapshot.get("forecast") or {}).get(k)
-                    for k in ("elapsed_days", "total_days", "as_of_date")
+                "obligations": payments["gaps"],
+                "receivables": ar["gaps"],
+                **{
+                    key: (factual.get("gaps") or {}).get(
+                        key,
+                        [
+                            "Fuente documental independiente no disponible o no autorizada."
+                        ],
+                    )
+                    for key in ("actual", "committed", "paid")
                 },
-                "values": {
-                    k: str(v) if v is not None else None for k, v in values.items()
-                },
-                "as_of": datetime.now(timezone.utc).isoformat(),
-                "gaps": {
-                    **{
-                        key: budget_gaps or ["Importe presupuestal no acreditado."]
-                        for key in (
-                            "budget",
-                            "actual",
-                            "committed",
-                            "paid",
-                            "forecast",
-                            "deviation",
-                        )
-                        if values[key] is None
-                    },
-                    "obligations": payments["gaps"],
-                    "receivables": ar["gaps"],
-                    **{
-                        key: (factual.get("gaps") or {}).get(
-                            key,
-                            [
-                                "Fuente documental independiente no disponible o no autorizada."
-                            ],
-                        )
-                        for key in ("actual", "committed", "paid")
-                    },
-                },
-                "operations": {
-                    "teams": (operations or {}).get("teams_count"),
-                    "players": (operations or {}).get("players_count"),
-                    "period": f"Edición {year}; sin filtro histórico por fecha",
-                    "progress_percent": None,
-                },
-                "payment_evidence": payments.get("evidence", []),
-                "monthly_execution": monthly_execution(
-                    factual, values["actual"], start, end
-                ),
-            }
-        )
+            },
+            "operations": {
+                "teams": (operations or {}).get("teams_count"),
+                "players": (operations or {}).get("players_count"),
+                "period": f"Edición {year}; sin filtro histórico por fecha",
+                "progress_percent": None,
+            },
+            "payment_evidence": payments.get("evidence", []),
+            "monthly_execution": monthly_execution(
+                factual, values["actual"], start, end
+            ),
+        }
+
+    factory = _tournament_read_factory(session) if len(scope["selected"]) > 1 else None
+    if factory is None:
+        rows = [
+            await project_row(session, tournament) for tournament in scope["selected"]
+        ]
+    else:
+        semaphore = asyncio.Semaphore(TOURNAMENT_READ_CONCURRENCY)
+
+        async def project_isolated(tournament):
+            async with semaphore:
+                if not source_access["budget"]:
+                    return await project_row(None, tournament)
+                try:
+                    async with factory() as read_session:
+                        async with read_session.begin():
+                            await read_session.execute(
+                                text("SET TRANSACTION READ ONLY")
+                            )
+                            return await project_row(read_session, tournament)
+                except Exception:
+                    # Preserve independent set-scoped facts on connection failure;
+                    # never retry against a shared or possibly aborted transaction.
+                    return await project_row(None, tournament)
+
+        rows = await asyncio.gather(*(project_isolated(t) for t in scope["selected"]))
     result = build_snapshot(
         scope,
         rows,

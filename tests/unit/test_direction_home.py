@@ -384,6 +384,151 @@ def signed(monkeypatch):
     return result, chat.sign_context(result, ACTOR)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_child", [False, True])
+async def test_large_scope_projects_in_bounded_readonly_batches_with_parity(
+    monkeypatch, fail_child
+):
+    import asyncio
+
+    selected = scope()
+    selected["selected"] = [
+        {"id": str(UUID(int=n)), "name": f"Synthetic {n}"} for n in range(1, 1002)
+    ]
+    selected["tournaments"] = selected["selected"]
+    ids = [t["id"] for t in selected["selected"]]
+    monkeypatch.setattr(home, "resolve_scope", AsyncMock(return_value=selected))
+    main = Session()
+    children = []
+    active = maximum = closed = 0
+
+    class Child(Session):
+        async def __aenter__(self):
+            nonlocal active, maximum
+            active += 1
+            maximum = max(maximum, active)
+            return self
+
+        async def __aexit__(self, *_):
+            nonlocal active, closed
+            active -= 1
+            closed += 1
+
+        def begin(self):
+            return Savepoint()
+
+        async def execute(self, statement, params=None):
+            assert str(statement) == "SET TRANSACTION READ ONLY"
+            if fail_child and self is children[0]:
+                raise RuntimeError("synthetic setup failure")
+            self.readonly = True
+            return Result()
+
+    def factory():
+        child = Child()
+        children.append(child)
+        return child
+
+    async def read(session, loader, **kwargs):
+        if loader is home.build_executive_facts:
+            assert session is main and kwargs["tournament_ids"] == ids
+            return {
+                "by_tournament": {
+                    tid: {
+                        "values": {"actual": "40", "committed": None, "paid": None},
+                        "gaps": {},
+                    }
+                    for tid in ids
+                }
+            }
+        if session is None:
+            return None
+        assert loader is home.service._build_direction_budget_snapshot
+        assert session is main or session.readonly
+        await asyncio.sleep(0)
+        return {
+            "source": "budget_db",
+            "version": {"id": VERSION, "status": "approved"},
+            "summary": {"budget_total": 100, "actual_total": 40},
+            "forecast": {"projected_close_total": 120},
+        }
+
+    monkeypatch.setattr(home, "_optional_read", read)
+    monkeypatch.setattr(
+        home.service,
+        "_build_operational_dossier",
+        AsyncMock(
+            return_value={
+                "source_status": "available",
+                "summary": {"teams_count": 5, "players_count": 10},
+            }
+        ),
+    )
+    monkeypatch.setattr(home, "_tournament_read_factory", lambda session: factory)
+    batched, _ = await home.build_home(
+        main,
+        actor=ACTOR,
+        superadmin=True,
+        year=YEAR,
+        source_access={"budget": True, "finance": False},
+    )
+    assert 1 < maximum <= home.TOURNAMENT_READ_CONCURRENCY
+    assert active == 0 and closed == len(ids)
+    assert batched["tournament_ids"] == ids
+    actual = next(m for m in batched["indicators"] if m["id"] == "actual")
+    assert actual["value"] == "40040.00" and actual["coverage"]["covered"] == 1001
+    budget = next(m for m in batched["indicators"] if m["id"] == "budget")
+    assert budget["coverage"]["covered"] == 1001 - int(fail_child)
+    if not fail_child:
+        monkeypatch.setattr(home, "_tournament_read_factory", lambda session: None)
+        serial, _ = await home.build_home(
+            main,
+            actor=ACTOR,
+            superadmin=True,
+            year=YEAR,
+            source_access={"budget": True, "finance": False},
+        )
+        assert [
+            (m["id"], m["value"], m["coverage"]) for m in batched["indicators"]
+        ] == [(m["id"], m["value"], m["coverage"]) for m in serial["indicators"]]
+        assert [r["values"] for r in batched["tournaments"]] == [
+            r["values"] for r in serial["tournaments"]
+        ]
+        monkeypatch.setattr(
+            home,
+            "_tournament_read_factory",
+            lambda session: lambda: pytest.fail(
+                "Denied financial sources must not open child sessions"
+            ),
+        )
+        denied, _ = await home.build_home(
+            main,
+            actor=ACTOR,
+            superadmin=True,
+            year=YEAR,
+            source_access={"budget": False, "finance": False},
+        )
+        assert all(metric["value"] is None for metric in denied["indicators"])
+
+
+@pytest.mark.asyncio
+async def test_batch_session_factory_reuses_only_the_existing_async_engine():
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    assert home._tournament_read_factory(Session()) is None
+    assert home._tournament_read_factory(SimpleNamespace(bind=object())) is None
+    # Construction is lazy: this test never connects to a database.
+    engine = create_async_engine("postgresql+asyncpg://")
+    try:
+        for bind in (engine, engine.connect()):
+            factory = home._tournament_read_factory(SimpleNamespace(bind=bind))
+            assert factory.kw["bind"] is engine
+            assert factory.kw["autoflush"] is False
+            assert factory.kw["expire_on_commit"] is False
+    finally:
+        await engine.dispose()
+
+
 def test_signed_context_foreign_tampered_expired(signed, monkeypatch):
     result, token = signed
     assert chat.load_context(token, ACTOR) == result

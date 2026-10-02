@@ -16,7 +16,7 @@ The board and Sam download PDF/XLSX from the same signed snapshot. PDF contains 
 
 The new POST `/direccion/reportes/exportar/{pdf|xlsx}` shares the conversation's session CSRF check, actor-bound 15-minute signed snapshot and live scope/domain permission revalidation. An optional signed analysis receipt binds the actor and snapshot and prevents client-authored amounts or conclusions. Tokens are not placed in URLs. Responses use no-store, attachment disposition and a matching snapshot header. Existing Direction position/portfolio scope, superadmin supervision and explicit denials remain the owners. No global cross-entity access, public sharing, external sending, schema installation or financial mutation is introduced.
 
-The cut is a signed collection of sequential source reads, not a cross-store atomic transaction. Sources may have individual cuts. The report carries that limitation, coverage and pending business acceptance. Observed expense, documented paid state, pending collections and reconciled bank cash remain separate.
+The cut is a signed collection of independent source reads, not a cross-store atomic transaction. Sources may have individual cuts. The report carries that limitation, coverage and pending business acceptance. Observed expense, documented paid state, pending collections and reconciled bank cash remain separate.
 
 ## Canon unchanged
 
