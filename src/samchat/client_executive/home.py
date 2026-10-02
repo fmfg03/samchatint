@@ -265,6 +265,19 @@ async def payment_values(session: Any, tournament_ids: list[str], today: date) -
             (
                 {
                     **source,
+                    "source_status": {
+                        **(source.get("source_status") or {}),
+                        "document_scan_truncated": (
+                            (source.get("source_status") or {}).get(
+                                "document_scan_truncated_by_tournament", {}
+                            )
+                        ).get(
+                            tid,
+                            (source.get("source_status") or {}).get(
+                                "document_scan_truncated", False
+                            ),
+                        ),
+                    },
                     "documents": [
                         r
                         for r in source.get("documents", [])

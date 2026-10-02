@@ -130,7 +130,7 @@ equivalen a despliegue, reconciliación productiva o aceptación del negocio.
 
 - CI del candidato ce0534e: todos los gates aprobados y 98% de cobertura de cambios.
   Se reparó compatibilidad de alcance y fuente con el plugin privado, conservando
-  validaciones: 131 pruebas offline y 20 PostgreSQL aisladas aprobadas.
+  validaciones: 130 pruebas offline y 20 PostgreSQL aisladas aprobadas.
 - Revisión Codex: estados terminales canónicos sin fecha de pago ya cuentan en
   compromiso/pagado; resolución de informe por enlace explícito, legado o cuenta
   con informe único. [Verificación SQL sintética](sql-link-checks.json) ejecuta
@@ -176,3 +176,10 @@ SUPERADMIN sin carteras configuradas, conservando organización acreditada y
 denegaciones explícitas (131 pruebas offline). Los exportes describen el ejercido
 como base fiscal canónica documental, sin atribuirlo a un presupuesto; PDF/XLSX
 verifican ese texto y sus artefactos fueron regenerados.
+
+Sexta revisión: la consulta de obligaciones aplica el límite por torneo mediante
+`row_number` particionado dentro del alcance autorizado. Un torneo truncado no
+anula las cifras de otro completo; el agregado permanece incompleto. Regresiones
+con límite pequeño verifican truncado/completo, dos completos que exceden juntos
+el límite y torneo vacío. Pasan 245 pruebas de Dirección y lectores financieros
+relacionados; el cambio no modifica píxeles ni formatos de exportación.

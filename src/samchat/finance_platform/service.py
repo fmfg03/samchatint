@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -124,6 +124,12 @@ async def build_finance_source_snapshot(
     if documents_only and tournament_ids is None:
         raise ValueError("Document-only executive reads require explicit scope")
     period_year, period_month, start, end = _period_bounds(year, month)
+    document_filter = or_(
+        and_(Documento.creado_en >= start, Documento.creado_en < end),
+        and_(Documento.aprobado_en >= start, Documento.aprobado_en < end),
+        and_(Documento.pagado_en >= start, Documento.pagado_en < end),
+        Documento.estado.in_(["enviado", "aprobado", "en_proceso_pago"]),
+    )
 
     document_stmt = (
         select(Documento)
@@ -132,14 +138,7 @@ async def build_finance_source_snapshot(
             selectinload(Documento.empleado),
             selectinload(Documento.beneficiario_empleado),
         )
-        .where(
-            or_(
-                and_(Documento.creado_en >= start, Documento.creado_en < end),
-                and_(Documento.aprobado_en >= start, Documento.aprobado_en < end),
-                and_(Documento.pagado_en >= start, Documento.pagado_en < end),
-                Documento.estado.in_(["enviado", "aprobado", "en_proceso_pago"]),
-            )
-        )
+        .where(document_filter)
         .order_by(Documento.creado_en.desc())
         .limit(limit)
     )
@@ -198,11 +197,38 @@ async def build_finance_source_snapshot(
     if tournament_ids is not None:
         # An empty authorized scope must return no rows, never a global read.
         document_stmt = document_stmt.where(Documento.torneo_id.in_(tournament_ids))
-        document_stmt = document_stmt.limit(limit + 1)
         if not documents_only:
             raise ValueError("Scoped finance reads currently support documents only")
+        # Preserve the per-tournament cap in one authorized query. A busy
+        # tournament must not consume another tournament's completeness budget.
+        ranked = (
+            select(
+                Documento.id,
+                func.row_number()
+                .over(
+                    partition_by=Documento.torneo_id,
+                    order_by=(Documento.creado_en.desc(), Documento.id),
+                )
+                .label("scope_rank"),
+            )
+            .where(document_filter, Documento.torneo_id.in_(tournament_ids))
+            .subquery()
+        )
+        document_stmt = document_stmt.where(
+            Documento.id.in_(
+                select(ranked.c.id).where(ranked.c.scope_rank <= limit + 1)
+            )
+        ).limit(None)
     documents = (await session.execute(document_stmt)).scalars().all()
     if documents_only:
+        counts = dict.fromkeys(tournament_ids, 0)
+        kept = []
+        for document in documents:
+            tid = str(document.torneo_id)
+            counts[tid] += 1
+            if counts[tid] <= limit:
+                kept.append(document)
+        truncated = {tid: count > limit for tid, count in counts.items()}
         return {
             "period": {"year": period_year, "month": period_month},
             "documents": [
@@ -211,12 +237,13 @@ async def build_finance_source_snapshot(
                     "currency": getattr(d, "currency", None),
                     "tournament_id": str(d.torneo_id),
                 }
-                for d in documents[:limit]
+                for d in kept
             ],
             "expenses": [],
             "polizas": [],
             "source_status": {
-                "document_scan_truncated": len(documents) > limit,
+                "document_scan_truncated": any(truncated.values()),
+                "document_scan_truncated_by_tournament": truncated,
                 "document_scan_limit": limit,
                 "tournament_ids": sorted(set(tournament_ids)),
                 "polizas_available": False,

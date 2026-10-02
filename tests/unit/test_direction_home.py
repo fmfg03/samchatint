@@ -515,6 +515,47 @@ async def test_scoped_finance_source_never_reads_global_expenses_or_polizas():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("a_count,b_count", [(3, 2), (2, 2), (3, 0)])
+async def test_payment_scan_completeness_is_per_tournament(
+    monkeypatch, a_count, b_count
+):
+    # A tiny cap exercises the same boundary as 5,000 without giant fixtures.
+    rows = [
+        SimpleNamespace(torneo_id=tid, currency="MXN")
+        for tid, count in [(T1, a_count), (T2, b_count)]
+        for _ in range(count)
+    ]
+    monkeypatch.setattr(
+        finance,
+        "_serialize_document",
+        lambda d: {
+            "tipo": "SOLICITUD",
+            "estado": "aprobado",
+            "monto_total": 10,
+            "fecha_pago": TODAY.isoformat(),
+        },
+    )
+    session = Session([rows])
+    source = await finance.build_finance_source_snapshot(
+        session, tournament_ids=[T1, T2], documents_only=True, limit=2
+    )
+    sql = str(session.calls[0][0].compile(dialect=postgresql.dialect()))
+    assert "PARTITION BY documentos.torneo_id" in sql
+    assert "documentos.torneo_id IN" in sql
+    assert len(session.calls) == 1
+    assert len(source["documents"]) == min(a_count, 2) + b_count
+    monkeypatch.setattr(home, "_optional_read", AsyncMock(return_value=source))
+    result = await home.payment_values(Session(), [T1, T2], TODAY)
+    assert result["by_tournament"][T2]["value"] == b_count * 10
+    if a_count > 2:
+        assert result["value"] is None
+        assert result["by_tournament"][T1]["value"] is None
+    else:
+        assert result["value"] == (a_count + b_count) * 10
+        assert result["by_tournament"][T1]["value"] == a_count * 10
+
+
+@pytest.mark.asyncio
 async def test_payment_stock_gap_zero_cutoff_and_payable_amount(monkeypatch):
     rows = [
         {
