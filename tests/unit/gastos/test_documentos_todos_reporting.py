@@ -367,6 +367,7 @@ async def test_pending_approval_queue_renders_expense_with_attachment_without_la
     monkeypatch.setattr(
         user_routes, "fetch_documento_aprobador_display_batch", AsyncMock(return_value={})
     )
+    monkeypatch.setattr(user_routes, "actor_is_route_approver", AsyncMock(return_value=True))
     monkeypatch.setattr(user_routes, "render_top_navigation", lambda *_: "")
     monkeypatch.setattr(user_routes, "_gastos_workspace_nav_html", lambda *_: "")
     monkeypatch.setattr(user_routes, "_gastos_breadcrumb_html", lambda *_: "")
