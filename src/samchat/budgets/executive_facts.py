@@ -64,7 +64,7 @@ def project_facts(
                 "committed": "documentos.creado_en",
                 "paid": "documentos.creado_en",
             },
-            "scope_note": "Solo atribución directa por UUID del documento; registros sin torneo quedan fuera. No es consolidación por razón social ni caja.",
+            "scope_note": "Solo atribución por UUID del documento o su cuenta canónica; registros sin torneo quedan fuera. No es consolidación por razón social ni caja.",
         }
     seen = {}
     for kind, records in (("expense", expenses), ("document", documents)):
@@ -181,7 +181,8 @@ async def build_executive_facts(
         (
             await session.execute(
                 text(f"""
-        SELECT e.id::text AS id, d.torneo_id::text AS tournament_id,
+        SELECT e.id::text AS id,
+            COALESCE(d.torneo_id, expense_cuenta.torneo_id)::text AS tournament_id,
             e.fecha AS observed_date, e.currency, e.gasto_cantidad,
             {_budget_expense_base_amount_sql('e', 'cfdi')} AS base_amount,
             (e.cfdi_compartido_confirmado IS TRUE OR EXISTS (
@@ -206,8 +207,10 @@ async def build_executive_facts(
                      report.creado_en ASC
             LIMIT 1
         ) d ON TRUE
+        LEFT JOIN cuentas_de_gastos expense_cuenta
+          ON expense_cuenta.id = COALESCE(e.cuenta_gastos_id, d.cuenta_gastos_id)
         LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
-        WHERE d.torneo_id = ANY(CAST(:ids AS uuid[]))
+        WHERE COALESCE(d.torneo_id, expense_cuenta.torneo_id) = ANY(CAST(:ids AS uuid[]))
           AND e.estado_gasto <> 'cancelado'
           AND (e.fecha IS NULL OR DATE(e.fecha) BETWEEN :start AND :end)
         ORDER BY e.id LIMIT :limit
@@ -229,7 +232,6 @@ async def build_executive_facts(
         WHERE d.torneo_id = ANY(CAST(:ids AS uuid[])) AND d.tipo = 'SOLICITUD'
           AND (d.estado = ANY(CAST(:committed_states AS text[]))
                OR d.pagado_en IS NOT NULL)
-          AND d.estado NOT IN ('cancelado', 'rechazado')
           AND (d.creado_en IS NULL OR DATE(d.creado_en) BETWEEN :start AND :end)
         ORDER BY d.id LIMIT :limit
     """),

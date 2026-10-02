@@ -46,7 +46,7 @@ en esta misma revisión y requieren revisión humana antes de merge.
 - CxC conserva los requisitos de su lector canónico (atribución, versión y
   matching aceptado). CFDI sin atribuir no se convierten en cobranza. No se suman
   inversión, intercompañía o devoluciones como ingresos/gastos operativos.
-- Las consultas documentales acreditan atribución directa por documento; no
+- Las consultas documentales acreditan atribución por documento o cuenta canónica; no
   prometen cobertura de registros sin torneo ni consolidación por razón social.
 - No se ha ejecutado SQL contra producción ni una base productiva clonada. Las
   pruebas verifican proyecciones, consultas parametrizadas y fronteras con dobles
@@ -108,7 +108,7 @@ Una ejecución conjunta de browser + pruebas async produjo 23 errores del runner
 Playwright síncrono mantiene su loop durante la sesión. Se ejecutan en procesos
 separados como indican los comandos de abajo; no se atribuye ese fallo al producto.
 
-- 176 unitarias/regresiones enfocadas aprobadas; 97% de cobertura combinada en
+- 179 unitarias/regresiones enfocadas aprobadas; 97% de cobertura combinada en
   `executive_facts.py` y `report_layouts.py`. Advertencias existentes de deprecación.
 - 3 pruebas de navegador aprobadas: filtros múltiples, autorización contextual,
   escenarios/exportes, tabs, diálogo, foco y móvil.
@@ -146,3 +146,10 @@ equivalen a despliegue, reconciliación productiva o aceptación del negocio.
 
 El SHA posterior a estas correcciones necesita su propio CI/revisión; consultar
 la conclusión más reciente del PR, no extrapolar el verde de ce0534e.
+
+Segunda revisión: el SQL usa el torneo efectivo del informe o cuenta canónica en
+selección y filtro autorizado. `pagado_en` conserva pagos pese a estado mutable
+cancelado/rechazado. Ambos casos pasan SQL PostgreSQL sintético; el rechazo sin
+pago queda excluido. El comentario sobre carteras SUPERADMIN era un falso positivo:
+el lector canónico ya consulta todas las carteras activas sin asignaciones; se
+verificó con una regresión directa. No se amplió nuevamente la autorización.

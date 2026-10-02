@@ -31,6 +31,13 @@ expr = next(
     )
 )
 query = eval(compile(ast.Expression(expr), "query", "eval"), ns)
+document_query = next(
+    n.value
+    for n in ast.walk(tree)
+    if isinstance(n, ast.Constant)
+    and isinstance(n.value, str)
+    and "SELECT d.id::text AS id" in n.value
+)
 bins = (
     pathlib.Path(importlib.util.find_spec("pgserver").origin).parent / "pginstall/bin"
 )
@@ -81,7 +88,7 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
         with eng.begin() as c:
             c.execute(
                 text(
-                    "CREATE TABLE documentos(id uuid primary key,torneo_id uuid,tipo text,cuenta_gastos_id uuid,creado_en timestamp)"
+                    "CREATE TABLE documentos(id uuid primary key,torneo_id uuid,tipo text,cuenta_gastos_id uuid,creado_en timestamp,currency text,estado text,pagado_en timestamp,monto_total numeric,monto_solicitado numeric,concepto_pago text)"
                 )
             )
             c.execute(
@@ -99,19 +106,28 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                     "CREATE TABLE adjuntos(gasto_id uuid,categoria text,activo boolean)"
                 )
             )
+            c.execute(
+                text(
+                    "CREATE TABLE cuentas_de_gastos(id uuid primary key,torneo_id uuid)"
+                )
+            )
             uid = lambda n: f"00000000-0000-0000-0000-{n:012d}"
+            c.execute(
+                text("INSERT INTO cuentas_de_gastos VALUES (:id,:tid)"),
+                {"id": uid(20), "tid": uid(100)},
+            )
             for n, acct, tid in [
                 (1, 10, 100),
-                (2, 20, 100),
+                (2, 20, None),
                 (3, 30, 100),
                 (4, 30, 100),
                 (5, 40, 200),
             ]:
                 c.execute(
                     text(
-                        "INSERT INTO documentos VALUES (:id,:tid,'INFORME',:acct,'2026-06-01')"
+                        "INSERT INTO documentos(id,torneo_id,tipo,cuenta_gastos_id,creado_en) VALUES (:id,:tid,'INFORME',:acct,'2026-06-01')"
                     ),
-                    dict(id=uid(n), tid=uid(tid), acct=uid(acct)),
+                    dict(id=uid(n), tid=uid(tid) if tid else None, acct=uid(acct)),
                 )
             for n, legacy, report, acct in [
                 (11, 1, None, None),
@@ -147,12 +163,48 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
             )
             assert {r["id"] for r in rows} == {uid(n) for n in [11, 12, 13, 16]}, rows
             assert sum(r["base_amount"] for r in rows) == 400
+            for n, state, paid in [
+                (51, "rechazado", "2026-06-15"),
+                (52, "cancelado", "2026-06-15"),
+                (53, "rechazado", None),
+            ]:
+                c.execute(
+                    text(
+                        "INSERT INTO documentos(id,torneo_id,tipo,creado_en,currency,estado,pagado_en,monto_total) VALUES (:id,:tid,'SOLICITUD','2026-06-01','MXN',:state,:paid,75)"
+                    ),
+                    dict(id=uid(n), tid=uid(100), state=state, paid=paid),
+                )
+            paid_rows = (
+                c.execute(
+                    text(document_query),
+                    dict(
+                        ids=[uid(100)],
+                        start="2026-06-01",
+                        end="2026-06-30",
+                        limit=10001,
+                        committed_states=[
+                            "aprobado",
+                            "en_proceso_pago",
+                            "pagado",
+                            "cerrado",
+                            "reembolsado",
+                            "aplicado",
+                            "liquidado",
+                        ],
+                    ),
+                )
+                .mappings()
+                .all()
+            )
+            assert {r["id"] for r in paid_rows} == {uid(51), uid(52)}
             print(
                 json.dumps(
                     {
                         "legacy_link": True,
                         "report_link": True,
                         "unique_account": True,
+                        "account_tournament_fallback": True,
+                        "paid_timestamp_overrides_stale_state": True,
                         "ambiguous_account_excluded": True,
                         "foreign_scope_excluded": True,
                         "explicit_report_precedence": True,

@@ -144,7 +144,7 @@ async def test_set_scoped_reader_uses_canonical_base_no_budget_gate_or_global_fa
     assert "SELECT COUNT(*)" in expense_sql
     assert session.calls[1][1]["committed_states"] == sorted(facts.COMMITTED)
     for statement, params in session.calls:
-        assert "d.torneo_id = ANY(CAST(:ids AS uuid[]))" in str(statement)
+        assert "= ANY(CAST(:ids AS uuid[]))" in str(statement)
         assert params["ids"] == sorted([T1, T2])
         assert "budget_versions" not in str(statement)
         assert "budget_concept_id IS NOT NULL" not in str(statement)
@@ -476,3 +476,10 @@ def test_terminal_document_without_paid_date_counts_both_stages(state):
     data = project(documents=[document(estado=state, pagado_en=None)])[T1]
     assert data["values"]["committed"] == "75.00"
     assert data["values"]["paid"] == "75.00"
+
+
+@pytest.mark.parametrize("state", ["rechazado", "cancelado"])
+def test_paid_evidence_survives_stale_state(state):
+    data = project(documents=[document(estado=state, pagado_en="2026-06-15")])[T1]
+    assert data["values"]["paid"] == "75.00"
+    assert data["values"]["committed"] == "75.00"
