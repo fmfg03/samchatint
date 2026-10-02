@@ -190,3 +190,13 @@ particionan el límite por torneo; cada fuente conserva su propia completitud.
 Pasaron 248 pruebas relacionadas. PostgreSQL efímero ejecutó los dos SQL reales
 con dos torneos y límite reducido, verificando que ninguno consume el cupo del
 otro; la atribución por cuenta y prioridad del torneo directo tienen regresiones.
+
+Octava revisión: el lector de obligaciones carga explícitamente el torneo diferido
+de la cuenta. Cada fuente documental usa su propio savepoint; un fallo no oculta
+hechos de la fuente independiente. Contextos/análisis que superarían 90.000
+caracteres usan una firma compacta SHA-256 del contenido serializado exacto,
+transportado aparte como cadena. Se verifican firma, vencimiento, hash, identidad
+y alcance actual antes de confiar en los datos; no se requiere un nuevo almacén.
+Regresiones: contexto originalmente mayor de 100.000 caracteres, alteración,
+ausencia, vencimiento, Sam/escenario/PDF/XLSX y transporte intacto en navegador.
+Pasaron 252 pruebas funcionales, 4 de navegador, 131 del plugin y 20 PostgreSQL.

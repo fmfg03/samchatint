@@ -487,6 +487,49 @@ def test_paid_evidence_survives_stale_state(state):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failed", ["expense", "document"])
+async def test_documentary_failure_rolls_back_only_its_source(failed):
+    class IsolatedSession(Session):
+        poisoned = False
+        rollbacks = 0
+
+        def begin_nested(self):
+            owner = self
+
+            class Boundary:
+                async def __aenter__(self):
+                    assert not owner.poisoned
+
+                async def __aexit__(self, exc_type, *_):
+                    if exc_type:
+                        owner.rollbacks += 1
+                        owner.poisoned = False
+
+            return Boundary()
+
+        async def execute(self, statement, params=None):
+            assert not self.poisoned
+            kind = (
+                "expense" if "FROM expense_reports e" in str(statement) else "document"
+            )
+            if kind == failed:
+                self.poisoned = True
+                raise RuntimeError("synthetic source failure")
+            return await super().execute(statement, params)
+
+    session = IsolatedSession([[document()] if failed == "expense" else [expense()]])
+    result = await facts.build_executive_facts(
+        session, tournament_ids=[T1], start=START, end=END
+    )
+    bucket = result["by_tournament"][T1]
+    assert session.rollbacks == 1 and not session.poisoned
+    assert bucket["values"]["actual"] == (None if failed == "expense" else "100.00")
+    assert bucket["values"]["paid"] == (None if failed == "document" else "75.00")
+    if failed == "expense":
+        assert bucket["executive_monthly_actuals"] == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["expense", "document"])
 async def test_documentary_completeness_is_per_source_and_tournament(monkeypatch, kind):
     monkeypatch.setattr(facts, "SCAN_LIMIT", 2)

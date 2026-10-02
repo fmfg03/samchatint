@@ -24,7 +24,9 @@ from devnous.gastos.services.access_control_service import (
 )
 from samchat.client_executive.conversation import (
     ContextError,
+    analysis_receipt,
     answer_snapshot,
+    context_receipt,
     load_analysis,
     load_context,
     save_turn,
@@ -245,7 +247,9 @@ class DirectionScenarioRequest(BaseModel):
 
 class DirectionReportRequest(BaseModel):
     context_token: str = Field(min_length=1, max_length=100000)
+    context_receipt: Optional[str] = None
     analysis_token: Optional[str] = Field(default=None, max_length=100000)
+    analysis_receipt: Optional[str] = None
 
 
 class DirectionReportCellRequest(BaseModel):
@@ -257,11 +261,13 @@ class DirectionReportCellRequest(BaseModel):
 
 class DirectionQueryRequest(BaseModel):
     context_token: str = Field(min_length=1, max_length=100000)
+    context_receipt: Optional[str] = None
     metric_id: str = Field(min_length=1, max_length=40)
     question: str = Field(min_length=1, max_length=2000)
     conversation_id: Optional[str] = Field(default=None, max_length=36)
     scenario: Optional[DirectionScenarioRequest] = None
     analysis_token: Optional[str] = Field(default=None, max_length=100000)
+    analysis_receipt: Optional[str] = None
     report_cell: Optional[DirectionReportCellRequest] = None
 
 
@@ -330,7 +336,13 @@ async def direction_home(
         "direction_context_csrf", secrets.token_urlsafe(32)
     )
     return HTMLResponse(
-        render_home(snapshot, scope, token=token, csrf=csrf),
+        render_home(
+            snapshot,
+            scope,
+            token=token,
+            csrf=csrf,
+            receipt=context_receipt(snapshot, str(current_empleado.id), token),
+        ),
         headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
     )
 
@@ -344,7 +356,9 @@ async def _verified_direction_context(request, payload, session, employee) -> di
             status_code=403, detail="La consulta no pertenece a esta sesión."
         )
     try:
-        snapshot = load_context(payload.context_token, str(employee.id))
+        snapshot = load_context(
+            payload.context_token, str(employee.id), payload.context_receipt
+        )
         selected_scope = snapshot["scope"]
         current = await resolve_scope(
             session,
@@ -394,6 +408,7 @@ async def direction_context_query(
                 payload.analysis_token,
                 snapshot["snapshot_id"],
                 str(current_empleado.id),
+                payload.analysis_receipt,
             )
             if payload.analysis_token
             else None
@@ -414,9 +429,14 @@ async def direction_context_query(
                 else None
             ),
         )
-        answer["analysis_token"] = sign_analysis(
+        answer_token = sign_analysis(
             answer, snapshot["snapshot_id"], str(current_empleado.id)
         )
+        answer_receipt = analysis_receipt(
+            answer, snapshot["snapshot_id"], str(current_empleado.id), answer_token
+        )
+        answer["analysis_token"] = answer_token
+        answer["analysis_receipt"] = answer_receipt
         answer["report_ready"] = True
         answer["conversation_id"] = await save_turn(
             session,
@@ -453,6 +473,7 @@ async def direction_export_report(
                 payload.analysis_token,
                 snapshot["snapshot_id"],
                 str(current_empleado.id),
+                payload.analysis_receipt,
             )
             if payload.analysis_token
             else None

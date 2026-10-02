@@ -6,6 +6,9 @@ is invoked here. Interpretations and scenarios never mutate financial records.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import os
 from datetime import datetime, timezone
 from typing import Any
@@ -20,6 +23,8 @@ from .home import SCHEMA
 
 TOKEN_TTL_SECONDS = 900
 TOKEN_SALT = "samchat.direction.context.v1"
+MAX_INLINE_TOKEN = 90000
+DETACHED_PREFIX = "receipt."
 
 
 class ContextError(ValueError):
@@ -33,15 +38,69 @@ def _signer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(secret, salt=TOKEN_SALT)
 
 
+def _serialized_payload(payload: dict) -> str:
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+        allow_nan=False,
+    )
+
+
+def _sign_payload(payload: dict) -> str:
+    """Keep tokens bounded; large exact receipts travel separately, hash-bound.
+
+    The receipt is still server-authored. Its signature, TTL and digest must pass
+    before any value is trusted; actor/scope checks remain the caller's contract.
+    """
+    token = _signer().dumps(payload)
+    if len(token) <= MAX_INLINE_TOKEN:
+        return token
+    digest = hashlib.sha256(_serialized_payload(payload).encode()).hexdigest()
+    return DETACHED_PREFIX + _signer().dumps({"receipt_sha256": digest})
+
+
+def _receipt(payload: dict, token: str) -> str | None:
+    return _serialized_payload(payload) if token.startswith(DETACHED_PREFIX) else None
+
+
+def _load_payload(token: str, receipt: str | None) -> dict:
+    detached = token.startswith(DETACHED_PREFIX)
+    payload = _signer().loads(
+        token[len(DETACHED_PREFIX) :] if detached else token, max_age=TOKEN_TTL_SECONDS
+    )
+    if detached:
+        digest = hashlib.sha256((receipt or "").encode()).hexdigest()
+        if not isinstance(payload, dict) or not hmac.compare_digest(
+            str(payload.get("receipt_sha256", "")), digest
+        ):
+            raise ContextError(
+                "El contenido no corresponde al contexto firmado; actualiza el tablero."
+            )
+        try:
+            payload = json.loads(receipt)
+        except (ValueError, TypeError) as exc:
+            raise ContextError("El contexto firmado no es válido.") from exc
+    if not isinstance(payload, dict):
+        raise ContextError("El contexto firmado no es válido.")
+    return payload
+
+
+def context_receipt(snapshot: dict, actor: str, token: str) -> str | None:
+    return _receipt({"actor": actor, "snapshot": snapshot}, token)
+
+
 def sign_context(snapshot: dict, actor: str) -> str:
     """Keep factual values server-authored and bind every context to its actor."""
-    return _signer().dumps({"actor": actor, "snapshot": snapshot})
+    return _sign_payload({"actor": actor, "snapshot": snapshot})
 
 
-def load_context(token: str, actor: str) -> dict:
+def load_context(token: str, actor: str, receipt: str | None = None) -> dict:
     """No client-provided money, filters or IDs are trusted outside this receipt."""
     try:
-        payload = _signer().loads(token, max_age=TOKEN_TTL_SECONDS)
+        payload = _load_payload(token, receipt)
     except (BadSignature, SignatureExpired) as exc:
         raise ContextError(
             "El contexto expiró o no es válido; actualiza el tablero."
@@ -54,21 +113,31 @@ def load_context(token: str, actor: str) -> dict:
     return payload["snapshot"]
 
 
+def _analysis_payload(analysis: dict, snapshot_id: str, actor: str) -> dict:
+    return {
+        "kind": "direction.analysis.v1",
+        "actor": actor,
+        "snapshot_id": snapshot_id,
+        "analysis": analysis,
+    }
+
+
 def sign_analysis(analysis: dict, snapshot_id: str, actor: str) -> str:
     """Bind server-authored recommendations and assumptions to the exact cut."""
-    return _signer().dumps(
-        {
-            "kind": "direction.analysis.v1",
-            "actor": actor,
-            "snapshot_id": snapshot_id,
-            "analysis": analysis,
-        }
-    )
+    return _sign_payload(_analysis_payload(analysis, snapshot_id, actor))
 
 
-def load_analysis(token: str, snapshot_id: str, actor: str) -> dict:
+def analysis_receipt(
+    analysis: dict, snapshot_id: str, actor: str, token: str
+) -> str | None:
+    return _receipt(_analysis_payload(analysis, snapshot_id, actor), token)
+
+
+def load_analysis(
+    token: str, snapshot_id: str, actor: str, receipt: str | None = None
+) -> dict:
     try:
-        payload = _signer().loads(token, max_age=TOKEN_TTL_SECONDS)
+        payload = _load_payload(token, receipt)
     except (BadSignature, SignatureExpired) as exc:
         raise ContextError(
             "El análisis expiró; repite la consulta en este contexto."

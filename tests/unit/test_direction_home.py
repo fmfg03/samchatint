@@ -404,6 +404,29 @@ def test_missing_signing_secret_fails_closed(monkeypatch):
         chat.sign_context(snapshot(), ACTOR)
 
 
+def test_large_context_receipt_preserves_exact_snapshot_and_signature(
+    signed, monkeypatch
+):
+    import random
+
+    data, _ = signed
+    data["synthetic_large_scope_evidence"] = random.Random(431).randbytes(120000).hex()
+    assert len(chat._signer().dumps({"actor": ACTOR, "snapshot": data})) > 100000
+    token = chat.sign_context(data, ACTOR)
+    receipt = chat.context_receipt(data, ACTOR, token)
+    assert len(token) < 100000 and receipt
+    assert chat.load_context(token, ACTOR, receipt) == data
+    for actor, value in [(T1, receipt), (ACTOR, receipt + " "), (ACTOR, None)]:
+        with pytest.raises(chat.ContextError):
+            chat.load_context(token, actor, value)
+    original = TimestampSigner.get_timestamp
+    monkeypatch.setattr(
+        TimestampSigner, "get_timestamp", lambda self: original(self) + 901
+    )
+    with pytest.raises(chat.ContextError):
+        chat.load_context(token, ACTOR, receipt)
+
+
 def test_sam_exact_metric_unsupported_request_and_unknown_id():
     data = snapshot()
     answer = chat.answer_snapshot(data, "actual", "¿Qué explica esto?")
@@ -502,6 +525,14 @@ async def test_scoped_finance_source_never_reads_global_expenses_or_polizas():
     )
     sql = str(session.calls[0][0].compile(dialect=postgresql.dialect()))
     assert "coalesce(documentos.torneo_id, cuentas_de_gastos.torneo_id) IN" in sql
+    loader_contexts = [
+        ctx for option in session.calls[0][0]._with_options for ctx in option.context
+    ]
+    assert any(
+        "CuentaDeGastos.torneo_id" in str(ctx.path)
+        and ("deferred", False) in ctx.strategy
+        for ctx in loader_contexts
+    )
     assert len(session.calls) == 1
     assert result["source_status"]["polizas_available"] is False
     with pytest.raises(ValueError):

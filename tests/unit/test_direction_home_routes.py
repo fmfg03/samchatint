@@ -59,6 +59,48 @@ def test_question_uses_exact_visible_snapshot(context_client):
     assert response.headers["cache-control"] == "no-store"
 
 
+def test_detached_context_sam_scenario_and_exports_share_exact_receipt(
+    context_client, monkeypatch
+):
+    from samchat.client_executive import conversation
+
+    client, _ = context_client
+    monkeypatch.setattr(conversation, "MAX_INLINE_TOKEN", 1)
+    response = client.get("/direccion/inicio")
+    page = json.loads(
+        re.search(
+            r'<script id="home-data" type="application/json">(.*?)</script>',
+            response.text,
+        ).group(1)
+    )
+    assert len(page["token"]) < 100000 and page["context_receipt"]
+    response = ask(
+        client,
+        page,
+        context_receipt=page["context_receipt"],
+        scenario={"kind": "expense_reduction", "percent": "10"},
+    )
+    assert response.status_code == 200
+    answer = response.json()
+    assert answer["snapshot_id"] == page["snapshot"]["snapshot_id"]
+    assert answer["analysis_receipt"] and len(answer["analysis_token"]) < 100000
+    body = {key: answer[key] for key in ("analysis_token", "analysis_receipt")}
+    body.update(context_token=page["token"], context_receipt=page["context_receipt"])
+    for fmt in ("pdf", "xlsx"):
+        exported = client.post(
+            f"/direccion/reportes/exportar/{fmt}",
+            json=body,
+            headers={"X-Direction-CSRF": page["csrf"]},
+        )
+        assert exported.status_code == 200
+        assert exported.headers["X-Direction-Snapshot"] == answer["snapshot_id"]
+    assert (
+        ask(client, page, context_receipt=page["context_receipt"] + " ").status_code
+        == 409
+    )
+    assert ask(client, page).status_code == 409
+
+
 def test_multi_selection_is_forwarded_and_revalidated_in_sam_and_exports(
     context_client, monkeypatch
 ):

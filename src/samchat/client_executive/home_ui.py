@@ -115,7 +115,9 @@ def _json(value: object) -> str:
     )
 
 
-def render_home(snapshot: dict, scope: dict, *, token: str, csrf: str) -> str:
+def render_home(
+    snapshot: dict, scope: dict, *, token: str, csrf: str, receipt: str | None = None
+) -> str:
     """Render only the already-authorized, reduced executive read model."""
     metrics = snapshot["indicators"]
     period = snapshot["period"]
@@ -222,7 +224,9 @@ def render_home(snapshot: dict, scope: dict, *, token: str, csrf: str) -> str:
         for row in snapshot["tournaments"]
     )
     dossier_query = urlencode({"edition_year": snapshot["edition_year"]})
-    data = _json({"snapshot": snapshot, "token": token, "csrf": csrf})
+    data = _json(
+        {"snapshot": snapshot, "token": token, "csrf": csrf, "context_receipt": receipt}
+    )
     report_panels = _report_panels(snapshot)
     return f"""<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="referrer" content="same-origin"><title>Dirección · SamChat</title>

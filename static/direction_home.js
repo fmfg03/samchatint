@@ -55,6 +55,7 @@
   let selected = snapshot.indicators[0];
   let conversationId = null;
   let analysisToken = null;
+  let analysisReceipt = null;
   let pending = null;
   let generation = 0;
   let reportSelection = null;
@@ -69,6 +70,7 @@
     reportSelection = null;
     byId('home-scenario').inert = false;
     analysisToken = null;
+    analysisReceipt = null;
     byId("home-report-status").textContent = "El reporte conserva las cifras reales de este corte.";
     document.querySelectorAll('[data-metric]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.metric === id)));
     byId('home-context').textContent = context();
@@ -105,7 +107,7 @@
       const response = await fetch('/direccion/tableros/asistente/consulta', {
         method: 'POST', credentials: 'same-origin', signal: controller.signal,
         headers: {'Content-Type': 'application/json', 'X-Direction-CSRF': data.csrf},
-        body: JSON.stringify({context_token: data.token, metric_id: metricId, question, conversation_id: conversationId, scenario, analysis_token: analysisToken, report_cell: reportSelection})
+        body: JSON.stringify({context_token: data.token, context_receipt: data.context_receipt, metric_id: metricId, question, conversation_id: conversationId, scenario, analysis_token: analysisToken, analysis_receipt: analysisReceipt, report_cell: reportSelection})
       });
       if (response.redirected) throw new Error('La sesión expiró. Vuelve a entrar.');
       const payload = await response.json();
@@ -114,6 +116,7 @@
       if (payload.snapshot_id !== snapshot.snapshot_id || payload.metric_id !== metricId) throw new Error('El contexto cambió. Actualiza el tablero.');
       conversationId = payload.conversation_id;
       analysisToken = payload.analysis_token || null;
+      analysisReceipt = payload.analysis_receipt || null;
       byId("home-report-status").textContent = payload.report_requested ? "Reporte preparado con este contexto. Descarga PDF o Excel." : (payload.scenario ? "El reporte incluye este escenario separado de las cifras reales." : "El reporte incluye la conclusión de esta consulta.");
       byId('home-answer').textContent = payload.assistant_message;
       const article = document.createElement('article');
@@ -140,7 +143,7 @@
       const response = await fetch(`/direccion/reportes/exportar/${format}`, {
         method: 'POST', credentials: 'same-origin',
         headers: {'Content-Type': 'application/json', 'X-Direction-CSRF': data.csrf},
-        body: JSON.stringify({context_token: data.token, analysis_token: analysisToken})
+        body: JSON.stringify({context_token: data.token, context_receipt: data.context_receipt, analysis_token: analysisToken, analysis_receipt: analysisReceipt})
       });
       if (response.redirected) throw new Error('La sesión expiró. Vuelve a entrar.');
       if (!response.ok) {

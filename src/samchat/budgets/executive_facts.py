@@ -159,6 +159,15 @@ def project_facts(
     }
 
 
+async def _read_source(session: Any, statement: Any, params: dict) -> list | None:
+    """A failed source rolls back its own savepoint, preserving independent facts."""
+    try:
+        async with session.begin_nested():
+            return (await session.execute(statement, params)).mappings().all()
+    except Exception:
+        return None
+
+
 async def build_executive_facts(
     session: Any,
     *,
@@ -187,10 +196,9 @@ async def build_executive_facts(
         "committed_states": sorted(COMMITTED),
     }
     expense_rows = (
-        (
-            (
-                await session.execute(
-                    text(f"""
+        await _read_source(
+            session,
+            text(f"""
         WITH scoped AS (
         SELECT e.id::text AS id,
             COALESCE(d.torneo_id, expense_cuenta.torneo_id)::text AS tournament_id,
@@ -236,20 +244,15 @@ async def build_executive_facts(
         )
         SELECT * FROM ranked WHERE source_rank <= :limit ORDER BY id
     """),
-                    params,
-                )
-            )
-            .mappings()
-            .all()
+            params,
         )
         if include_expenses
         else []
     )
     document_rows = (
-        (
-            (
-                await session.execute(
-                    text("""
+        await _read_source(
+            session,
+            text("""
         WITH scoped AS (
         SELECT d.id::text AS id,
             COALESCE(d.torneo_id, document_cuenta.torneo_id)::text AS tournament_id,
@@ -267,15 +270,18 @@ async def build_executive_facts(
         )
         SELECT * FROM ranked WHERE source_rank <= :limit ORDER BY id
     """),
-                    params,
-                )
-            )
-            .mappings()
-            .all()
+            params,
         )
         if include_documents
         else []
     )
+    failed = {
+        kind
+        for kind, records in (("expense", expense_rows), ("document", document_rows))
+        if records is None
+    }
+    expense_rows = expense_rows or []
+    document_rows = document_rows or []
     truncated = {tid: set() for tid in ids}
     for kind, records in (("expense", expense_rows), ("document", document_rows)):
         for tid, count in Counter(str(r["tournament_id"]) for r in records).items():
@@ -296,10 +302,17 @@ async def build_executive_facts(
             ("committed", include_documents),
             ("paid", include_documents),
         ):
-            if not allowed:
+            source_failed = ("expense" if key == "actual" else "document") in failed
+            if not allowed or source_failed:
                 bucket["values"][key] = None
                 bucket["known_subtotals"][key] = None
-                bucket["gaps"][key] = ["Fuente no autorizada para esta identidad."]
-        if not include_expenses:
+                bucket["gaps"][key] = [
+                    (
+                        "Fuente documental temporalmente no disponible."
+                        if allowed
+                        else "Fuente no autorizada para esta identidad."
+                    )
+                ]
+        if not include_expenses or "expense" in failed:
             bucket["executive_monthly_actuals"] = []
     return result

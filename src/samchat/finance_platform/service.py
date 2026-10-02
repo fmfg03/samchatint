@@ -207,7 +207,9 @@ async def build_finance_source_snapshot(
         account_join = CuentaDeGastos.id == Documento.cuenta_gastos_id
         document_stmt = (
             document_stmt.outerjoin(CuentaDeGastos, account_join)
-            .options(selectinload(Documento.cuenta_gastos))
+            .options(
+                selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.torneo_id)
+            )
             .where(effective_tournament.in_(tournament_ids))
         )
         if not documents_only:

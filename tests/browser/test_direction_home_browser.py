@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import pytest
 from playwright.sync_api import Page
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "unit"))
@@ -194,11 +195,14 @@ def test_desktop_mobile_context_and_filter_navigation(page: Page):
     assert not errors
 
 
-def test_scenario_download_uses_same_context_and_signed_analysis(page: Page):
+@pytest.mark.parametrize("detached", [False, True])
+def test_scenario_download_uses_same_context_and_signed_analysis(page: Page, detached):
     from samchat.client_executive.reports import build_report
     from samchat.executive.exporter import generate_direction_report_xlsx
 
     data = snapshot()
+    receipt = '{"synthetic":"contexto exacto < & ñ"}' if detached else None
+    analysis_receipt = '{"synthetic":"análisis exacto"}' if detached else None
     latest = None
     captured = []
     errors = []
@@ -215,6 +219,8 @@ def test_scenario_download_uses_same_context_and_signed_analysis(page: Page):
             payload = route.request.post_data_json
             assert payload["context_token"] == "same-cut"
             assert payload["analysis_token"] == "signed-analysis"
+            assert payload.get("context_receipt") == receipt
+            assert payload.get("analysis_receipt") == analysis_receipt
             captured.append(payload)
             route.fulfill(
                 content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -228,6 +234,7 @@ def test_scenario_download_uses_same_context_and_signed_analysis(page: Page):
             )
         elif route.request.method == "POST":
             payload = route.request.post_data_json
+            assert payload.get("context_receipt") == receipt
             latest = answer_snapshot(
                 data,
                 payload["metric_id"],
@@ -235,13 +242,17 @@ def test_scenario_download_uses_same_context_and_signed_analysis(page: Page):
                 scenario=payload.get("scenario"),
             )
             latest.update(
-                analysis_token="signed-analysis", conversation_id="same-conversation"
+                analysis_token="signed-analysis",
+                analysis_receipt=analysis_receipt,
+                conversation_id="same-conversation",
             )
             route.fulfill(content_type="application/json", body=json.dumps(latest))
         else:
             route.fulfill(
                 content_type="text/html",
-                body=render_home(data, scope(), token="same-cut", csrf="same-csrf"),
+                body=render_home(
+                    data, scope(), token="same-cut", csrf="same-csrf", receipt=receipt
+                ),
             )
 
     page.route("http://direction.test/**", serve)
