@@ -723,11 +723,13 @@ async def build_home(
         await _optional_read(
             session,
             build_executive_facts,
+            include_expenses=source_access["budget"],
+            include_documents=source_access["finance"],
             tournament_ids=selected_ids,
             start=start,
             end=end,
         )
-        if source_access["finance"] and source_access["budget"]
+        if source_access["finance"] or source_access["budget"]
         else None
     ) or {}
     previous_end = start - timedelta(days=1)
@@ -736,13 +738,14 @@ async def build_home(
         await _optional_read(
             session,
             build_executive_facts,
+            include_expenses=source_access["budget"],
+            include_documents=source_access["finance"],
             tournament_ids=selected_ids,
             start=previous_start,
             end=previous_end,
         )
         if previous_start.year == year
-        and source_access["finance"]
-        and source_access["budget"]
+        and (source_access["finance"] or source_access["budget"])
         else None
     ) or {}
     payment_batch = (

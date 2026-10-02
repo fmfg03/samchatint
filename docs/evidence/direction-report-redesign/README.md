@@ -108,7 +108,7 @@ Una ejecución conjunta de browser + pruebas async produjo 23 errores del runner
 Playwright síncrono mantiene su loop durante la sesión. Se ejecutan en procesos
 separados como indican los comandos de abajo; no se atribuye ese fallo al producto.
 
-- 179 unitarias/regresiones enfocadas aprobadas; 97% de cobertura combinada en
+- 187 unitarias/regresiones enfocadas aprobadas; 97% de cobertura combinada en
   `executive_facts.py` y `report_layouts.py`. Advertencias existentes de deprecación.
 - 3 pruebas de navegador aprobadas: filtros múltiples, autorización contextual,
   escenarios/exportes, tabs, diálogo, foco y móvil.
@@ -153,3 +153,11 @@ cancelado/rechazado. Ambos casos pasan SQL PostgreSQL sintético; el rechazo sin
 pago queda excluido. El comentario sobre carteras SUPERADMIN era un falso positivo:
 el lector canónico ya consulta todas las carteras activas sin asignaciones; se
 verificó con una regresión directa. No se amplió nuevamente la autorización.
+
+Tercera revisión: el informe mantiene precedencia y la solicitud directa actúa
+como fallback documentado; SQL sintético incluye ese flujo y excluye torneos ajenos.
+Los permisos de fuente ahora omiten físicamente la consulta denegada: presupuesto
+controla ejercido y Finanzas compromiso/pagado. Se verifican combinaciones de
+denegación en lector, home y plugin. Contextos legacy escalar+lista se revalidan
+con un único selector para Sam/PDF/XLSX. Las preguntas operativas sobre celdas
+pasan el mismo guard de intención y responden que no se ejecutó acción alguna.

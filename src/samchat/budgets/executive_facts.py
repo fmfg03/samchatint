@@ -158,6 +158,8 @@ async def build_executive_facts(
     tournament_ids: list[str],
     start: date,
     end: date,
+    include_expenses: bool = True,
+    include_documents: bool = True,
 ) -> dict:
     """One set-scoped read per source; base amounts reuse the budget tax owner.
 
@@ -179,8 +181,9 @@ async def build_executive_facts(
     }
     expense_rows = (
         (
-            await session.execute(
-                text(f"""
+            (
+                await session.execute(
+                    text(f"""
         SELECT e.id::text AS id,
             COALESCE(d.torneo_id, expense_cuenta.torneo_id)::text AS tournament_id,
             e.fecha AS observed_date, e.currency, e.gasto_cantidad,
@@ -193,7 +196,7 @@ async def build_executive_facts(
         FROM expense_reports e
         JOIN LATERAL (
             SELECT report.* FROM documentos report
-            WHERE report.tipo = 'INFORME' AND (
+            WHERE (report.tipo = 'INFORME' AND (
                 report.id = e.informe_documento_id
                 OR report.id = e.documento_id
                 OR (e.cuenta_gastos_id IS NOT NULL
@@ -201,8 +204,9 @@ async def build_executive_facts(
                     AND 1 = (SELECT COUNT(*) FROM documentos account_report
                         WHERE account_report.tipo = 'INFORME'
                         AND account_report.cuenta_gastos_id = e.cuenta_gastos_id))
-            )
-            ORDER BY CASE WHEN report.id = e.informe_documento_id THEN 0
+            )) OR (report.tipo = 'SOLICITUD' AND report.id = e.documento_id)
+            ORDER BY CASE WHEN report.tipo = 'SOLICITUD' THEN 3
+                          WHEN report.id = e.informe_documento_id THEN 0
                           WHEN report.id = e.documento_id THEN 1 ELSE 2 END,
                      report.creado_en ASC
             LIMIT 1
@@ -215,16 +219,20 @@ async def build_executive_facts(
           AND (e.fecha IS NULL OR DATE(e.fecha) BETWEEN :start AND :end)
         ORDER BY e.id LIMIT :limit
     """),
-                params,
+                    params,
+                )
             )
+            .mappings()
+            .all()
         )
-        .mappings()
-        .all()
+        if include_expenses
+        else []
     )
     document_rows = (
         (
-            await session.execute(
-                text("""
+            (
+                await session.execute(
+                    text("""
         SELECT d.id::text AS id, d.torneo_id::text AS tournament_id,
             d.creado_en AS observed_date, d.currency, d.estado, d.pagado_en,
             d.monto_total, d.monto_solicitado, d.concepto_pago
@@ -235,13 +243,16 @@ async def build_executive_facts(
           AND (d.creado_en IS NULL OR DATE(d.creado_en) BETWEEN :start AND :end)
         ORDER BY d.id LIMIT :limit
     """),
-                params,
+                    params,
+                )
             )
+            .mappings()
+            .all()
         )
-        .mappings()
-        .all()
+        if include_documents
+        else []
     )
-    return project_facts(
+    result = project_facts(
         ids,
         [dict(r) for r in expense_rows],
         [dict(r) for r in document_rows],
@@ -256,3 +267,17 @@ async def build_executive_facts(
             if len(records) > SCAN_LIMIT
         },
     )
+
+    for bucket in result["by_tournament"].values():
+        for key, allowed in (
+            ("actual", include_expenses),
+            ("committed", include_documents),
+            ("paid", include_documents),
+        ):
+            if not allowed:
+                bucket["values"][key] = None
+                bucket["known_subtotals"][key] = None
+                bucket["gaps"][key] = ["Fuente no autorizada para esta identidad."]
+        if not include_expenses:
+            bucket["executive_monthly_actuals"] = []
+    return result

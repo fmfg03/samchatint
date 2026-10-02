@@ -352,7 +352,11 @@ async def _verified_direction_context(request, payload, session, employee) -> di
             superadmin=_is_superadmin(employee),
             portfolio_id=selected_scope["portfolio_id"],
             tournament_id=selected_scope["tournament_id"],
-            tournament_ids=selected_scope.get("tournament_ids"),
+            tournament_ids=(
+                None
+                if selected_scope["tournament_id"]
+                else selected_scope.get("tournament_ids")
+            ),
         )
         if (
             sorted(snapshot["tournament_ids"])

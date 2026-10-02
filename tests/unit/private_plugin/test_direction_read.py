@@ -181,6 +181,23 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
                 "DIRECTION_EXECUTIVE_TOOL": "direccion.tableros_ejecutivos",
             },
         )
+
+        async def documentary_facts(
+            _session, *, include_expenses, include_documents, **kwargs
+        ):
+            return {
+                "by_tournament": {
+                    TOURNAMENT: {
+                        "values": {
+                            "actual": "40" if include_expenses else None,
+                            "committed": "50" if include_documents else None,
+                            "paid": "20" if include_documents else None,
+                        },
+                        "gaps": {},
+                    }
+                }
+            }
+
         home = source_functions(
             "src/samchat/client_executive/home.py",
             None,
@@ -188,20 +205,7 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
                 "service": service,
                 "FACT_SOURCE": "samchat.budgets.executive_facts.build_executive_facts",
                 "report_layouts": report_layouts,
-                "build_executive_facts": AsyncMock(
-                    return_value={
-                        "by_tournament": {
-                            TOURNAMENT: {
-                                "values": {
-                                    "actual": "40",
-                                    "committed": "50",
-                                    "paid": "20",
-                                },
-                                "gaps": {},
-                            }
-                        }
-                    }
-                ),
+                "build_executive_facts": AsyncMock(side_effect=documentary_facts),
                 "text": lambda value: value,
                 "date": date,
                 "datetime": datetime,
@@ -340,10 +344,13 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
                 if denied_tool == "admin.presupuestos":
                     self.budget.assert_not_awaited()
                     self.assertIsNone(values["actual"]["value"])
+                    self.assertEqual(values["paid"]["value"], "20.00")
                 else:
                     self.payments.assert_not_awaited()
                     self.receivables.assert_not_awaited()
                     self.assertIsNone(values["obligations"]["value"])
+                    self.assertIsNone(values["paid"]["value"])
+                    self.assertEqual(values["actual"]["value"], "40.00")
                     self.assertTrue(values["obligations"]["gaps"])
 
     async def test_source_lookup_failure_is_denial_not_global_fallback(self):

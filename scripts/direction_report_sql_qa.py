@@ -129,13 +129,22 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                     ),
                     dict(id=uid(n), tid=uid(tid) if tid else None, acct=uid(acct)),
                 )
+            for n, tid in [(6, 100), (7, 200)]:
+                c.execute(
+                    text(
+                        "INSERT INTO documentos(id,torneo_id,tipo,creado_en) VALUES (:id,:tid,'SOLICITUD','2026-06-01')"
+                    ),
+                    dict(id=uid(n), tid=uid(tid)),
+                )
             for n, legacy, report, acct in [
                 (11, 1, None, None),
                 (12, None, 1, None),
                 (13, None, None, 20),
                 (14, None, None, 30),
                 (15, None, 5, None),
-                (16, 5, 1, None),
+                (16, 7, 1, None),
+                (17, 6, None, None),
+                (18, 7, None, None),
             ]:
                 c.execute(
                     text(
@@ -161,8 +170,10 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                 .mappings()
                 .all()
             )
-            assert {r["id"] for r in rows} == {uid(n) for n in [11, 12, 13, 16]}, rows
-            assert sum(r["base_amount"] for r in rows) == 400
+            assert {r["id"] for r in rows} == {
+                uid(n) for n in [11, 12, 13, 16, 17]
+            }, rows
+            assert sum(r["base_amount"] for r in rows) == 500
             for n, state, paid in [
                 (51, "rechazado", "2026-06-15"),
                 (52, "cancelado", "2026-06-15"),
@@ -201,6 +212,7 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                 json.dumps(
                     {
                         "legacy_link": True,
+                        "direct_request_fallback": True,
                         "report_link": True,
                         "unique_account": True,
                         "account_tournament_fallback": True,
@@ -208,7 +220,7 @@ with tempfile.TemporaryDirectory(prefix="direction-links-") as tmp:
                         "ambiguous_account_excluded": True,
                         "foreign_scope_excluded": True,
                         "explicit_report_precedence": True,
-                        "fiscal_base_total": "400.00",
+                        "fiscal_base_total": "500.00",
                         "synthetic_only": True,
                     }
                 )

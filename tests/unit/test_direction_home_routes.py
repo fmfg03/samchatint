@@ -179,3 +179,31 @@ def test_superadmin_home_and_sam_respect_explicit_denial(monkeypatch, role):
     assert ask(client, {"token": "unused", "csrf": "unused"}).status_code == 403
     build.assert_not_awaited()
     save.assert_not_awaited()
+
+
+def test_legacy_single_context_sam_and_exports_use_one_selector(
+    context_client, monkeypatch
+):
+    client, page = context_client
+    data = page["snapshot"]
+    tid = data["tournament_ids"][0]
+    data["tournament_ids"] = [tid]
+    data["scope"].update(tournament_id=tid, tournament_ids=[tid])
+    page["token"] = sign_context(data, str(_employee().id))
+
+    async def resolve(*args, **kwargs):
+        assert kwargs["tournament_id"] == tid
+        assert not kwargs["tournament_ids"]
+        result = scope()
+        result["selected"] = [t for t in result["selected"] if t["id"] == tid]
+        return result
+
+    monkeypatch.setattr(routes, "resolve_scope", resolve)
+    assert ask(client, page).status_code == 200
+    for fmt in ("pdf", "xlsx"):
+        response = client.post(
+            f"/direccion/reportes/exportar/{fmt}",
+            json={"context_token": page["token"]},
+            headers={"X-Direction-CSRF": page["csrf"]},
+        )
+        assert response.status_code == 200

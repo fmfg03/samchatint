@@ -92,12 +92,12 @@ def answer_snapshot(
     report_cell: dict | None = None,
 ) -> dict:
     """Interpret and calculate using only the already signed financial facts."""
-    from .analysis import analyze
+    from .analysis import analyze, prohibited_write_request
 
     metric = next((m for m in snapshot["indicators"] if m["id"] == metric_id), None)
     if metric is None:
         raise ContextError("Selecciona un indicador de este tablero.")
-    if report_cell is not None:
+    if report_cell is not None and not prohibited_write_request(question):
         if scenario:
             raise ContextError(
                 "Selecciona un indicador del Resumen para calcular un escenario."

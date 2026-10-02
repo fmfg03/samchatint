@@ -483,3 +483,77 @@ def test_paid_evidence_survives_stale_state(state):
     data = project(documents=[document(estado=state, pagado_en="2026-06-15")])[T1]
     assert data["values"]["paid"] == "75.00"
     assert data["values"]["committed"] == "75.00"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "expenses,documents", [(False, True), (True, False), (False, False)]
+)
+async def test_documentary_source_denials_skip_owned_queries(expenses, documents):
+    rows = ([[expense()]] if expenses else []) + ([[document()]] if documents else [])
+    session = Session(rows)
+    data = await facts.build_executive_facts(
+        session,
+        tournament_ids=[T1],
+        start=START,
+        end=END,
+        include_expenses=expenses,
+        include_documents=documents,
+    )
+    assert len(session.calls) == int(expenses) + int(documents)
+    values = data["by_tournament"][T1]["values"]
+    assert values["actual"] == ("100.00" if expenses else None)
+    assert values["paid"] == ("75.00" if documents else None)
+    if not expenses:
+        assert all("FROM expense_reports e" not in str(q) for q, _ in session.calls)
+    if not documents:
+        assert all("d.tipo = 'SOLICITUD'" not in str(q) for q, _ in session.calls)
+
+
+@pytest.mark.parametrize(
+    "question", ["aprueba este presupuesto", "paga esto", "elimina el documento"]
+)
+def test_report_cell_preserves_operational_write_guard(question):
+    from samchat.client_executive.conversation import answer_snapshot
+
+    data = snapshot()
+    result = answer_snapshot(
+        data,
+        "actual",
+        question,
+        report_cell={"report": "budget", "row": "income", "column": "actual_month"},
+    )
+    assert result["supported"] is False
+    assert "No se ejecutó ninguna acción" in result["assistant_message"]
+    assert result["read_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_home_keeps_finance_documents_when_budget_is_denied(monkeypatch):
+    monkeypatch.setattr(home, "resolve_scope", AsyncMock(return_value=scope()))
+
+    async def read(session, loader, **kwargs):
+        assert loader is home.build_executive_facts
+        assert kwargs["include_expenses"] is False
+        assert kwargs["include_documents"] is True
+        return await loader(session, **kwargs)
+
+    monkeypatch.setattr(home, "_optional_read", read)
+    monkeypatch.setattr(home, "payment_values", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        home.service, "_build_operational_dossier", AsyncMock(return_value={})
+    )
+    session = Session([[document()]])
+    data, _ = await home.build_home(
+        session,
+        actor=ACTOR,
+        superadmin=True,
+        year=2026,
+        start=date(2026, 1, 1),
+        end=END,
+        source_access={"budget": False, "finance": True},
+    )
+    values = {m["id"]: m["value"] for m in data["indicators"]}
+    assert values["committed"] == "75.00" and values["paid"] == "75.00"
+    assert values["actual"] is None and values["budget"] is None
+    assert len(session.calls) == 1
