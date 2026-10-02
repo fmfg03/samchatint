@@ -920,14 +920,7 @@ async def query_pending_documentos_for_approver(
         result = await session.execute(
             select(Documento)
             .options(*base_opts)
-            .where(
-                Documento.estado == "enviado",
-                or_(
-                    text("NULLIF(BTRIM(documentos.referencia_operaciones), '') IS NULL"),
-                    text(document_route_approver_sql()),
-                ),
-            )
-            .params(route_employee_id=str(empleado.id))
+            .where(Documento.estado == "enviado")
             .order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
             .limit(limit)
         )

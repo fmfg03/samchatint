@@ -15,10 +15,13 @@ from devnous.gastos.services import documento_telegram, project_authorization_se
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("channel", ["web", "telegram"])
-@pytest.mark.parametrize("role", ["superadmin", "super_admin"])
+@pytest.mark.parametrize(
+    "role", ["superadmin", "super_admin", "admin", "finanzas", "usuario"]
+)
 @pytest.mark.parametrize("operations_holder", [False, True])
-async def test_superadmin_queue_requires_operations_authority_for_reference(
-    monkeypatch, role, operations_holder, channel
+@pytest.mark.parametrize("route_snapshot", [False, True])
+async def test_pending_queue_superadmin_visibility_preserves_other_roles_scope(
+    monkeypatch, role, operations_holder, channel, route_snapshot
 ):
     actor = str(uuid4())
     database = sqlite3.connect(":memory:")
@@ -27,7 +30,8 @@ async def test_superadmin_queue_requires_operations_authority_for_reference(
     )
     database.executescript("""
         CREATE TABLE documentos (id TEXT, estado TEXT, referencia_operaciones TEXT,
-                                 enviado_en TEXT, creado_en TEXT);
+                                 enviado_en TEXT, creado_en TEXT,
+                                 empleado_id TEXT, beneficiario_empleado_id TEXT);
         CREATE TABLE aprobaciones (tipo_entidad TEXT, entidad_id TEXT,
                          aprobador_id TEXT, accion TEXT, fecha TEXT);
         CREATE TABLE documento_authorization_routes (documento_id TEXT,
@@ -36,15 +40,28 @@ async def test_superadmin_queue_requires_operations_authority_for_reference(
         CREATE TABLE authorization_position_assignments (empleado_id TEXT,
                                        position_key TEXT, active BOOLEAN);
         CREATE TABLE authorization_positions (position_key TEXT, active BOOLEAN);
-        CREATE TABLE empleados (id TEXT, activo BOOLEAN);
-        INSERT INTO documentos VALUES
+        CREATE TABLE empleados (id TEXT, activo BOOLEAN, aprobador_id TEXT);
+        INSERT INTO documentos (id, estado, referencia_operaciones, enviado_en, creado_en) VALUES
             ('operations', 'enviado', '177', NULL, '2026-01-01');
-        INSERT INTO documentos VALUES ('natural', 'enviado', NULL, NULL, '2026-01-01');
-        INSERT INTO documentos VALUES ('blank', 'enviado', '  ', NULL, '2026-01-01');
-        INSERT INTO documentos VALUES ('paid', 'pagado', '178', NULL, '2026-01-01');
+        INSERT INTO documentos (id, estado, referencia_operaciones, enviado_en, creado_en) VALUES
+            ('natural', 'enviado', NULL, NULL, '2026-01-01'),
+            ('blank', 'enviado', '  ', NULL, '2026-01-01'),
+            ('other-route', 'enviado', NULL, NULL, '2026-01-01'),
+            ('paid', 'pagado', '178', NULL, '2026-01-01'),
+            ('budget', 'control_presupuestal', '179', NULL, '2026-01-01');
         INSERT INTO authorization_positions VALUES ('director_operaciones', TRUE);
         """)
-    database.execute("INSERT INTO empleados VALUES (?, TRUE)", (actor,))
+    database.execute("INSERT INTO empleados VALUES (?, TRUE, ?)", (actor, actor))
+    database.execute("UPDATE documentos SET empleado_id = ?", (actor,))
+    database.execute(
+        "INSERT INTO documento_authorization_routes VALUES (?, ?, FALSE, ?)",
+        ("other-route", '["other-position"]', '["other-actor"]'),
+    )
+    if route_snapshot:
+        database.execute(
+            "INSERT INTO documento_authorization_routes VALUES (?, ?, TRUE, ?)",
+            ("operations", '["director_operaciones"]', '["other-actor"]'),
+        )
     if operations_holder:
         database.execute(
             "INSERT INTO authorization_position_assignments VALUES (?, ?, TRUE)",
@@ -78,7 +95,8 @@ async def test_superadmin_queue_requires_operations_authority_for_reference(
             compiled = query._whereclause.compile(
                 dialect=asyncpg_dialect(paramstyle="named")
             )
-            assert "::VARCHAR" in str(compiled)
+            if channel == "web" or role not in {"superadmin", "super_admin"}:
+                assert "::VARCHAR" in str(compiled)
             predicate = re.sub(
                 r"::(?:jsonb|text|uuid|varchar)(?:\(\d+\))?",
                 "",
@@ -102,7 +120,13 @@ async def test_superadmin_queue_requires_operations_authority_for_reference(
             visible.extend(
                 row[0]
                 for row in database.execute(
-                    "SELECT id FROM documentos WHERE " + predicate, params
+                    "SELECT documentos.id FROM documentos "
+                    "LEFT JOIN empleados AS empleados_1 "
+                    "ON documentos.empleado_id = empleados_1.id "
+                    "LEFT JOIN empleados AS empleados_2 "
+                    "ON documentos.beneficiario_empleado_id = empleados_2.id "
+                    "WHERE " + predicate,
+                    params,
                 )
             )
             return SimpleNamespace(
@@ -123,9 +147,13 @@ async def test_superadmin_queue_requires_operations_authority_for_reference(
             )
     finally:
         database.close()
-    assert set(visible) == (
-        {"operations", "natural", "blank"}
-        if operations_holder
-        else {"natural", "blank"}
-    )
-    canonical_policy.assert_called_once_with()
+    if role in {"superadmin", "super_admin"}:
+        assert set(visible) == {"operations", "natural", "blank", "other-route"}
+        canonical_policy.assert_not_called()
+    else:
+        assert set(visible) == (
+            {"operations", "natural", "blank"}
+            if operations_holder and not route_snapshot
+            else {"natural", "blank"}
+        )
+        canonical_policy.assert_called_once_with()
