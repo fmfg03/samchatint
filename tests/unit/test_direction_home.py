@@ -316,6 +316,18 @@ async def test_home_reuses_canonical_sources_with_exact_scope_and_period(monkeyp
     monkeypatch.setattr(home, "resolve_scope", AsyncMock(return_value=scope()))
 
     async def read(_session, loader, **kwargs):
+        if loader is home.build_executive_facts:
+            assert kwargs["tournament_ids"] == [T1, T2]
+            assert kwargs["start"] == date(YEAR, 1, 1) and kwargs["end"] == TODAY
+            return {
+                "by_tournament": {
+                    tid: {
+                        "values": {"actual": "40", "committed": "50", "paid": "30"},
+                        "gaps": {},
+                    }
+                    for tid in (T1, T2)
+                }
+            }
         assert loader is home.service._build_direction_budget_snapshot
         assert kwargs["executive_read"] is True and kwargs["date_to"] == TODAY
         return {
@@ -360,7 +372,8 @@ async def test_home_reuses_canonical_sources_with_exact_scope_and_period(monkeyp
         "total": 2,
     }
     assert result["tournaments"][0]["operations"]["players"] == 10
-    assert home.payment_values.await_args_list[0].args[1] == [T1]
+    assert home.payment_values.await_args_list[0].args[1] == [T1, T2]
+    assert home.payment_values.await_count == 1
 
 
 @pytest.fixture
@@ -927,7 +940,12 @@ async def test_suppressed_budget_indicators_preserve_source_failure(
             in {"budget", "actual", "committed", "paid", "forecast", "deviation"}
             and metric["value"] is None
         ):
-            assert any(expected in gap for gap in metric["gaps"])
+            expected_gap = (
+                "Fuente documental independiente no disponible o no autorizada."
+                if metric["id"] in {"actual", "committed", "paid"}
+                else expected
+            )
+            assert any(expected_gap in gap for gap in metric["gaps"])
             answer = chat.answer_snapshot(result, metric["id"], "¿Qué explica esto?")
-            assert expected in answer["missing_evidence"]
-            assert expected in answer["assistant_message"]
+            assert expected_gap in answer["missing_evidence"]
+            assert expected_gap in answer["assistant_message"]

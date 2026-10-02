@@ -89,6 +89,7 @@ def answer_snapshot(
     *,
     scenario: dict | None = None,
     previous: dict | None = None,
+    report_cell: dict | None = None,
 ) -> dict:
     """Interpret and calculate using only the already signed financial facts."""
     from .analysis import analyze
@@ -96,6 +97,46 @@ def answer_snapshot(
     metric = next((m for m in snapshot["indicators"] if m["id"] == metric_id), None)
     if metric is None:
         raise ContextError("Selecciona un indicador de este tablero.")
+    if report_cell is not None:
+        if scenario:
+            raise ContextError(
+                "Selecciona un indicador del Resumen para calcular un escenario."
+            )
+        from .report_layouts import report_cell_evidence
+
+        try:
+            cell = report_cell_evidence(snapshot.get("reports") or {}, report_cell)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ContextError("La celda no pertenece a este reporte firmado.") from exc
+        facts = [
+            f"{cell['label']}: {cell['formatted_value']}.",
+            f"Periodo: {cell['period']}. Corte: {snapshot['as_of']}.",
+            cell["definition"],
+            f"Fuente: {cell['source']}.",
+        ]
+        gaps = [cell["gap"]] if cell.get("gap") else []
+        message = "\n".join(
+            [
+                "Hechos",
+                *facts,
+                "Límites",
+                *(gaps or ["La variación no acredita una causa."]),
+                "Para comparar torneos o calcular escenarios, selecciona un indicador del Resumen.",
+            ]
+        )
+        return {
+            "supported": True,
+            "conclusion": facts[0],
+            "facts": facts,
+            "missing_evidence": gaps,
+            "assistant_message": message,
+            "metric_id": metric_id,
+            "snapshot_id": snapshot["snapshot_id"],
+            "metric": {**metric, **cell},
+            "report_cell": report_cell,
+            "scenario": None,
+            "read_only": True,
+        }
     answer = analyze(snapshot, metric, question, spec=scenario, previous=previous)
     answer["assistant_message"] = render_executive_tool_result(
         "direction.executive_snapshot",

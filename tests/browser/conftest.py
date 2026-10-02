@@ -113,7 +113,10 @@ def browser_server() -> str:
 @pytest.fixture(scope="session")
 def browser() -> Browser:
     with sync_playwright() as playwright:
-        instance = playwright.chromium.launch(headless=True)
+        instance = playwright.chromium.launch(
+            headless=True,
+            executable_path=os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"),
+        )
         yield instance
         instance.close()
 

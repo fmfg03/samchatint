@@ -206,7 +206,11 @@ async def build_finance_source_snapshot(
         return {
             "period": {"year": period_year, "month": period_month},
             "documents": [
-                {**_serialize_document(d), "currency": getattr(d, "currency", None)}
+                {
+                    **_serialize_document(d),
+                    "currency": getattr(d, "currency", None),
+                    "tournament_id": str(d.torneo_id),
+                }
                 for d in documents[:limit]
             ],
             "expenses": [],

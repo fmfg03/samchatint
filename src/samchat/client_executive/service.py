@@ -80,12 +80,11 @@ async def _authorized_tournaments(
     """
     if is_superadmin:
         result = await session.execute(
-            text("""SELECT DISTINCT t.id::text AS id, t.name, NULL::text AS slug
-                FROM client_executive_portfolio_tournaments assignment
-                JOIN client_executive_portfolios portfolio
-                  ON portfolio.id = assignment.portfolio_id AND portfolio.active = TRUE
-                JOIN tournaments t ON t.id = assignment.tournament_id AND t.active = TRUE
-                WHERE assignment.active = TRUE
+            # This catalog belongs to the current installation, not an external
+            # organization directory. No Supabase/global catalog is consulted.
+            text("""SELECT t.id::text AS id, t.name, NULL::text AS slug
+                FROM tournaments t
+                WHERE t.active = TRUE
                 ORDER BY t.name ASC""")
         )
         return [

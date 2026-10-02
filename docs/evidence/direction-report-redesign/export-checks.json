@@ -1,0 +1,28 @@
+{
+  "synthetic-report": {
+    "pages": 4,
+    "outside_page": [],
+    "sheets": [
+      "Consejo",
+      "Respaldo",
+      "Comparaci\u00f3n",
+      "Presupuesto vs Real",
+      "EFE"
+    ]
+  },
+  "synthetic-populated-report": {
+    "pages": 4,
+    "outside_page": [],
+    "sheets": [
+      "Consejo",
+      "Respaldo",
+      "Comparaci\u00f3n",
+      "Presupuesto vs Real",
+      "EFE"
+    ],
+    "budget_direct": 420000,
+    "budget_remanente": 70000,
+    "actual_remanente": 200000,
+    "cash_close_thousands": 340
+  }
+}

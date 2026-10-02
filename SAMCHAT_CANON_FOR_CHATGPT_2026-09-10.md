@@ -269,3 +269,28 @@ portfolio and tournament scope was configured for the eligible Direction
 positions. The expanded executive dossier remains an approved repository
 change under review until its own merge and deployment. Authenticated UAT and
 business acceptance remain pending.
+
+## 15. Direction supervision and independent documentary facts amendment
+
+Date: 2026-10-02. Human authorization: Francisco explicitly authorized SUPERADMIN
+to read all active tournaments in these boards, relayed at 18:27 UTC. This
+amendment is proposed in a draft PR and requires human review before merge.
+
+SUPERADMIN supervision now includes the active tournament catalog of the current
+Plataforma Sports installation even without portfolio membership. It does not
+include unrelated organizations, external catalogs, inactive tournaments, or any
+new action authority. Other profiles retain their assigned active portfolios and
+positions. An explicit portfolio filter narrows even SUPERADMIN's selection;
+explicit denials still prevail. No persistent assignment is created by a read.
+
+Documentary facts with their own verified source coverage must remain visible
+without an approved budget. Absence of an approved budget is not an authorized
+zero. Expenses use the canonical fiscal base and expense date; commitments and
+documentary paid amounts use the canonical payable amount in the request creation
+cohort. These stages are not added together, and none proves bank cash. Monthly
+budget, operating classifications, reconciled cash and comparative periods require
+their own source evidence; the supplied workbook examples are not production data.
+
+Evidence: isolated worktree from PR452, synthetic unit/browser/export verification
+and draft review evidence in `docs/evidence/direction-report-redesign`. No production
+access, merge, deployment, or business acceptance is claimed.

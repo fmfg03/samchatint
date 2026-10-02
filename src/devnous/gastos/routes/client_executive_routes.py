@@ -97,7 +97,9 @@ async def _assigned_direction_portfolios(
         str(getattr(current_empleado, "id", "")),
         is_superadmin=is_superadmin,
     )
-    if not portfolio_ids:
+    if not portfolio_ids and not (
+        is_superadmin and action_key == "ver" and not require_explicit_action
+    ):
         raise HTTPException(
             status_code=403,
             detail="An active Direction position with assigned scope is required.",
@@ -246,6 +248,13 @@ class DirectionReportRequest(BaseModel):
     analysis_token: Optional[str] = Field(default=None, max_length=100000)
 
 
+class DirectionReportCellRequest(BaseModel):
+    report: Literal["budget", "cashflow"]
+    row: Optional[str] = Field(default=None, max_length=80)
+    column: str = Field(min_length=1, max_length=40)
+    period: Optional[str] = Field(default=None, pattern="^[0-5]$")
+
+
 class DirectionQueryRequest(BaseModel):
     context_token: str = Field(min_length=1, max_length=100000)
     metric_id: str = Field(min_length=1, max_length=40)
@@ -253,6 +262,7 @@ class DirectionQueryRequest(BaseModel):
     conversation_id: Optional[str] = Field(default=None, max_length=36)
     scenario: Optional[DirectionScenarioRequest] = None
     analysis_token: Optional[str] = Field(default=None, max_length=100000)
+    report_cell: Optional[DirectionReportCellRequest] = None
 
 
 def _selection(value: str) -> Optional[str]:
@@ -290,6 +300,7 @@ async def direction_home(
     tournament_id: str = Query("", max_length=36),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
+    tournament_ids: Optional[list[str]] = Query(None, max_length=200),
 ):
     await _assigned_direction_portfolios(session, current_empleado)
     access = await _direction_source_access(session, current_empleado)
@@ -301,6 +312,9 @@ async def direction_home(
             year=edition_year or datetime.now(TZ).year,
             portfolio_id=_selection(portfolio_id),
             tournament_id=_selection(tournament_id),
+            tournament_ids=(
+                [_selection(tid) for tid in tournament_ids] if tournament_ids else None
+            ),
             start=date_from,
             end=date_to,
             source_access=access,
@@ -338,6 +352,7 @@ async def _verified_direction_context(request, payload, session, employee) -> di
             superadmin=_is_superadmin(employee),
             portfolio_id=selected_scope["portfolio_id"],
             tournament_id=selected_scope["tournament_id"],
+            tournament_ids=selected_scope.get("tournament_ids"),
         )
         if (
             sorted(snapshot["tournament_ids"])
@@ -389,6 +404,11 @@ async def direction_context_query(
                 else None
             ),
             previous=previous,
+            report_cell=(
+                payload.report_cell.model_dump(exclude_none=True)
+                if payload.report_cell
+                else None
+            ),
         )
         answer["analysis_token"] = sign_analysis(
             answer, snapshot["snapshot_id"], str(current_empleado.id)

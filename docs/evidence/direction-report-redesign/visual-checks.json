@@ -1,0 +1,18 @@
+{
+  "checks": {
+    "before_mobile_no_overflow": true,
+    "no_permanent_aside": true,
+    "sam_initially_closed": true,
+    "sam_contextual": true,
+    "after_mobile_no_overflow": true,
+    "budget_mobile_no_overflow": true,
+    "cashflow_mobile_no_overflow": true,
+    "populated_budget_desktop_no_overflow": true,
+    "populated_cashflow_desktop_no_overflow": true,
+    "populated_budget_mobile_no_overflow": true,
+    "populated_cashflow_mobile_no_overflow": true
+  },
+  "javascript_errors": [],
+  "data": "synthetic only",
+  "baseline": "11ff4c4b828bec7df4e8b0b07e87d9184739e3bc"
+}

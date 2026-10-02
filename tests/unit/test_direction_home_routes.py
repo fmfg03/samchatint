@@ -59,6 +59,34 @@ def test_question_uses_exact_visible_snapshot(context_client):
     assert response.headers["cache-control"] == "no-store"
 
 
+def test_multi_selection_is_forwarded_and_revalidated_in_sam_and_exports(
+    context_client, monkeypatch
+):
+    client, page = context_client
+    tids = page["snapshot"]["tournament_ids"]
+    response = client.get(
+        "/direccion/inicio", params=[("tournament_ids", tid) for tid in tids]
+    )
+    assert response.status_code == 200
+    assert routes.build_home.await_args.kwargs["tournament_ids"] == tids
+    assert client.get("/direccion/inicio?tournament_ids=invalid").status_code == 422
+    data = page["snapshot"]
+    data["scope"]["tournament_ids"] = tids
+    page["token"] = sign_context(data, str(_employee().id))
+    assert ask(client, page).status_code == 200
+    assert routes.resolve_scope.await_args.kwargs["tournament_ids"] == tids
+    narrowed = scope()
+    narrowed["selected"] = narrowed["selected"][:1]
+    monkeypatch.setattr(routes, "resolve_scope", AsyncMock(return_value=narrowed))
+    for fmt in ("pdf", "xlsx"):
+        response = client.post(
+            f"/direccion/reportes/exportar/{fmt}",
+            json={"context_token": page["token"]},
+            headers={"X-Direction-CSRF": page["csrf"]},
+        )
+        assert response.status_code == 409
+
+
 def test_missing_csrf_and_foreign_actor_rejected(context_client):
     client, page = context_client
     assert (
