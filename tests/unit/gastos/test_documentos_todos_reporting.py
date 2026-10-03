@@ -21,6 +21,7 @@ from devnous.gastos.services.documento_semantics import (
 def _doc(**overrides):
     values = {
         "id": uuid4(),
+        "empleado_id": uuid4(),
         "tipo": "SOLICITUD",
         "numero_referencia": "S-26000123",
         "estado": "aprobado",
@@ -1983,6 +1984,9 @@ class _FakeResult:
     def __init__(self, rows):
         self._rows = rows
 
+    def all(self):
+        return self._rows
+
     def scalars(self):
         return _FakeScalars(self._rows)
 
@@ -2225,17 +2229,20 @@ async def test_report_lines_batch_preserves_explicit_ownership_and_legacy_accoun
     unrelated = _report_line(_doc(tipo="INFORME", cuenta_gastos_id=uuid4()))
     session = SimpleNamespace(
         execute=AsyncMock(
-            return_value=_FakeResult(
-                [
-                    explicit,
-                    direct,
-                    direct,
-                    legacy,
-                    conflict,
-                    cancelled,
-                    unrelated,
-                ]
-            )
+            side_effect=[
+                _FakeResult(
+                    [
+                        explicit,
+                        direct,
+                        direct,
+                        legacy,
+                        conflict,
+                        cancelled,
+                        unrelated,
+                    ]
+                ),
+                _FakeResult([(legacy.id, informe.id), (unrelated.id, None)]),
+            ]
         )
     )
 
@@ -2244,10 +2251,10 @@ async def test_report_lines_batch_preserves_explicit_ownership_and_legacy_accoun
     )
 
     assert [e.id for e in loaded[informe.id]] == [explicit.id, direct.id, legacy.id]
-    assert [e.id for e in loaded[other.id]] == [direct.id, legacy.id, conflict.id]
+    assert [e.id for e in loaded[other.id]] == [conflict.id]
     assert informe.gastos == []
-    session.execute.assert_awaited_once()
-    statement = session.execute.call_args.args[0]
+    assert session.execute.await_count == 2
+    statement = session.execute.call_args_list[0].args[0]
     assert any("ExpenseReport.adjuntos" in str(o.path) for o in statement._with_options)
     assert any(
         "ExpenseReport.cfdi_report" in str(o.path) for o in statement._with_options
@@ -2325,3 +2332,403 @@ async def test_linked_informe_lines_drive_todos_and_history_html_and_xlsx(monkey
     assert history_sheet["L2"].value == 110
     assert history_sheet["M2"].value == "Parcial"
     assert informe.gastos == []
+
+
+@pytest.mark.parametrize(
+    "categories, expected",
+    [
+        (None, "—"),
+        ([], "—"),
+        ("Libre", "—"),
+        ([" Libre ", "Femenil", "Libre", "", None], "Libre, Femenil"),
+    ],
+)
+def test_reporting_category_uses_recorded_values_only(categories, expected):
+    documento = _doc(
+        categorias=categories, torneo=SimpleNamespace(categorias=["No asignada"])
+    )
+    assert user_routes._document_reporting_categories(documento) == expected
+
+
+def test_reporting_partidas_follow_canonical_assignment_owner():
+    doc_concept = SimpleNamespace(concept_name="Partida documento", concept_key="doc")
+    line_concept = SimpleNamespace(concept_name="Hospedaje", concept_key="hotel")
+    line_id = uuid4()
+    line = SimpleNamespace(
+        budget_concept_id=line_id, budget_concept=line_concept, estado_gasto="activo"
+    )
+    cancelled = SimpleNamespace(
+        budget_concept_id=uuid4(),
+        estado_gasto="cancelado",
+        budget_concept=SimpleNamespace(concept_name="Cancelada"),
+    )
+    unassigned = SimpleNamespace(budget_concept_id=None, estado_gasto="activo")
+    documento = _doc(budget_concept=doc_concept, gastos=[line, cancelled])
+    assert (
+        user_routes._document_reporting_budget_items(documento) == "Partida documento"
+    )
+    documento.tipo = "INFORME"
+    assert user_routes._document_reporting_budget_items(documento) == "Hospedaje"
+    assert (
+        user_routes._document_reporting_budget_items(
+            documento, expenses=[line, line, cancelled, unassigned]
+        )
+        == "Hospedaje"
+    )
+    assert (
+        user_routes._document_reporting_budget_items(documento, expenses=[])
+        == "Sin partida"
+    )
+    assert (
+        user_routes._document_reporting_budget_items(documento, expenses=[cancelled])
+        == "Sin partida"
+    )
+
+
+def test_reporting_partidas_preserve_identity_when_label_is_unavailable():
+    concept_id = uuid4()
+    documento = _doc(budget_concept_id=concept_id, budget_concept=None)
+    assert user_routes._document_reporting_budget_items(documento) == str(concept_id)
+    documento.budget_concept = SimpleNamespace(concept_name=None, concept_key="hotel")
+    assert user_routes._document_reporting_budget_items(documento) == "hotel"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("report", [False, True])
+async def test_reporting_fields_match_html_and_xlsx_without_duplicate_rows(
+    monkeypatch, report
+):
+    from html.parser import HTMLParser
+    from openpyxl import load_workbook
+
+    class TableParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.rows = []
+            self.cell = None
+            self.row = None
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "tr":
+                self.row = []
+            if tag in ("th", "td"):
+                self.cell = ""
+
+        def handle_data(self, data):
+            if self.cell is not None:
+                self.cell += data
+
+        def handle_endtag(self, tag):
+            if tag in ("th", "td") and self.cell is not None:
+                self.row.append(self.cell.strip())
+                self.cell = None
+            if tag == "tr" and self.row is not None:
+                self.rows.append(self.row)
+                self.row = None
+
+    documento = _doc(
+        tipo="INFORME" if report else "SOLICITUD",
+        categorias=["Libre", "<Juvenil>"],
+        budget_concept=SimpleNamespace(concept_name="Partida documento"),
+        torneo=SimpleNamespace(name="Nacional"),
+    )
+    hotel = _report_line(
+        documento, budget_concept=SimpleNamespace(concept_name="Hospedaje")
+    )
+    transport = _report_line(
+        documento, budget_concept=SimpleNamespace(concept_name="Transporte")
+    )
+    duplicate = _report_line(
+        documento,
+        budget_concept_id=hotel.budget_concept_id,
+        budget_concept=hotel.budget_concept,
+    )
+    cancelled = _report_line(
+        documento,
+        estado_gasto="cancelado",
+        budget_concept=SimpleNamespace(concept_name="Oculta"),
+    )
+    lines = [hotel, transport, duplicate, cancelled]
+    expected_partidas = "Hospedaje; Transporte" if report else "Partida documento"
+    approval = SimpleNamespace(
+        entidad_id=documento.id,
+        fecha=datetime(2026, 10, 2),
+        accion="aprobar",
+        comentario="QA sintético",
+        aprobador=SimpleNamespace(nombre="Aprobador QA"),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "fetch_documento_aprobador_display_batch",
+        AsyncMock(return_value={}),
+    )
+    actor = _alicia_operations_observer()
+    filters = dict(
+        torneo=["Nacional"],
+        concepto=None,
+        beneficiario=None,
+        tipo=[documento.tipo],
+        estado=["aprobado"],
+    )
+    for history in (False, True):
+        results = [[approval], [documento]] if history else [[documento]]
+        if report:
+            results.append(lines)
+        kwargs = (
+            filters
+            if history
+            else dict(filters, empleado_nombre=None, q=None, situacion=None)
+        )
+        page_route = (
+            user_routes.historial_aprobador if history else user_routes.documentos_todos
+        )
+        export_route = (
+            user_routes.historial_aprobador_exportar_xlsx
+            if history
+            else user_routes.documentos_todos_exportar_xlsx
+        )
+        from starlette.datastructures import QueryParams
+
+        request = SimpleNamespace(
+            query_params=QueryParams(
+                "torneo=Nacional&estado=aprobado&tipo=" + documento.tipo
+            )
+        )
+        page = await page_route(request, _SequenceSession(*results), actor, **kwargs)
+        parsed = TableParser()
+        parsed.feed(page)
+        assert len(parsed.rows) == 2  # One document/event, however many assignments.
+        headers, row = parsed.rows
+        assert len(headers) == len(row)
+        assert row[headers.index("Categoría")] == "Libre, <Juvenil>"
+        assert row[headers.index("Partida Presupuestal")] == (
+            "Varias partidas · 2" if report else expected_partidas
+        )
+        assert "&lt;Juvenil&gt;" in page
+        assert 'name="categoria"' not in page
+        assert 'name="partida"' not in page
+        assert "torneo=Nacional" in page and "estado=aprobado" in page
+        response = await export_route(None, _SequenceSession(*results), actor, **kwargs)
+        sheet = load_workbook(BytesIO(response.body)).active
+        assert sheet.max_row == 2
+        exported = dict(zip([c.value for c in sheet[1]], [c.value for c in sheet[2]]))
+        assert exported["Categoría"] == "Libre, <Juvenil>"
+        assert exported["Partida Presupuestal"] == expected_partidas
+        assert exported["Monto total"] == 1160
+
+
+def test_reporting_fields_are_safe_spreadsheet_text():
+    from openpyxl import load_workbook
+
+    row = user_routes._documentos_todos_reporting_row_values(
+        _doc(categorias=["=1+1"], budget_concept=SimpleNamespace(concept_name="=2+2"))
+    )
+    response = user_routes._documentos_reporting_xlsx_response(
+        title="QA", rows=[row], filename_prefix="qa"
+    )
+    sheet = load_workbook(BytesIO(response.body)).active
+    values = dict(zip([c.value for c in sheet[1]], [c.value for c in sheet[2]]))
+    assert values["Categoría"] == "'=1+1"
+    assert values["Partida Presupuestal"] == "'=2+2"
+
+
+@pytest.mark.parametrize("count", [0, 1, 2, 100])
+def test_reporting_budget_item_html_is_compact_and_accessible(count):
+    from html import unescape
+    from urllib.parse import parse_qs, urlsplit
+
+    document = _doc(tipo="INFORME", numero_referencia="QA-<1>")
+    lines = [
+        _report_line(
+            document, budget_concept=SimpleNamespace(concept_name=f"Partida <{i}>")
+        )
+        for i in range(count)
+    ]
+    return_url = "/documentos/historial-aprobador?torneo=Proyecto+QA&estado=aprobado"
+    html = user_routes._document_reporting_budget_items_html(
+        document, expenses=lines, return_url=return_url, can_view_detail=True
+    )
+    if count == 0:
+        assert html == "Sin partida"
+    elif count == 1:
+        assert html == "Partida &lt;0&gt;"
+        assert "<a" not in html
+    else:
+        assert f"Varias partidas · {count}" in html
+        assert "aria-label=" in html and "QA-&lt;1&gt;" in html
+        assert "Partida &lt;" not in html
+        assert len(html) < 400
+        href = unescape(html.split('href="')[1].split('"')[0])
+        url = urlsplit(href)
+        assert url.path == f"/documentos/{document.id}"
+        assert url.fragment == "gastos-asociados"
+        assert parse_qs(url.query)["next"] == [return_url]
+    exported = user_routes._document_reporting_budget_items(document, expenses=lines)
+    if count:
+        assert exported.count("Partida <") == count
+    else:
+        assert exported == "Sin partida"
+
+
+def test_reporting_partidas_count_identities_not_duplicate_labels():
+    document = _doc(tipo="INFORME")
+    first = _report_line(
+        document, budget_concept=SimpleNamespace(concept_name="Mismo nombre")
+    )
+    second = _report_line(
+        document, budget_concept=SimpleNamespace(concept_name="Mismo nombre")
+    )
+    html = user_routes._document_reporting_budget_items_html(
+        document, expenses=[first, first, second]
+    )
+    assert "Varias partidas · 2" in html
+
+
+def test_reporting_detail_uses_same_report_ownership_and_existing_section():
+    source = user_routes.__file__
+    from pathlib import Path
+
+    detail = Path(source).read_text().split("async def ver_documento(", 1)[1]
+    assert 'id="gastos-asociados"' in detail
+    assert "await _document_informe_expenses_by_id(session, [documento])" in detail
+
+
+@pytest.mark.asyncio
+async def test_legacy_report_owner_resolution_executes_sql_without_scope_reassignment():
+    from sqlalchemy import (
+        Column,
+        DateTime,
+        MetaData,
+        String,
+        Table,
+        Uuid,
+        create_engine,
+    )
+
+    account = uuid4()
+    old = _doc(tipo="INFORME", cuenta_gastos_id=account, creado_en=datetime(2026, 1, 1))
+    newer = _doc(
+        tipo="INFORME", cuenta_gastos_id=account, creado_en=datetime(2026, 2, 1)
+    )
+    request = _doc(cuenta_gastos_id=account, creado_en=datetime(2025, 1, 1))
+    legacy = _report_line(newer, informe_documento_id=None)
+    direct = _report_line(newer, informe_documento_id=None, documento_id=newer.id)
+    request_line = _report_line(
+        newer, informe_documento_id=None, documento_id=request.id
+    )
+    explicit = _report_line(newer, documento_id=old.id)
+    cancelled = _report_line(newer, estado_gasto="cancelado")
+    lines = [legacy, direct, request_line, explicit, cancelled]
+    meta = MetaData()
+    documents = Table(
+        "documentos",
+        meta,
+        Column("id", Uuid, primary_key=True),
+        Column("tipo", String),
+        Column("cuenta_gastos_id", Uuid),
+        Column("creado_en", DateTime),
+    )
+    expenses = Table(
+        "expense_reports",
+        meta,
+        Column("id", Uuid, primary_key=True),
+        Column("documento_id", Uuid),
+        Column("cuenta_gastos_id", Uuid),
+    )
+    engine = create_engine("sqlite://")
+    meta.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            documents.insert(),
+            [
+                {
+                    key: getattr(d, key)
+                    for key in ("id", "tipo", "cuenta_gastos_id", "creado_en")
+                }
+                for d in (old, newer, request)
+            ],
+        )
+        connection.execute(
+            expenses.insert(),
+            [
+                {
+                    key: getattr(e, key)
+                    for key in ("id", "documento_id", "cuenta_gastos_id")
+                }
+                for e in lines
+            ],
+        )
+
+        class OwnerSession:
+            def __init__(self):
+                self.calls = 0
+
+            async def execute(self, statement):
+                self.calls += 1
+                if self.calls == 1:
+                    return _FakeResult(lines)
+                # Execute the actual correlated owner query, not a mocked answer.
+                return connection.execute(statement)
+
+        both = await user_routes._document_informe_expenses_by_id(
+            OwnerSession(), [old, newer]
+        )
+        assert {e.id for e in both[old.id]} == {legacy.id, request_line.id}
+        assert {e.id for e in both[newer.id]} == {direct.id, explicit.id}
+        assert sum(len(values) for values in both.values()) == 4
+        newer_only = await user_routes._document_informe_expenses_by_id(
+            OwnerSession(), [newer]
+        )
+        assert {e.id for e in newer_only[newer.id]} == {direct.id, explicit.id}
+        old_only = await user_routes._document_informe_expenses_by_id(
+            OwnerSession(), [old]
+        )
+        assert {e.id for e in old_only[old.id]} == {legacy.id, request_line.id}
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_route_approver_history_keeps_compact_text_without_unauthorized_detail_link(
+    monkeypatch,
+):
+    from starlette.datastructures import QueryParams
+
+    actor = SimpleNamespace(
+        id=uuid4(), nombre="Approver QA", correo="qa@example.invalid", rol="empleado"
+    )
+    document = _doc(tipo="INFORME")
+    lines = [
+        _report_line(document, budget_concept=SimpleNamespace(concept_name=name))
+        for name in ("Hospedaje", "Transporte")
+    ]
+    approval = SimpleNamespace(
+        entidad_id=document.id,
+        fecha=datetime(2026, 10, 2),
+        accion="aprobar",
+        comentario="QA",
+        aprobador=actor,
+    )
+    monkeypatch.setattr(
+        user_routes, "_can_review_pending_approvals", AsyncMock(return_value=True)
+    )
+    page = await user_routes.historial_aprobador(
+        SimpleNamespace(query_params=QueryParams()),
+        _SequenceSession([approval], [document], lines),
+        actor,
+        torneo=None,
+        concepto=None,
+        beneficiario=None,
+        tipo=None,
+        estado=None,
+    )
+    assert "Varias partidas · 2" in page
+    assert "#gastos-asociados" not in page
+    assert 'data-sort-value="Hospedaje; Transporte"' in page
+    # Ownership is sufficient under the existing detail guard; no new role authority.
+    document.empleado_id = actor.id
+    assert user_routes._can_access_documento_adjunto(document, actor)
+    assert "#gastos-asociados" in user_routes._document_reporting_budget_items_html(
+        document,
+        expenses=lines,
+        can_view_detail=user_routes._can_access_documento_adjunto(document, actor),
+    )
