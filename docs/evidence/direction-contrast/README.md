@@ -3,7 +3,16 @@
 Base: main `60f2c3dfebafd1ed8ee92312c0c243f14e5496d4` (PR453/454).
 Autorización de Francisco: `Sentinel_501c4e1233448191a114c22218ecd26d`, en respuesta
 a la propuesta `Sentinel_460c110d3b6c81919c1a00e7740ff42f`: corregir contraste y
-publicar el ajuste. PR separada en borrador; sin merge ni deploy autorizado.
+publicar el ajuste. En esa etapa: PR separada en borrador, sin autorización de
+merge ni deploy.
+
+Actualización de autorización, 2026-10-03: Francisco respondió «Merge y deploy»
+en `Sentinel_afb19b4be3248191b00ca82bc0f327cf`, tras la solicitud
+`Sentinel_608a1a7df16081919c9da1b55c7ee1ab`. Esta aprobación posterior permite
+marcar PR455 lista y fusionarla por el flujo normal una vez verdes los checks y
+resuelta la revisión. El entorno cloud realiza únicamente el merge; Surface
+coordina el despliegue y el smoke autenticado. La autorización no demuestra que
+se haya desplegado: `deployed_verified` requiere su evidencia independiente.
 
 ## Causa y cambio
 
