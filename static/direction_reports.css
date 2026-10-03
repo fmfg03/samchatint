@@ -1,5 +1,11 @@
 /* Direction executive reports: full-width workspace, contextual Sam on demand. */
-body { background:#f5f7fa; color:#182e41; }
+/* The runtime injects its legacy theme AFTER this stylesheet. Its important
+   dark canvas and table headers need equally explicit, page-scoped surfaces. */
+body.direction-reports { background:#f5f7fa !important; color:#182e41; }
+.direction-reports .home-metric { background:#fff; }
+.direction-reports th { background:#eaf1f5 !important; color:#294a5d !important; }
+.direction-reports .financial-table tbody th { background:#fff !important; color:#182e41 !important; }
+.direction-reports .financial-table tbody tr:hover th { background:#f1f8fa !important; }
 header { background:#122b3e; padding:20px 3.5%; }
 main { max-width:1680px; padding:30px 3.5%; }
 .hero { margin:32px 0 24px; }
