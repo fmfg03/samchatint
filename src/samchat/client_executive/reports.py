@@ -11,7 +11,7 @@ from .home import format_money
 
 SOURCE_NAMES = {
     "budget": "Presupuesto aprobado · versión de cada torneo",
-    "actual": "Gastos activos · base presupuestal del intervalo",
+    "actual": "Gastos activos · base fiscal canónica documental del intervalo",
     "committed": "Solicitudes · estados de compromiso documental",
     "paid": "Solicitudes · pago documental; no saldo bancario",
     "forecast": "Proyección mecánica del servicio de presupuestos",
@@ -65,8 +65,9 @@ def build_report(snapshot: dict, analysis: dict | None = None) -> dict:
         "scenario": (analysis or {}).get("scenario"),
         "gaps": gaps,
         "validation": "Validación de negocio pendiente. Subtotales parciales no representan toda la cartera.",
-        "method": "Lecturas secuenciales con cortes individuales. Proyección mecánica, sin causalidad acreditada. Pagado documental no equivale a salida de caja.",
+        "method": "Lecturas independientes con cortes individuales. Proyección mecánica, sin causalidad acreditada. Pagado documental no equivale a salida de caja.",
         "read_only": True,
+        "layouts": snapshot.get("reports", {}),
     }
     report["report_id"] = hashlib.sha256(
         json.dumps(report, sort_keys=True, ensure_ascii=False).encode()

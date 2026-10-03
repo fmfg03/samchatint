@@ -262,6 +262,14 @@ def test_pdf_workbook_share_numbers_cut_gaps_and_formula_cache(tmp_path):
         load_workbook(io.BytesIO(xlsx), data_only=False)["Escenario"]["B7"].value
         == "=B4-B6"
     )
+    assert "base fiscal" in text
+    assert "base presupuestal" not in text
+    assert any(
+        "base fiscal canónica documental" in str(cell.value)
+        for sheet in book
+        for row in sheet
+        for cell in row
+    )
     assert report["snapshot_id"] == answer["snapshot_id"]
     assert "None" not in text and "samchat." not in text
     # Rendered QA fixture; synthetic evidence, never business UAT.

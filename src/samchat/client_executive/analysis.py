@@ -297,6 +297,25 @@ def recommendations(snapshot: dict) -> list[dict]:
     return result
 
 
+def prohibited_write_request(question: str, *, scenario_edit: bool = False) -> bool:
+    """Apply the same operational-write boundary to every executive answer path."""
+    text = normalized(question)
+    operational_write = bool(
+        re.search(
+            r"\b(paga|pagar|aprueba|aprobar|elimina|eliminar|factura|solicitud|registro|documento|presupuesto)\b",
+            text,
+        )
+    )
+    prohibited = bool(
+        re.search(
+            r"\b(paga|pagar|aprueba|aprobar|elimina|eliminar|modifica|modificar)\b",
+            text,
+        )
+    )
+    prohibited = prohibited and (operational_write or not scenario_edit)
+    return prohibited
+
+
 def analyze(
     snapshot: dict,
     metric: dict,
@@ -346,19 +365,7 @@ def analyze(
             or re.search(r"escenario|supuesto|alternativa", text)
         )
     )
-    operational_write = bool(
-        re.search(
-            r"\b(paga|pagar|aprueba|aprobar|elimina|eliminar|factura|solicitud|registro|documento|presupuesto)\b",
-            text,
-        )
-    )
-    prohibited = bool(
-        re.search(
-            r"\b(paga|pagar|aprueba|aprobar|elimina|eliminar|modifica|modificar)\b",
-            text,
-        )
-    )
-    prohibited = prohibited and (operational_write or not scenario_edit)
+    prohibited = prohibited_write_request(question, scenario_edit=scenario_edit)
     conclusion = "Esta cifra describe el alcance y corte seleccionados; su causa requiere evidencia de detalle."
     if prohibited:
         supported = False

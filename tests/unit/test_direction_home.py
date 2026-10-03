@@ -316,6 +316,18 @@ async def test_home_reuses_canonical_sources_with_exact_scope_and_period(monkeyp
     monkeypatch.setattr(home, "resolve_scope", AsyncMock(return_value=scope()))
 
     async def read(_session, loader, **kwargs):
+        if loader is home.build_executive_facts:
+            assert kwargs["tournament_ids"] == [T1, T2]
+            assert kwargs["start"] == date(YEAR, 1, 1) and kwargs["end"] == TODAY
+            return {
+                "by_tournament": {
+                    tid: {
+                        "values": {"actual": "40", "committed": "50", "paid": "30"},
+                        "gaps": {},
+                    }
+                    for tid in (T1, T2)
+                }
+            }
         assert loader is home.service._build_direction_budget_snapshot
         assert kwargs["executive_read"] is True and kwargs["date_to"] == TODAY
         return {
@@ -360,7 +372,8 @@ async def test_home_reuses_canonical_sources_with_exact_scope_and_period(monkeyp
         "total": 2,
     }
     assert result["tournaments"][0]["operations"]["players"] == 10
-    assert home.payment_values.await_args_list[0].args[1] == [T1]
+    assert home.payment_values.await_args_list[0].args[1] == [T1, T2]
+    assert home.payment_values.await_count == 1
 
 
 @pytest.fixture
@@ -369,6 +382,175 @@ def signed(monkeypatch):
     result = snapshot()
     result["source_access"] = {"budget": True, "finance": True}
     return result, chat.sign_context(result, ACTOR)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_child", [False, True])
+async def test_large_scope_projects_in_bounded_readonly_batches_with_parity(
+    monkeypatch, fail_child
+):
+    import asyncio
+
+    selected = scope()
+    selected["selected"] = [
+        {"id": str(UUID(int=n)), "name": f"Synthetic {n}"} for n in range(1, 1002)
+    ]
+    selected["tournaments"] = selected["selected"]
+    ids = [t["id"] for t in selected["selected"]]
+    monkeypatch.setattr(home, "resolve_scope", AsyncMock(return_value=selected))
+    main = Session()
+    children = []
+    active = maximum = closed = 0
+
+    class Child(Session):
+        async def __aenter__(self):
+            nonlocal active, maximum
+            active += 1
+            maximum = max(maximum, active)
+            return self
+
+        async def __aexit__(self, *_):
+            nonlocal active, closed
+            active -= 1
+            closed += 1
+
+        def begin(self):
+            return Savepoint()
+
+        async def execute(self, statement, params=None):
+            assert str(statement) == "SET TRANSACTION READ ONLY"
+            if fail_child and self is children[0]:
+                raise RuntimeError("synthetic setup failure")
+            self.readonly = True
+            return Result()
+
+    def factory():
+        child = Child()
+        children.append(child)
+        return child
+
+    async def read(session, loader, **kwargs):
+        if loader is home.build_executive_facts:
+            assert session is main and kwargs["tournament_ids"] == ids
+            return {
+                "by_tournament": {
+                    tid: {
+                        "values": {"actual": "40", "committed": None, "paid": None},
+                        "gaps": {},
+                    }
+                    for tid in ids
+                }
+            }
+        if session is None:
+            return None
+        assert loader is home.service._build_direction_budget_snapshot
+        assert session is main or session.session.readonly
+        await asyncio.sleep(0)
+        return {
+            "source": "budget_db",
+            "version": {"id": VERSION, "status": "approved"},
+            "summary": {"budget_total": 100, "actual_total": 40},
+            "forecast": {"projected_close_total": 120},
+        }
+
+    monkeypatch.setattr(home, "_optional_read", read)
+    monkeypatch.setattr(
+        home.service,
+        "_build_operational_dossier",
+        AsyncMock(
+            return_value={
+                "source_status": "available",
+                "summary": {"teams_count": 5, "players_count": 10},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        home.service,
+        "_build_operational_summaries",
+        AsyncMock(
+            return_value={tid: {"teams_count": 5, "players_count": 10} for tid in ids}
+        ),
+    )
+    monkeypatch.setattr(home, "_tournament_read_factory", lambda session: factory)
+    batched, _ = await home.build_home(
+        main,
+        actor=ACTOR,
+        superadmin=True,
+        year=YEAR,
+        source_access={"budget": True, "finance": False},
+    )
+    assert 1 < maximum <= home.TOURNAMENT_READ_CONCURRENCY
+    assert (
+        active == 0
+        and closed
+        == (len(ids) + home.TOURNAMENT_READ_BATCH_SIZE - 1)
+        // home.TOURNAMENT_READ_BATCH_SIZE
+    )
+    assert batched["tournament_ids"] == ids
+    actual = next(m for m in batched["indicators"] if m["id"] == "actual")
+    assert actual["value"] == "40040.00" and actual["coverage"]["covered"] == 1001
+    budget = next(m for m in batched["indicators"] if m["id"] == "budget")
+    assert budget["coverage"]["covered"] == 1001 - (
+        home.TOURNAMENT_READ_BATCH_SIZE if fail_child else 0
+    )
+    if not fail_child:
+        monkeypatch.setattr(home, "_tournament_read_factory", lambda session: None)
+        serial, _ = await home.build_home(
+            main,
+            actor=ACTOR,
+            superadmin=True,
+            year=YEAR,
+            source_access={"budget": True, "finance": False},
+        )
+        assert [
+            (m["id"], m["value"], m["coverage"]) for m in batched["indicators"]
+        ] == [(m["id"], m["value"], m["coverage"]) for m in serial["indicators"]]
+        assert [r["values"] for r in batched["tournaments"]] == [
+            r["values"] for r in serial["tournaments"]
+        ]
+        for field in (
+            "operations",
+            "concepts",
+            "gaps",
+            "monthly_execution",
+            "previous_period",
+        ):
+            assert [r[field] for r in batched["tournaments"]] == [
+                r[field] for r in serial["tournaments"]
+            ]
+        monkeypatch.setattr(
+            home,
+            "_tournament_read_factory",
+            lambda session: lambda: pytest.fail(
+                "Denied financial sources must not open child sessions"
+            ),
+        )
+        denied, _ = await home.build_home(
+            main,
+            actor=ACTOR,
+            superadmin=True,
+            year=YEAR,
+            source_access={"budget": False, "finance": False},
+        )
+        assert all(metric["value"] is None for metric in denied["indicators"])
+
+
+@pytest.mark.asyncio
+async def test_batch_session_factory_reuses_only_the_existing_async_engine():
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    assert home._tournament_read_factory(Session()) is None
+    assert home._tournament_read_factory(SimpleNamespace(bind=object())) is None
+    # Construction is lazy: this test never connects to a database.
+    engine = create_async_engine("postgresql+asyncpg://")
+    try:
+        for bind in (engine, engine.connect()):
+            factory = home._tournament_read_factory(SimpleNamespace(bind=bind))
+            assert factory.kw["bind"] is engine
+            assert factory.kw["autoflush"] is False
+            assert factory.kw["expire_on_commit"] is False
+    finally:
+        await engine.dispose()
 
 
 def test_signed_context_foreign_tampered_expired(signed, monkeypatch):
@@ -389,6 +571,29 @@ def test_missing_signing_secret_fails_closed(monkeypatch):
     monkeypatch.delenv("SESSION_SECRET_KEY", raising=False)
     with pytest.raises(chat.ContextError):
         chat.sign_context(snapshot(), ACTOR)
+
+
+def test_large_context_receipt_preserves_exact_snapshot_and_signature(
+    signed, monkeypatch
+):
+    import random
+
+    data, _ = signed
+    data["synthetic_large_scope_evidence"] = random.Random(431).randbytes(120000).hex()
+    assert len(chat._signer().dumps({"actor": ACTOR, "snapshot": data})) > 100000
+    token = chat.sign_context(data, ACTOR)
+    receipt = chat.context_receipt(data, ACTOR, token)
+    assert len(token) < 100000 and receipt
+    assert chat.load_context(token, ACTOR, receipt) == data
+    for actor, value in [(T1, receipt), (ACTOR, receipt + " "), (ACTOR, None)]:
+        with pytest.raises(chat.ContextError):
+            chat.load_context(token, actor, value)
+    original = TimestampSigner.get_timestamp
+    monkeypatch.setattr(
+        TimestampSigner, "get_timestamp", lambda self: original(self) + 901
+    )
+    with pytest.raises(chat.ContextError):
+        chat.load_context(token, ACTOR, receipt)
 
 
 def test_sam_exact_metric_unsupported_request_and_unknown_id():
@@ -488,7 +693,15 @@ async def test_scoped_finance_source_never_reads_global_expenses_or_polizas():
         session, tournament_ids=[T1], documents_only=True
     )
     sql = str(session.calls[0][0].compile(dialect=postgresql.dialect()))
-    assert "documentos.torneo_id IN" in sql
+    assert "coalesce(documentos.torneo_id, cuentas_de_gastos.torneo_id) IN" in sql
+    loader_contexts = [
+        ctx for option in session.calls[0][0]._with_options for ctx in option.context
+    ]
+    assert any(
+        "CuentaDeGastos.torneo_id" in str(ctx.path)
+        and ("deferred", False) in ctx.strategy
+        for ctx in loader_contexts
+    )
     assert len(session.calls) == 1
     assert result["source_status"]["polizas_available"] is False
     with pytest.raises(ValueError):
@@ -499,6 +712,83 @@ async def test_scoped_finance_source_never_reads_global_expenses_or_polizas():
         Session([[]]), tournament_ids=[], documents_only=True
     )
     assert result["documents"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("a_count,b_count", [(3, 2), (2, 2), (3, 0)])
+async def test_payment_scan_completeness_is_per_tournament(
+    monkeypatch, a_count, b_count
+):
+    # A tiny cap exercises the same boundary as 5,000 without giant fixtures.
+    rows = [
+        SimpleNamespace(torneo_id=tid, currency="MXN")
+        for tid, count in [(T1, a_count), (T2, b_count)]
+        for _ in range(count)
+    ]
+    monkeypatch.setattr(
+        finance,
+        "_serialize_document",
+        lambda d: {
+            "tipo": "SOLICITUD",
+            "estado": "aprobado",
+            "monto_total": 10,
+            "fecha_pago": TODAY.isoformat(),
+        },
+    )
+    session = Session([rows])
+    source = await finance.build_finance_source_snapshot(
+        session, tournament_ids=[T1, T2], documents_only=True, limit=2
+    )
+    sql = str(session.calls[0][0].compile(dialect=postgresql.dialect()))
+    assert (
+        "PARTITION BY coalesce(documentos.torneo_id, cuentas_de_gastos.torneo_id)"
+        in sql
+    )
+    assert "coalesce(documentos.torneo_id, cuentas_de_gastos.torneo_id) IN" in sql
+    assert len(session.calls) == 1
+    assert len(source["documents"]) == min(a_count, 2) + b_count
+    monkeypatch.setattr(home, "_optional_read", AsyncMock(return_value=source))
+    result = await home.payment_values(Session(), [T1, T2], TODAY)
+    assert result["by_tournament"][T2]["value"] == b_count * 10
+    if a_count > 2:
+        assert result["value"] is None
+        assert result["by_tournament"][T1]["value"] is None
+    else:
+        assert result["value"] == (a_count + b_count) * 10
+        assert result["by_tournament"][T1]["value"] == a_count * 10
+
+
+@pytest.mark.asyncio
+async def test_obligations_inherit_account_tournament_without_overriding_direct_scope(
+    monkeypatch,
+):
+    rows = [
+        SimpleNamespace(
+            torneo_id=None, cuenta_gastos=SimpleNamespace(torneo_id=T1), currency="MXN"
+        ),
+        SimpleNamespace(
+            torneo_id=T2, cuenta_gastos=SimpleNamespace(torneo_id=T1), currency="MXN"
+        ),
+    ]
+    monkeypatch.setattr(
+        finance,
+        "_serialize_document",
+        lambda d: {
+            "tipo": "SOLICITUD",
+            "estado": "aprobado",
+            "monto_total": 10,
+            "fecha_pago": TODAY.isoformat(),
+        },
+    )
+    source = await finance.build_finance_source_snapshot(
+        Session([rows]), tournament_ids=[T1, T2], documents_only=True
+    )
+    assert [r["tournament_id"] for r in source["documents"]] == [T1, T2]
+    monkeypatch.setattr(home, "_optional_read", AsyncMock(return_value=source))
+    result = await home.payment_values(Session(), [T1, T2], TODAY)
+    assert result["value"] == 20
+    assert result["by_tournament"][T1]["value"] == 10
+    assert result["by_tournament"][T2]["value"] == 10
 
 
 @pytest.mark.asyncio
@@ -927,7 +1217,46 @@ async def test_suppressed_budget_indicators_preserve_source_failure(
             in {"budget", "actual", "committed", "paid", "forecast", "deviation"}
             and metric["value"] is None
         ):
-            assert any(expected in gap for gap in metric["gaps"])
+            expected_gap = (
+                "Fuente documental independiente no disponible o no autorizada."
+                if metric["id"] in {"actual", "committed", "paid"}
+                else expected
+            )
+            assert any(expected_gap in gap for gap in metric["gaps"])
             answer = chat.answer_snapshot(result, metric["id"], "¿Qué explica esto?")
-            assert expected in answer["missing_evidence"]
-            assert expected in answer["assistant_message"]
+            assert expected_gap in answer["missing_evidence"]
+            assert expected_gap in answer["assistant_message"]
+
+
+@pytest.mark.parametrize("value", ["x" * 65, "é" * 33])
+def test_oversized_receipt_rejected_before_signer_hash_or_json(monkeypatch, value):
+    monkeypatch.setattr(chat, "MAX_RECEIPT_BYTES", 64)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Oversized receipt was processed")
+
+    monkeypatch.setattr(chat, "_signer", forbidden)
+    for token in ("receipt.valid-signed-token", "inline-token"):
+        with pytest.raises(chat.ContextError, match="tamaño"):
+            chat._load_payload(token, value)
+
+
+def test_receipt_generation_and_utf8_boundaries(signed, monkeypatch):
+    monkeypatch.setattr(chat, "MAX_RECEIPT_BYTES", 64)
+    assert chat._receipt_bytes("x" * 64) == b"x" * 64
+    assert len(chat._receipt_bytes("é" * 32)) == 64
+    for call in (
+        lambda: chat.sign_context(signed[0], ACTOR),
+        lambda: chat.sign_analysis({"text": "x" * 65}, "snapshot", ACTOR),
+        lambda: chat.context_receipt(signed[0], ACTOR, "receipt.token"),
+        lambda: chat.analysis_receipt(
+            {"text": "x" * 65}, "snapshot", ACTOR, "receipt.token"
+        ),
+    ):
+        with pytest.raises(chat.ContextError, match="tamaño"):
+            call()
+
+
+def test_invalid_receipt_unicode_fails_closed():
+    with pytest.raises(chat.ContextError, match="válido"):
+        chat._receipt_bytes("\ud800")

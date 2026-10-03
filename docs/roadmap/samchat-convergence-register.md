@@ -22,9 +22,9 @@ canon edits silently.
 
 | Protected source path | SHA-256 at Line 0 baseline |
 | --- | --- |
-| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `99b06fb10c09fc079bad21bd6cb5a141d018845e2fd6cd0680d2a16ff684a479` |
+| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `fda2dad65000a66cc27f304feffc856fe7d12a61c6f1b95bb60112d69b43feca` |
 | `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `f930556b0c6002d8d6242e5591fdce72362d922a39a0746d4fac04538580e433` |
-| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `9599c5872ad5308f6dc5546f94ba0596028fd0051f5f63492dd54d4a5fa1ce1c` |
+| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `22f0f1904bbc034b62c5357e9758878fef20256d21b97648a24cd6e5daea8bff` |
 
 | Canon amendment date | Affected sources | Reason and evidence | Evidence state |
 | --- | --- | --- | --- |
@@ -63,3 +63,12 @@ canon edits silently.
    recorded. Requested features are not silently reclassified as defects.
 5. This register records facts and decisions; it does not confer authority to
    deploy, mutate data, or accept contractual scope.
+
+## Proposed 2026-10-02 amendment — requires human PR review
+
+Francisco authorized SUPERADMIN read supervision of all active local-installation
+tournaments at 18:27 UTC. Product and engineering canons record that narrow
+exception and independent documentary source coverage. Other profiles, explicit
+denials and all write authority remain unchanged. Evidence and limitations:
+`docs/evidence/direction-report-redesign/README.md`. Updated hashes above describe
+the proposed draft, not deployment or accepted UAT. Sweep canon unchanged.

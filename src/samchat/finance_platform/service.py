@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -119,11 +119,22 @@ async def build_finance_source_snapshot(
     documents_only: bool = False,
 ) -> dict[str, Any]:
     """Read current finance source rows and normalize them for UI projections."""
-    from devnous.gastos.models import AccountingPoliza, Documento, ExpenseReport
+    from devnous.gastos.models import (
+        AccountingPoliza,
+        CuentaDeGastos,
+        Documento,
+        ExpenseReport,
+    )
 
     if documents_only and tournament_ids is None:
         raise ValueError("Document-only executive reads require explicit scope")
     period_year, period_month, start, end = _period_bounds(year, month)
+    document_filter = or_(
+        and_(Documento.creado_en >= start, Documento.creado_en < end),
+        and_(Documento.aprobado_en >= start, Documento.aprobado_en < end),
+        and_(Documento.pagado_en >= start, Documento.pagado_en < end),
+        Documento.estado.in_(["enviado", "aprobado", "en_proceso_pago"]),
+    )
 
     document_stmt = (
         select(Documento)
@@ -132,14 +143,7 @@ async def build_finance_source_snapshot(
             selectinload(Documento.empleado),
             selectinload(Documento.beneficiario_empleado),
         )
-        .where(
-            or_(
-                and_(Documento.creado_en >= start, Documento.creado_en < end),
-                and_(Documento.aprobado_en >= start, Documento.aprobado_en < end),
-                and_(Documento.pagado_en >= start, Documento.pagado_en < end),
-                Documento.estado.in_(["enviado", "aprobado", "en_proceso_pago"]),
-            )
-        )
+        .where(document_filter)
         .order_by(Documento.creado_en.desc())
         .limit(limit)
     )
@@ -197,22 +201,68 @@ async def build_finance_source_snapshot(
 
     if tournament_ids is not None:
         # An empty authorized scope must return no rows, never a global read.
-        document_stmt = document_stmt.where(Documento.torneo_id.in_(tournament_ids))
-        document_stmt = document_stmt.limit(limit + 1)
+        effective_tournament = func.coalesce(
+            Documento.torneo_id, CuentaDeGastos.torneo_id
+        )
+        account_join = CuentaDeGastos.id == Documento.cuenta_gastos_id
+        document_stmt = (
+            document_stmt.outerjoin(CuentaDeGastos, account_join)
+            .options(
+                selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.torneo_id)
+            )
+            .where(effective_tournament.in_(tournament_ids))
+        )
         if not documents_only:
             raise ValueError("Scoped finance reads currently support documents only")
+        # Preserve the per-tournament cap in one authorized query. A busy
+        # tournament must not consume another tournament's completeness budget.
+        ranked = (
+            select(
+                Documento.id,
+                func.row_number()
+                .over(
+                    partition_by=effective_tournament,
+                    order_by=(Documento.creado_en.desc(), Documento.id),
+                )
+                .label("scope_rank"),
+            )
+            .outerjoin(CuentaDeGastos, account_join)
+            .where(document_filter, effective_tournament.in_(tournament_ids))
+            .subquery()
+        )
+        document_stmt = document_stmt.where(
+            Documento.id.in_(
+                select(ranked.c.id).where(ranked.c.scope_rank <= limit + 1)
+            )
+        ).limit(None)
     documents = (await session.execute(document_stmt)).scalars().all()
     if documents_only:
+        counts = dict.fromkeys(tournament_ids, 0)
+        kept = []
+        for document in documents:
+            tid = str(
+                document.torneo_id
+                or getattr(getattr(document, "cuenta_gastos", None), "torneo_id", None)
+            )
+            counts[tid] += 1
+            if counts[tid] <= limit:
+                kept.append((document, tid))
+        truncated = {tid: count > limit for tid, count in counts.items()}
         return {
             "period": {"year": period_year, "month": period_month},
             "documents": [
-                {**_serialize_document(d), "currency": getattr(d, "currency", None)}
-                for d in documents[:limit]
+                {
+                    **_serialize_document(d),
+                    "currency": getattr(d, "currency", None),
+                    "tournament_id": tid,
+                }
+                for d, tid in kept
             ],
             "expenses": [],
             "polizas": [],
             "source_status": {
-                "document_scan_truncated": len(documents) > limit,
+                "document_scan_truncated": any(truncated.values()),
+                "document_scan_truncated_by_tournament": truncated,
                 "document_scan_limit": limit,
                 "tournament_ids": sorted(set(tournament_ids)),
                 "polizas_available": False,

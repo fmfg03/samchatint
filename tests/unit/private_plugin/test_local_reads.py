@@ -319,6 +319,9 @@ class CanonicalMCPReadTests(unittest.IsolatedAsyncioTestCase):
         self.fixture.build.assert_not_awaited()
 
     async def test_scope_listing_sdk_receipt_and_strict_noargs(self):
+        import base64
+        import json
+
         async with create_connected_server_and_client_session(self.server) as client:
             await client.list_tools()
             result = await client.call_tool("direction_list_scopes", {})
@@ -335,10 +338,26 @@ class CanonicalMCPReadTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 self.audit.rows[-1]["evidence_digest"], digest(result.structuredContent)
             )
+            cursor = base64.urlsafe_b64encode(
+                json.dumps(
+                    [
+                        result.structuredContent["scope_manifest"]["scope_digest"],
+                        0,
+                        None,
+                        None,
+                    ]
+                ).encode()
+            ).decode()
+            repeated = await client.call_tool(
+                "direction_list_scopes", {"cursor": cursor}
+            )
+            self.assertFalse(repeated.isError, repeated)
+            self.assertEqual(repeated.structuredContent, result.structuredContent)
             for arguments in (
                 {"actor_id": "other"},
                 {"year": 2026},
                 {"portfolio_id": direction_fixture.PORTFOLIO},
+                {"cursor": 1},
             ):
                 denied = await client.call_tool("direction_list_scopes", arguments)
                 self.assertEqual(denied.content[0].text, "INVALID_ARGUMENTS")

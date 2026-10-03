@@ -5,6 +5,7 @@ No financial records, permissions, budgets or bank balances are created here.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from datetime import date, datetime, timedelta, timezone
@@ -15,12 +16,15 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import text
 
 from samchat.ar.service import build_ar_read_model
+from samchat.budgets.executive_facts import SOURCE as FACT_SOURCE
+from samchat.budgets.executive_facts import build_executive_facts
 from samchat.finance_platform.service import (
     approved_unpaid_documents,
     build_finance_source_snapshot,
 )
 
 from . import service
+from .report_layouts import report_layouts
 
 SCHEMA = "samchat.direction.home.v1"
 TZ = ZoneInfo("America/Mexico_City")
@@ -32,21 +36,21 @@ DEFINITIONS = {
         "Finanzas / Presupuestos",
     ),
     "actual": (
-        "Ejercido presupuestal",
-        "Gastos activos en base presupuestal; no es salida de caja.",
-        "summary.actual_total",
+        "Ejercido documental",
+        "Gastos activos atribuidos al torneo, en base fiscal canónica y por fecha de gasto; no es caja ni solo partidas presupuestadas.",
+        "Σ base fiscal canónica por expense_reports.id",
         "Contabilidad / Finanzas",
     ),
     "committed": (
         "Comprometido documental",
-        "Incluye solicitudes pagadas/cerradas; no se suma al ejercido.",
-        "summary.committed_total",
+        "Importe pagable de solicitudes creadas en el intervalo, con su estado actual; incluye enviadas, liquidadas y reembolsos. No equivale a deuda pendiente ni se suma al ejercido.",
+        "Σ importe pagable canónico por documentos.id",
         "Finanzas",
     ),
     "paid": (
         "Pagado documental",
-        "Estado documental; no acredita movimiento bancario.",
-        "summary.paid_total",
+        "Importe pagable de solicitudes creadas en el intervalo, con su estado/registro actual de pago; no acredita por sí solo una transferencia ni es flujo por fecha efectiva o caja.",
+        "Σ importe pagable de solicitudes con pago documental",
         "Contabilidad / Tesorería",
     ),
     "forecast": (
@@ -121,12 +125,13 @@ async def resolve_scope(
     superadmin: bool,
     portfolio_id: str | None,
     tournament_id: str | None,
+    tournament_ids: list[str] | None = None,
 ) -> dict:
     """Resolve dropdowns and selection without a global or role fallback."""
     ids = await service.authorized_direction_portfolio_ids(
         session, actor, is_superadmin=superadmin
     )
-    if not ids or (portfolio_id and portfolio_id not in ids):
+    if (not ids and not superadmin) or (portfolio_id and portfolio_id not in ids):
         raise service.ClientExecutiveAccessError("Cartera fuera de tu alcance activo.")
     portfolios = (
         (
@@ -144,6 +149,7 @@ async def resolve_scope(
     tournaments = await service._authorized_tournaments(
         session, actor, is_superadmin=superadmin
     )
+    accessible_count = len({t["id"] for t in tournaments})
     if portfolio_id:
         rows = (
             (
@@ -161,16 +167,28 @@ async def resolve_scope(
         permitted = {str(row["id"]) for row in rows}
         tournaments = [t for t in tournaments if t["id"] in permitted]
     options = {t["id"]: t for t in tournaments}
-    if tournament_id and tournament_id not in options:
+    if tournament_id and tournament_ids:
+        raise ValueError("Usa un solo selector de torneos.")
+    requested = sorted(
+        set(tournament_ids or ([tournament_id] if tournament_id else []))
+    )
+    if any(tid not in options for tid in requested):
         raise service.ClientExecutiveAccessError("Torneo fuera de tu alcance activo.")
-    selected = [options[tournament_id]] if tournament_id else list(options.values())
+    selected = (
+        [options[tid] for tid in requested] if requested else list(options.values())
+    )
     return {
         "portfolio_ids": [portfolio_id] if portfolio_id else sorted(ids),
         "portfolio_id": portfolio_id,
         "tournament_id": tournament_id,
+        "tournament_ids": requested,
         "portfolios": [dict(row) for row in portfolios],
         "tournaments": list(options.values()),
         "selected": selected,
+        "accessible_tournament_count": accessible_count,
+        "scope_mode": (
+            "installation_supervision" if superadmin else "assigned_portfolios"
+        ),
     }
 
 
@@ -232,6 +250,24 @@ async def _optional_read(session: Any, loader: Any, **kwargs: Any) -> dict | Non
         return None
 
 
+# Independent canonical per-tournament readers must never concurrently share an
+# AsyncSession. Bound connection use while removing the serial portfolio waterfall.
+TOURNAMENT_READ_CONCURRENCY = 4
+TOURNAMENT_READ_BATCH_SIZE = 25
+
+
+def _tournament_read_factory(session: Any):
+    bind = getattr(session, "bind", None)
+    if bind is None:
+        return None
+    from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, async_sessionmaker
+
+    engine = bind.engine if isinstance(bind, AsyncConnection) else bind
+    if not isinstance(engine, AsyncEngine):
+        return None
+    return async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+
+
 async def payment_values(session: Any, tournament_ids: list[str], today: date) -> dict:
     source = await _optional_read(
         session,
@@ -242,6 +278,43 @@ async def payment_values(session: Any, tournament_ids: list[str], today: date) -
         tournament_ids=tournament_ids,
         documents_only=True,
     )
+    projected = _project_payment_values(source, today)
+    projected["by_tournament"] = {
+        tid: _project_payment_values(
+            (
+                {
+                    **source,
+                    "source_status": {
+                        **(source.get("source_status") or {}),
+                        "document_scan_truncated": (
+                            (source.get("source_status") or {}).get(
+                                "document_scan_truncated_by_tournament", {}
+                            )
+                        ).get(
+                            tid,
+                            (source.get("source_status") or {}).get(
+                                "document_scan_truncated", False
+                            ),
+                        ),
+                    },
+                    "documents": [
+                        r
+                        for r in source.get("documents", [])
+                        if r.get("tournament_id") == tid
+                    ],
+                }
+                if source is not None
+                else None
+            ),
+            today,
+        )
+        for tid in tournament_ids
+    }
+    return projected
+
+
+def _project_payment_values(source: dict | None, today: date) -> dict:
+    """Project the current stock after one authorized set-scoped source read."""
     if source is None or (source.get("source_status") or {}).get(
         "document_scan_truncated"
     ):
@@ -253,11 +326,14 @@ async def payment_values(session: Any, tournament_ids: list[str], today: date) -
     due = []
     gaps = []
     for row in eligible:
+        record_valid = True
         if row.get("currency") != "MXN":
+            record_valid = False
             gaps.append(
                 "Hay obligaciones sin moneda MXN acreditada; falta conversión validada."
             )
         if row.get("monto_total") is None and row.get("monto_solicitado") is None:
+            record_valid = False
             gaps.append("Una obligación no tiene importe acreditado.")
         scheduled = str(row.get("fecha_pago") or "")[:10]
         if not scheduled:
@@ -269,6 +345,8 @@ async def payment_values(session: Any, tournament_ids: list[str], today: date) -
             gaps.append("Hay fechas de pago no verificables.")
             continue
         if today <= due_date <= today + timedelta(days=30):
+            if not record_valid:
+                continue
             # Resolve with the owning domain helper, never sum request + invoice.
             from devnous.gastos.services.document_amount_service import (
                 resolve_payable_document_amount,
@@ -287,6 +365,8 @@ async def payment_values(session: Any, tournament_ids: list[str], today: date) -
                 )
     return {
         "value": None if gaps else sum((amount(r["value"]) for r in due), Decimal("0")),
+        "known_subtotal": str(sum((amount(r["value"]) for r in due), Decimal("0"))),
+        "status": "partial" if gaps else "available",
         "gaps": sorted(set(gaps)),
         "evidence": due,
     }
@@ -511,7 +591,11 @@ def build_snapshot(
                 else (
                     "bank_balance_source_unavailable"
                     if key == "liquidity"
-                    else BUDGET_SOURCE
+                    else (
+                        FACT_SOURCE
+                        if key in {"actual", "committed", "paid"}
+                        else BUDGET_SOURCE
+                    )
                 )
             )
         )
@@ -522,9 +606,13 @@ def build_snapshot(
                 f"Edición {year} · proyección anual al corte"
                 if key in {"forecast", "deviation"}
                 else (
-                    "Saldo actual al corte de consulta"
-                    if key in {"obligations", "receivables", "overdue", "liquidity"}
-                    else f"{start.isoformat()} a {end.isoformat()}"
+                    "Stock actual · próximos 30 días desde la consulta; independiente del intervalo seleccionado"
+                    if key == "obligations"
+                    else (
+                        "Saldo actual al corte de consulta"
+                        if key in {"obligations", "receivables", "overdue", "liquidity"}
+                        else f"{start.isoformat()} a {end.isoformat()}"
+                    )
                 )
             )
         )
@@ -619,15 +707,17 @@ def build_snapshot(
         "period": {"start": start.isoformat(), "end": end.isoformat()},
         "as_of": observed_at,
         "scope": {
-            k: scope[k] for k in ("portfolio_ids", "portfolio_id", "tournament_id")
+            **{k: scope[k] for k in ("portfolio_ids", "portfolio_id", "tournament_id")},
+            "tournament_ids": scope.get("tournament_ids", []),
         },
         "tournament_ids": [r["id"] for r in rows],
         "indicators": indicators,
         "tournaments": rows,
         "priorities": concerns[:3],
         "headline": headline,
-        "source_consistency": "sequential_reads_with_individual_cuts_not_cross_store_atomic",
+        "source_consistency": "independent_reads_with_individual_cuts_not_cross_store_atomic",
         "business_acceptance": "pending",
+        "reports": report_layouts({"start": start.isoformat(), "end": end.isoformat()}),
     }
     result["snapshot_id"] = hashlib.sha256(
         json.dumps(result, ensure_ascii=False, sort_keys=True, default=str).encode()
@@ -643,6 +733,7 @@ async def build_home(
     year: int,
     portfolio_id: str | None = None,
     tournament_id: str | None = None,
+    tournament_ids: list[str] | None = None,
     start: date | None = None,
     end: date | None = None,
     source_access: dict[str, bool] | None = None,
@@ -655,13 +746,60 @@ async def build_home(
         superadmin=superadmin,
         portfolio_id=portfolio_id,
         tournament_id=tournament_id,
+        tournament_ids=tournament_ids,
     )
     rows = []
     today = datetime.now(TZ).date()
-    for tournament in scope["selected"]:
+    selected_ids = [t["id"] for t in scope["selected"]]
+    facts = (
+        await _optional_read(
+            session,
+            build_executive_facts,
+            include_expenses=source_access["budget"],
+            include_documents=source_access["finance"],
+            tournament_ids=selected_ids,
+            start=start,
+            end=end,
+        )
+        if source_access["finance"] or source_access["budget"]
+        else None
+    ) or {}
+    previous_end = start - timedelta(days=1)
+    previous_start = previous_end - (end - start)
+    previous_facts = (
+        await _optional_read(
+            session,
+            build_executive_facts,
+            include_expenses=source_access["budget"],
+            include_documents=source_access["finance"],
+            tournament_ids=selected_ids,
+            start=previous_start,
+            end=previous_end,
+        )
+        if previous_start.year == year
+        and (source_access["finance"] or source_access["budget"])
+        else None
+    ) or {}
+    payment_batch = (
+        await payment_values(session, selected_ids, today)
+        if source_access["finance"]
+        else {}
+    )
+
+    factory = _tournament_read_factory(session) if len(scope["selected"]) > 1 else None
+    operational_summaries = None
+    if factory is not None:
+        try:
+            operational_summaries = await service._build_operational_summaries(
+                scope["selected"], edition_year=year
+            )
+        except Exception:
+            operational_summaries = {}
+
+    async def project_row(row_session, tournament):
         snapshot = (
             await _optional_read(
-                session,
+                row_session,
                 service._build_direction_budget_snapshot,
                 tournament=tournament,
                 edition_year=year,
@@ -673,20 +811,46 @@ async def build_home(
             else None
         ) or {}
         values, budget_gaps = budget_values(snapshot, start=start, end=end, year=year)
+        factual = (facts.get("by_tournament") or {}).get(tournament["id"], {})
+        factual_values = factual.get("values") or {}
+        # A forecast calibrated on budget-classified expenses cannot describe
+        # the broader documentary population unless both bases reconcile.
+        if (
+            values["forecast"] is not None
+            and amount(factual_values.get("actual")) != values["actual"]
+        ):
+            values.update(forecast=None, deviation=None)
+            budget_gaps.append(
+                "La base documental no concilia con la base de la proyección presupuestal."
+            )
+        for key in ("actual", "committed", "paid"):
+            values[key] = amount(factual_values.get(key))
         concepts = concept_evidence(snapshot, values)
-        previous = (
-            await previous_period_values(session, tournament, start, end, year)
-            if source_access["budget"]
-            else {"values": {}, "gaps": ["Fuente presupuestal no autorizada."]}
-        )
-        payments = (
-            await payment_values(session, [tournament["id"]], today)
-            if source_access["finance"]
-            else {"value": None, "gaps": ["Fuente financiera no autorizada."]}
+        prior = (previous_facts.get("by_tournament") or {}).get(tournament["id"], {})
+        previous = {
+            "values": prior.get("values", {}),
+            "period": {
+                "start": previous_start.isoformat(),
+                "end": previous_end.isoformat(),
+            },
+            "gaps": (
+                sorted({g for gs in prior.get("gaps", {}).values() for g in gs})
+                if prior
+                else [
+                    "Periodo anterior sin fuente documental acreditada en esta edición."
+                ]
+            ),
+        }
+        payments = (payment_batch.get("by_tournament") or {}).get(
+            tournament["id"],
+            {
+                "value": None,
+                "gaps": ["Fuente financiera no disponible o no autorizada."],
+            },
         )
         version = str((snapshot.get("version") or {}).get("id") or "")
         ar = (
-            await receivable_values(session, tournament["id"], version, year)
+            await receivable_values(row_session, tournament["id"], version, year)
             if version and source_access["finance"]
             else {
                 "value": None,
@@ -699,60 +863,111 @@ async def build_home(
             overdue=None,
             liquidity=None,
         )
-        try:
-            dossier = await service._build_operational_dossier(
-                tournament, edition_year=year
+        if operational_summaries is not None:
+            operations = operational_summaries.get(tournament["id"])
+        else:
+            try:
+                dossier = await service._build_operational_dossier(
+                    tournament, edition_year=year
+                )
+            except Exception:
+                dossier = {}
+            operations = (
+                dossier.get("summary")
+                if dossier.get("source_status") == "available"
+                else None
             )
-        except Exception:
-            dossier = {}
-        operations = (
-            dossier.get("summary")
-            if dossier.get("source_status") == "available"
-            else None
-        )
-        rows.append(
-            {
-                "id": tournament["id"],
-                "name": tournament["name"],
-                "version_id": version or None,
-                "concepts": concepts,
-                "previous_period": previous,
-                "forecast_method": {
-                    k: (snapshot.get("forecast") or {}).get(k)
-                    for k in ("elapsed_days", "total_days", "as_of_date")
+        return {
+            "id": tournament["id"],
+            "name": tournament["name"],
+            "version_id": version or None,
+            "documentary_evidence": {
+                **factual,
+                "source": FACT_SOURCE,
+                "as_of": facts.get("as_of"),
+            },
+            "concepts": concepts,
+            "previous_period": previous,
+            "forecast_method": {
+                k: (snapshot.get("forecast") or {}).get(k)
+                for k in ("elapsed_days", "total_days", "as_of_date")
+            },
+            "values": {k: str(v) if v is not None else None for k, v in values.items()},
+            "as_of": datetime.now(timezone.utc).isoformat(),
+            "gaps": {
+                **{
+                    key: budget_gaps or ["Importe presupuestal no acreditado."]
+                    for key in (
+                        "budget",
+                        "actual",
+                        "committed",
+                        "paid",
+                        "forecast",
+                        "deviation",
+                    )
+                    if values[key] is None
                 },
-                "values": {
-                    k: str(v) if v is not None else None for k, v in values.items()
+                "obligations": payments["gaps"],
+                "receivables": ar["gaps"],
+                **{
+                    key: (factual.get("gaps") or {}).get(
+                        key,
+                        [
+                            "Fuente documental independiente no disponible o no autorizada."
+                        ],
+                    )
+                    for key in ("actual", "committed", "paid")
                 },
-                "as_of": datetime.now(timezone.utc).isoformat(),
-                "gaps": {
-                    **{
-                        key: budget_gaps or ["Importe presupuestal no acreditado."]
-                        for key in (
-                            "budget",
-                            "actual",
-                            "committed",
-                            "paid",
-                            "forecast",
-                            "deviation",
-                        )
-                        if values[key] is None
-                    },
-                    "obligations": payments["gaps"],
-                    "receivables": ar["gaps"],
-                },
-                "operations": {
-                    "teams": (operations or {}).get("teams_count"),
-                    "players": (operations or {}).get("players_count"),
-                    "period": f"Edición {year}; sin filtro histórico por fecha",
-                    "progress_percent": None,
-                },
-                "payment_evidence": payments.get("evidence", []),
-                "monthly_execution": monthly_execution(
-                    snapshot, values["actual"], start, end
-                ),
-            }
-        )
+            },
+            "operations": {
+                "teams": (operations or {}).get("teams_count"),
+                "players": (operations or {}).get("players_count"),
+                "period": f"Edición {year}; sin filtro histórico por fecha",
+                "progress_percent": None,
+            },
+            "payment_evidence": payments.get("evidence", []),
+            "monthly_execution": monthly_execution(
+                factual, values["actual"], start, end
+            ),
+        }
+
+    if factory is None:
+        rows = [
+            await project_row(session, tournament) for tournament in scope["selected"]
+        ]
+    else:
+        semaphore = asyncio.Semaphore(TOURNAMENT_READ_CONCURRENCY)
+
+        async def project_chunk(tournaments):
+            async with semaphore:
+                if not source_access["budget"]:
+                    return [await project_row(None, t) for t in tournaments]
+                try:
+                    async with factory() as read_session:
+                        async with read_session.begin():
+                            await read_session.execute(
+                                text("SET TRANSACTION READ ONLY")
+                            )
+                            from .read_batches import ReadBatch
+
+                            batch = ReadBatch(read_session)
+                            try:
+                                return await asyncio.gather(
+                                    *(project_row(batch, t) for t in tournaments)
+                                )
+                            finally:
+                                await batch.close()
+                except Exception:
+                    # Preserve independent set-scoped facts on connection failure;
+                    # never retry against a shared or possibly aborted transaction.
+                    return [await project_row(None, t) for t in tournaments]
+
+        chunks = [
+            scope["selected"][i : i + TOURNAMENT_READ_BATCH_SIZE]
+            for i in range(0, len(scope["selected"]), TOURNAMENT_READ_BATCH_SIZE)
+        ]
+        projected = await asyncio.gather(*(project_chunk(chunk) for chunk in chunks))
+        rows = [row for chunk in projected for row in chunk]
     result = build_snapshot(
         scope,
         rows,

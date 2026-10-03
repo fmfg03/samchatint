@@ -227,6 +227,67 @@ def generate_direction_report_xlsx(report: dict[str, Any]) -> bytes:
         if scenario["assumptions"]["kind"] != "payment_delay":
             case["B6"] = "=ROUND(B4*B5/100,2)"
             case["B7"] = "=B4-B6"
+    layouts = report.get("layouts") or {}
+    if layouts.get("budget"):
+        layout = layouts["budget"]
+        budget_sheet = wb.create_sheet("Presupuesto vs Real")
+        budget_sheet["A1"] = report["scope"]
+        budget_sheet["A2"] = f"Corte: {report['cut']} · {layout['unit']}"
+        budget_sheet["A3"] = layout.get("gap") or layout["source"]
+        budget_sheet.merge_cells("A1:I1")
+        budget_sheet.merge_cells("A2:I2")
+        budget_sheet.merge_cells("A3:I3")
+        for column, title in (
+            (2, "Presupuesto"),
+            (5, "Real"),
+            (8, "Variación presupuesto − real"),
+        ):
+            budget_sheet.cell(4, column, title)
+            budget_sheet.cell(5, column, "Mes")
+            budget_sheet.cell(5, column + 1, "Acumulado")
+        for item in layout["rows"]:
+            rownum = item["source_row"]
+            budget_sheet.cell(rownum, 1, item["label"])
+            for column, key in zip((2, 3, 5, 6, 8, 9), layout["columns"]):
+                budget_sheet.cell(rownum, column, money(item["values"][key]))
+            if item["parent"]:
+                budget_sheet.row_dimensions[rownum].outlineLevel = 1
+        budget_sheet.freeze_panes = "B6"
+    if layouts.get("cashflow"):
+        layout = layouts["cashflow"]
+        cash_sheet = wb.create_sheet("EFE")
+        cash_sheet.append([report["scope"]])
+        cash_sheet.append([f"Corte: {report['cut']} · {layout['unit']}"])
+        cash_sheet.append([layout.get("gap") or layout["source"]])
+        for rownum, title in (
+            (6, "Saldo inicial"),
+            (8, "Orígenes"),
+            (15, "Aplicaciones"),
+            (22, "Saldo final"),
+        ):
+            cash_sheet.cell(rownum, 1, title)
+        for rownum in (*range(9, 15), *range(16, 22)):
+            cash_sheet.cell(rownum, 1, "Conceptos/Proyectos")
+        for slot in range(6):
+            entry = layout["periods"][slot] if slot < len(layout["periods"]) else {}
+            col = slot + 2
+            cash_sheet.cell(
+                4,
+                col,
+                entry.get("label")
+                or f"{'Mensual' if slot < 3 else 'Acumulado'} {slot % 3 + 1} · periodo pendiente",
+            )
+            for rownum, key in (
+                (6, "opening"),
+                (8, "origins_total"),
+                (15, "applications_total"),
+                (22, "closing"),
+            ):
+                cash_sheet.cell(rownum, col, money(entry.get(key)))
+            for first, key in ((9, "origins"), (16, "applications")):
+                for offset, value in enumerate(entry.get(key) or [None] * 6):
+                    cash_sheet.cell(first + offset, col, money(value))
+        cash_sheet.freeze_panes = "B6"
     for sheet in wb:
         sheet.sheet_view.showGridLines = False
         sheet.sheet_properties.pageSetUpPr.fitToPage = True
@@ -309,7 +370,7 @@ def generate_direction_report_pdf(report: dict[str, Any]) -> bytes:
     from reportlab.graphics.shapes import Drawing, Rect, String
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.platypus import (
         KeepTogether,
         Paragraph,
@@ -326,6 +387,9 @@ def generate_direction_report_pdf(report: dict[str, Any]) -> bytes:
     styles["Normal"].leading = 13
     styles["Heading2"].keepWithNext = True
     styles["Heading3"].keepWithNext = True
+    styles.add(
+        ParagraphStyle("ReportTable", parent=styles["Normal"], fontSize=8, leading=10)
+    )
 
     def p(value, style="Normal"):
         return Paragraph(escape(str(value)).replace("\n", "<br/>"), styles[style])
@@ -444,6 +508,79 @@ def generate_direction_report_pdf(report: dict[str, Any]) -> bytes:
             ),
             *[p(note) for note in s["limits"]],
         ]
+    for key, title in (
+        ("budget", "Presupuesto vs Real"),
+        ("cashflow", "Flujo de efectivo"),
+    ):
+        layout = (report.get("layouts") or {}).get(key)
+        if not layout:
+            continue
+        story += [
+            p(title, "Heading2"),
+            p(layout["unit"]),
+            p(layout.get("gap") or layout["source"]),
+        ]
+        if key == "budget":
+
+            def numeric(value):
+                parsed = amount(value)
+                return f"{parsed:,.2f}" if parsed is not None else "—"
+
+            report_rows = [
+                [p("Concepto", "ReportTable")]
+                + [
+                    p(label.replace(" · ", "\n"), "ReportTable")
+                    for label in layout["column_labels"]
+                ]
+            ]
+            report_rows += [
+                [p(item["label"], "ReportTable")]
+                + [
+                    p(numeric(item["values"][col]), "ReportTable")
+                    for col in layout["columns"]
+                ]
+                for item in layout["rows"]
+            ]
+            report_table = Table(
+                report_rows, colWidths=[144, 61, 61, 61, 61, 61, 61], repeatRows=1
+            )
+            report_table.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eaf1f5")),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        (
+                            "LINEBELOW",
+                            (0, 0),
+                            (-1, -1),
+                            0.3,
+                            colors.HexColor("#d1dfe8"),
+                        ),
+                    ]
+                )
+            )
+            story.append(report_table)
+        else:
+            for entry in layout["periods"]:
+                story += [
+                    p(entry["label"], "Heading3"),
+                    p(
+                        " · ".join(
+                            f"{label}: {entry.get(field) if entry.get(field) is not None else 'Sin dato'}"
+                            for field, label in (
+                                ("opening", "Apertura"),
+                                ("origins_total", "Orígenes"),
+                                ("applications_total", "Aplicaciones"),
+                                ("closing", "Cierre"),
+                            )
+                        )
+                    ),
+                ]
+            story.append(
+                p(
+                    "Saldos inicial/final son existencias, no sumas acumuladas; no se atribuye caja empresarial sin evidencia."
+                )
+            )
     story += [
         p("Datos faltantes y límites", "Heading2"),
         *[p(g) for g in report["gaps"]],

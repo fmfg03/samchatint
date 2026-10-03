@@ -8,6 +8,7 @@ not an adapter facility and accepts no user-supplied code.
 
 import ast
 import hashlib
+import importlib.util
 import json
 import unittest
 from dataclasses import replace
@@ -16,16 +17,28 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from samchat.private_plugin.contracts import Denied, Identity
 from samchat.private_plugin.direction_read import (
+    DIRECTION_OUTPUT_SCHEMA,
+    DIRECTION_SCOPES_OUTPUT_SCHEMA,
     DirectionContext,
     DirectionOwners,
     DirectionReadAdapter,
+    _bounded_scope,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
+_layout_spec = importlib.util.spec_from_file_location(
+    "direction_report_layouts_fixture",
+    ROOT / "src/samchat/client_executive/report_layouts.py",
+)
+_layout_module = importlib.util.module_from_spec(_layout_spec)
+_layout_spec.loader.exec_module(_layout_module)
+report_layouts = _layout_module.report_layouts
+
 ACTOR = "10000000-0000-0000-0000-000000000001"
 PORTFOLIO = "20000000-0000-0000-0000-000000000001"
 TOURNAMENT = "30000000-0000-0000-0000-000000000001"
@@ -172,11 +185,31 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
                 "DIRECTION_EXECUTIVE_TOOL": "direccion.tableros_ejecutivos",
             },
         )
+
+        async def documentary_facts(
+            _session, *, include_expenses, include_documents, **kwargs
+        ):
+            return {
+                "by_tournament": {
+                    TOURNAMENT: {
+                        "values": {
+                            "actual": "40" if include_expenses else None,
+                            "committed": "50" if include_documents else None,
+                            "paid": "20" if include_documents else None,
+                        },
+                        "gaps": {},
+                    }
+                }
+            }
+
         home = source_functions(
             "src/samchat/client_executive/home.py",
             None,
             {
                 "service": service,
+                "FACT_SOURCE": "samchat.budgets.executive_facts.build_executive_facts",
+                "report_layouts": report_layouts,
+                "build_executive_facts": AsyncMock(side_effect=documentary_facts),
                 "text": lambda value: value,
                 "date": date,
                 "datetime": datetime,
@@ -190,7 +223,11 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
             },
             constants=True,
         )
-        self.payments = AsyncMock(return_value={"value": Decimal("7"), "gaps": []})
+        self.payments = AsyncMock(
+            return_value={
+                "by_tournament": {TOURNAMENT: {"value": Decimal("7"), "gaps": []}}
+            }
+        )
         self.receivables = AsyncMock(
             return_value={"value": None, "gaps": ["Fixture missing collections"]}
         )
@@ -200,6 +237,7 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
         self.adapter = DirectionReadAdapter(
             current_context=self.context,
             organization_for_scope=self.mapping,
+            organization_for_catalog=self.mapping,
             owners=DirectionOwners(
                 routes["_assigned_direction_portfolios"],
                 routes["_direction_source_access"],
@@ -211,6 +249,60 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
             now=lambda: 100,
         )
 
+        async def catalog_page(
+            session,
+            actor,
+            *,
+            is_superadmin,
+            offset,
+            limit,
+            after_portfolio=None,
+            after_tournament=None,
+        ):
+            # Test double only. Production binds the SQL-paged canonical owner;
+            # its real-query row/count bounds are verified in PostgreSQL QA.
+            scope = await self.adapter._owners.resolve_scope(
+                session,
+                actor=actor,
+                superadmin=is_superadmin,
+                portfolio_id=None,
+                tournament_id=None,
+            )
+            bounded, _, manifest = _bounded_scope(
+                scope, [t["id"] for t in scope["selected"]]
+            )
+            return {
+                "portfolio_ids": bounded["portfolio_ids"],
+                "portfolio_count": manifest["portfolio_count"],
+                "tournament_count": manifest["tournament_count"],
+                "scope_digest": manifest["scope_digest"],
+                "portfolios": [
+                    p
+                    for p in sorted(scope["portfolios"], key=lambda r: r["id"])
+                    if after_portfolio is None or p["id"] > after_portfolio
+                ][
+                    0 if after_portfolio else offset : (
+                        0 if after_portfolio else offset
+                    )
+                    + limit
+                ],
+                "tournaments": [
+                    {"id": t["id"], "label": t["name"]}
+                    for t in [
+                        t
+                        for t in sorted(scope["selected"], key=lambda r: r["id"])
+                        if after_tournament is None or t["id"] > after_tournament
+                    ][
+                        0 if after_tournament else offset : (
+                            0 if after_tournament else offset
+                        )
+                        + limit
+                    ]
+                ],
+            }
+
+        self.adapter._owners = replace(self.adapter._owners, catalog_page=catalog_page)
+
     async def read(self, **kwargs):
         return await self.adapter.read(identity=self.identity, **kwargs)
 
@@ -219,7 +311,8 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
         values = {row["id"]: row for row in result["indicators"]}
         self.assertEqual(values["actual"]["value"], "40.00")
         self.assertEqual(
-            values["actual"]["source"], "samchat.budgets.service.build_budget_snapshot"
+            values["actual"]["source"],
+            "samchat.budgets.executive_facts.build_executive_facts",
         )
         self.assertIsNone(values["receivables"]["value"])
         self.assertIn("Fixture missing collections", values["receivables"]["gaps"])
@@ -245,6 +338,116 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
         self.budget.assert_not_awaited()
         self.payments.assert_not_awaited()
         self.receivables.assert_not_awaited()
+
+    async def test_catalog_requires_explicit_full_catalog_organization_binding(self):
+        self.adapter._catalog_organization = None
+        with self.assertRaisesRegex(Denied, "ORGANIZATION_UNPROVEN"):
+            await self.adapter.list_scopes(identity=self.identity)
+        self.mapping.assert_not_awaited()
+        self.adapter._catalog_organization = self.mapping
+        self.adapter._owners = replace(self.adapter._owners, catalog_page=None)
+        with self.assertRaisesRegex(Denied, "ORGANIZATION_UNPROVEN"):
+            await self.adapter.list_scopes(identity=self.identity)
+
+    async def test_catalog_does_not_reload_full_scope_or_assigned_ids(self):
+        page = await self.adapter._owners.catalog_page(
+            self.session, ACTOR, is_superadmin=False, offset=0, limit=25
+        )
+        self.portfolios.reset_mock()
+        forbidden = AsyncMock(side_effect=AssertionError("Full scope reloaded"))
+        paged = AsyncMock(return_value=page)
+        self.adapter._owners = replace(
+            self.adapter._owners, catalog_page=paged, resolve_scope=forbidden
+        )
+        await self.adapter.list_scopes(identity=self.identity)
+        self.assertEqual(paged.await_count, 2)
+        forbidden.assert_not_awaited()
+        self.assertTrue(
+            all(
+                call.kwargs.get("limit") == 1
+                for call in self.portfolios.await_args_list
+            )
+        )
+        self.assertEqual(self.mapping.await_count, 2)
+
+    async def test_scope_completeness_metadata_is_required_by_output_contracts(self):
+        from jsonschema import Draft202012Validator
+
+        summary = await self.read()
+        scopes = await self.adapter.list_scopes(identity=self.identity)
+        for result, schema, keys in (
+            (summary, DIRECTION_OUTPUT_SCHEMA, ["scope_manifest"]),
+            (scopes, DIRECTION_SCOPES_OUTPUT_SCHEMA, ["scope_manifest", "pagination"]),
+        ):
+            for key in keys:
+                incomplete = {k: v for k, v in result.items() if k != key}
+                self.assertFalse(Draft202012Validator(schema).is_valid(incomplete))
+
+    async def test_large_superadmin_catalog_pages_and_aggregate_remain_complete(self):
+        snapshot, scope = await self.build(
+            self.session,
+            actor=ACTOR,
+            superadmin=False,
+            year=2026,
+            portfolio_id=None,
+            tournament_id=None,
+            source_access={"budget": True, "finance": True},
+        )
+        ids = [str(UUID(int=n)) for n in range(1, 1002)]
+        portfolios = [str(UUID(int=n)) for n in range(2001, 3002)]
+        scope.update(
+            portfolio_ids=portfolios,
+            portfolios=[
+                {"id": tid, "label": "Synthetic portfolio"} for tid in portfolios
+            ],
+            selected=[{"id": tid, "name": "Synthetic tournament"} for tid in ids],
+        )
+        snapshot["tournament_ids"] = ids
+        snapshot["scope"]["portfolio_ids"] = portfolios
+        for metric in snapshot["indicators"]:
+            metric["coverage"] = {
+                "covered": 1001 if metric["value"] is not None else 0,
+                "total": 1001,
+            }
+        self.employee.rol = "superadmin"
+        self.portfolios.return_value = portfolios
+        self.adapter._owners = replace(
+            self.adapter._owners,
+            resolve_scope=AsyncMock(return_value=scope),
+            build_home=AsyncMock(return_value=(snapshot, scope)),
+        )
+        first = await self.adapter.list_scopes(identity=self.identity)
+        found, found_portfolios = [], []
+        page = first
+        while True:
+            self.assertLessEqual(len(page["tournaments"]), 25)
+            self.assertLess(len(json.dumps(page).encode()), 65536)
+            found.extend(row["id"] for row in page["tournaments"])
+            found_portfolios.extend(row["id"] for row in page["portfolios"])
+            cursor = page["pagination"]["next_cursor"]
+            if cursor is None:
+                break
+            page = await self.adapter.list_scopes(identity=self.identity, cursor=cursor)
+        self.assertEqual(found, ids)
+        self.assertEqual(found_portfolios, portfolios)
+        result = await self.read()
+        self.assertEqual(result["tournament_ids"], [])
+        self.assertEqual(result["scope"]["portfolio_ids"], [])
+        self.assertEqual(result["scope_manifest"]["tournament_count"], 1001)
+        self.assertFalse(result["scope_manifest"]["tournament_ids_complete"])
+        self.assertEqual(
+            result["scope_manifest"]["scope_digest"],
+            first["scope_manifest"]["scope_digest"],
+        )
+        self.assertTrue(
+            all(row["coverage"]["total"] == 1001 for row in result["indicators"])
+        )
+        self.assertLess(len(json.dumps(result).encode()), 65536)
+        scope["selected"] = scope["selected"][:-1]
+        with self.assertRaisesRegex(Denied, "SCOPE_CHANGED"):
+            await self.adapter.list_scopes(
+                identity=self.identity, cursor=first["pagination"]["next_cursor"]
+            )
 
     async def test_scope_listing_denies_role_company_and_current_revocation(self):
         self.portfolios.return_value = []
@@ -310,10 +513,13 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
                 if denied_tool == "admin.presupuestos":
                     self.budget.assert_not_awaited()
                     self.assertIsNone(values["actual"]["value"])
+                    self.assertEqual(values["paid"]["value"], "20.00")
                 else:
                     self.payments.assert_not_awaited()
                     self.receivables.assert_not_awaited()
                     self.assertIsNone(values["obligations"]["value"])
+                    self.assertIsNone(values["paid"]["value"])
+                    self.assertEqual(values["actual"]["value"], "40.00")
                     self.assertTrue(values["obligations"]["gaps"])
 
     async def test_source_lookup_failure_is_denial_not_global_fallback(self):
@@ -333,6 +539,35 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(Denied, "FORBIDDEN"):
             await self.read()
         self.build.assert_not_awaited()
+
+    async def test_superadmin_without_portfolios_can_read_but_still_needs_organization(
+        self,
+    ):
+        self.employee.rol = "superadmin"
+        self.portfolios.return_value = []
+
+        class NoPortfolios(Session):
+            async def execute(self, query, params):
+                if "FROM client_executive_portfolios" in query:
+                    return Result([])
+                return await super().execute(query, params)
+
+        self.context.return_value = DirectionContext(
+            self.identity, self.employee, NoPortfolios()
+        )
+        listed = await self.adapter.list_scopes(identity=self.identity)
+        self.assertEqual(listed["portfolios"], [])
+        self.assertEqual(listed["tournaments"][0]["id"], TOURNAMENT)
+        result = await self.read()
+        self.assertEqual(result["tournament_ids"], [TOURNAMENT])
+        self.assertEqual(result["scope"]["portfolio_ids"], [])
+        self.mapping.return_value = "foreign-organization"
+        with self.assertRaisesRegex(Denied, "ORGANIZATION_UNPROVEN"):
+            await self.read()
+        self.mapping.return_value = "organization"
+        self.decisions["direccion.tableros_ejecutivos"] = False
+        with self.assertRaisesRegex(Denied, "FORBIDDEN"):
+            await self.read()
 
     async def test_foreign_selectors_denied_by_actual_scope_resolver(self):
         for selectors in ({"portfolio_id": FOREIGN}, {"tournament_id": FOREIGN}):
