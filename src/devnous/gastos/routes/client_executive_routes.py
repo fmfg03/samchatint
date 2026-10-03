@@ -64,6 +64,7 @@ async def _assigned_direction_portfolios(
     *,
     action_key: str = "ver",
     require_explicit_action: bool = False,
+    existence_only: bool = False,
 ) -> list[str]:
     """Authorize an active internal identity without role-based fallback.
 
@@ -98,6 +99,7 @@ async def _assigned_direction_portfolios(
         session,
         str(getattr(current_empleado, "id", "")),
         is_superadmin=is_superadmin,
+        **({"limit": 1} if existence_only else {}),
     )
     if not portfolio_ids and not (
         is_superadmin and action_key == "ver" and not require_explicit_action

@@ -444,7 +444,7 @@ async def test_large_scope_projects_in_bounded_readonly_batches_with_parity(
         if session is None:
             return None
         assert loader is home.service._build_direction_budget_snapshot
-        assert session is main or session.readonly
+        assert session is main or session.session.readonly
         await asyncio.sleep(0)
         return {
             "source": "budget_db",
@@ -464,6 +464,13 @@ async def test_large_scope_projects_in_bounded_readonly_batches_with_parity(
             }
         ),
     )
+    monkeypatch.setattr(
+        home.service,
+        "_build_operational_summaries",
+        AsyncMock(
+            return_value={tid: {"teams_count": 5, "players_count": 10} for tid in ids}
+        ),
+    )
     monkeypatch.setattr(home, "_tournament_read_factory", lambda session: factory)
     batched, _ = await home.build_home(
         main,
@@ -473,12 +480,19 @@ async def test_large_scope_projects_in_bounded_readonly_batches_with_parity(
         source_access={"budget": True, "finance": False},
     )
     assert 1 < maximum <= home.TOURNAMENT_READ_CONCURRENCY
-    assert active == 0 and closed == len(ids)
+    assert (
+        active == 0
+        and closed
+        == (len(ids) + home.TOURNAMENT_READ_BATCH_SIZE - 1)
+        // home.TOURNAMENT_READ_BATCH_SIZE
+    )
     assert batched["tournament_ids"] == ids
     actual = next(m for m in batched["indicators"] if m["id"] == "actual")
     assert actual["value"] == "40040.00" and actual["coverage"]["covered"] == 1001
     budget = next(m for m in batched["indicators"] if m["id"] == "budget")
-    assert budget["coverage"]["covered"] == 1001 - int(fail_child)
+    assert budget["coverage"]["covered"] == 1001 - (
+        home.TOURNAMENT_READ_BATCH_SIZE if fail_child else 0
+    )
     if not fail_child:
         monkeypatch.setattr(home, "_tournament_read_factory", lambda session: None)
         serial, _ = await home.build_home(
@@ -494,6 +508,16 @@ async def test_large_scope_projects_in_bounded_readonly_batches_with_parity(
         assert [r["values"] for r in batched["tournaments"]] == [
             r["values"] for r in serial["tournaments"]
         ]
+        for field in (
+            "operations",
+            "concepts",
+            "gaps",
+            "monthly_execution",
+            "previous_period",
+        ):
+            assert [r[field] for r in batched["tournaments"]] == [
+                r[field] for r in serial["tournaments"]
+            ]
         monkeypatch.setattr(
             home,
             "_tournament_read_factory",

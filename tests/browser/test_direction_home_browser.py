@@ -41,6 +41,12 @@ def test_report_tabs_multiselect_and_dialog_keyboard_access(page: Page):
 
     page.route("http://direction.test/**", serve)
     page.goto("http://direction.test/direccion/inicio")
+    assert page.locator("#documentary-basis").is_visible()
+    assert "con su estado actual" in page.locator("#documentary-basis").inner_text()
+    assert (
+        "septiembre pagada en octubre"
+        in page.locator("#documentary-basis").inner_text()
+    )
     assert not page.locator("#sam-dialog").evaluate("el => el.open")
     page.locator("#summary-tab").focus()
     page.keyboard.press("ArrowRight")

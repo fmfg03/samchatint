@@ -43,13 +43,13 @@ DEFINITIONS = {
     ),
     "committed": (
         "Comprometido documental",
-        "Importe pagable de solicitudes creadas en el intervalo; incluye pagadas/cerradas y reembolsos. No se suma al ejercido.",
+        "Importe pagable de solicitudes creadas en el intervalo, con su estado actual; incluye enviadas, liquidadas y reembolsos. No equivale a deuda pendiente ni se suma al ejercido.",
         "Σ importe pagable canónico por documentos.id",
         "Finanzas",
     ),
     "paid": (
         "Pagado documental",
-        "Importe pagable con estado/registro de pago, de solicitudes creadas en el intervalo; no es flujo por fecha efectiva ni caja.",
+        "Importe pagable de solicitudes creadas en el intervalo, con su estado/registro actual de pago; no acredita por sí solo una transferencia ni es flujo por fecha efectiva o caja.",
         "Σ importe pagable de solicitudes con pago documental",
         "Contabilidad / Tesorería",
     ),
@@ -253,6 +253,7 @@ async def _optional_read(session: Any, loader: Any, **kwargs: Any) -> dict | Non
 # Independent canonical per-tournament readers must never concurrently share an
 # AsyncSession. Bound connection use while removing the serial portfolio waterfall.
 TOURNAMENT_READ_CONCURRENCY = 4
+TOURNAMENT_READ_BATCH_SIZE = 25
 
 
 def _tournament_read_factory(session: Any):
@@ -785,6 +786,16 @@ async def build_home(
         else {}
     )
 
+    factory = _tournament_read_factory(session) if len(scope["selected"]) > 1 else None
+    operational_summaries = None
+    if factory is not None:
+        try:
+            operational_summaries = await service._build_operational_summaries(
+                scope["selected"], edition_year=year
+            )
+        except Exception:
+            operational_summaries = {}
+
     async def project_row(row_session, tournament):
         snapshot = (
             await _optional_read(
@@ -852,17 +863,20 @@ async def build_home(
             overdue=None,
             liquidity=None,
         )
-        try:
-            dossier = await service._build_operational_dossier(
-                tournament, edition_year=year
+        if operational_summaries is not None:
+            operations = operational_summaries.get(tournament["id"])
+        else:
+            try:
+                dossier = await service._build_operational_dossier(
+                    tournament, edition_year=year
+                )
+            except Exception:
+                dossier = {}
+            operations = (
+                dossier.get("summary")
+                if dossier.get("source_status") == "available"
+                else None
             )
-        except Exception:
-            dossier = {}
-        operations = (
-            dossier.get("summary")
-            if dossier.get("source_status") == "available"
-            else None
-        )
         return {
             "id": tournament["id"],
             "name": tournament["name"],
@@ -917,7 +931,6 @@ async def build_home(
             ),
         }
 
-    factory = _tournament_read_factory(session) if len(scope["selected"]) > 1 else None
     if factory is None:
         rows = [
             await project_row(session, tournament) for tournament in scope["selected"]
@@ -925,23 +938,36 @@ async def build_home(
     else:
         semaphore = asyncio.Semaphore(TOURNAMENT_READ_CONCURRENCY)
 
-        async def project_isolated(tournament):
+        async def project_chunk(tournaments):
             async with semaphore:
                 if not source_access["budget"]:
-                    return await project_row(None, tournament)
+                    return [await project_row(None, t) for t in tournaments]
                 try:
                     async with factory() as read_session:
                         async with read_session.begin():
                             await read_session.execute(
                                 text("SET TRANSACTION READ ONLY")
                             )
-                            return await project_row(read_session, tournament)
+                            from .read_batches import ReadBatch
+
+                            batch = ReadBatch(read_session)
+                            try:
+                                return await asyncio.gather(
+                                    *(project_row(batch, t) for t in tournaments)
+                                )
+                            finally:
+                                await batch.close()
                 except Exception:
                     # Preserve independent set-scoped facts on connection failure;
                     # never retry against a shared or possibly aborted transaction.
-                    return await project_row(None, tournament)
+                    return [await project_row(None, t) for t in tournaments]
 
-        rows = await asyncio.gather(*(project_isolated(t) for t in scope["selected"]))
+        chunks = [
+            scope["selected"][i : i + TOURNAMENT_READ_BATCH_SIZE]
+            for i in range(0, len(scope["selected"]), TOURNAMENT_READ_BATCH_SIZE)
+        ]
+        projected = await asyncio.gather(*(project_chunk(chunk) for chunk in chunks))
+        rows = [row for chunk in projected for row in chunk]
     result = build_snapshot(
         scope,
         rows,

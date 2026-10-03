@@ -119,13 +119,20 @@ async def _authorized_tournaments(
 
 
 async def authorized_direction_portfolio_ids(
-    session: Any, empleado_id: str, *, is_superadmin: bool = False
+    session: Any,
+    empleado_id: str,
+    *,
+    is_superadmin: bool = False,
+    limit: int | None = None,
 ) -> list[str]:
     """Return active Direction portfolios visible to an internal identity."""
+    if limit is not None and limit != 1:
+        raise ValueError("Only an existence probe may limit authorized portfolios")
     if is_superadmin:
         result = await session.execute(
             text(
                 "SELECT id::text AS id FROM client_executive_portfolios WHERE active = TRUE"
+                + (" LIMIT 1" if limit else "")
             )
         )
     else:
@@ -141,13 +148,81 @@ async def authorized_direction_portfolio_ids(
                   AND holder.active = TRUE
                   AND holder.position_key = ANY(:position_keys)
                 ORDER BY portfolio.id::text
-                """),
+                """ + (" LIMIT 1" if limit else "")),
             {
                 "empleado_id": str(empleado_id),
                 "position_keys": sorted(DIRECTION_POSITION_KEYS),
             },
         )
     return [str(row.id) for row in result]
+
+
+async def authorized_direction_catalog_page(
+    session: Any, actor: str, *, is_superadmin: bool, offset: int, limit: int = 25
+) -> dict:
+    """Return one bounded catalog page plus a current full-scope digest/count.
+
+    The database computes metadata without transporting the complete catalog.
+    This is authorization scope only, not proof of organization ownership.
+    """
+    if type(offset) is not int or offset < 0 or limit != 25:
+        raise ValueError("Invalid catalog page")
+    portfolio_predicate = (
+        "TRUE"
+        if is_superadmin
+        else """EXISTS (
+        SELECT 1 FROM authorization_position_assignments holder
+        JOIN client_executive_portfolio_positions position
+          ON position.position_key = holder.position_key AND position.active = TRUE
+        WHERE holder.empleado_id = :actor AND holder.active = TRUE
+          AND holder.position_key = ANY(:position_keys)
+          AND position.portfolio_id = p.id)"""
+    )
+    tournament_predicate = (
+        "TRUE"
+        if is_superadmin
+        else """EXISTS (
+        SELECT 1 FROM client_executive_portfolio_tournaments assignment
+        JOIN portfolios p ON p.id = assignment.portfolio_id::text
+        WHERE assignment.tournament_id = t.id AND assignment.active = TRUE)"""
+    )
+    result = await session.execute(
+        text(f"""
+        WITH portfolios AS MATERIALIZED (
+            SELECT p.id::text AS id, p.label FROM client_executive_portfolios p
+            WHERE p.active = TRUE AND {portfolio_predicate}
+        ), tournaments AS MATERIALIZED (
+            SELECT t.id::text AS id, t.name AS label FROM tournaments t
+            WHERE t.active = TRUE AND {tournament_predicate}
+        ), metadata AS (
+            SELECT
+              (SELECT COALESCE(jsonb_agg(id ORDER BY id), '[]'::jsonb) FROM portfolios) AS pids,
+              (SELECT COALESCE(jsonb_agg(id ORDER BY id), '[]'::jsonb) FROM tournaments) AS tids
+        )
+        SELECT jsonb_array_length(pids) AS portfolio_count,
+               jsonb_array_length(tids) AS tournament_count,
+               CASE WHEN jsonb_array_length(pids) <= 200 THEN pids ELSE '[]'::jsonb END AS portfolio_ids,
+               encode(sha256(convert_to(
+                   '{{"portfolio_id": null, "portfolio_ids": ' || pids::text ||
+                   ', "tournament_id": null, "tournament_ids": ' || tids::text || '}}',
+                   'UTF8')), 'hex') AS scope_digest,
+               (SELECT COALESCE(jsonb_agg(page ORDER BY id), '[]'::jsonb)
+                FROM (SELECT * FROM portfolios ORDER BY id LIMIT :limit OFFSET :offset) page) AS portfolios,
+               (SELECT COALESCE(jsonb_agg(page ORDER BY id), '[]'::jsonb)
+                FROM (SELECT * FROM tournaments ORDER BY id LIMIT :limit OFFSET :offset) page) AS tournaments
+        FROM metadata
+    """),
+        {
+            "actor": actor,
+            "position_keys": sorted(DIRECTION_POSITION_KEYS),
+            "offset": offset,
+            "limit": limit,
+        },
+    )
+    row = dict(result.mappings().first())
+    if not row["portfolio_count"] and not is_superadmin:
+        raise ClientExecutiveAccessError("No active Direction portfolio assignment")
+    return row
 
 
 def _optional_money(mapping: dict[str, Any], *keys: str) -> Optional[float]:
@@ -342,7 +417,7 @@ def _exact_name_snapshot_matches(
 
 
 async def _load_soul_snapshot(
-    tournament: dict[str, str], *, edition_year: int
+    tournament: dict[str, str], *, edition_year: int, client: Any = None
 ) -> tuple[Optional[dict[str, Any]], str]:
     """Resolve SOUL without allowing display names to broaden Direction scope."""
     observed_wrong_edition = False
@@ -353,6 +428,7 @@ async def _load_soul_snapshot(
             include_communications=False,
             include_media=True,
             limit=1000,
+            **({"client": client} if client is not None else {}),
         )
     except TournamentsV2Error:
         uuid_snapshot = None
@@ -378,6 +454,7 @@ async def _load_soul_snapshot(
                 include_communications=False,
                 include_media=True,
                 limit=1000,
+                **({"client": client} if client is not None else {}),
             )
         except TournamentsV2Error:
             name_snapshot = None
@@ -400,9 +477,14 @@ async def _build_operational_dossier(
     tournament: dict[str, str],
     *,
     edition_year: int,
+    client: Any = None,
 ) -> dict[str, Any]:
     """Build one strictly tournament-scoped dossier without operational writes."""
-    snapshot, bridge = await _load_soul_snapshot(tournament, edition_year=edition_year)
+    snapshot, bridge = await _load_soul_snapshot(
+        tournament,
+        edition_year=edition_year,
+        **({"client": client} if client is not None else {}),
+    )
     if snapshot is None:
         unavailable = _unavailable_dossier(tournament)
         if bridge == "edition_unavailable":
@@ -443,6 +525,43 @@ async def _build_operational_dossier(
     dossier["national_phase"] = national_phase
     dossier["marketing"] = marketing
     return dossier
+
+
+async def _build_operational_summaries(tournaments, *, edition_year, client=None):
+    """Batch canonical SOUL reads for the two counts consumed by Direction home."""
+    import asyncio
+
+    from samchat.tournaments_v2.config import load_tournaments_v2_config
+    from samchat.tournaments_v2.supabase_client import SupabaseRestClient
+    from samchat.tournaments_v2.services.summary_batches import SummaryBatchClient
+
+    client = SummaryBatchClient(
+        client or SupabaseRestClient(load_tournaments_v2_config())
+    )
+    summaries = {}
+
+    async def read(tournament):
+        try:
+            dossier = await _build_operational_dossier(
+                tournament, edition_year=edition_year, client=client
+            )
+            if dossier.get("source_status") == "available":
+                summary = dossier.get("summary") or {}
+                return {
+                    key: summary.get(key) for key in ("teams_count", "players_count")
+                }
+        except Exception:
+            pass
+        return None
+
+    try:
+        for offset in range(0, len(tournaments), 25):
+            chunk = tournaments[offset : offset + 25]
+            values = await asyncio.gather(*(read(t) for t in chunk))
+            summaries.update({t["id"]: value for t, value in zip(chunk, values)})
+    finally:
+        await client.close()
+    return summaries
 
 
 async def _budget_alias_bridge_is_safe(

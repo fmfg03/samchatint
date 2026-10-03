@@ -224,3 +224,105 @@ Pasaron 255 pruebas funcionales (97,35% de cobertura de los módulos medidos), 1
 del plugin y 20 PostgreSQL. QA visual/exportes sintéticos pasó sus 11 comprobaciones,
 sin errores JS; ambos PDF de cuatro páginas conservan texto dentro del papel.
 Los reportes explicitan lecturas independientes con cortes individuales.
+
+### Ajuste local posterior a 6654127 — sin publicación
+
+Los P2 `4170557362` y `4170557367` tienen correcciones locales para revisión:
+
+- SQL canónico agrupado en lotes de 25 mediante `UNION ALL` parametrizado, con
+  una sesión/transacción de solo lectura por lote (máximo cuatro activas). No se
+  sustituyen fórmulas, filtros, aliases, tipos, orden ni límites de los lectores.
+  Lecturas idénticas comparten resultado dentro del lote. Un error revierte su
+  savepoint y divide el lote para conservar las otras fuentes; la cancelación
+  cierra tareas y sesiones. Se mantienen subconsultas por alcance: no se afirma
+  una agregación financiera nueva ni un único escaneo físico de todas las tablas.
+- SOUL agrupa las lecturas del dataset con los mismos límites **por solicitud**,
+  incluso con un torneo dominante. El catálogo canónico se reutiliza dentro de
+  la petición; se omiten llamadas de detalle opcional que no aportan los dos
+  conteos usados por la portada. Se mantiene el dueño SOUL/dossier y el guard
+  UUID/nombre/edición. No se cambia el límite preexistente de su catálogo remoto.
+- El catálogo privado aplica `LIMIT/OFFSET` en PostgreSQL y transmite páginas de
+  hasta 25 torneos/25 carteras, más metadata acotada. La autorización conserva
+  posición, denegaciones y prueba de organización completa; esta última requiere
+  el binding explícito documentado en `docs/private-plugin/local-read-verification.md`.
+  La integración productiva del plugin permanece sin acreditar.
+
+[Medición SQL sintética](batch-scaling-checks.json): con 1 / 25 / 100 / 1.001
+registros, el lector SQL de prueba ejecuta 2 / 2 / 8 / 82 SELECT agrupados y devuelve
+2 / 26 / 104 / 1.042 filas. Enumerar y revalidar el catálogo hace respectivamente
+2 / 2 / 8 / 82 consultas y devuelve 4 / 100 / 400 / 4.004 elementos de catálogo
+(sumando carteras, torneos y revalidación). El digest/conteo todavía recorre el
+alcance dentro de PostgreSQL; la medición no confunde filas transferidas con
+filas examinadas internamente ni afirma latencia productiva. Las cifras de SELECT no incluyen los comandos
+SAVEPOINT/RELEASE que aíslan cada lote ni BEGIN/COMMIT de sus transacciones.
+
+Reproducir: `python scripts/direction_batch_sql_qa.py` con las dependencias
+PostgreSQL opcionales, y `pytest tests/unit/test_direction_read_batches.py`.
+La QA usa PostgreSQL 16 efímero por socket local, datos sintéticos y TCP desactivado.
+También verifica digest idéntico al contrato Python, cambios de asignación,
+exclusión ajena/inactiva, tipos SQL, aislamiento y prohibición efectiva de escribir.
+**Canon unchanged:** transporte/lectura de los mismos dueños; no cambia autoridad,
+contabilidad, significado de métricas, persistencia ni despliegue.
+
+Validación local de este ajuste: **248 pruebas funcionales + 173 de los dueños
+Presupuestos/CxC**, **135 offline del plugin**, **20 PostgreSQL del plugin** y
+**4 de navegador**, todas aprobadas. Los nuevos módulos de transporte alcanzan
+95% de cobertura cada uno (96,51% combinado con los otros módulos medidos).
+No se publicaron commits, comentarios, artefactos Library ni cambios de estado
+de PR para este conjunto local. Los checks remotos de 6654127 no se atribuyen
+a estas modificaciones aún no publicadas.
+
+### Reconciliación local sobre main/PR454 — 2026-10-03
+
+Base solicitada: `e73d55b48794be53a868404a1c897dc7c8a9636e`, que contiene PR454
+(`d5928eeca38d3788436f2f1d8ecc6af3608724fb`). Worktree aislado en
+`/workspace/samchat-executive-reports-local`, rama local
+`local/direction-p2-reconcile-e73d55b`. La copia anterior permanece intacta.
+Se aplicó el diff conservado sin conflictos, excepto que los dos inventarios se
+regeneraron desde esta base para preservar los hashes/rutas de PR454. Su código,
+sus tests y sus capturas no tienen modificaciones locales.
+
+Validación reconciliada: **528 pruebas funcionales**, incluyendo las 107 de
+PR454; **135 del plugin**, **20 PostgreSQL**, **4 de navegador**, y QA de lotes/
+paginación con PostgreSQL efímero: aprobadas. Cobertura dirigida 96,51%; los dos
+módulos nuevos conservan 95% cada uno. Canon y registro sin cambios.
+
+Incidencia de instrumentación conservada en los logs: medir por nombres de
+paquete produjo `TypeError: 'InternalTraversal' object is not callable` en la
+prueba SQL de PR454. También se reprodujo en la base e73d55b limpia con esos
+mismos argumentos de cobertura, sin estas correcciones. La suite sin cobertura
+pasó; midiendo `--cov=src/samchat` y filtrando el reporte a los mismos cinco
+archivos mediante una configuración local, pasaron las 528 pruebas y el umbral.
+No se omitió ningún test ni se alteró el código de PR454 para obtener ese resultado.
+La causa interna de SQLAlchemy no se declara demostrada; la incidencia queda
+asociada a esa modalidad de instrumentación y es reproducible con los logs.
+
+Preparación exclusivamente local: sin push, comentarios GitHub, resolución de
+hilos, cambios de auto-merge, merge, despliegue ni publicación de artefactos.
+El bloqueo de publicación por auto-merge/canon pendiente no fue eludido.
+
+### Aprobación humana y aclaración documental — 2026-10-03
+
+Francisco aprobó las definiciones documentales de esta versión tras revisar el
+criterio y el ejemplo explícito: solicitud de septiembre pagada en octubre aparece
+pagada al consultar septiembre hoy, sin representar salida bancaria de septiembre.
+Evidencia transmitida por el padre tras leer los mensajes originales:
+`Sentinel_d9cbac39a4608191aead631e0f2af2b9` (definiciones y solicitud de revisión)
+y `Sentinel_84e2fa86c93081919613ba94bde5bd08` (respuesta: «Aprobado»).
+La revisión humana pendiente de esas definiciones queda satisfecha. La propiedad
+de la instalación ya estaba confirmada; no se amplían permisos ni se cambia la
+base de cálculo. Se añadió la aclaración visible a Resumen y se precisaron las
+mismas definiciones compartidas por Sam y los exportes.
+
+La publicación de las correcciones fue autorizada de nuevo mediante
+`Sentinel_b11de76fc740819183049b400b4a3849` / `Sentinel_1f450b8d8614819191a99108fb1b5bd3`.
+El merge de PR453 fue autorizado por Francisco en
+`Sentinel_4d68ddcb74288191ba30452e48656df1`; queda sujeto a checks y revisión final.
+Este turno no autoriza despliegue. El auto-merge configurado por el usuario no se
+modifica. No se declara revisión limpia ni merge por anticipado.
+
+La aclaración aprobada pasó 130 regresiones de Dirección/exportes, las 4 pruebas
+de navegador y las 11 comprobaciones visuales. Se inspeccionaron nuevamente
+capturas desktop/móvil y los límites de texto de ambos PDF de cuatro páginas.
+Sin errores JavaScript ni desbordamiento de página; las capturas y muestras de
+exportación fueron regeneradas con datos exclusivamente sintéticos.

@@ -27,6 +27,7 @@ from samchat.private_plugin.direction_read import (
     DirectionContext,
     DirectionOwners,
     DirectionReadAdapter,
+    _bounded_scope,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -236,6 +237,7 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
         self.adapter = DirectionReadAdapter(
             current_context=self.context,
             organization_for_scope=self.mapping,
+            organization_for_catalog=self.mapping,
             owners=DirectionOwners(
                 routes["_assigned_direction_portfolios"],
                 routes["_direction_source_access"],
@@ -246,6 +248,37 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
             ),
             now=lambda: 100,
         )
+
+        async def catalog_page(session, actor, *, is_superadmin, offset, limit):
+            # Test double only. Production binds the SQL-paged canonical owner;
+            # its real-query row/count bounds are verified in PostgreSQL QA.
+            scope = await self.adapter._owners.resolve_scope(
+                session,
+                actor=actor,
+                superadmin=is_superadmin,
+                portfolio_id=None,
+                tournament_id=None,
+            )
+            bounded, _, manifest = _bounded_scope(
+                scope, [t["id"] for t in scope["selected"]]
+            )
+            return {
+                "portfolio_ids": bounded["portfolio_ids"],
+                "portfolio_count": manifest["portfolio_count"],
+                "tournament_count": manifest["tournament_count"],
+                "scope_digest": manifest["scope_digest"],
+                "portfolios": sorted(scope["portfolios"], key=lambda r: r["id"])[
+                    offset : offset + limit
+                ],
+                "tournaments": [
+                    {"id": t["id"], "label": t["name"]}
+                    for t in sorted(scope["selected"], key=lambda r: r["id"])[
+                        offset : offset + limit
+                    ]
+                ],
+            }
+
+        self.adapter._owners = replace(self.adapter._owners, catalog_page=catalog_page)
 
     async def read(self, **kwargs):
         return await self.adapter.read(identity=self.identity, **kwargs)
@@ -282,6 +315,37 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
         self.budget.assert_not_awaited()
         self.payments.assert_not_awaited()
         self.receivables.assert_not_awaited()
+
+    async def test_catalog_requires_explicit_full_catalog_organization_binding(self):
+        self.adapter._catalog_organization = None
+        with self.assertRaisesRegex(Denied, "ORGANIZATION_UNPROVEN"):
+            await self.adapter.list_scopes(identity=self.identity)
+        self.mapping.assert_not_awaited()
+        self.adapter._catalog_organization = self.mapping
+        self.adapter._owners = replace(self.adapter._owners, catalog_page=None)
+        with self.assertRaisesRegex(Denied, "ORGANIZATION_UNPROVEN"):
+            await self.adapter.list_scopes(identity=self.identity)
+
+    async def test_catalog_does_not_reload_full_scope_or_assigned_ids(self):
+        page = await self.adapter._owners.catalog_page(
+            self.session, ACTOR, is_superadmin=False, offset=0, limit=25
+        )
+        self.portfolios.reset_mock()
+        forbidden = AsyncMock(side_effect=AssertionError("Full scope reloaded"))
+        paged = AsyncMock(return_value=page)
+        self.adapter._owners = replace(
+            self.adapter._owners, catalog_page=paged, resolve_scope=forbidden
+        )
+        await self.adapter.list_scopes(identity=self.identity)
+        self.assertEqual(paged.await_count, 2)
+        forbidden.assert_not_awaited()
+        self.assertTrue(
+            all(
+                call.kwargs.get("limit") == 1
+                for call in self.portfolios.await_args_list
+            )
+        )
+        self.assertEqual(self.mapping.await_count, 2)
 
     async def test_scope_completeness_metadata_is_required_by_output_contracts(self):
         from jsonschema import Draft202012Validator

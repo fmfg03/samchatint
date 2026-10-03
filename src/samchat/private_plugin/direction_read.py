@@ -51,6 +51,7 @@ class DirectionOwners:
     resolve_scope: Callable[..., Awaitable[dict]]
     build_home: Callable[..., Awaitable[tuple[dict, dict]]]
     access_errors: tuple[type[Exception], ...] = ()
+    catalog_page: Callable[..., Awaitable[dict]] | None = None
 
 
 _METRICS = frozenset(
@@ -329,11 +330,46 @@ class DirectionReadAdapter:
         ],
         owners: DirectionOwners,
         now: Callable[[], int],
+        organization_for_catalog: (
+            Callable[[DirectionContext, dict], Awaitable[str | None]] | None
+        ) = None,
     ):
         self._context = current_context
         self._organization = organization_for_scope
         self._owners = owners
         self._now = now
+        # A page is insufficient evidence of organization ownership of a full
+        # catalog. This distinct binding must prove employee membership AND the
+        # complete canonical catalog represented by its current digest/count.
+        # No fallback to token claims or the per-ID scope mapper is permitted.
+        self._catalog_organization = organization_for_catalog
+
+    async def _catalog_page(self, identity, offset):
+        context = await self._current(identity)
+        owners, employee = self._owners, context.employee
+        if owners.catalog_page is None or self._catalog_organization is None:
+            raise Denied("ORGANIZATION_UNPROVEN")
+        assigned = await owners.assigned_portfolios(
+            context.session, employee, existence_only=True
+        )
+        if not assigned and not owners.is_superadmin(employee):
+            raise Denied("FORBIDDEN")
+        page = await owners.catalog_page(
+            context.session,
+            identity.actor_id,
+            is_superadmin=owners.is_superadmin(employee),
+            offset=offset,
+            limit=_PAGE_SIZE,
+        )
+        organization = await self._catalog_organization(context, page)
+        if not organization or organization != identity.organization_id:
+            raise Denied("ORGANIZATION_UNPROVEN")
+        access = await owners.source_access(context.session, employee)
+        if set(access) != {"budget", "finance"} or any(
+            type(v) is not bool for v in access.values()
+        ):
+            raise Denied("FORBIDDEN")
+        return page, access, organization
 
     async def _current(self, identity: Identity) -> DirectionContext:
         context = await self._context()
@@ -398,23 +434,36 @@ class DirectionReadAdapter:
             except Exception:
                 raise Denied("INVALID_SELECTOR") from None
         try:
-            _, args, scope, access, organization = await self._authorize(
-                identity, None, None
-            )
-            portfolios = sorted(scope["portfolios"], key=lambda row: row["id"])
-            tournaments = sorted(scope["selected"], key=lambda row: row["id"])
-            bounded, _, manifest = _bounded_scope(
-                scope, [row["id"] for row in tournaments]
-            )
+            page, access, organization = await self._catalog_page(identity, offset)
+            portfolios, tournaments = page["portfolios"], page["tournaments"]
+            bounded = {
+                "portfolio_id": None,
+                "tournament_id": None,
+                "portfolio_ids": page["portfolio_ids"],
+            }
+            manifest = {
+                "portfolio_count": page["portfolio_count"],
+                "tournament_count": page["tournament_count"],
+                "portfolio_ids_complete": page["portfolio_count"] <= _INLINE_IDS,
+                "tournament_ids_complete": page["tournament_count"] <= _INLINE_IDS,
+                "scope_digest": page["scope_digest"],
+            }
             if (
                 expected_digest is not None
                 and expected_digest != manifest["scope_digest"]
             ):
                 raise Denied("SCOPE_CHANGED")
             if (
-                {row["id"] for row in portfolios} != set(scope["portfolio_ids"])
+                len(portfolios) > _PAGE_SIZE
+                or len(tournaments) > _PAGE_SIZE
                 or len({row["id"] for row in portfolios}) != len(portfolios)
                 or len({row["id"] for row in tournaments}) != len(tournaments)
+                or (
+                    manifest["portfolio_ids_complete"]
+                    and not {r["id"] for r in portfolios}.issubset(
+                        page["portfolio_ids"]
+                    )
+                )
             ):
                 raise Denied("SOURCE_UNAVAILABLE")
             next_offset = offset + _PAGE_SIZE
@@ -422,7 +471,7 @@ class DirectionReadAdapter:
                 base64.urlsafe_b64encode(
                     json.dumps([manifest["scope_digest"], next_offset]).encode()
                 ).decode()
-                if next_offset < max(len(portfolios), len(tournaments))
+                if next_offset < max(page["portfolio_count"], page["tournament_count"])
                 else None
             )
             result = {
@@ -432,23 +481,20 @@ class DirectionReadAdapter:
                 "scope_manifest": manifest,
                 "pagination": {"next_cursor": next_cursor, "page_size": _PAGE_SIZE},
                 "portfolios": [
-                    {"id": row["id"], "label": row["label"]}
-                    for row in portfolios[offset:next_offset]
+                    {"id": row["id"], "label": row["label"]} for row in portfolios
                 ],
                 "tournaments": [
-                    {"id": row["id"], "label": row["name"]}
-                    for row in tournaments[offset:next_offset]
+                    {"id": row["id"], "label": row["label"]} for row in tournaments
                 ],
             }
             _SCOPES_VALIDATOR.validate(result)
             if len(json.dumps(result, ensure_ascii=False).encode()) > 65536:
                 raise Denied("SOURCE_UNAVAILABLE")
-            _, current_args, current_scope, current_access, current_org = (
-                await self._authorize(identity, None, None)
+            current_page, current_access, current_org = await self._catalog_page(
+                identity, offset
             )
             if (
-                current_args != args
-                or _scope_key(current_scope) != _scope_key(scope)
+                current_page != page
                 or current_access != access
                 or current_org != organization
             ):

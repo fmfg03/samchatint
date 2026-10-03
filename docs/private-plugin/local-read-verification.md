@@ -128,3 +128,29 @@ UI/API completa; estas dos tools locales no reducen el objetivo final.
 **Canon unchanged:** integración local de lecturas y evidencia, sin cambio de
 autoridad, contabilidad, usuarios, persistencia productiva, distribución ni
 despliegue. No push, PR ni merge a main.
+
+## Ajuste local P2 de PR453: catálogo paginado
+
+`DirectionOwners.catalog_page` se enlaza al dueño canónico
+`client_executive.service.authorized_direction_catalog_page`. Devuelve 25 carteras
+más 25 torneos como máximo; conteos y digest del alcance completo se calculan en
+PostgreSQL. La comprobación inicial usa `_assigned_direction_portfolios` con
+`existence_only=True`: conserva identidad/posición/denegación, sin descargar todos
+los IDs. La consulta de página vuelve a aplicar los mismos predicados canónicos.
+Página, digest, fuentes e identidad se revalidan antes de devolver el resultado.
+
+`organization_for_catalog` es un binding explícito adicional de la composición
+local: debe acreditar al empleado **y todo el catálogo identificado por el
+digest/conteos actuales**, no solo los IDs de la página ni el claim OAuth. Sin ese
+binding, la lista falla cerrada con `ORGANIZATION_UNPROVEN`; nunca reutiliza por
+conjetura un mapper que solo conoce IDs completos. La composición productiva y su
+mapping siguen sin implementarse/acreditarse, como antes de este ajuste. Los tests
+usan una prueba de organización sintética y verifican ausencia/revocación/otra
+organización. No se declara la integración privada productiva lista.
+
+El digest completo todavía requiere recorrer el conjunto autorizado en PostgreSQL
+por página. Se acotan filas transferidas y objetos de aplicación; no se afirma
+un escaneo total O(N) ni una mejora de latencia productiva medida. No se agregan
+cachés persistentes, tablas, credenciales ni permisos. **Canon unchanged:** mismos
+dueños y misma autoridad; solo transporte de lectura y contrato de evidencia
+explícito, conservando fallo cerrado. Este conjunto está local y no publicado.
