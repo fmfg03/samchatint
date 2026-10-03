@@ -31485,6 +31485,10 @@ async def historial_aprobador(
             "asignacion_presupuestal": _document_budget_assignment_label(
                 documento, expenses=informe_expenses_by_id.get(documento.id)
             ),
+            "categorias": _document_reporting_categories(documento),
+            "partidas_presupuestales": _document_reporting_budget_items(
+                documento, expenses=informe_expenses_by_id.get(documento.id)
+            ),
         }
         history_items.append((aprobacion, documento, row_values))
     history_items.sort(
@@ -31568,6 +31572,10 @@ async def historial_aprobador(
     if history_export_params:
         history_export_href += "?" + urlencode(history_export_params, doseq=True)
 
+    reporting_return_url = "/documentos/historial-aprobador"
+    if request is not None and request.query_params:
+        reporting_return_url += "?" + str(request.query_params)
+
     # Build rows HTML
     rows_html = ""
     for aprobacion, documento, row_values in history_items:
@@ -31632,6 +31640,8 @@ async def historial_aprobador(
             <td>{escape(row_values["estado"])}</td>
             <td data-sort-value="{escape(monto_total_sort)}">{escape(monto_total_display)}</td>
             <td data-sort-value="{escape(monto_presupuestal_sort)}">{escape(monto_presupuestal_display)}<br><small>{escape(row_values["asignacion_presupuestal"])}</small></td>
+            <td>{escape(row_values["categorias"])}</td>
+            <td data-sort-value="{escape(row_values["partidas_presupuestales"])}">{_document_reporting_budget_items_html(documento, expenses=informe_expenses_by_id.get(documento.id), return_url=reporting_return_url, can_view_detail=_can_access_documento_adjunto(documento, current_empleado))}</td>
             <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{comentario_safe}">{comentario_safe}</td>
         </tr>
         """
@@ -31736,6 +31746,8 @@ async def historial_aprobador(
                         <th data-sort-key="estado_actual" data-sort-type="text">Estado Actual</th>
                         <th data-sort-key="monto_total" data-sort-type="money">Monto</th>
                         <th data-sort-key="monto_presupuestal" data-sort-type="money">Monto que afecta presupuesto</th>
+                        <th scope="col" data-sort-key="categorias" data-sort-type="text">Categoría</th>
+                        <th scope="col" data-sort-key="partidas_presupuestales" data-sort-type="text">Partida Presupuestal</th>
                         <th data-sort-key="comentario" data-sort-type="text">Comentario</th>
                     </tr>
                 </thead>
@@ -31958,32 +31970,59 @@ async def _document_informe_expenses_by_id(
         .options(
             selectinload(ExpenseReport.adjuntos),
             selectinload(ExpenseReport.cfdi_report),
+            selectinload(ExpenseReport.budget_concept),
         )
         .where(or_(*filters), ExpenseReport.estado_gasto != "cancelado")
         .order_by(ExpenseReport.numero_referencia.asc(), ExpenseReport.id.asc())
     )
-    by_id = {doc_id: [] for doc_id in informes}
-    account_reports: dict[Any, list[Any]] = {}
-    for documento in informes.values():
-        if getattr(documento, "cuenta_gastos_id", None):
-            account_reports.setdefault(documento.cuenta_gastos_id, []).append(
-                documento.id
+    expenses = list(result.scalars().all())
+    legacy_ids = {
+        expense.id
+        for expense in expenses
+        if not getattr(expense, "informe_documento_id", None)
+        and getattr(expense, "documento_id", None) not in informes
+    }
+    legacy_owners = {}
+    if legacy_ids:
+        # Resolve against all reports, not only the visible/filtered subset.
+        # An explicit direct report wins; account-only lines use the primary
+        # report (oldest creado_en), as _informe_documento_for_cuenta does.
+        direct_report = (
+            select(Documento.id)
+            .where(
+                Documento.id == ExpenseReport.documento_id,
+                Documento.tipo == "INFORME",
             )
-    for expense in result.scalars().all():
+            .correlate(ExpenseReport)
+            .scalar_subquery()
+        )
+        primary_report = (
+            select(Documento.id)
+            .where(
+                Documento.cuenta_gastos_id == ExpenseReport.cuenta_gastos_id,
+                Documento.tipo == "INFORME",
+            )
+            .order_by(Documento.creado_en.asc(), Documento.id.asc())
+            .limit(1)
+            .correlate(ExpenseReport)
+            .scalar_subquery()
+        )
+        owner_rows = await session.execute(
+            select(
+                ExpenseReport.id, func.coalesce(direct_report, primary_report)
+            ).where(ExpenseReport.id.in_(legacy_ids))
+        )
+        legacy_owners = dict(owner_rows.all())
+    by_id = {doc_id: [] for doc_id in informes}
+    for expense in expenses:
         if getattr(expense, "estado_gasto", None) == "cancelado":
             continue
         explicit = getattr(expense, "informe_documento_id", None)
         direct = getattr(expense, "documento_id", None)
-        owners = set()
-        if explicit in informes:
-            owners.add(explicit)
-        if direct in informes and (explicit is None or explicit == direct):
-            owners.add(direct)
-        if explicit is None:
-            owners.update(
-                account_reports.get(getattr(expense, "cuenta_gastos_id", None), [])
-            )
-        for owner in owners:
+        owner = explicit or (
+            direct if direct in informes else legacy_owners.get(expense.id)
+        )
+        if owner in informes:
             by_id[owner].append(expense)
     return {doc_id: _unique_expenses(expenses) for doc_id, expenses in by_id.items()}
 
@@ -31994,6 +32033,91 @@ def _document_budget_assignment_label(
     return budget_document_effect_snapshot(documento, expenses=expenses)[
         "assignment_label"
     ]
+
+
+def _document_reporting_categories(documento: Documento) -> str:
+    """Display recorded project categories, never the entire project catalog."""
+    categories = getattr(documento, "categorias", None)
+    if not isinstance(categories, list):
+        return "—"
+    return (
+        ", ".join(
+            dict.fromkeys(
+                value.strip()
+                for value in categories
+                if isinstance(value, str) and value.strip()
+            )
+        )
+        or "—"
+    )
+
+
+def _document_reporting_budget_item_labels(
+    documento: Documento, *, expenses: Optional[list[ExpenseReport]] = None
+) -> list[str]:
+    """Use the same assignment owners as budget_document_effect_snapshot.
+
+    Reports show the distinct assignments of active expenses, not a fallback
+    document classification. Requests show their own assignment. This is a
+    projection only: it never allocates amounts or changes classifications.
+    """
+    records = [documento]
+    if str(getattr(documento, "tipo", "") or "").strip().upper() == "INFORME":
+        records = [
+            expense
+            for expense in (
+                expenses
+                if expenses is not None
+                else (getattr(documento, "gastos", None) or [])
+            )
+            if str(getattr(expense, "estado_gasto", "") or "").strip().lower()
+            != "cancelado"
+        ]
+    items = {}
+    for record in records:
+        concept_id = getattr(record, "budget_concept_id", None)
+        if not concept_id:
+            continue
+        concept = getattr(record, "budget_concept", None)
+        items[str(concept_id)] = str(
+            getattr(concept, "concept_name", None)
+            or getattr(concept, "concept_key", None)
+            or concept_id
+        )
+    return sorted(items.values(), key=_normalize_filter_value)
+
+
+def _document_reporting_budget_items(
+    documento: Documento, *, expenses: Optional[list[ExpenseReport]] = None
+) -> str:
+    """Keep the complete assigned-item list in one spreadsheet cell."""
+    return (
+        "; ".join(_document_reporting_budget_item_labels(documento, expenses=expenses))
+        or "Sin partida"
+    )
+
+
+def _document_reporting_budget_items_html(
+    documento: Documento,
+    *,
+    expenses: Optional[list[ExpenseReport]] = None,
+    return_url: str = "/documentos/todos",
+    can_view_detail: bool = False,
+) -> str:
+    """Compact read-only display; reuse the authorized document detail."""
+    labels = _document_reporting_budget_item_labels(documento, expenses=expenses)
+    if len(labels) < 2:
+        return escape(labels[0] if labels else "Sin partida")
+    label = f"Varias partidas · {len(labels)}"
+    if not can_view_detail:
+        return label
+    reference = escape(
+        str(getattr(documento, "numero_referencia", None) or documento.id)
+    )
+    return (
+        f'<a href="/documentos/{documento.id}?{escape(urlencode({"next": return_url}))}#gastos-asociados" '
+        f'aria-label="{label}. Ver gastos asociados de {reference}">{label}</a>'
+    )
 
 
 def _document_total_reporting_amount(documento: Documento) -> Decimal:
@@ -32021,9 +32145,7 @@ def _documentos_todos_reporting_row_values(
     torneo = getattr(documento, "torneo", None) or getattr(cuenta, "torneo", None)
     torneo_display = documento_project_name(documento, torneo) or "—"
     fase_display = (
-        getattr(documento, "fase", None)
-        or getattr(cuenta, "fase", None)
-        or "—"
+        getattr(documento, "fase", None) or getattr(cuenta, "fase", None) or "—"
     )
     budget_effect = budget_document_effect_snapshot(
         documento, cfdi_report, expenses=expenses
@@ -32055,6 +32177,10 @@ def _documentos_todos_reporting_row_values(
         "monto_presupuestal": format_currency(monto_presupuestal, currency),
         "monto_presupuestal_valor": monto_presupuestal,
         "asignacion_presupuestal": budget_effect["assignment_label"],
+        "categorias": _document_reporting_categories(documento),
+        "partidas_presupuestales": _document_reporting_budget_items(
+            documento, expenses=expenses
+        ),
         "currency": currency,
         "situacion": _documentos_todos_reporting_situation(documento),
         "estado": getattr(documento, "estado", None) or "—",
@@ -32253,6 +32379,10 @@ async def documentos_todos(
     cfdi_reports_by_id = await _document_cfdi_reports_by_id(session, documentos)
     informe_expenses_by_id = await _document_informe_expenses_by_id(session, documentos)
 
+    reporting_return_url = "/documentos/todos"
+    if request is not None and request.query_params:
+        reporting_return_url += "?" + str(request.query_params)
+
     # Build rows HTML
     rows_html = ""
     for documento in documentos:
@@ -32316,6 +32446,8 @@ async def documentos_todos(
             <td data-sort-value="{escape(enviado_sort)}">{row_values["enviado"]}</td>
             <td data-sort-value="{escape(aprobado_sort)}">{row_values["aprobado"]}</td>
             <td data-sort-value="{escape(pagado_sort)}">{row_values["pagado"]}</td>
+            <td>{escape(row_values["categorias"])}</td>
+            <td data-sort-value="{escape(row_values["partidas_presupuestales"])}">{_document_reporting_budget_items_html(documento, expenses=informe_expenses_by_id.get(documento.id), return_url=reporting_return_url, can_view_detail=_can_access_documento_adjunto(documento, current_empleado))}</td>
             <td>{action_link}</td>
         </tr>
         """
@@ -32511,6 +32643,8 @@ async def documentos_todos(
                             <th data-sort-key="enviado" data-sort-type="date">Enviado</th>
                             <th data-sort-key="aprobado" data-sort-type="date">Aprobado</th>
                             <th data-sort-key="pagado" data-sort-type="date">Pagado</th>
+                            <th scope="col" data-sort-key="categorias" data-sort-type="text">Categoría</th>
+                            <th scope="col" data-sort-key="partidas_presupuestales" data-sort-type="text">Partida Presupuestal</th>
                             <th>Acción</th>
                         </tr>
                     </thead>
@@ -32656,7 +32790,7 @@ def _documentos_reporting_xlsx_response(
         "Número de referencia", "Tipo", "Torneo", "Fase", "Solicitante",
         "Beneficiario", "Concepto", "Referencia operaciones", "Monto total",
         "Monto que afecta presupuesto", "Asignación presupuestal", "Moneda",
-        "Situación", "Estado",
+        "Situación", "Estado", "Categoría", "Partida Presupuestal",
     ]
     if include_history:
         headers = ["Fecha", "Acción", *headers, "Comentario"]
@@ -32675,6 +32809,7 @@ def _documentos_reporting_xlsx_response(
             row["referencia_operaciones"], float(row["monto_total_valor"]),
             float(row["monto_presupuestal_valor"]), row["asignacion_presupuestal"],
             row["currency"], row["situacion"], row["estado"],
+            row["categorias"], row["partidas_presupuestales"],
         ]
         if include_history:
             values = [
@@ -38644,19 +38779,11 @@ async def ver_documento(
     # Load related expenses (exclude cancelled).
     # For INFORME: also include expenses linked via informe_documento_id (cuenta-based attach).
     if documento.tipo == 'INFORME':
-        expenses_result = await session.execute(
-            select(ExpenseReport)
-            .options(selectinload(ExpenseReport.budget_concept))
-            .where(
-                and_(
-                    or_(
-                        ExpenseReport.documento_id == documento_id,
-                        ExpenseReport.informe_documento_id == documento_id
-                    ),
-                    ExpenseReport.estado_gasto != 'cancelado'
-                )
-            )
-            .order_by(ExpenseReport.fecha.desc())
+        report_expenses = await _document_informe_expenses_by_id(session, [documento])
+        expenses = sorted(
+            report_expenses[documento.id],
+            key=lambda expense: _datetime_sort_timestamp(expense.fecha),
+            reverse=True,
         )
     else:
         expenses_result = await session.execute(
@@ -38670,7 +38797,7 @@ async def ver_documento(
             )
             .order_by(ExpenseReport.fecha.desc())
         )
-    expenses = expenses_result.scalars().all()
+        expenses = expenses_result.scalars().all()
 
     ids_with_comprobante_doc = await fetch_expense_ids_with_archivo_data(
         session, [e.id for e in expenses]
@@ -39638,7 +39765,7 @@ async def ver_documento(
                 {authorization_strategy_html}
                 {authorization_route_warning_html}
                 {authorization_pre_send_preview_html}
-                <section class="surface">
+                <section class="surface" id="gastos-asociados">
                     <div class="section-head">
                         <div>
                             <h2>Gastos asociados</h2>
