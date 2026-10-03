@@ -24,6 +24,8 @@ from .home import SCHEMA
 TOKEN_TTL_SECONDS = 900
 TOKEN_SALT = "samchat.direction.context.v1"
 MAX_INLINE_TOKEN = 90000
+# Maximum supported UTF-8 receipt, shared by generation, API fields and loaders.
+MAX_RECEIPT_BYTES = 8 * 1024 * 1024
 DETACHED_PREFIX = "receipt."
 
 
@@ -49,30 +51,49 @@ def _serialized_payload(payload: dict) -> str:
     )
 
 
+def _receipt_bytes(receipt: str) -> bytes:
+    # Reject by character count before allocating UTF-8 bytes or hashing/parsing.
+    if not isinstance(receipt, str) or len(receipt) > MAX_RECEIPT_BYTES:
+        raise ContextError("El contexto excede el tamaño admitido; reduce el alcance.")
+    try:
+        encoded = receipt.encode("utf-8")
+    except UnicodeError as exc:
+        raise ContextError("El contexto firmado no es válido.") from exc
+    if len(encoded) > MAX_RECEIPT_BYTES:
+        raise ContextError("El contexto excede el tamaño admitido; reduce el alcance.")
+    return encoded
+
+
 def _sign_payload(payload: dict) -> str:
     """Keep tokens bounded; large exact receipts travel separately, hash-bound.
 
     The receipt is still server-authored. Its signature, TTL and digest must pass
     before any value is trusted; actor/scope checks remain the caller's contract.
     """
+    serialized = _receipt_bytes(_serialized_payload(payload))
     token = _signer().dumps(payload)
     if len(token) <= MAX_INLINE_TOKEN:
         return token
-    digest = hashlib.sha256(_serialized_payload(payload).encode()).hexdigest()
+    digest = hashlib.sha256(serialized).hexdigest()
     return DETACHED_PREFIX + _signer().dumps({"receipt_sha256": digest})
 
 
 def _receipt(payload: dict, token: str) -> str | None:
-    return _serialized_payload(payload) if token.startswith(DETACHED_PREFIX) else None
+    if not token.startswith(DETACHED_PREFIX):
+        return None
+    receipt = _serialized_payload(payload)
+    _receipt_bytes(receipt)
+    return receipt
 
 
 def _load_payload(token: str, receipt: str | None) -> dict:
+    encoded_receipt = _receipt_bytes(receipt) if receipt is not None else b""
     detached = token.startswith(DETACHED_PREFIX)
     payload = _signer().loads(
         token[len(DETACHED_PREFIX) :] if detached else token, max_age=TOKEN_TTL_SECONDS
     )
     if detached:
-        digest = hashlib.sha256((receipt or "").encode()).hexdigest()
+        digest = hashlib.sha256(encoded_receipt).hexdigest()
         if not isinstance(payload, dict) or not hmac.compare_digest(
             str(payload.get("receipt_sha256", "")), digest
         ):

@@ -326,3 +326,33 @@ de navegador y las 11 comprobaciones visuales. Se inspeccionaron nuevamente
 capturas desktop/móvil y los límites de texto de ambos PDF de cuatro páginas.
 Sin errores JavaScript ni desbordamiento de página; las capturas y muestras de
 exportación fueron regeneradas con datos exclusivamente sintéticos.
+
+
+### Segunda ronda P2 — revisión de f88c844, 2026-10-03
+
+- Catálogo: metadatos acotados por motor, identidad y rol (LRU de 64 entradas),
+  reutilizados solo si la revisión MVCC de PostgreSQL coincide dentro de la misma
+  sentencia que obtiene la página. Toda escritura visible invalida de forma
+  conservadora, aun si no afecta al catálogo; una transacción con XID propio no
+  reutiliza metadatos. Sin TTL como sustituto de la comprobación de permisos.
+  Cursores por último UUID evitan recorrer las filas de páginas anteriores.
+  Se mantienen revalidación de identidad, permisos, organización, digest y página.
+- `EXPLAIN ANALYZE` con 1 / 25 / 100 / 1.001 registros demuestra dos agregados
+  completos de IDs una sola vez por revisión estable, cero en páginas/rechecks
+  posteriores; 82 lecturas de catálogo/revalidación para 1.001 registros. Pruebas
+  con dos conexiones verifican invisibilidad antes del commit, cambio del digest
+  tras commit, revocación de posición, aislamiento de actor/rol y ausencia de
+  alias mutable entre la respuesta y la caché. Los commits concurrentes pueden
+  obligar a recalcular: no se promete coste lineal bajo escritura constante.
+- Recibos de contexto y análisis: máximo 8 MiB UTF-8 en generación y recepción;
+  rechazo por longitud antes de codificar y por bytes antes de hash/JSON/firma.
+  Los modelos HTTP acotan ambos campos. La ruta cuenta el cuerpo real, incluso
+  fragmentado/sin Content-Length, antes del parseo de FastAPI: máximo 32 MiB +
+  256 KiB para dos recibos, su escape JSON y campos acotados. No se confía solo
+  en el tamaño declarado por el cliente.
+- Pasaron 541 pruebas funcionales (96,60% de cobertura dirigida), 135 del plugin,
+  20 de PostgreSQL del plugin, cuatro de navegador y el fixture SQL real. Los casos de recibo prueban límites
+  Unicode, generación, ambos campos/modelos y los tres endpoints POST.
+- **Canon unchanged:** estas correcciones limitan transporte/caché y entradas;
+  no cambian fuente canónica, autoridad, bases financieras ni definiciones
+  documentales aprobadas. Hashes y registro verificados. No despliegue.

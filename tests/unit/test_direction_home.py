@@ -1226,3 +1226,37 @@ async def test_suppressed_budget_indicators_preserve_source_failure(
             answer = chat.answer_snapshot(result, metric["id"], "¿Qué explica esto?")
             assert expected_gap in answer["missing_evidence"]
             assert expected_gap in answer["assistant_message"]
+
+
+@pytest.mark.parametrize("value", ["x" * 65, "é" * 33])
+def test_oversized_receipt_rejected_before_signer_hash_or_json(monkeypatch, value):
+    monkeypatch.setattr(chat, "MAX_RECEIPT_BYTES", 64)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Oversized receipt was processed")
+
+    monkeypatch.setattr(chat, "_signer", forbidden)
+    for token in ("receipt.valid-signed-token", "inline-token"):
+        with pytest.raises(chat.ContextError, match="tamaño"):
+            chat._load_payload(token, value)
+
+
+def test_receipt_generation_and_utf8_boundaries(signed, monkeypatch):
+    monkeypatch.setattr(chat, "MAX_RECEIPT_BYTES", 64)
+    assert chat._receipt_bytes("x" * 64) == b"x" * 64
+    assert len(chat._receipt_bytes("é" * 32)) == 64
+    for call in (
+        lambda: chat.sign_context(signed[0], ACTOR),
+        lambda: chat.sign_analysis({"text": "x" * 65}, "snapshot", ACTOR),
+        lambda: chat.context_receipt(signed[0], ACTOR, "receipt.token"),
+        lambda: chat.analysis_receipt(
+            {"text": "x" * 65}, "snapshot", ACTOR, "receipt.token"
+        ),
+    ):
+        with pytest.raises(chat.ContextError, match="tamaño"):
+            call()
+
+
+def test_invalid_receipt_unicode_fails_closed():
+    with pytest.raises(chat.ContextError, match="válido"):
+        chat._receipt_bytes("\ud800")

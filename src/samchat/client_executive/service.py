@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import unicodedata
+from collections import OrderedDict
 from datetime import date, datetime, timezone
 from typing import Any, Optional
+from weakref import WeakKeyDictionary
 
 from sqlalchemy import text
 
@@ -157,16 +160,41 @@ async def authorized_direction_portfolio_ids(
     return [str(row.id) for row in result]
 
 
+# Per-engine and per-identity metadata only, never financial facts or labels.
+# PostgreSQL validates the MVCC revision in the SAME statement as every page.
+_CATALOG_METADATA = WeakKeyDictionary()
+
+
 async def authorized_direction_catalog_page(
-    session: Any, actor: str, *, is_superadmin: bool, offset: int, limit: int = 25
+    session: Any,
+    actor: str,
+    *,
+    is_superadmin: bool,
+    offset: int,
+    limit: int = 25,
+    after_portfolio: str | None = None,
+    after_tournament: str | None = None,
 ) -> dict:
     """Return one bounded catalog page plus a current full-scope digest/count.
 
-    The database computes metadata without transporting the complete catalog.
-    This is authorization scope only, not proof of organization ownership.
+    Metadata is reused only while PostgreSQL's MVCC snapshot is identical and
+    this transaction has no assigned write XID. Any concurrent commit or own
+    write forces recomputation; scope/role predicates still guard every page.
+    Keyset selectors avoid rescanning prior pages. No organization is inferred.
     """
     if type(offset) is not int or offset < 0 or limit != 25:
         raise ValueError("Invalid catalog page")
+    # Engines isolate databases; actors/roles isolate authorization decisions.
+    # A small LRU bounds memory; eviction only causes safe recomputation.
+    bind = session.get_bind() if callable(getattr(session, "get_bind", None)) else None
+    engine = getattr(bind, "engine", bind)
+    cache = (
+        _CATALOG_METADATA.setdefault(engine, OrderedDict())
+        if engine is not None
+        else OrderedDict()
+    )
+    key = (str(actor), bool(is_superadmin))
+    cached = cache.get(key, {})
     portfolio_predicate = (
         "TRUE"
         if is_superadmin
@@ -183,43 +211,84 @@ async def authorized_direction_catalog_page(
         if is_superadmin
         else """EXISTS (
         SELECT 1 FROM client_executive_portfolio_tournaments assignment
-        JOIN portfolios p ON p.id = assignment.portfolio_id::text
+        JOIN portfolios p ON p.id = assignment.portfolio_id
         WHERE assignment.tournament_id = t.id AND assignment.active = TRUE)"""
     )
     result = await session.execute(
         text(f"""
-        WITH portfolios AS MATERIALIZED (
-            SELECT p.id::text AS id, p.label FROM client_executive_portfolios p
+        WITH revision AS MATERIALIZED (
+            SELECT pg_current_snapshot()::text AS value,
+                   pg_current_xact_id_if_assigned() IS NULL AS reusable
+        ), reuse AS MATERIALIZED (
+            SELECT CAST(:cached AS jsonb) AS value FROM revision
+            WHERE reusable AND value = :cached_revision
+        ), portfolios AS NOT MATERIALIZED (
+            SELECT p.id, p.label FROM client_executive_portfolios p
             WHERE p.active = TRUE AND {portfolio_predicate}
-        ), tournaments AS MATERIALIZED (
-            SELECT t.id::text AS id, t.name AS label FROM tournaments t
+        ), tournaments AS NOT MATERIALIZED (
+            SELECT t.id, t.name AS label FROM tournaments t
             WHERE t.active = TRUE AND {tournament_predicate}
-        ), metadata AS (
+        ), fresh AS MATERIALIZED (
             SELECT
-              (SELECT COALESCE(jsonb_agg(id ORDER BY id), '[]'::jsonb) FROM portfolios) AS pids,
-              (SELECT COALESCE(jsonb_agg(id ORDER BY id), '[]'::jsonb) FROM tournaments) AS tids
+              (SELECT COALESCE(jsonb_agg(id::text ORDER BY id), '[]'::jsonb) FROM portfolios) AS pids,
+              (SELECT COALESCE(jsonb_agg(id::text ORDER BY id), '[]'::jsonb) FROM tournaments) AS tids
+            FROM revision WHERE NOT EXISTS (SELECT 1 FROM reuse)
+        ), metadata AS (
+            SELECT (value->>'portfolio_count')::int AS portfolio_count,
+                   (value->>'tournament_count')::int AS tournament_count,
+                   value->'portfolio_ids' AS portfolio_ids,
+                   value->>'scope_digest' AS scope_digest FROM reuse
+            UNION ALL
+            SELECT jsonb_array_length(pids), jsonb_array_length(tids),
+                   CASE WHEN jsonb_array_length(pids) <= 200 THEN pids ELSE '[]'::jsonb END,
+                   encode(sha256(convert_to(
+                       '{{"portfolio_id": null, "portfolio_ids": ' || pids::text ||
+                       ', "tournament_id": null, "tournament_ids": ' || tids::text || '}}',
+                       'UTF8')), 'hex') FROM fresh
         )
-        SELECT jsonb_array_length(pids) AS portfolio_count,
-               jsonb_array_length(tids) AS tournament_count,
-               CASE WHEN jsonb_array_length(pids) <= 200 THEN pids ELSE '[]'::jsonb END AS portfolio_ids,
-               encode(sha256(convert_to(
-                   '{{"portfolio_id": null, "portfolio_ids": ' || pids::text ||
-                   ', "tournament_id": null, "tournament_ids": ' || tids::text || '}}',
-                   'UTF8')), 'hex') AS scope_digest,
+        SELECT metadata.*, revision.value AS _revision, revision.reusable AS _reusable,
                (SELECT COALESCE(jsonb_agg(page ORDER BY id), '[]'::jsonb)
-                FROM (SELECT * FROM portfolios ORDER BY id LIMIT :limit OFFSET :offset) page) AS portfolios,
+                FROM (SELECT * FROM portfolios
+                      WHERE CAST(:after_portfolio AS uuid) IS NULL OR id > CAST(:after_portfolio AS uuid)
+                      ORDER BY id LIMIT :limit OFFSET :portfolio_offset) page) AS portfolios,
                (SELECT COALESCE(jsonb_agg(page ORDER BY id), '[]'::jsonb)
-                FROM (SELECT * FROM tournaments ORDER BY id LIMIT :limit OFFSET :offset) page) AS tournaments
-        FROM metadata
+                FROM (SELECT * FROM tournaments
+                      WHERE CAST(:after_tournament AS uuid) IS NULL OR id > CAST(:after_tournament AS uuid)
+                      ORDER BY id LIMIT :limit OFFSET :tournament_offset) page) AS tournaments
+        FROM metadata CROSS JOIN revision
     """),
         {
             "actor": actor,
             "position_keys": sorted(DIRECTION_POSITION_KEYS),
-            "offset": offset,
+            "portfolio_offset": 0 if after_portfolio is not None else offset,
+            "tournament_offset": 0 if after_tournament is not None else offset,
+            "after_portfolio": after_portfolio,
+            "after_tournament": after_tournament,
             "limit": limit,
+            "cached_revision": cached.get("revision"),
+            "cached": json.dumps(cached.get("metadata", {})),
         },
     )
     row = dict(result.mappings().first())
+    revision, reusable = row.pop("_revision"), row.pop("_reusable")
+    if reusable:
+        cache[key] = {
+            "revision": revision,
+            "metadata": {
+                k: list(row[k]) if k == "portfolio_ids" else row[k]
+                for k in (
+                    "portfolio_count",
+                    "tournament_count",
+                    "portfolio_ids",
+                    "scope_digest",
+                )
+            },
+        }
+        cache.move_to_end(key)
+        while len(cache) > 64:
+            cache.popitem(last=False)
+    else:
+        cache.pop(key, None)
     if not row["portfolio_count"] and not is_superadmin:
         raise ClientExecutiveAccessError("No active Direction portfolio assignment")
     return row
@@ -532,8 +601,8 @@ async def _build_operational_summaries(tournaments, *, edition_year, client=None
     import asyncio
 
     from samchat.tournaments_v2.config import load_tournaments_v2_config
-    from samchat.tournaments_v2.supabase_client import SupabaseRestClient
     from samchat.tournaments_v2.services.summary_batches import SummaryBatchClient
+    from samchat.tournaments_v2.supabase_client import SupabaseRestClient
 
     client = SummaryBatchClient(
         client or SupabaseRestClient(load_tournaments_v2_config())

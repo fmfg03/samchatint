@@ -13,6 +13,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,7 @@ from devnous.gastos.services.access_control_service import (
     is_superadmin_role,
 )
 from samchat.client_executive.conversation import (
+    MAX_RECEIPT_BYTES,
     ContextError,
     analysis_receipt,
     answer_snapshot,
@@ -50,7 +52,46 @@ from samchat.executive.exporter import (
 
 from .dependencies import get_current_empleado, get_db_session
 
-router = APIRouter(tags=["direction-executive"])
+# Two receipts plus JSON string escaping and bounded tokens/questions. Count the
+# actual stream as well as Content-Length, before FastAPI parses any request JSON.
+MAX_DIRECTION_BODY_BYTES = 4 * MAX_RECEIPT_BYTES + 262144
+
+
+class DirectionReceiptRoute(APIRoute):
+    def get_route_handler(self):
+        original = super().get_route_handler()
+
+        async def bounded(request: Request):
+            if request.method == "POST":
+                length = request.headers.get("content-length")
+                if length is not None:
+                    try:
+                        declared = int(length)
+                    except ValueError:
+                        raise HTTPException(
+                            400, "Tamaño de solicitud no válido."
+                        ) from None
+                    if declared < 0:
+                        raise HTTPException(400, "Tamaño de solicitud no válido.")
+                    if declared > MAX_DIRECTION_BODY_BYTES:
+                        raise HTTPException(
+                            413, "El contexto excede el tamaño admitido."
+                        )
+                chunks, size = [], 0
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > MAX_DIRECTION_BODY_BYTES:
+                        raise HTTPException(
+                            413, "El contexto excede el tamaño admitido."
+                        )
+                    chunks.append(chunk)
+                request._body = b"".join(chunks)
+            return await original(request)
+
+        return bounded
+
+
+router = APIRouter(tags=["direction-executive"], route_class=DirectionReceiptRoute)
 DIRECTION_EXECUTIVE_TOOL = "direccion.tableros_ejecutivos"
 
 
@@ -249,9 +290,9 @@ class DirectionScenarioRequest(BaseModel):
 
 class DirectionReportRequest(BaseModel):
     context_token: str = Field(min_length=1, max_length=100000)
-    context_receipt: Optional[str] = None
+    context_receipt: Optional[str] = Field(default=None, max_length=MAX_RECEIPT_BYTES)
     analysis_token: Optional[str] = Field(default=None, max_length=100000)
-    analysis_receipt: Optional[str] = None
+    analysis_receipt: Optional[str] = Field(default=None, max_length=MAX_RECEIPT_BYTES)
 
 
 class DirectionReportCellRequest(BaseModel):
@@ -263,13 +304,13 @@ class DirectionReportCellRequest(BaseModel):
 
 class DirectionQueryRequest(BaseModel):
     context_token: str = Field(min_length=1, max_length=100000)
-    context_receipt: Optional[str] = None
+    context_receipt: Optional[str] = Field(default=None, max_length=MAX_RECEIPT_BYTES)
     metric_id: str = Field(min_length=1, max_length=40)
     question: str = Field(min_length=1, max_length=2000)
     conversation_id: Optional[str] = Field(default=None, max_length=36)
     scenario: Optional[DirectionScenarioRequest] = None
     analysis_token: Optional[str] = Field(default=None, max_length=100000)
-    analysis_receipt: Optional[str] = None
+    analysis_receipt: Optional[str] = Field(default=None, max_length=MAX_RECEIPT_BYTES)
     report_cell: Optional[DirectionReportCellRequest] = None
 
 

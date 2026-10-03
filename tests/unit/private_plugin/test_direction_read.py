@@ -249,7 +249,16 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
             now=lambda: 100,
         )
 
-        async def catalog_page(session, actor, *, is_superadmin, offset, limit):
+        async def catalog_page(
+            session,
+            actor,
+            *,
+            is_superadmin,
+            offset,
+            limit,
+            after_portfolio=None,
+            after_tournament=None,
+        ):
             # Test double only. Production binds the SQL-paged canonical owner;
             # its real-query row/count bounds are verified in PostgreSQL QA.
             scope = await self.adapter._owners.resolve_scope(
@@ -267,13 +276,27 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
                 "portfolio_count": manifest["portfolio_count"],
                 "tournament_count": manifest["tournament_count"],
                 "scope_digest": manifest["scope_digest"],
-                "portfolios": sorted(scope["portfolios"], key=lambda r: r["id"])[
-                    offset : offset + limit
+                "portfolios": [
+                    p
+                    for p in sorted(scope["portfolios"], key=lambda r: r["id"])
+                    if after_portfolio is None or p["id"] > after_portfolio
+                ][
+                    0 if after_portfolio else offset : (
+                        0 if after_portfolio else offset
+                    )
+                    + limit
                 ],
                 "tournaments": [
                     {"id": t["id"], "label": t["name"]}
-                    for t in sorted(scope["selected"], key=lambda r: r["id"])[
-                        offset : offset + limit
+                    for t in [
+                        t
+                        for t in sorted(scope["selected"], key=lambda r: r["id"])
+                        if after_tournament is None or t["id"] > after_tournament
+                    ][
+                        0 if after_tournament else offset : (
+                            0 if after_tournament else offset
+                        )
+                        + limit
                     ]
                 ],
             }

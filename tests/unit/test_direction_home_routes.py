@@ -249,3 +249,40 @@ def test_legacy_single_context_sam_and_exports_use_one_selector(
             headers={"X-Direction-CSRF": page["csrf"]},
         )
         assert response.status_code == 200
+
+
+@pytest.mark.parametrize("field", ["context_receipt", "analysis_receipt"])
+@pytest.mark.parametrize(
+    "model", [routes.DirectionQueryRequest, routes.DirectionReportRequest]
+)
+def test_receipt_fields_have_explicit_size_limit(field, model):
+    from pydantic import ValidationError
+
+    body = dict(context_token="signed", metric_id="actual", question="Fuente")
+    body[field] = "x" * (routes.MAX_RECEIPT_BYTES + 1)
+    with pytest.raises(ValidationError):
+        model(**body)
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "/direccion/tableros/asistente/consulta",
+        "/direccion/reportes/exportar/pdf",
+        "/direccion/reportes/exportar/xlsx",
+    ],
+)
+@pytest.mark.parametrize("chunked", [False, True])
+def test_receipt_body_limit_precedes_json_parsing(
+    context_client, monkeypatch, endpoint, chunked
+):
+    client, page = context_client
+    monkeypatch.setattr(routes, "MAX_DIRECTION_BODY_BYTES", 64)
+    # Invalid JSON must produce 413, not a JSON parse error, with or without a header.
+    payload = (b"x" * 33 for _ in range(2)) if chunked else b"x" * 65
+    response = client.post(
+        endpoint,
+        content=payload,
+        headers={"X-Direction-CSRF": page["csrf"], "Content-Type": "application/json"},
+    )
+    assert response.status_code == 413

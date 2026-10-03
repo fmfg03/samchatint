@@ -344,7 +344,9 @@ class DirectionReadAdapter:
         # No fallback to token claims or the per-ID scope mapper is permitted.
         self._catalog_organization = organization_for_catalog
 
-    async def _catalog_page(self, identity, offset):
+    async def _catalog_page(
+        self, identity, offset, after_portfolio=None, after_tournament=None
+    ):
         context = await self._current(identity)
         owners, employee = self._owners, context.employee
         if owners.catalog_page is None or self._catalog_organization is None:
@@ -360,6 +362,8 @@ class DirectionReadAdapter:
             is_superadmin=owners.is_superadmin(employee),
             offset=offset,
             limit=_PAGE_SIZE,
+            after_portfolio=after_portfolio,
+            after_tournament=after_tournament,
         )
         organization = await self._catalog_organization(context, page)
         if not organization or organization != identity.organization_id:
@@ -420,11 +424,17 @@ class DirectionReadAdapter:
     ) -> dict:
         """List authorized current selectors; never load financial/roster data."""
         offset, expected_digest = 0, None
+        after_portfolio = after_tournament = None
         if cursor is not None:
             try:
                 if type(cursor) is not str or len(cursor) > 1024:
                     raise ValueError()
-                expected_digest, offset = json.loads(base64.urlsafe_b64decode(cursor))
+                expected_digest, offset, after_portfolio, after_tournament = json.loads(
+                    base64.urlsafe_b64decode(cursor)
+                )
+                after_portfolio, after_tournament = _selection(
+                    after_portfolio
+                ), _selection(after_tournament)
                 if (
                     type(offset) is not int
                     or offset < 0
@@ -434,7 +444,9 @@ class DirectionReadAdapter:
             except Exception:
                 raise Denied("INVALID_SELECTOR") from None
         try:
-            page, access, organization = await self._catalog_page(identity, offset)
+            page, access, organization = await self._catalog_page(
+                identity, offset, after_portfolio, after_tournament
+            )
             portfolios, tournaments = page["portfolios"], page["tournaments"]
             bounded = {
                 "portfolio_id": None,
@@ -469,7 +481,14 @@ class DirectionReadAdapter:
             next_offset = offset + _PAGE_SIZE
             next_cursor = (
                 base64.urlsafe_b64encode(
-                    json.dumps([manifest["scope_digest"], next_offset]).encode()
+                    json.dumps(
+                        [
+                            manifest["scope_digest"],
+                            next_offset,
+                            portfolios[-1]["id"] if portfolios else after_portfolio,
+                            tournaments[-1]["id"] if tournaments else after_tournament,
+                        ]
+                    ).encode()
                 ).decode()
                 if next_offset < max(page["portfolio_count"], page["tournament_count"])
                 else None
@@ -491,7 +510,7 @@ class DirectionReadAdapter:
             if len(json.dumps(result, ensure_ascii=False).encode()) > 65536:
                 raise Denied("SOURCE_UNAVAILABLE")
             current_page, current_access, current_org = await self._catalog_page(
-                identity, offset
+                identity, offset, after_portfolio, after_tournament
             )
             if (
                 current_page != page

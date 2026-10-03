@@ -11,14 +11,23 @@ import importlib.util
 import json
 import subprocess
 import tempfile
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import UUID
+from weakref import WeakKeyDictionary
 
 from sqlalchemy import URL, create_engine, text
 
 ROOT = Path(__file__).resolve().parents[1]
-ns = {"text": text, "Any": object, "ClientExecutiveAccessError": PermissionError}
+ns = {
+    "text": text,
+    "Any": object,
+    "ClientExecutiveAccessError": PermissionError,
+    "json": json,
+    "OrderedDict": OrderedDict,
+    "_CATALOG_METADATA": WeakKeyDictionary(),
+}
 tree = ast.parse((ROOT / "src/samchat/client_executive/service.py").read_text())
 selected = [
     n
@@ -50,9 +59,30 @@ class Session:
         self.connection = connection
         self.calls = 0
         self.returned = 0
+        self.metadata_aggregates = 0
+
+    def get_bind(self):
+        return self.connection.engine
 
     async def execute(self, statement, params=None):
         self.calls += 1
+        if "WITH revision AS MATERIALIZED" in str(statement):
+            plan = self.connection.execute(
+                text("EXPLAIN (ANALYZE, FORMAT JSON) " + str(statement)), params
+            ).scalar_one()[0]["Plan"]
+
+            def walk(node, fresh=False):
+                fresh = fresh or node.get("Subplan Name") == "CTE fresh"
+                if (
+                    fresh
+                    and node["Node Type"] == "Aggregate"
+                    and node.get("Strategy") == "Plain"
+                ):
+                    self.metadata_aggregates += node["Actual Loops"]
+                for child in node.get("Plans", []):
+                    walk(child, fresh)
+
+            walk(plan)
         result = self.connection.execute(statement, params or {})
         self.returned += max(result.rowcount, 0)
         return result
@@ -91,14 +121,28 @@ async def verify(connection):
             text("INSERT INTO tournaments VALUES (:id,'Inactive',FALSE)"),
             {"id": str(UUID(int=999998))},
         )
+        connection.commit()  # Fixture setup is separate from read-only measurements.
+        connection.execute(text("SET TRANSACTION READ ONLY"))
         start_calls = session.calls
+        start_aggregates = session.metadata_aggregates
         fetched = returned = 0
+        after_p = after_t = None
         for offset in range(0, count, 25):
             page = await ns["authorized_direction_catalog_page"](
-                session, actor, is_superadmin=True, offset=offset
+                session,
+                actor,
+                is_superadmin=True,
+                offset=offset,
+                after_portfolio=after_p,
+                after_tournament=after_t,
             )
             rechecked = await ns["authorized_direction_catalog_page"](
-                session, actor, is_superadmin=True, offset=offset
+                session,
+                actor,
+                is_superadmin=True,
+                offset=offset,
+                after_portfolio=after_p,
+                after_tournament=after_t,
             )
             assert page == rechecked
             assert page["portfolio_count"] == page["tournament_count"] == count
@@ -119,12 +163,16 @@ async def verify(connection):
                 ).hexdigest()
             )
             assert len(json.dumps(page)) < 16000
+            after_p = page["portfolios"][-1]["id"] if page["portfolios"] else after_p
+            after_t = page["tournaments"][-1]["id"] if page["tournaments"] else after_t
             fetched += len(page["tournaments"])
             returned += 2 * (len(page["tournaments"]) + len(page["portfolios"]))
         assert fetched == count
         queries = session.calls - start_calls
         assert queries == 2 * ((count + 24) // 25)
         assert returned == 4 * count
+        metadata_aggregates = session.metadata_aggregates - start_aggregates
+        assert metadata_aggregates == 2, metadata_aggregates
         before_calls, before_rows = session.calls, session.returned
 
         async def read_tournament(batch, tid):
@@ -161,9 +209,11 @@ async def verify(connection):
                 "sql_batch_queries": session.calls - before_calls,
                 "sql_batch_rows_returned": session.returned - before_rows,
                 "returned_catalog_items_with_recheck": returned,
-                "metadata_note": "Digest/count scan full authorized scope inside PostgreSQL; payload is bounded.",
+                "metadata_aggregates_executed": metadata_aggregates,
+                "metadata_note": "EXPLAIN ANALYZE proves two full-scope ID aggregates once per unchanged MVCC revision, zero on subsequent pages/rechecks; keyset pages skip no prior rows.",
             }
         )
+        connection.commit()
     # Compare actual role-scoped canonical readers, including duplicate position
     # assignments, inactive memberships and a foreign active tournament.
     connection.execute(
@@ -257,6 +307,86 @@ async def verify(connection):
     }
 
 
+async def verify_revision_cache(engine):
+    actor = str(UUID(int=999999))
+    reader = engine.connect()
+    writer = engine.connect()
+    try:
+        reader.execute(text("SET TRANSACTION READ ONLY"))
+        session = Session(reader)
+        first = await ns["authorized_direction_catalog_page"](
+            session, actor, is_superadmin=False, offset=0
+        )
+        assert first["portfolio_count"] == 1
+        first["portfolio_ids"].clear()
+        reloaded = await ns["authorized_direction_catalog_page"](
+            session, actor, is_superadmin=False, offset=0
+        )
+        assert len(reloaded["portfolio_ids"]) == 1
+        assert session.metadata_aggregates == 2, session.metadata_aggregates
+        writer.execute(
+            text(
+                "UPDATE client_executive_portfolio_tournaments SET active=FALSE WHERE tournament_id=:id"
+            ),
+            {"id": str(UUID(int=2))},
+        )
+        before_commit = await ns["authorized_direction_catalog_page"](
+            session, actor, is_superadmin=False, offset=0
+        )
+        assert before_commit["scope_digest"] == reloaded["scope_digest"]
+        writer.commit()
+        changed = await ns["authorized_direction_catalog_page"](
+            session, actor, is_superadmin=False, offset=0
+        )
+        assert changed["tournament_count"] == reloaded["tournament_count"] - 1
+        assert changed["scope_digest"] != reloaded["scope_digest"]
+        aggregates = session.metadata_aggregates
+        assert (
+            await ns["authorized_direction_catalog_page"](
+                session, actor, is_superadmin=False, offset=0
+            )
+            == changed
+        )
+        assert session.metadata_aggregates == aggregates
+        admin = await ns["authorized_direction_catalog_page"](
+            session, actor, is_superadmin=True, offset=0
+        )
+        assert admin["tournament_count"] == 1001
+        assert (
+            await ns["authorized_direction_catalog_page"](
+                session, actor, is_superadmin=False, offset=0
+            )
+            == changed
+        )
+        writer.execute(
+            text(
+                "UPDATE authorization_position_assignments SET active=FALSE WHERE empleado_id=:id"
+            ),
+            {"id": actor},
+        )
+        writer.commit()
+        try:
+            await ns["authorized_direction_catalog_page"](
+                session, actor, is_superadmin=False, offset=0
+            )
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError("Cached scope survived committed role revocation")
+        try:
+            await ns["authorized_direction_catalog_page"](
+                session, str(UUID(int=888888)), is_superadmin=False, offset=0
+            )
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError("Cached scope escaped actor isolation")
+    finally:
+        reader.close()
+        writer.close()
+    return True
+
+
 bins = Path(importlib.util.find_spec("pgserver").origin).parent / "pginstall/bin"
 with tempfile.TemporaryDirectory(prefix="direction-batch-") as tmp:
     root = Path(tmp)
@@ -303,8 +433,12 @@ with tempfile.TemporaryDirectory(prefix="direction-batch-") as tmp:
                 query={"host": str(socket)},
             )
         )
-        with engine.begin() as connection:
+        with engine.connect() as connection:
             evidence = asyncio.run(verify(connection))
+            connection.commit()
+        evidence["cache_commit_revocation_actor_role_and_mutation_isolation"] = (
+            asyncio.run(verify_revision_cache(engine))
+        )
         with engine.begin() as connection:
             connection.execute(text("SET TRANSACTION READ ONLY"))
             before = connection.execute(

@@ -340,7 +340,12 @@ class CanonicalMCPReadTests(unittest.IsolatedAsyncioTestCase):
             )
             cursor = base64.urlsafe_b64encode(
                 json.dumps(
-                    [result.structuredContent["scope_manifest"]["scope_digest"], 0]
+                    [
+                        result.structuredContent["scope_manifest"]["scope_digest"],
+                        0,
+                        None,
+                        None,
+                    ]
                 ).encode()
             ).decode()
             repeated = await client.call_tool(
