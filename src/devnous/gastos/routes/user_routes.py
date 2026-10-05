@@ -399,6 +399,11 @@ from ..utils.receipt_bytes import (
     resolve_media_type,
 )
 from .dependencies import get_current_empleado, get_db_session, has_permission, require_admin_finanzas
+from .block_messages import (
+    ExpenseBlockRoute,
+    duplicate_invoice_message,
+    expense_lock_reason,
+)
 from ..services.payment_run_service import (
     can_confirm_payment_run_payment,
     can_manage_payment_run,
@@ -507,7 +512,7 @@ async def _active_cfdi_project_assignment_ids(
     return ids
 
 
-router = APIRouter()
+router = APIRouter(route_class=ExpenseBlockRoute)
 
 # This will be set by the app that includes these routes
 _db_session_maker = None
@@ -26510,13 +26515,13 @@ async def ver_gasto(
         cfdi_status = "CFDI pendiente (UUID capturado)"
 
     # Get error/success message if present
-    error_msg = request.query_params.get("error_msg", "")
+    error_msg = await _expense_block_message(request, session, current_empleado)
     success_msg = request.query_params.get("success_msg", "")
     message_html = ""
     if error_msg:
         message_html = f"""
             <div style="background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 5px; padding: 15px; margin-bottom: 20px; color: #721c24;">
-                <strong>⚠️ Error:</strong> {error_msg}
+                <strong>⚠️ Error:</strong> {escape(error_msg)}
             </div>
         """
     elif success_msg:
@@ -27174,6 +27179,7 @@ async def editar_gasto_form(
         )
 
     # Determine lock status
+    documento = None
     documento_estado = None
     if expense.documento_id:
         doc_result = await session.execute(
@@ -27200,29 +27206,34 @@ async def editar_gasto_form(
         # Finanzas/admin can edit when locked (except cancelado, already checked)
         can_edit = True
 
-    # Build lock status banner
+    # Build lock status banner from the conditions actually observed.
+    lock_reason = escape(expense_lock_reason(expense, documento))
     lock_banner_html = ""
     if is_locked and not can_edit:
-        lock_banner_html = """
+        lock_banner_html = f"""
             <div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin-bottom: 20px; color: #856404;">
-                <strong>🔒 Gasto Bloqueado:</strong> Este gasto no puede ser editado porque está asociado a un documento enviado/aprobado o tiene una factura en proceso/completada.
+                <strong>🔒 Gasto Bloqueado:</strong>
+                Este gasto no puede ser editado porque {lock_reason}.
+                Solicita a Finanzas y Operaciones que revisen ese registro.
             </div>
         """
     elif is_locked and can_edit:
-        lock_banner_html = """
+        lock_banner_html = f"""
             <div style="background: #d1ecf1; border: 1px solid #0c5460; border-radius: 5px; padding: 15px; margin-bottom: 20px; color: #0c5460;">
-                <strong>⚠️ Gasto Bloqueado:</strong> Este gasto está bloqueado, pero usted tiene permisos de administración para editarlo. Se requiere un motivo para la edición.
+                <strong>⚠️ Gasto Bloqueado:</strong>
+                Este gasto tiene estas restricciones: {lock_reason}.
+                Tu perfil permite editarlo con un motivo auditado.
             </div>
         """
 
     # Get error/success message if present
-    error_msg = request.query_params.get("error_msg", "")
+    error_msg = await _expense_block_message(request, session, current_empleado)
     success_msg = request.query_params.get("success_msg", "")
     message_html = ""
     if error_msg:
         message_html = f"""
             <div style="background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 5px; padding: 15px; margin-bottom: 20px; color: #721c24;">
-                <strong>⚠️ Error:</strong> {error_msg}
+                <strong>⚠️ Error:</strong> {escape(error_msg)}
             </div>
         """
     elif success_msg:
@@ -27901,6 +27912,7 @@ async def editar_gasto(
         )
 
     # Determine lock status
+    documento = None
     documento_estado = None
     if expense.documento_id:
         doc_result = await session.execute(
@@ -27926,7 +27938,10 @@ async def editar_gasto(
             return RedirectResponse(
                 url=_append_error_params(
                     edit_form_url,
-                    error_msg="Este gasto está bloqueado y no puede ser editado.",
+                    error_msg=(
+                        "Este gasto no puede ser editado porque "
+                        f"{expense_lock_reason(expense, documento)}."
+                    ),
                 ),
                 status_code=303
             )
@@ -27938,7 +27953,11 @@ async def editar_gasto(
                 return RedirectResponse(
                     url=_append_error_params(
                         edit_form_url,
-                        error_msg="Se requiere un motivo para editar gastos bloqueados.",
+                        error_msg=(
+                            "Se requiere un motivo para editar este gasto porque "
+                            f"{expense_lock_reason(expense, documento)}. "
+                            "Captura el motivo de la edición."
+                        ),
                     ),
                     status_code=303
                 )
@@ -28530,7 +28549,7 @@ async def editar_gasto(
             )
         except (ExpenseCFDIDuplicateError, ValueError) as exc:
             return RedirectResponse(
-                url=_append_error_params(edit_form_url, error_msg=str(exc)), status_code=303
+                url=_append_error_params(edit_form_url, error_msg=exc), status_code=303
             )
         if stored_manual_before != expense.cfdi_uuid_manual:
             old_values["cfdi_uuid_manual"] = stored_manual_before
@@ -28639,7 +28658,11 @@ async def eliminar_comprobante_no_deducible(
         or expense.estado_factura in ("en_proceso", "completada")
     )
     if is_locked and not is_finance_admin:
-        raise HTTPException(status_code=403, detail="El gasto está bloqueado para edición")
+        raise HTTPException(
+            status_code=403,
+            detail=("El gasto está bloqueado para edición porque "
+                    f"{expense_lock_reason(expense, documento)}."),
+        )
     safe_return_to = _safe_internal_next(return_to, f"/gastos/{gasto_id}/editar")
     try:
         await logically_delete_non_deductible_proof(
@@ -37329,8 +37352,11 @@ async def ver_documento(
                 f' &middot; <a href="/gastos/{expense.id}/editar" class="text-link">Editar</a>'
             )
         elif expense_locked_for_actions:
+            lock_document = documento if expense.documento_id == documento.id else None
+            lock_title = escape(expense_lock_reason(expense, lock_document))
             expense_actions += (
-                ' <span class="muted" title="Gasto bloqueado por documento enviado/aprobado o CFDI en proceso/completado">Bloqueado</span>'
+                f' <span class="muted" title="{lock_title}. '
+                'Solicita revisión a Finanzas.">Bloqueado</span>'
             )
         budget_concept_name = getattr(
             expense.budget_concept, "concept_name", None
@@ -38928,15 +38954,91 @@ def _append_success_params(
 def _append_error_params(
     url: str,
     *,
-    error_msg: Optional[str] = None,
+    error_msg: Optional[Union[str, ValueError]] = None,
     error: Optional[str] = None,
 ) -> str:
     params: Dict[str, str] = {}
+    if isinstance(error_msg, ExpenseCFDIDuplicateError):
+        params["error"] = "expense_cfdi_duplicate"
+        if error_msg.duplicate_id is not None:
+            params["blocked_expense_id"] = str(error_msg.duplicate_id)
+        params["blocked_cfdi_uuid"] = error_msg.fiscal_uuid
+        return _append_query_params(url, params)
     if error is not None:
         params["error"] = error
     if error_msg is not None:
-        params["error_msg"] = error_msg
+        params["error_msg"] = str(error_msg)
     return _append_query_params(url, params)
+
+
+async def _expense_block_message(
+    request: Request,
+    session: AsyncSession,
+    actor: Empleado,
+    *,
+    current_document: Optional[Documento] = None,
+) -> str:
+    """Resolve duplicate evidence after page authorization, never in a URL."""
+    if request.query_params.get("error") != "expense_cfdi_duplicate":
+        return (request.query_params.get("error_msg") or "").strip()
+    fallback = (
+        "La factura está vinculada a otra partida activa. "
+        "Los detalles deben revisarse con Finanzas y Operaciones. "
+        "Esto no significa que tú la hayas usado antes. "
+        "No marques ‘Factura compartida’ para continuar."
+    )
+    unavailable = (
+        "No se pudo confirmar la vinculación activa que provocó el bloqueo. "
+        "Solicita a Finanzas y Operaciones que revisen la factura antes de continuar."
+    )
+    try:
+        duplicate_id = UUIDType(request.query_params.get("blocked_expense_id", ""))
+        fiscal_uuid = normalize_cfdi_uuid_to_canonical(
+            request.query_params.get("blocked_cfdi_uuid", "")
+        )
+    except (ValueError, TypeError):
+        return unavailable
+    expense = await session.get(ExpenseReport, duplicate_id)
+    if expense is None or expense.estado_gasto in {None, "cancelado"}:
+        return unavailable
+    if not await _can_access_read_only_informe_expense(session, expense, actor):
+        return fallback
+    stored_uuid = (expense.cfdi_uuid_manual or "").strip().upper()
+    if stored_uuid != fiscal_uuid:
+        report = (
+            await session.get(CFDIReport, expense.cfdi_report_id)
+            if expense.cfdi_report_id
+            else None
+        )
+        if report is None or (report.cfdi_uuid or "").strip().upper() != fiscal_uuid:
+            return unavailable
+    document_id = expense.informe_documento_id or expense.documento_id
+    document = await session.get(Documento, document_id) if document_id else None
+    cuenta = (
+        await session.get(CuentaDeGastos, expense.cuenta_gastos_id)
+        if expense.cuenta_gastos_id
+        else None
+    )
+    beneficiary_id = document.beneficiario_empleado_id if document else None
+    beneficiary = (
+        await session.get(Empleado, beneficiary_id) if beneficiary_id else None
+    )
+    return duplicate_invoice_message(
+        amount=Decimal(str(expense.gasto_cantidad)),
+        currency=currency_for(expense),
+        expense_reference=expense.numero_referencia,
+        report_reference=document.numero_referencia if document else None,
+        operations_reference=document.referencia_operaciones if document else None,
+        report_name=cuenta.nombre if cuenta else None,
+        beneficiary=beneficiary.nombre if beneficiary else None,
+        state=document.estado if document else expense.estado_gasto,
+        current_reference=(
+            current_document.numero_referencia if current_document else None
+        ),
+        current_operations=(
+            current_document.referencia_operaciones if current_document else None
+        ),
+    )
 
 
 def _render_transient_message_query_cleanup_script() -> str:
@@ -38947,7 +39049,8 @@ def _render_transient_message_query_cleanup_script() -> str:
             if (!window.history || !window.history.replaceState) return;
             const url = new URL(window.location.href);
             const transientKeys = [
-                "error", "error_msg", "success", "success_msg", "msg"
+                "error", "error_msg", "success", "success_msg", "msg",
+                "blocked_expense_id", "blocked_cfdi_uuid"
             ];
             let changed = false;
             transientKeys.forEach(function(key) {
@@ -39839,7 +39942,10 @@ async def adjuntar_gastos_a_cuenta(
                 url=_append_error_params(
                     "/informes-de-gastos",
                     error="currency_mismatch",
-                    error_msg="No se pueden crear informes con gastos de monedas distintas.",
+                    error_msg=(
+                        "No se pueden crear informes con gastos de monedas distintas: "
+                        + ", ".join(sorted(expense_currencies)) + "."
+                    ),
                 ),
                 status_code=303,
             )
@@ -40867,6 +40973,36 @@ def _can_create_solicitud_from_cuenta(
     )
 
 
+def _quick_capture_block_reason(
+    cuenta: CuentaDeGastos,
+    informe_doc: Optional[Documento],
+    actor: Empleado,
+) -> str:
+    """Explain the first failing existing capture condition without leaking state."""
+    if cuenta.empleado_id != actor.id and actor.rol not in (
+        "admin",
+        "finanzas",
+        "superadmin",
+        "super_admin",
+    ):
+        return "No tienes permiso para capturar gastos en este informe."
+    if cuenta.estado != "abierta":
+        return (
+            "No se pueden capturar gastos porque la cuenta está "
+            f"en estado {cuenta.estado}."
+        )
+    if informe_doc is None:
+        return (
+            "El informe no tiene documento INFORME vinculado; "
+            "solicita revisión a Soporte."
+        )
+    return (
+        "No se pueden capturar gastos porque el informe "
+        f"{informe_doc.numero_referencia} "
+        f"está en estado {informe_doc.estado}; la captura requiere un borrador."
+    )
+
+
 def _quick_expense_decimal(
     value: Optional[str],
     label: str,
@@ -40951,7 +41087,10 @@ def _quick_expense_values(
         if abs(calculated_total - xml_total) > Decimal("0.01"):
             raise ValueError(
                 "El TOTAL del XML no coincide con Sub total - Descuento + "
-                "Impuestos y retenciones"
+                f"Impuestos y retenciones. TOTAL XML: ${xml_total:,.2f}; "
+                f"total calculado: ${calculated_total:,.2f}. Diferencia: "
+                f"${abs(xml_total - calculated_total):,.2f}. "
+                "Revisa el XML de la factura."
             )
         calculated_total = xml_total + propina_amount
     else:
@@ -41072,14 +41211,19 @@ async def crear_gasto_rapido_en_informe(
         if not _can_quick_capture_expense(cuenta, informe_doc, current_empleado):
             raise HTTPException(
                 status_code=403,
-                detail="La captura rápida solo está disponible para informes abiertos en borrador",
+                detail=_quick_capture_block_reason(
+                    cuenta, informe_doc, current_empleado
+                ),
             )
 
         xml_bytes: Optional[bytes] = None
         if cfdi_xml and cfdi_xml.filename:
             xml_bytes = await cfdi_xml.read()
             if xml_bytes and len(xml_bytes) > MAX_SOLICITUD_ATTACHMENT_BYTES:
-                raise ValueError("El CFDI XML excede el tamaño máximo permitido")
+                raise ValueError(
+                    f"El CFDI XML mide {len(xml_bytes):,} bytes y excede "
+                    f"el máximo de {MAX_SOLICITUD_ATTACHMENT_BYTES:,} bytes."
+                )
             if xml_bytes and not xml_bytes.strip():
                 xml_bytes = None
 
@@ -41089,7 +41233,10 @@ async def crear_gasto_rapido_en_informe(
             if not pdf_bytes:
                 raise ValueError("El CFDI PDF está vacío")
             if len(pdf_bytes) > MAX_SOLICITUD_PDF_BYTES:
-                raise ValueError("El CFDI PDF excede el tamaño máximo permitido")
+                raise ValueError(
+                    f"El CFDI PDF mide {len(pdf_bytes):,} bytes y excede "
+                    f"el máximo de {MAX_SOLICITUD_PDF_BYTES:,} bytes."
+                )
             if not is_pdf_content(pdf_bytes):
                 raise ValueError("El archivo CFDI PDF debe ser un PDF válido")
 
@@ -41463,7 +41610,7 @@ async def crear_gasto_rapido_en_informe(
     except ValueError as exc:
         await session.rollback()
         return RedirectResponse(
-            url=_append_error_params(redirect_base, error_msg=str(exc)),
+            url=_append_error_params(redirect_base, error_msg=exc),
             status_code=303,
         )
     except Exception as exc:
@@ -42049,7 +42196,9 @@ async def cuenta_de_gastos_detail(
             f'{success_actions_html}'
             '</div>'
         )
-    error_message = (request.query_params.get("error_msg") or "").strip()
+    error_message = await _expense_block_message(
+        request, session, current_empleado, current_document=informe_doc
+    )
     error_msg_html = (
         '<div class="notice warn"><strong>Error:</strong> '
         f'{escape(error_message)}</div>'
@@ -43465,7 +43614,10 @@ async def cerrar_cuenta_de_gastos(
                 redirect_url,
                 {
                     "error": "invalid_estado",
-                    "error_msg": "El informe no está en un estado que pueda cerrarse.",
+                    "error_msg": (
+                        "El informe no puede cerrarse porque su estado "
+                        f"actual es {cuenta.estado}."
+                    ),
                 },
             ),
             status_code=303,
