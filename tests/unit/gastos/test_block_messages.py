@@ -483,6 +483,15 @@ def test_browser_redirect_keeps_session_context_without_financial_query_values()
         assert "No se pudo confirmar" in client.get(location).json()["message"]
 
 
+def test_context_consumption_replaces_mapping_for_session_change_detection():
+    request, session, actor, current = _duplicate_context()
+    initial = request.session.copy()
+    asyncio.run(user_routes._expense_block_message(request, session, actor))
+    assert request.session != initial
+    assert request.session["expense_block_contexts"] == {}
+    assert initial["expense_block_contexts"]
+
+
 @pytest.mark.parametrize("party_source", ["document", "account"])
 def test_provider_beneficiary_uses_document_then_account_precedence(party_source):
     request, session, actor, current = _duplicate_context()

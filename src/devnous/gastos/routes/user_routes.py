@@ -40703,7 +40703,7 @@ def _append_error_params(
     if isinstance(error_msg, ExpenseCFDIDuplicateError):
         params["error"] = "expense_cfdi_duplicate"
         if request is not None and "session" in request.scope:
-            contexts = request.session.setdefault("expense_block_contexts", {})
+            contexts = dict(request.session.get("expense_block_contexts", {}))
             target = urlparse(url).path
             contexts[target] = {
                 "expense_id": str(error_msg.duplicate_id or ""),
@@ -40711,6 +40711,7 @@ def _append_error_params(
             }
             while len(contexts) > 8:
                 del contexts[next(iter(contexts))]
+            request.session["expense_block_contexts"] = contexts
         return _append_query_params(url, params)
     if error is not None:
         params["error"] = error
@@ -40740,8 +40741,10 @@ async def _expense_block_message(
         "Solicita a Finanzas y Operaciones que revisen la factura antes de continuar."
     )
     try:
-        contexts = request.scope.get("session", {}).get("expense_block_contexts", {})
+        browser_session = request.scope.get("session", {})
+        contexts = dict(browser_session.get("expense_block_contexts", {}))
         context = contexts.pop(request.scope.get("path", ""), {})
+        browser_session["expense_block_contexts"] = contexts
         duplicate_id = UUIDType(context.get("expense_id", ""))
         fiscal_uuid = normalize_cfdi_uuid_to_canonical(
             context.get("fiscal_uuid", "")
