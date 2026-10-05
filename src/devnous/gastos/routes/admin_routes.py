@@ -9065,18 +9065,6 @@ async def _build_finance_coi_batch_expenses(
         informes.values(), key=lambda item: item.numero_referencia or str(item.id)
     ):
         expenses = report_expenses_by_id.get(informe.id, [])
-        outside_period = [
-            expense for expense in expenses if not (start <= expense.fecha < end)
-        ]
-        if outside_period:
-            references = ", ".join(
-                expense.numero_referencia or str(expense.id)[:8]
-                for expense in outside_period[:6]
-            )
-            raise ValueError(
-                f"El Informe {informe.numero_referencia or informe.id} contiene "
-                f"partidas de otro periodo contable: {references}."
-            )
         document_cfdis: list[ExpenseCFDI] = []
         for expense in expenses:
             ready, issues = await assess_expense_coi_cleanup_ready(session, expense)

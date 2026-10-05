@@ -1,13 +1,22 @@
+import csv
+import io
+import zipfile
 from datetime import datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from openpyxl import load_workbook
 from sqlalchemy.dialects import postgresql
 
 from devnous.gastos.routes import admin_routes, user_routes
-from devnous.gastos.services.coi_poliza_exporter import ExpenseCFDI
+from devnous.gastos.services.coi_poliza_exporter import (
+    ExpenseCFDI,
+    generate_coi_poliza_csv,
+    generate_coi_poliza_xlsx,
+    generate_coi_poliza_zip,
+)
 
 
 class _ScalarRows:
@@ -310,7 +319,10 @@ async def test_document_bundle_blocks_entire_informe_when_one_expense_is_not_rea
 
 
 @pytest.mark.asyncio
-async def test_document_bundle_blocks_informe_spanning_accounting_months():
+@pytest.mark.parametrize("second_date", [datetime(2026, 9, 1), datetime(2027, 1, 1)])
+async def test_document_bundle_exports_informe_spanning_accounting_months(
+    monkeypatch, second_date
+):
     employee_id = uuid4()
     document = SimpleNamespace(
         id=uuid4(),
@@ -328,7 +340,7 @@ async def test_document_bundle_blocks_informe_spanning_accounting_months():
         )
         for reference, expense_date in (
             ("G-AUG", datetime(2026, 8, 31)),
-            ("G-SEP", datetime(2026, 9, 1)),
+            ("G-LATER", second_date),
         )
     ]
 
@@ -339,16 +351,58 @@ async def test_document_bundle_blocks_informe_spanning_accounting_months():
             self.calls += 1
             return _ScalarRows([document] if self.calls == 1 else expenses)
 
-    with pytest.raises(HTTPException) as exc_info:
-        await user_routes._build_documento_coi_bundle(
-            document.id,
-            Session(),
-            SimpleNamespace(id=employee_id, rol="usuario"),
-            require_complete_informe=True,
+    async def ready(*_args, **_kwargs):
+        return True, []
+
+    async def build(_session, expense, **_kwargs):
+        return ExpenseCFDI(
+            fecha=expense.fecha,
+            total=100,
+            iva_amount=0,
+            subtotal_amount=100,
+            concepto=expense.numero_referencia,
+            cuenta_contable="5000",
+            cuenta_contrapartida="1170",
+            cfdi_uuid=str(expense.id),
+            cfdi_date=expense.fecha,
         )
 
-    assert exc_info.value.status_code == 400
-    assert "2026-08, 2026-09" in exc_info.value.detail
+    monkeypatch.setattr(user_routes, "assess_expense_coi_cleanup_ready", ready)
+    monkeypatch.setattr(user_routes, "build_expense_cfdi_for_export", build)
+    _, loaded, payloads = await user_routes._build_documento_coi_bundle(
+        document.id,
+        Session(),
+        SimpleNamespace(id=employee_id, rol="usuario"),
+        require_complete_informe=True,
+    )
+
+    assert loaded == expenses
+    assert [p.fecha for p in payloads] == [e.fecha for e in expenses]
+    assert [p.cfdi_date for p in payloads] == [e.fecha for e in expenses]
+    assert [p.cfdi_uuid for p in payloads] == [str(e.id) for e in expenses]
+    assert {p.poliza_group_key for p in payloads} == {f"informe:{document.id}"}
+
+    csv_rows = list(
+        csv.reader(io.StringIO(generate_coi_poliza_csv(payloads).decode("utf-8-sig")))
+    )
+    workbook = load_workbook(io.BytesIO(generate_coi_poliza_xlsx(payloads)))
+    with zipfile.ZipFile(io.BytesIO(generate_coi_poliza_zip(payloads))) as archive:
+        assert archive.namelist() == [f"Poliza_COI_{document.numero_referencia}.xlsx"]
+        zipped_workbook = load_workbook(io.BytesIO(archive.read(archive.namelist()[0])))
+    for rows in (
+        csv_rows,
+        list(workbook["Poliza COI"].values),
+        list(zipped_workbook["Poliza COI"].values),
+    ):
+        assert sum(row[0] == "Eg" for row in rows) == 1
+        assert sum(row[1] == "FIN_PARTIDAS" for row in rows) == 1
+        assert {row[8] for row in rows if row[8]} == {str(e.id) for e in expenses}
+        assert {row[2] for row in rows if row[8]} == {
+            e.fecha.strftime("%d/%m/%y") for e in expenses
+        }
+        movements = [row for row in rows if str(row[4]) == "1"]
+        assert sum(float(row[5] or 0) for row in movements) == 200
+        assert sum(float(row[6] or 0) for row in movements) == 200
 
 
 @pytest.mark.asyncio
@@ -385,8 +439,10 @@ async def test_single_expense_export_redirects_to_owning_informe(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_monthly_batch_blocks_informe_with_expenses_in_another_period(
+@pytest.mark.parametrize("outside_ready", [True, False])
+async def test_monthly_batch_checks_all_informe_expenses_across_periods(
     monkeypatch,
+    outside_ready,
 ):
     document = SimpleNamespace(
         id=uuid4(),
@@ -422,7 +478,9 @@ async def test_monthly_batch_blocks_informe_with_expenses_in_another_period(
             return [september]
         return [august, september]
 
-    async def ready(*_args, **_kwargs):
+    async def ready(_session, expense):
+        if expense.id == august.id and not outside_ready:
+            return False, ["Falta cuenta contable"]
         return True, []
 
     monkeypatch.setattr(user_routes, "_load_coi_lote_informe_documentos", load_informes)
@@ -443,8 +501,12 @@ async def test_monthly_batch_blocks_informe_with_expenses_in_another_period(
     )
 
     assert len(rows) == 1
-    assert rows[0]["can_export"] is False
-    assert "otro periodo contable: G-AUG" in rows[0]["block_reason"]
+    assert rows[0]["expenses"] == [august, september]
+    assert rows[0]["can_export"] is outside_ready
+    if outside_ready:
+        assert rows[0]["block_reason"] == ""
+    else:
+        assert "G-AUG: Falta cuenta contable" in rows[0]["block_reason"]
 
 
 @pytest.mark.asyncio
@@ -532,7 +594,9 @@ async def test_finance_batch_blocks_unapproved_informe():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("relation", ["documento", "cuenta"])
-@pytest.mark.parametrize("blocker", [None, "not_ready", "outside_period"])
+@pytest.mark.parametrize(
+    "blocker", [None, "not_ready", "outside_period", "outside_not_ready"]
+)
 async def test_finance_report_ownership_and_atomic_blockers(
     monkeypatch, relation, blocker
 ):
@@ -555,7 +619,7 @@ async def test_finance_report_ownership_and_atomic_blockers(
     second = SimpleNamespace(
         **{**vars(expense), "id": uuid4(), "numero_referencia": "G-BLOCKED"}
     )
-    if blocker == "outside_period":
+    if blocker in {"outside_period", "outside_not_ready"}:
         second.fecha = datetime(2026, 8, 31)
     responses = [[expense]]
     if account_id:
@@ -567,7 +631,7 @@ async def test_finance_report_ownership_and_atomic_blockers(
             return _ScalarRows(responses.pop(0))
 
     async def ready(_session, item):
-        if blocker == "not_ready" and item.id == second.id:
+        if blocker in {"not_ready", "outside_not_ready"} and item.id == second.id:
             return False, ["Falta contrapartida"]
         return True, []
 
@@ -584,7 +648,7 @@ async def test_finance_report_ownership_and_atomic_blockers(
 
     monkeypatch.setattr(admin_routes, "assess_expense_coi_cleanup_ready", ready)
     monkeypatch.setattr(admin_routes, "build_expense_cfdi_for_export", build)
-    if blocker:
+    if blocker in {"not_ready", "outside_not_ready"}:
         with pytest.raises(ValueError, match="G-BLOCKED"):
             await admin_routes._build_finance_coi_batch_expenses(
                 Session(), year=2026, month=9
@@ -595,6 +659,7 @@ async def test_finance_report_ownership_and_atomic_blockers(
         )
         assert len(payloads) == 2
         assert {p.poliza_group_key for p in payloads} == {f"informe:{informe.id}"}
+        assert [p.fecha for p in payloads] == [expense.fecha, second.fecha]
 
 
 @pytest.mark.asyncio

@@ -4669,21 +4669,6 @@ async def _build_coi_exportable_lote_rows(
                 expenses = await _load_documento_active_coi_expenses(
                     session, documento
                 )
-                period_ids = {expense.id for expense in period_expenses}
-                outside_period = [
-                    expense for expense in expenses if expense.id not in period_ids
-                ]
-                if outside_period:
-                    references = ", ".join(
-                        expense.numero_referencia or str(expense.id)[:8]
-                        for expense in outside_period[:6]
-                    )
-                    if len(outside_period) > 6:
-                        references += f" y {len(outside_period) - 6} más"
-                    block_reasons.append(
-                        "El informe contiene partidas de otro periodo contable: "
-                        + references
-                    )
             if not expenses:
                 continue
             if tipo_lote != "INFORME":
@@ -34653,22 +34638,6 @@ async def _build_documento_coi_bundle(
                 return documento, expenses, cut_expense_cfdis(cut)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-        accounting_periods = {
-            (expense.fecha.year, expense.fecha.month)
-            for expense in expenses
-            if expense.fecha is not None
-        }
-        if len(accounting_periods) > 1:
-            period_labels = ", ".join(
-                f"{year}-{month:02d}" for year, month in sorted(accounting_periods)
-            )
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "No se generó una póliza parcial. Las partidas del Informe de "
-                    f"Gastos pertenecen a más de un periodo contable: {period_labels}."
-                ),
-            )
 
     expense_cfdi_list: list[ExpenseCFDI] = []
     ready_expenses: list[ExpenseReport] = []
