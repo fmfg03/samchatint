@@ -313,3 +313,13 @@ Prefer canonical services and read models. Do not add another direct query or mu
 ## 17. Final conclusion
 
 SamChat has crossed the threshold from a collection of modules into a substantial operational system with a coherent finance spine and a governed assistant architecture. The constraint is no longer raw feature absence. It is controlled convergence: one runtime truth, canonical workflow ownership, production reconciliation, UAT evidence, and contractual closure.
+
+## 18. Copa Telmex registration PostgreSQL candidate evidence
+
+Date: 2026-10-05
+
+Reason: human-approved first delivery of registration read-source consolidation; preserve the distinction between local candidate, production activation, and canonical intake. The final diff and this amendment were explicitly approved in the conversation.
+
+2026-10-05: candidato local de consolidación de inscripción, base `d548d148f7521988587d6498b5461901c21a2ee3`. Catálogo explícito, proyección PostgreSQL compartida y exclusión de roster alterno. Evidencia: informe `docs/roadmap/ctt-postgres-registration-first-delivery.md`; 209 tests aprobados, cobertura de instrucciones modificadas 99,45 %, revisión independiente sin defectos pendientes. Calidad general parcial por deuda heredada de lint/tipos. Sin migración aplicada, despliegue ni importación; UAT pendiente.
+
+Evidence: `docs/roadmap/ctt-postgres-registration-first-delivery.md` and its scoped test and review receipts. This is an isolated-worktree candidate; merge, deployment, data application, authenticated UAT, and business acceptance remain separate.

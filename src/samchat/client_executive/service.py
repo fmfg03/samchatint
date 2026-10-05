@@ -8,6 +8,10 @@ from typing import Any, Optional
 
 from sqlalchemy import text
 
+from devnous.copa_telmex.registration_read_model import (
+    dispatch_registration_snapshot,
+)
+
 from samchat.budgets.service import budget_alias_candidates, build_budget_snapshot
 from samchat.sports_platform import build_director_general_entity_dossier
 from samchat.tournaments_v2.services import build_tournament_soul_snapshot
@@ -343,10 +347,13 @@ def _exact_name_snapshot_matches(
 
 
 async def _load_soul_snapshot(
-    tournament: dict[str, str], *, edition_year: int
+    tournament: dict[str, str], *, edition_year: int, include_registration: bool = True
 ) -> tuple[Optional[dict[str, Any]], str]:
     """Resolve SOUL without allowing display names to broaden Direction scope."""
     observed_wrong_edition = False
+    registration_options: dict[str, Any] = (
+        {} if include_registration else {"include_registration": False}
+    )
     try:
         uuid_snapshot = await build_tournament_soul_snapshot(
             tournament_key="all",
@@ -354,6 +361,7 @@ async def _load_soul_snapshot(
             include_communications=False,
             include_media=True,
             limit=1000,
+            **registration_options,
         )
     except TournamentsV2Error:
         uuid_snapshot = None
@@ -379,6 +387,7 @@ async def _load_soul_snapshot(
                 include_communications=False,
                 include_media=True,
                 limit=1000,
+                **registration_options,
             )
         except TournamentsV2Error:
             name_snapshot = None
@@ -401,9 +410,15 @@ async def _build_operational_dossier(
     tournament: dict[str, str],
     *,
     edition_year: int,
+    include_registration: bool = True,
 ) -> dict[str, Any]:
     """Build one strictly tournament-scoped dossier without operational writes."""
-    snapshot, bridge = await _load_soul_snapshot(tournament, edition_year=edition_year)
+    registration_options: dict[str, Any] = (
+        {} if include_registration else {"include_registration": False}
+    )
+    snapshot, bridge = await _load_soul_snapshot(
+        tournament, edition_year=edition_year, **registration_options
+    )
     if snapshot is None:
         unavailable = _unavailable_dossier(tournament)
         if bridge == "edition_unavailable":
@@ -414,7 +429,18 @@ async def _build_operational_dossier(
             ]
         return unavailable
 
-    dossier = build_director_general_entity_dossier(snapshot)
+    dossier = (
+        build_director_general_entity_dossier(snapshot)
+        if include_registration
+        else {
+            "read_only": True,
+            "schema_version": "samchat.dg_entity_dossier.v1",
+            "source": "tournament_soul_snapshot",
+            "summary": {},
+            "entities": [],
+            "non_claims": ["La inscripción se consulta por separado desde SamChat."],
+        }
+    )
     soul = snapshot.get("soul") if isinstance(snapshot.get("soul"), dict) else {}
     optional_sources = snapshot.get("optional_sources")
     optional_sources = optional_sources if isinstance(optional_sources, dict) else {}
@@ -689,10 +715,22 @@ async def build_client_dashboard(
         )
         card = _executive_card(tournament, snapshot)
         if include_operational_detail:
+            registration = await dispatch_registration_snapshot(
+                session,
+                tournament_id=tournament["id"],
+                edition_year=edition_year,
+            )
+            dossier_options: dict[str, Any] = (
+                {} if registration is None else {"include_registration": False}
+            )
             card["dossier"] = await _build_operational_dossier(
                 tournament,
                 edition_year=edition_year,
+                **dossier_options,
             )
+            if registration is not None:
+                card["registration"] = registration
+                card["dossier"]["registration_source"] = registration["source"]
         cards.append(card)
 
     return {
@@ -701,6 +739,7 @@ async def build_client_dashboard(
         "cards": cards,
         "data_boundary": {
             "operations": "tournament_soul_snapshot",
+            "registration": "postgres_registration_for_configured_editions",
             "budget": "samchat.budgets.service.build_budget_snapshot",
             "entity_finance": "pending_finance_entity_bridge",
             "writes": False,

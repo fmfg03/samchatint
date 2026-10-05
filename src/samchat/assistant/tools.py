@@ -21,6 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from devnous.copa_telmex.models import Player, Team
+from samchat.assistant.registration_postgres_adapter import (
+    registration_postgres_response,
+)
 from devnous.gastos.models import (
     AccountingAuditLog,
     AccountingClosePeriod,
@@ -2351,11 +2354,26 @@ async def tournament_registration_breakdown(
     state: str,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    tournament_id: Optional[str] = None,
+    edition_year: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Count teams and players for a tournament by state and municipality."""
     state = (state or "").strip()
     if not state:
         raise ValueError("state is required")
+
+    postgres = await registration_postgres_response(
+        session,
+        projection="breakdown",
+        tournament_key=tournament_key,
+        tournament_id=tournament_id,
+        edition_year=edition_year,
+        state=state,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    if postgres is not None:
+        return postgres
 
     reads_enabled, fallback_to_legacy = _tournaments_v2_read_flags()
     if reads_enabled:
@@ -2390,7 +2408,6 @@ async def tournament_registration_breakdown(
         date_from=date_from,
         date_to=date_to,
     )
-
 
 async def _tournament_registration_executive_reports_legacy(
     session: AsyncSession,
@@ -2477,8 +2494,22 @@ async def tournament_registration_executive_reports(
     tournament_key: str,
     tournament_slug: Optional[str] = None,
     as_of_date: Optional[str] = None,
+    tournament_id: Optional[str] = None,
+    edition_year: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Build director-facing reports from captured registrations."""
+    postgres = await registration_postgres_response(
+        session,
+        projection="executive_reports",
+        tournament_key=tournament_key,
+        tournament_id=tournament_id,
+        edition_year=edition_year,
+        tournament_slug=tournament_slug,
+        as_of_date=as_of_date,
+    )
+    if postgres is not None:
+        return postgres
+
     reads_enabled, fallback_to_legacy = _tournaments_v2_read_flags()
     if reads_enabled:
         try:
@@ -2510,7 +2541,6 @@ async def tournament_registration_executive_reports(
         as_of_date=as_of_date,
     )
 
-
 async def tournament_ops_query(
     session: AsyncSession,
     *,
@@ -2525,6 +2555,8 @@ async def tournament_ops_query(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     limit: int = 50,
+    tournament_id: Optional[str] = None,
+    edition_year: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Universal read-only query for tournament operational data.
@@ -2532,6 +2564,26 @@ async def tournament_ops_query(
     Returns totals plus multiple breakdowns so the LLM can answer a wide range of
     questions without needing one tool per question pattern.
     """
+    postgres = await registration_postgres_response(
+        session,
+        projection="operations",
+        tournament_key=tournament_key,
+        tournament_id=tournament_id,
+        edition_year=edition_year,
+        question=question,
+        state=state,
+        municipality=municipality,
+        category=category,
+        gender=gender,
+        team_name=team_name,
+        tournament_slug=tournament_slug,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+    )
+    if postgres is not None:
+        return postgres
+
     reads_enabled, fallback_to_legacy = _tournaments_v2_read_flags()
     if reads_enabled:
         try:
@@ -2585,7 +2637,6 @@ async def tournament_ops_query(
         date_to=date_to,
         limit=limit,
     )
-
 
 async def tournament_schedule_create(
     *,

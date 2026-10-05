@@ -47,6 +47,18 @@ def _entity_matches(entity: Dict[str, Any], entity_key: str) -> bool:
 def build_compliance_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     """Summarize document compliance in stable SOUL language."""
 
+    if snapshot.get("registration_status") == "handled_elsewhere":
+        return {
+            "status": "handled_elsewhere",
+            "players_count": None,
+            "documents_complete_players": None,
+            "documents_verified_players": None,
+            "completion_rate": None,
+            "verification_rate": None,
+            "teams_with_incomplete_documents": None,
+            "incomplete_entities": [],
+            "incomplete_teams": [],
+        }
     summary = snapshot.get("summary") or {}
     players_count = int(summary.get("players_count") or 0)
     complete_players = int(summary.get("document_players_complete") or 0)
@@ -209,8 +221,10 @@ def build_marketing_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     media = dict(marketing.get("media") or {})
     return {
         "media": media,
-        "team_marketing_profiles_count": int(
-            marketing.get("team_marketing_profiles_count") or 0
+        "team_marketing_profiles_count": (
+            None
+            if snapshot.get("registration_status") == "handled_elsewhere"
+            else int(marketing.get("team_marketing_profiles_count") or 0)
         ),
         "communications": communications,
         "activation_evidence_ready": bool(
@@ -267,9 +281,10 @@ def _entity_pending_actions(entity: Dict[str, Any]) -> list[str]:
 def _global_pending_actions(snapshot: Dict[str, Any]) -> list[str]:
     summary = snapshot.get("summary") or {}
     pending: list[str] = []
-    if not int(summary.get("teams_count") or 0):
+    registration_included = snapshot.get("registration_status") != "handled_elsewhere"
+    if registration_included and not int(summary.get("teams_count") or 0):
         pending.append("Registrar equipos reales para activar carpetas por entidad.")
-    if not int(summary.get("players_count") or 0):
+    if registration_included and not int(summary.get("players_count") or 0):
         pending.append("Registrar jugadores para calcular cumplimiento documental.")
     if not int(summary.get("matches_count") or 0):
         pending.append("Cargar o generar calendario para rondas y fase nacional.")
@@ -308,7 +323,9 @@ def _risk_register(snapshot: Dict[str, Any]) -> list[Dict[str, Any]]:
                 "message": "No hay calendario/partidos en el snapshot canonico.",
             }
         )
-    if not int(summary.get("teams_count") or 0):
+    if snapshot.get("registration_status") != "handled_elsewhere" and not int(
+        summary.get("teams_count") or 0
+    ):
         risks.append(
             {
                 "severity": "medium",
@@ -362,6 +379,7 @@ async def build_tournament_soul_snapshot(
     tournament_name: Optional[str] = None,
     include_communications: bool = True,
     include_media: bool = True,
+    include_registration: bool = True,
     limit: int = 250,
     client: Optional[SupabaseRestClient] = None,
 ) -> Dict[str, Any]:
@@ -370,6 +388,7 @@ async def build_tournament_soul_snapshot(
     The underlying adapter remains the canonical read-only data fetcher. This
     service adds operational language, folder seeds, compliance, national phase,
     marketing and finance bridge sections without changing the legacy keys.
+    Registration excluded by the caller remains explicitly unavailable here.
     """
 
     snapshot = await tournament_soul_snapshot_v2(
@@ -378,6 +397,7 @@ async def build_tournament_soul_snapshot(
         tournament_name=tournament_name,
         include_communications=include_communications,
         include_media=include_media,
+        include_registration=include_registration,
         limit=limit,
         client=client,
     )
