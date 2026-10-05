@@ -175,38 +175,69 @@ def test_coi_blocked_report_has_no_selectable_partial_policy():
     assert "Bloqueada: O-1: falta cuenta contable" in html
 
 
-def test_blocked_amex_report_links_existing_review_workpaper():
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("role", "owns_account", "can_download"),
+    [
+        ("finanzas", False, True),
+        ("operaciones", True, True),
+        ("operaciones", False, False),
+    ],
+)
+async def test_blocked_amex_report_links_only_readable_review_workpaper(
+    role, owns_account, can_download
+):
     cuenta_id, documento_id, expense_id = uuid4(), uuid4(), uuid4()
+    rows = [
+        {
+            "tipo_lote": "INFORME",
+            "documento": SimpleNamespace(
+                id=documento_id,
+                cuenta_gastos_id=cuenta_id,
+                numero_referencia="I-AMEX",
+                estado="aprobado",
+            ),
+            "expenses": [
+                SimpleNamespace(
+                    id=expense_id,
+                    numero_referencia="O-AMEX",
+                    concepto="Cargo AMEX",
+                    gasto_cantidad=100,
+                    fecha=datetime(2026, 8, 20),
+                    pagado_con_amex_empresa=True,
+                )
+            ],
+            "period_label": "2026-08",
+            "can_export": False,
+            "block_reason": "Falta corte AMEX",
+        }
+    ]
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=SimpleNamespace(
+                scalars=lambda: SimpleNamespace(
+                    all=lambda: [cuenta_id] if owns_account else []
+                )
+            )
+        )
+    )
+    allowed_ids = await user_routes._coi_readable_workpaper_account_ids(
+        session,
+        rows,
+        SimpleNamespace(
+            id=uuid4(),
+            rol=role,
+            correo="",
+            permissions={"finanzas.manage"} if role == "operaciones" else set(),
+        ),
+    )
     html = user_routes._render_coi_exportable_lote_rows_html(
-        [
-            {
-                "tipo_lote": "INFORME",
-                "documento": SimpleNamespace(
-                    id=documento_id,
-                    cuenta_gastos_id=cuenta_id,
-                    numero_referencia="I-AMEX",
-                    estado="aprobado",
-                ),
-                "expenses": [
-                    SimpleNamespace(
-                        id=expense_id,
-                        numero_referencia="O-AMEX",
-                        concepto="Cargo AMEX",
-                        gasto_cantidad=100,
-                        fecha=datetime(2026, 8, 20),
-                        pagado_con_amex_empresa=True,
-                    )
-                ],
-                "period_label": "2026-08",
-                "can_export": False,
-                "block_reason": "Falta corte AMEX",
-            }
-        ]
+        rows, readable_workpaper_account_ids=allowed_ids
     )
 
     assert "Bloqueada: Falta corte AMEX" in html
-    assert f'/informes-de-gastos/{cuenta_id}/papel-poliza.xlsx' in html
-    assert "Descargar papel de revisión" in html
+    assert (f'/informes-de-gastos/{cuenta_id}/papel-poliza.xlsx' in html) is can_download
+    assert ("Descargar papel de revisión" in html) is can_download
     assert 'name="selected_documento_id"' not in html
 
 

@@ -4831,10 +4831,40 @@ def _render_coi_expense_status_form(
     )
 
 
+async def _coi_readable_workpaper_account_ids(
+    session: AsyncSession,
+    rows: List[dict[str, Any]],
+    empleado: Empleado,
+) -> set[str]:
+    """Limit review links to accounts this Finance viewer can already read."""
+    candidate_ids = {
+        row["documento"].cuenta_gastos_id
+        for row in rows
+        if row.get("tipo_lote") == "INFORME"
+        and not row.get("can_export")
+        and row["documento"].cuenta_gastos_id
+        and any(is_company_amex_expense(expense) for expense in row.get("expenses") or [])
+    }
+    if not candidate_ids:
+        return set()
+    if _can_view_all_cuentas_de_gastos(empleado):
+        return {str(account_id) for account_id in candidate_ids}
+    owned_accounts = (
+        await session.execute(
+            select(CuentaDeGastos.id).where(
+                CuentaDeGastos.id.in_(candidate_ids),
+                CuentaDeGastos.empleado_id == empleado.id,
+            )
+        )
+    ).scalars().all()
+    return {str(account_id) for account_id in owned_accounts}
+
+
 def _render_coi_exportable_lote_rows_html(
     rows: List[dict[str, Any]],
     *,
     return_to: str = "/admin/contabilidad/coi",
+    readable_workpaper_account_ids: Optional[set[str]] = None,
 ) -> str:
     if not rows:
         return (
@@ -4919,7 +4949,12 @@ def _render_coi_exportable_lote_rows_html(
                     f' <a href="/informes-de-gastos/{documento.cuenta_gastos_id}/papel-poliza.xlsx" '
                     'title="Papel de revisión; no contabilizado">'
                     "Descargar papel de revisión</a>"
-                    if is_amex_report and documento.cuenta_gastos_id
+                    if (
+                        is_amex_report
+                        and documento.cuenta_gastos_id
+                        and str(documento.cuenta_gastos_id)
+                        in (readable_workpaper_account_ids or set())
+                    )
                     else ""
                 )
             )
@@ -5232,6 +5267,9 @@ async def contabilidad_coi_view(
         end_date=end_date,
         search_q=selected_q,
     )
+    workpaper_account_ids = await _coi_readable_workpaper_account_ids(
+        session, exportable_rows, current_empleado
+    )
     exportable_document_ids = {str(row["documento"].id) for row in exportable_rows}
     exportable_expense_count = sum(
         len(row.get("expenses") or []) for row in exportable_rows
@@ -5249,7 +5287,9 @@ async def contabilidad_coi_view(
         }
     )
     exportable_rows_html = _render_coi_exportable_lote_rows_html(
-        exportable_rows, return_to=return_to
+        exportable_rows,
+        return_to=return_to,
+        readable_workpaper_account_ids=workpaper_account_ids,
     )
 
     conditions = []
