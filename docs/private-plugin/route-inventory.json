@@ -18972,7 +18972,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 683,
       "handler": "api_contabilidad_historica_snapshot",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/api/contabilidad/historica/snapshot"
@@ -19024,7 +19024,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 720,
       "handler": "api_contabilidad_historica_empresas",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/api/contabilidad/historica/empresas"
@@ -19075,7 +19075,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 745,
       "handler": "api_contabilidad_historica_cobertura",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/api/contabilidad/historica/cobertura"
@@ -19127,7 +19127,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 773,
       "handler": "api_contabilidad_historica_comparativo",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/api/contabilidad/historica/comparativo"
@@ -19182,7 +19182,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 804,
       "handler": "api_contabilidad_historica_reporte",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/api/contabilidad/historica/reporte"
@@ -19240,7 +19240,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 858,
       "handler": "contabilidad_historica_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/historica"
@@ -19320,7 +19320,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 1570,
       "handler": "control_accesos_page",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/control-accesos"
@@ -19398,7 +19398,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 1703,
       "handler": "control_accesos_save_rule",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/control-accesos/rules"
@@ -19487,7 +19487,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 1740,
       "handler": "authorization_strategy_warnings_page",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/estrategias-autorizacion/warnings"
@@ -19578,7 +19578,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 1955,
       "handler": "estrategias_autorizacion_page",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/estrategias-autorizacion"
@@ -19657,7 +19657,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 2117,
       "handler": "estrategias_autorizacion_copy_profile",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/estrategias-autorizacion/perfiles/{profile_id}/copiar"
@@ -19741,7 +19741,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 2144,
       "handler": "estrategias_autorizacion_save_rules",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/estrategias-autorizacion/perfiles/{profile_id}/reglas"
@@ -19827,7 +19827,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 2174,
       "handler": "puestos_autorizacion_page",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/puestos-autorizacion"
@@ -19892,7 +19892,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 2187,
       "handler": "guardar_puestos_autorizacion",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/puestos-autorizacion/{position_key}"
@@ -19962,7 +19962,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 3206,
       "handler": "nomina_patrones_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/nomina/patrones"
@@ -20042,7 +20042,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 3312,
       "handler": "nomina_patrones_create",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/nomina/patrones"
@@ -20132,7 +20132,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 3337,
       "handler": "nomina_patrones_registros_create",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/nomina/patrones/registros"
@@ -20226,7 +20226,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 3374,
       "handler": "nomina_cuentas_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/nomina/cuentas"
@@ -20306,7 +20306,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 3524,
       "handler": "nomina_cuentas_create",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/nomina/cuentas"
@@ -20396,7 +20396,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 3556,
       "handler": "nomina_cfdi_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/nomina/cfdi"
@@ -20479,7 +20479,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 3680,
       "handler": "nomina_cfdi_mapping_save",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/nomina/cfdi/mapping/save"
@@ -20569,7 +20569,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 3732,
       "handler": "nomina_empleados_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/nomina/empleados"
@@ -20649,7 +20649,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 4053,
       "handler": "contabilidad_ingresos_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/ingresos"
@@ -20731,7 +20731,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 4200,
       "handler": "contabilidad_ingresos_save",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/ingresos"
@@ -20819,7 +20819,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 5038,
       "handler": "exportar_coi_gastos_lote_xlsx_legacy",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/coi/exportar-gastos-lote.xlsx"
@@ -20900,7 +20900,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 5057,
       "handler": "exportar_coi_gastos_lote_xlsx",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/coi/exportar-gastos-lote.xlsx"
@@ -20992,7 +20992,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 5196,
       "handler": "exportar_coi_gastos_lote_zip",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/coi/exportar-gastos-lote.zip"
@@ -21073,7 +21073,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 5214,
       "handler": "contabilidad_coi_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/coi"
@@ -21159,7 +21159,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 5533,
       "handler": "actualizar_estado_coi_gasto",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/coi/gastos/{expense_id}/estado"
@@ -21247,7 +21247,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 5571,
       "handler": "contabilidad_manual_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/manual"
@@ -21332,7 +21332,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 5888,
       "handler": "contabilidad_manual_save",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/manual"
@@ -21419,7 +21419,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 6107,
       "handler": "contabilidad_manual_delete",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/manual/{poliza_id}/delete"
@@ -21510,7 +21510,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 6166,
       "handler": "contabilidad_diario_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/diario"
@@ -21594,7 +21594,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 6304,
       "handler": "contabilidad_diario_export",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/diario/export"
@@ -21678,7 +21678,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 6385,
       "handler": "contabilidad_diario_export_csv",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/diario/export.csv"
@@ -21762,7 +21762,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 6456,
       "handler": "contabilidad_diario_export_pdf",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/diario/export.pdf"
@@ -21846,7 +21846,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 6583,
       "handler": "contabilidad_coi_poliza_detail",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/coi/{poliza_id}"
@@ -21927,7 +21927,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 6731,
       "handler": "contabilidad_coi_poliza_edit",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/coi/{poliza_id}/editar"
@@ -22020,7 +22020,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 6781,
       "handler": "contabilidad_mayor_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/mayor"
@@ -22104,7 +22104,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 6950,
       "handler": "contabilidad_mayor_export",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/mayor/export"
@@ -22188,7 +22188,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 7028,
       "handler": "contabilidad_mayor_export_pdf",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/mayor/export.pdf"
@@ -22272,7 +22272,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 7132,
       "handler": "contabilidad_balanza_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/balanza"
@@ -22355,7 +22355,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 7273,
       "handler": "contabilidad_balanza_export",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/balanza/export"
@@ -22438,7 +22438,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 7340,
       "handler": "contabilidad_balanza_export_pdf",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/balanza/export.pdf"
@@ -22521,7 +22521,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 7453,
       "handler": "contabilidad_estado_mes_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/estado"
@@ -22603,7 +22603,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 7575,
       "handler": "contabilidad_coi_line_set_account",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/coi/lineas/{line_id}/cuenta"
@@ -22696,7 +22696,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 7671,
       "handler": "contabilidad_cierres_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/cierres"
@@ -22781,7 +22781,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 7864,
       "handler": "contabilidad_auditoria_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/auditoria"
@@ -22864,7 +22864,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 7961,
       "handler": "contabilidad_cierre_checklist_update",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/cierres/checklist/{item_id}"
@@ -22953,7 +22953,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 8019,
       "handler": "contabilidad_cierre_cerrar",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/cierres/{fiscal_year}/{fiscal_month}/cerrar"
@@ -23046,7 +23046,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 8129,
       "handler": "contabilidad_cierre_reabrir",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/cierres/{fiscal_year}/{fiscal_month}/reabrir"
@@ -23137,7 +23137,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 8182,
       "handler": "contabilidad_cierre_export_package",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/cierres/export"
@@ -23220,7 +23220,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 8449,
       "handler": "contabilidad_cierre_export_zip",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/cierres/export.zip"
@@ -23302,7 +23302,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 8512,
       "handler": "contabilidad_reclasificacion_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/reclasificacion"
@@ -23389,7 +23389,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 8690,
       "handler": "contabilidad_reclasificacion_apply",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/reclasificacion/aplicar"
@@ -23483,7 +23483,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 8806,
       "handler": "nomina_empleados_create",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/nomina/empleados"
@@ -23650,7 +23650,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 9022,
       "handler": "nomina_periodos_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/nomina/periodos"
@@ -23730,7 +23730,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 9082,
       "handler": "nomina_periodos_create",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/nomina/periodos"
@@ -23823,7 +23823,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 9120,
       "handler": "nomina_incidencias_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/nomina/incidencias"
@@ -23904,7 +23904,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 9234,
       "handler": "nomina_incidencias_create",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/nomina/incidencias"
@@ -23997,7 +23997,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 9266,
       "handler": "nomina_prenomina_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/nomina/prenomina"
@@ -24079,7 +24079,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 9536,
       "handler": "nomina_prenomina_calcular",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/nomina/prenomina/calcular"
@@ -24163,7 +24163,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 9562,
       "handler": "nomina_prenomina_export",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/nomina/prenomina/export"
@@ -24244,7 +24244,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 9616,
       "handler": "nomina_prenomina_pagos_export",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/nomina/prenomina/pagos/export"
@@ -24327,7 +24327,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 9660,
       "handler": "nomina_prenomina_mapping_export",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/nomina/prenomina/mapping/export"
@@ -24408,7 +24408,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 9699,
       "handler": "nomina_prenomina_recibo_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/nomina/prenomina/recibo"
@@ -24491,7 +24491,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 9956,
       "handler": "nomina_prenomina_generar_poliza",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/nomina/prenomina/poliza/generar"
@@ -24575,7 +24575,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 10005,
       "handler": "nomina_periodos_cerrar",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/nomina/periodos/cerrar"
@@ -24659,7 +24659,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 10028,
       "handler": "nomina_beneficios_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/nomina/beneficios"
@@ -24742,7 +24742,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 10175,
       "handler": "nomina_beneficios_update",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/nomina/beneficios/{rule_id}"
@@ -24836,7 +24836,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 11026,
       "handler": "employee_bank_accounts_for_beneficiary",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/api/empleados/{beneficiario_id}/cuentas-bancarias"
@@ -24887,7 +24887,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 12040,
       "handler": "api_cantidad_en_letra",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/api/cantidad-en-letra"
@@ -24939,7 +24939,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 12297,
       "handler": "api_customer_success_heartbeat",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/api/customer-success/heartbeat"
@@ -24992,7 +24992,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 13149,
       "handler": "panel_cambiar_contrasena_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/panel/cambiar-contrasena"
@@ -25059,7 +25059,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 13261,
       "handler": "panel_telegram_console",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/panel/telegram-console"
@@ -25141,7 +25141,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 13802,
       "handler": "panel_telegram_console_send_pending",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/panel/telegram-console/enviar-pendientes"
@@ -25224,7 +25224,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 13822,
       "handler": "panel_telegram_status",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/panel/telegram-status"
@@ -25303,7 +25303,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 14000,
       "handler": "panel_mi_telegram_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/panel/mi-telegram"
@@ -25384,7 +25384,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 14117,
       "handler": "panel_mi_telegram_post",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/panel/mi-telegram"
@@ -25470,7 +25470,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 14394,
       "handler": "beneficiary_onboarding_new_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/beneficiarios/altas/nueva"
@@ -25520,7 +25520,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 14623,
       "handler": "beneficiary_onboarding_create",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/beneficiarios/altas/nueva"
@@ -25597,7 +25597,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 14725,
       "handler": "beneficiary_onboarding_mine",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/beneficiarios/altas"
@@ -25647,7 +25647,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 14743,
       "handler": "beneficiary_onboarding_area_queue",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/beneficiarios/altas/area"
@@ -25697,7 +25697,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 14761,
       "handler": "beneficiary_onboarding_area_action",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/beneficiarios/altas/{request_id}/area/{action}"
@@ -25756,7 +25756,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 14790,
       "handler": "beneficiary_onboarding_final_queue",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/beneficiarios/altas/revision-final"
@@ -25806,7 +25806,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 14810,
       "handler": "beneficiary_onboarding_final_action",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/beneficiarios/altas/{request_id}/final/{action}"
@@ -25865,7 +25865,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 14839,
       "handler": "beneficiary_onboarding_attachment_download",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/beneficiarios/altas/{request_id}/adjuntos/{attachment_id}"
@@ -25917,7 +25917,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 14891,
       "handler": "panel_cambiar_contrasena_post",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/panel/cambiar-contrasena"
@@ -25991,7 +25991,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 14941,
       "handler": "panel_operaciones_console",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/panel/operaciones-console"
@@ -26080,7 +26080,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 15756,
       "handler": "panel",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/panel"
@@ -26149,7 +26149,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 16086,
       "handler": "mis_gastos",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/gastos/mis-gastos"
@@ -26216,7 +26216,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 16104,
       "handler": "gastos_empleado",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/gastos-empleado"
@@ -26266,7 +26266,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 16122,
       "handler": "gastos_personales",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/gastos-personales"
@@ -26316,7 +26316,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 16264,
       "handler": "prestamos_list",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/prestamos"
@@ -26368,7 +26368,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 16409,
       "handler": "prestamo_new_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/prestamos/nuevo"
@@ -26418,7 +26418,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 16654,
       "handler": "prestamo_create",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/prestamos"
@@ -26475,7 +26475,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 16689,
       "handler": "prestamo_register_abono_from_new_request_route",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/prestamos/abonos"
@@ -26535,7 +26535,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 16743,
       "handler": "prestamo_edit_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/prestamos/{prestamo_id}/editar"
@@ -26586,7 +26586,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 16893,
       "handler": "prestamo_edit",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/prestamos/{prestamo_id}/editar"
@@ -26642,7 +26642,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 16933,
       "handler": "prestamo_detail",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/prestamos/{prestamo_id}"
@@ -26696,7 +26696,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 17223,
       "handler": "prestamo_submit_route",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/prestamos/{prestamo_id}/enviar"
@@ -26752,7 +26752,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 17245,
       "handler": "prestamo_cancel_route",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/prestamos/{prestamo_id}/cancelar"
@@ -26808,7 +26808,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 17267,
       "handler": "prestamo_approve_route",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/prestamos/{prestamo_id}/aprobar"
@@ -26865,7 +26865,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 17296,
       "handler": "prestamo_reject_route",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/prestamos/{prestamo_id}/rechazar"
@@ -26922,7 +26922,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 17325,
       "handler": "prestamo_schedule_payment_route",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/prestamos/{prestamo_id}/programar-pago"
@@ -26978,7 +26978,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 17348,
       "handler": "prestamo_assign_debtor_account_route",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/prestamos/{prestamo_id}/cuenta-deudor"
@@ -27035,7 +27035,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 17377,
       "handler": "prestamo_upload_payment_proof_route",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/prestamos/{prestamo_id}/comprobante-pago"
@@ -27092,7 +27092,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 17449,
       "handler": "prestamo_register_abono_route",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/prestamos/{prestamo_id}/abonos"
@@ -27152,7 +27152,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 17503,
       "handler": "prestamo_approve_abono_route",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/prestamos/abonos/{abono_id}/aprobar"
@@ -27209,7 +27209,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 17537,
       "handler": "prestamo_reject_abono_route",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/prestamos/abonos/{abono_id}/rechazar"
@@ -27266,7 +27266,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 17568,
       "handler": "gastos_terceros",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/gastos-terceros"
@@ -27339,7 +27339,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 17933,
       "handler": "solicitar_anticipo_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/gastos-terceros/solicitar-anticipo"
@@ -27410,7 +27410,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 18312,
       "handler": "solicitar_anticipo_submit",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/gastos-terceros/solicitar-anticipo"
@@ -27488,7 +27488,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 18566,
       "handler": "get_eligibles_informe",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/api/documentos/eligibles-informe"
@@ -27539,7 +27539,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 18640,
       "handler": "nuevo_gasto_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/gastos/nuevo"
@@ -27606,7 +27606,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 19512,
       "handler": "crear_gasto",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/gastos/nuevo"
@@ -27704,7 +27704,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 19924,
       "handler": "carga_masiva_amex_get",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/gastos/carga-masiva-amex"
@@ -27770,7 +27770,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 20152,
       "handler": "carga_masiva_amex_post",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/gastos/carga-masiva-amex"
@@ -27845,7 +27845,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 20585,
       "handler": "amex_card_accounts_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/gastos/amex/tarjetas"
@@ -27922,7 +27922,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 20663,
       "handler": "amex_card_accounts_save",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/gastos/amex/tarjetas"
@@ -28008,7 +28008,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 20704,
       "handler": "amex_conciliacion_bind_consumption",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/gastos/amex/conciliacion/vincular-consumo"
@@ -28109,7 +28109,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 20763,
       "handler": "amex_conciliacion_link_cfdi",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/gastos/amex/conciliacion/vincular-cfdi"
@@ -28210,7 +28210,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 20816,
       "handler": "amex_conciliacion_link_cfdi_bulk",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/gastos/amex/conciliacion/vincular-cfdi-masivo"
@@ -28310,7 +28310,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 20888,
       "handler": "amex_conciliacion_link_pase_monthly_cfdi",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/gastos/amex/conciliacion/vincular-pase-mensual"
@@ -28411,7 +28411,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 20947,
       "handler": "amex_conciliacion_schedule_card_payment",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/gastos/amex/conciliacion/programar-pago"
@@ -28511,7 +28511,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 20991,
       "handler": "amex_conciliacion_validate_notify",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/gastos/amex/conciliacion/validar-notificar"
@@ -28611,7 +28611,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 21055,
       "handler": "amex_conciliacion_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/gastos/amex/conciliacion"
@@ -28706,7 +28706,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 21628,
       "handler": "contabilidad_cuentas_por_cobrar_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/cuentas-por-cobrar"
@@ -28799,7 +28799,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 22075,
       "handler": "contabilidad_cxc_assign_cfdi_income_tournament",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/cuentas-por-cobrar/cfdi-ingresos/assign"
@@ -28888,7 +28888,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 22119,
       "handler": "contabilidad_cuentas_por_pagar_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/cuentas-por-pagar"
@@ -28972,7 +28972,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 22334,
       "handler": "contabilidad_cash_flow_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/cash-flow"
@@ -29070,7 +29070,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 23263,
       "handler": "contabilidad_cash_flow_export_xlsx",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/cash-flow/export.xlsx"
@@ -29166,7 +29166,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 23830,
       "handler": "contabilidad_tesoreria_matches_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/tesoreria-matches"
@@ -29253,7 +29253,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 24267,
       "handler": "contabilidad_tesoreria_matches_accept",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/tesoreria-matches/accept"
@@ -29348,7 +29348,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 24441,
       "handler": "contabilidad_tesoreria_payment_request_accept",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/tesoreria-matches/accept-payment-request"
@@ -29439,7 +29439,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 24490,
       "handler": "contabilidad_tesoreria_matches_undo",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/tesoreria-matches/{movement_id}/undo"
@@ -29532,7 +29532,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 24569,
       "handler": "contabilidad_tesoreria_matches_export_xlsx",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/tesoreria-matches/export.xlsx"
@@ -29619,7 +29619,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 24839,
       "handler": "contabilidad_conciliacion_view",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/conciliacion"
@@ -29706,7 +29706,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 25406,
       "handler": "contabilidad_conciliacion_recalculate_bank",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/conciliacion/recalculate-bank"
@@ -29792,7 +29792,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 25459,
       "handler": "contabilidad_conciliacion_seed_and_recalculate",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/conciliacion/seed-and-recalculate"
@@ -29883,7 +29883,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 25796,
       "handler": "contabilidad_conciliacion_review",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/conciliacion/{movement_id}"
@@ -29964,7 +29964,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 26232,
       "handler": "contabilidad_conciliacion_accept",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/conciliacion/{movement_id}/accept"
@@ -30050,7 +30050,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 26256,
       "handler": "contabilidad_conciliacion_reject",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/conciliacion/{movement_id}/reject"
@@ -30136,7 +30136,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 26284,
       "handler": "contabilidad_conciliacion_link_aux",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/conciliacion/{movement_id}/link-aux"
@@ -30223,7 +30223,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 26317,
       "handler": "contabilidad_conciliacion_link_expense",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/conciliacion/{movement_id}/link-expense"
@@ -30310,7 +30310,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 26349,
       "handler": "contabilidad_conciliacion_link_proveedor",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/conciliacion/{movement_id}/link-proveedor"
@@ -30397,7 +30397,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 26385,
       "handler": "contabilidad_conciliacion_unlink_proveedor",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/conciliacion/{movement_id}/unlink-proveedor"
@@ -30483,7 +30483,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 26410,
       "handler": "contabilidad_conciliacion_unlink_aux",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/conciliacion/{movement_id}/unlink-aux"
@@ -30569,7 +30569,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 26436,
       "handler": "contabilidad_conciliacion_unlink_expense",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/conciliacion/{movement_id}/unlink-expense"
@@ -30655,7 +30655,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 26461,
       "handler": "contabilidad_conciliacion_bulk",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/conciliacion/bulk"
@@ -30742,7 +30742,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 26519,
       "handler": "contabilidad_conciliacion_auditoria",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/conciliacion/auditoria"
@@ -30824,7 +30824,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 26673,
       "handler": "contabilidad_conciliacion_auditoria_export",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/conciliacion/auditoria/export"
@@ -30906,7 +30906,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 26731,
       "handler": "contabilidad_conciliacion_export",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/conciliacion/export"
@@ -30993,7 +30993,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 26831,
       "handler": "contabilidad_conciliacion_export_pdf",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/conciliacion/export.pdf"
@@ -31080,7 +31080,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 26981,
       "handler": "descargar_gasto_comprobante",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/gastos/{gasto_id}/comprobante"
@@ -31133,7 +31133,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 27017,
       "handler": "descargar_gasto_adjunto",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/gastos/{gasto_id}/adjuntos/{attachment_key}"
@@ -31187,7 +31187,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 27073,
       "handler": "descargar_documento_adjunto",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/{documento_id}/adjuntos/{adjunto_id}"
@@ -31260,7 +31260,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 27118,
       "handler": "ver_gasto",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/gastos/{gasto_id}"
@@ -31314,7 +31314,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 27501,
       "handler": "solicitar_cfdi",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/gastos/{gasto_id}/solicitar-cfdi"
@@ -31368,7 +31368,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 27630,
       "handler": "cancelar_gasto",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/gastos/{gasto_id}/cancelar"
@@ -31428,7 +31428,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 27773,
       "handler": "editar_gasto_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/gastos/{gasto_id}/editar"
@@ -31482,7 +31482,7 @@
       "source": "src/devnous/gastos/routes/user_routes.py",
       "line": 28494,
       "handler": "editar_gasto",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/gastos/{gasto_id}/editar"
@@ -31556,11 +31556,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "9aea1e613673",
+      "id": "3517148337b7",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 29296,
+      "line": 29297,
       "handler": "eliminar_comprobante_no_deducible",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/gastos/{gasto_id}/comprobante-no-deducible/eliminar"
@@ -31590,7 +31590,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:eliminar_comprobante_no_deducible",
-      "proposed_tool": "documents_and_other_eliminar_comprobante_no_deducible_po_9aea1e",
+      "proposed_tool": "documents_and_other_eliminar_comprobante_no_deducible_po_351714",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "gasto_id",
@@ -31614,11 +31614,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "2c1229dcdd17",
+      "id": "a1f7e6da681c",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 29350,
+      "line": 29351,
       "handler": "mis_documentos",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/mis-documentos"
@@ -31665,7 +31665,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:mis_documentos",
-      "proposed_tool": "documents_and_other_mis_documentos_get_2c1229",
+      "proposed_tool": "documents_and_other_mis_documentos_get_a1f7e6",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -31683,11 +31683,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "54527cadbcd1",
+      "id": "73121c5820e5",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 29720,
+      "line": 29721,
       "handler": "documentos_control_presupuestal",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/control-presupuestal"
@@ -31734,7 +31734,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:documentos_control_presupuestal",
-      "proposed_tool": "documents_and_other_documentos_control_presupuestal_get_54527c",
+      "proposed_tool": "documents_and_other_documentos_control_presupuestal_get_73121c",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -31753,11 +31753,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "1f3e83b8c76d",
+      "id": "2a7ee9c216b5",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 30280,
+      "line": 30281,
       "handler": "asignar_control_presupuestal",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/{documento_id}/control-presupuestal/asignar"
@@ -31806,7 +31806,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:asignar_control_presupuestal",
-      "proposed_tool": "documents_and_other_asignar_control_presupuestal_post_1f3e83",
+      "proposed_tool": "documents_and_other_asignar_control_presupuestal_post_2a7ee9",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -31830,11 +31830,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "c3d4094d8369",
+      "id": "8f0ca02273dd",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 30324,
+      "line": 30325,
       "handler": "asignar_control_presupuestal_lote",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/control-presupuestal/asignar-lote"
@@ -31885,7 +31885,7 @@
         "str(reject_documento_id).strip"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:asignar_control_presupuestal_lote",
-      "proposed_tool": "documents_and_other_asignar_control_presupuestal_lote_po_c3d409",
+      "proposed_tool": "documents_and_other_asignar_control_presupuestal_lote_po_8f0ca0",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -31911,11 +31911,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ded856ddd8af",
+      "id": "c3d10c8c6942",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 30537,
+      "line": 30538,
       "handler": "documentos_pendientes",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/pendientes"
@@ -31967,7 +31967,7 @@
         "document_route_approver_sql"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:documentos_pendientes",
-      "proposed_tool": "documents_and_other_documentos_pendientes_get_ded856",
+      "proposed_tool": "documents_and_other_documentos_pendientes_get_c3d10c",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -31989,11 +31989,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "caca1fed4db2",
+      "id": "3e64cf3e5fce",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 31001,
+      "line": 31002,
       "handler": "documentos_pendientes_accion_lote",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/pendientes/accion-lote"
@@ -32045,7 +32045,7 @@
         "{'approve': 'approve', 'reject': 'reject'}.get"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:documentos_pendientes_accion_lote",
-      "proposed_tool": "documents_and_other_documentos_pendientes_accion_lote_po_caca1f",
+      "proposed_tool": "documents_and_other_documentos_pendientes_accion_lote_po_3e64cf",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -32069,11 +32069,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "dcdb0c969d26",
+      "id": "3ccc307b822c",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 31385,
+      "line": 31386,
       "handler": "historial_aprobador",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/historial-aprobador"
@@ -32124,7 +32124,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:historial_aprobador",
-      "proposed_tool": "documents_and_other_historial_aprobador_get_dcdb0c",
+      "proposed_tool": "documents_and_other_historial_aprobador_get_3ccc30",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -32147,11 +32147,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "4b37367cc5e7",
+      "id": "eb66392d32ac",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 31797,
+      "line": 31798,
       "handler": "historial_aprobador_exportar_xlsx",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/historial-aprobador/exportar.xlsx"
@@ -32200,7 +32200,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:historial_aprobador_exportar_xlsx",
-      "proposed_tool": "documents_and_other_historial_aprobador_exportar_xlsx_ge_4b3736",
+      "proposed_tool": "documents_and_other_historial_aprobador_exportar_xlsx_ge_eb6639",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -32223,11 +32223,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "b59b6adfe2aa",
+      "id": "b5d14fbec031",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 32265,
+      "line": 32266,
       "handler": "documentos_todos",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/todos"
@@ -32278,7 +32278,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:documentos_todos",
-      "proposed_tool": "documents_and_other_documentos_todos_get_b59b6a",
+      "proposed_tool": "documents_and_other_documentos_todos_get_b5d14f",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -32304,11 +32304,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "705e7551bd24",
+      "id": "3635c8288154",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 32869,
+      "line": 32870,
       "handler": "documentos_todos_exportar_xlsx",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/todos/exportar.xlsx"
@@ -32355,7 +32355,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:documentos_todos_exportar_xlsx",
-      "proposed_tool": "documents_and_other_documentos_todos_exportar_xlsx_get_705e75",
+      "proposed_tool": "documents_and_other_documentos_todos_exportar_xlsx_get_3635c8",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -32381,11 +32381,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d7a7195f9e73",
+      "id": "dd9fcbfbabd1",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 32905,
+      "line": 32906,
       "handler": "documentos_todos_exportar_exceles_zip",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/todos/exportar-exceles.zip"
@@ -32432,7 +32432,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:documentos_todos_exportar_exceles_zip",
-      "proposed_tool": "documents_and_other_documentos_todos_exportar_exceles_zi_d7a719",
+      "proposed_tool": "documents_and_other_documentos_todos_exportar_exceles_zi_dd9fcb",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -32458,11 +32458,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "3c34f352bf54",
+      "id": "9d7d004b4dd1",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 32976,
+      "line": 32977,
       "handler": "nueva_solicitud_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/nueva-solicitud"
@@ -32509,7 +32509,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:nueva_solicitud_form",
-      "proposed_tool": "documents_and_other_nueva_solicitud_form_get_3c34f3",
+      "proposed_tool": "documents_and_other_nueva_solicitud_form_get_9d7d00",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -32527,11 +32527,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "eef7d48d1f77",
+      "id": "f5f24662d2b3",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 33199,
+      "line": 33200,
       "handler": "crear_nueva_solicitud",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/nueva-solicitud"
@@ -32580,7 +32580,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:crear_nueva_solicitud",
-      "proposed_tool": "documents_and_other_crear_nueva_solicitud_post_eef7d4",
+      "proposed_tool": "documents_and_other_crear_nueva_solicitud_post_f5f246",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -32611,11 +32611,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "a6ac8cce740a",
+      "id": "caf1c9737b46",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 33377,
+      "line": 33378,
       "handler": "crear_documento_desde_gastos",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/crear-desde-gastos"
@@ -32664,7 +32664,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:crear_documento_desde_gastos",
-      "proposed_tool": "documents_and_other_crear_documento_desde_gastos_post_a6ac8c",
+      "proposed_tool": "documents_and_other_crear_documento_desde_gastos_post_caf1c9",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -32691,11 +32691,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "eef94ff3dfea",
+      "id": "faa48c402fee",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 33544,
+      "line": 33545,
       "handler": "asignar_gastos_a_documento",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/{documento_id}/asignar-gastos"
@@ -32744,7 +32744,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:asignar_gastos_a_documento",
-      "proposed_tool": "documents_and_other_asignar_gastos_a_documento_post_eef94f",
+      "proposed_tool": "documents_and_other_asignar_gastos_a_documento_post_faa48c",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -32767,11 +32767,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "859b4e031b32",
+      "id": "c727de7e3025",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 33705,
+      "line": 33706,
       "handler": "enviar_documento",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/{documento_id}/enviar"
@@ -32818,7 +32818,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:enviar_documento",
-      "proposed_tool": "documents_and_other_enviar_documento_post_859b4e",
+      "proposed_tool": "documents_and_other_enviar_documento_post_c727de",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -32841,11 +32841,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "cfe601bc9f42",
+      "id": "c75367d3ec47",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 33795,
+      "line": 33796,
       "handler": "aprobar_documento",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/{documento_id}/aprobar"
@@ -32894,7 +32894,7 @@
         "_ensure_reembolso_solicitud_for_approved_informe"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:aprobar_documento",
-      "proposed_tool": "documents_and_other_aprobar_documento_post_cfe601",
+      "proposed_tool": "documents_and_other_aprobar_documento_post_c75367",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -32918,11 +32918,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "bc4409054a9d",
+      "id": "33af2e7bb820",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 33916,
+      "line": 33917,
       "handler": "rechazar_documento",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/{documento_id}/rechazar"
@@ -32969,7 +32969,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:rechazar_documento",
-      "proposed_tool": "documents_and_other_rechazar_documento_post_bc4409",
+      "proposed_tool": "documents_and_other_rechazar_documento_post_33af2e",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -32993,11 +32993,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d968316229d0",
+      "id": "204b29ef377a",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34098,
+      "line": 34099,
       "handler": "cfdi_duplicate_release_console",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/gastos/cfdis/liberar-duplicados"
@@ -33015,7 +33015,7 @@
         }
       ],
       "guard_definitions": [
-        "src/devnous/gastos/routes/user_routes.py:34022:_require_cfdi_duplicate_release_superadmin"
+        "src/devnous/gastos/routes/user_routes.py:34023:_require_cfdi_duplicate_release_superadmin"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -33053,7 +33053,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:cfdi_duplicate_release_console",
-      "proposed_tool": "accounting_cfdi_duplicate_release_console_get_d96831",
+      "proposed_tool": "accounting_cfdi_duplicate_release_console_get_204b29",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -33071,11 +33071,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "2f81ba01acce",
+      "id": "81ab0085b297",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34111,
+      "line": 34112,
       "handler": "cfdi_duplicate_release_preview",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/gastos/cfdis/liberar-duplicados/vista-previa"
@@ -33093,7 +33093,7 @@
         }
       ],
       "guard_definitions": [
-        "src/devnous/gastos/routes/user_routes.py:34022:_require_cfdi_duplicate_release_superadmin"
+        "src/devnous/gastos/routes/user_routes.py:34023:_require_cfdi_duplicate_release_superadmin"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -33131,7 +33131,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:cfdi_duplicate_release_preview",
-      "proposed_tool": "accounting_cfdi_duplicate_release_preview_post_2f81ba",
+      "proposed_tool": "accounting_cfdi_duplicate_release_preview_post_81ab00",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "cfdi_uuids",
@@ -33153,11 +33153,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "a05201789f02",
+      "id": "32a37176519d",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34125,
+      "line": 34126,
       "handler": "cfdi_duplicate_release_apply",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/admin/gastos/cfdis/liberar-duplicados/aplicar"
@@ -33175,7 +33175,7 @@
         }
       ],
       "guard_definitions": [
-        "src/devnous/gastos/routes/user_routes.py:34022:_require_cfdi_duplicate_release_superadmin"
+        "src/devnous/gastos/routes/user_routes.py:34023:_require_cfdi_duplicate_release_superadmin"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -33213,7 +33213,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:cfdi_duplicate_release_apply",
-      "proposed_tool": "accounting_cfdi_duplicate_release_apply_post_a05201",
+      "proposed_tool": "accounting_cfdi_duplicate_release_apply_post_32a371",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "selected_uuids",
@@ -33238,11 +33238,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d82dab49a1b8",
+      "id": "ebd8117312ea",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34146,
+      "line": 34147,
       "handler": "cfdi_duplicate_release_receipt",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/admin/gastos/cfdis/liberar-duplicados/recibos/{operation_id}"
@@ -33260,7 +33260,7 @@
         }
       ],
       "guard_definitions": [
-        "src/devnous/gastos/routes/user_routes.py:34022:_require_cfdi_duplicate_release_superadmin"
+        "src/devnous/gastos/routes/user_routes.py:34023:_require_cfdi_duplicate_release_superadmin"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -33298,7 +33298,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:cfdi_duplicate_release_receipt",
-      "proposed_tool": "accounting_cfdi_duplicate_release_receipt_get_d82dab",
+      "proposed_tool": "accounting_cfdi_duplicate_release_receipt_get_ebd811",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "operation_id",
@@ -33317,11 +33317,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "bfb496503ab1",
+      "id": "1703df7ae7ba",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34164,
+      "line": 34165,
       "handler": "cancelar_solicitud_documento",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/{documento_id}/cancelar"
@@ -33368,7 +33368,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:cancelar_solicitud_documento",
-      "proposed_tool": "documents_and_other_cancelar_solicitud_documento_post_bfb496",
+      "proposed_tool": "documents_and_other_cancelar_solicitud_documento_post_1703df",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -33392,11 +33392,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e129f523acb7",
+      "id": "1c19016979ec",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34239,
+      "line": 34240,
       "handler": "retirar_solicitud_documento",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/{documento_id}/retirar"
@@ -33443,7 +33443,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:retirar_solicitud_documento",
-      "proposed_tool": "documents_and_other_retirar_solicitud_documento_post_e129f5",
+      "proposed_tool": "documents_and_other_retirar_solicitud_documento_post_1c1901",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -33467,11 +33467,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "0e8b2d49cfe3",
+      "id": "62a19fe6ce5f",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34314,
+      "line": 34315,
       "handler": "registrar_anticipo",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/{documento_id}/registrar-anticipo"
@@ -33520,7 +33520,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:registrar_anticipo",
-      "proposed_tool": "documents_and_other_registrar_anticipo_post_0e8b2d",
+      "proposed_tool": "documents_and_other_registrar_anticipo_post_62a19f",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -33546,11 +33546,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "bf588d72102b",
+      "id": "932135f02c08",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34456,
+      "line": 34457,
       "handler": "registrar_pago",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/{documento_id}/registrar-pago"
@@ -33597,7 +33597,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:registrar_pago",
-      "proposed_tool": "payments_registrar_pago_post_bf588d",
+      "proposed_tool": "payments_registrar_pago_post_932135",
       "scope_proposal": "payments:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -33620,11 +33620,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "8f5cf0253a04",
+      "id": "dd0d977b0095",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34478,
+      "line": 34479,
       "handler": "registrar_reembolso",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/{documento_id}/registrar-reembolso"
@@ -33671,7 +33671,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:registrar_reembolso",
-      "proposed_tool": "payments_registrar_reembolso_post_8f5cf0",
+      "proposed_tool": "payments_registrar_reembolso_post_dd0d97",
       "scope_proposal": "payments:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -33698,11 +33698,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "12f4794507a7",
+      "id": "a73ef8047086",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34796,
+      "line": 34797,
       "handler": "exportar_informe_excel_cuenta",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/exportar-informe.xlsx"
@@ -33748,7 +33748,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:exportar_informe_excel_cuenta",
-      "proposed_tool": "documents_and_other_exportar_informe_excel_cuenta_get_12f479",
+      "proposed_tool": "documents_and_other_exportar_informe_excel_cuenta_get_a73ef8",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -33767,11 +33767,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "82ac28fbd72c",
+      "id": "b76b992be90c",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34813,
+      "line": 34814,
       "handler": "exportar_coi_poliza_cuenta",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/exportar-coi"
@@ -33819,7 +33819,7 @@
         "_approved_informe_for_cuenta_or_redirect"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:exportar_coi_poliza_cuenta",
-      "proposed_tool": "accounting_exportar_coi_poliza_cuenta_get_82ac28",
+      "proposed_tool": "accounting_exportar_coi_poliza_cuenta_get_b76b99",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -33838,11 +33838,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "9b7d5340f0fc",
+      "id": "6ed66eed122a",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34830,
+      "line": 34831,
       "handler": "exportar_papel_poliza_informe",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/papel-poliza.xlsx"
@@ -33890,7 +33890,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:exportar_papel_poliza_informe",
-      "proposed_tool": "documents_and_other_exportar_papel_poliza_informe_get_9b7d53",
+      "proposed_tool": "documents_and_other_exportar_papel_poliza_informe_get_6ed66e",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -33909,11 +33909,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "821fac5ba9ba",
+      "id": "fbd19994f27b",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34938,
+      "line": 34939,
       "handler": "exportar_coi_poliza_excel_cuenta",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/exportar-coi.xlsx"
@@ -33961,7 +33961,7 @@
         "_approved_informe_for_cuenta_or_redirect"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:exportar_coi_poliza_excel_cuenta",
-      "proposed_tool": "accounting_exportar_coi_poliza_excel_cuenta_get_821fac",
+      "proposed_tool": "accounting_exportar_coi_poliza_excel_cuenta_get_fbd199",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -33980,11 +33980,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "9c24d8eebac9",
+      "id": "ddb87b2f5ac1",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34955,
+      "line": 34956,
       "handler": "preview_coi_poliza_cuenta",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/preview-coi"
@@ -34032,7 +34032,7 @@
         "_approved_informe_for_cuenta_or_redirect"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:preview_coi_poliza_cuenta",
-      "proposed_tool": "accounting_preview_coi_poliza_cuenta_get_9c24d8",
+      "proposed_tool": "accounting_preview_coi_poliza_cuenta_get_ddb87b",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -34051,11 +34051,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "8b8e2eafc1e1",
+      "id": "cf468959ea47",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34972,
+      "line": 34973,
       "handler": "exportar_diot_excel_cuenta",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/exportar-diot.xlsx"
@@ -34103,7 +34103,7 @@
         "_approved_informe_for_cuenta_or_redirect"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:exportar_diot_excel_cuenta",
-      "proposed_tool": "accounting_exportar_diot_excel_cuenta_get_8b8e2e",
+      "proposed_tool": "accounting_exportar_diot_excel_cuenta_get_cf4689",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -34122,11 +34122,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "48149cda7717",
+      "id": "3a34476be93f",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 34989,
+      "line": 34990,
       "handler": "exportar_diot_txt_cuenta",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/exportar-diot.txt"
@@ -34174,7 +34174,7 @@
         "_approved_informe_for_cuenta_or_redirect"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:exportar_diot_txt_cuenta",
-      "proposed_tool": "accounting_exportar_diot_txt_cuenta_get_48149c",
+      "proposed_tool": "accounting_exportar_diot_txt_cuenta_get_3a3447",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -34193,11 +34193,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "b665ef2b9fde",
+      "id": "512b7d907c3b",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 35006,
+      "line": 35007,
       "handler": "exportar_diot_excel",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/{documento_id}/exportar-diot.xlsx"
@@ -34247,7 +34247,7 @@
         "build_diot_export"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:exportar_diot_excel",
-      "proposed_tool": "accounting_exportar_diot_excel_get_b665ef",
+      "proposed_tool": "accounting_exportar_diot_excel_get_512b7d",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -34266,11 +34266,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "70200d7862a9",
+      "id": "6ecdf9b9e729",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 35049,
+      "line": 35050,
       "handler": "exportar_diot_txt",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/{documento_id}/exportar-diot.txt"
@@ -34320,7 +34320,7 @@
         "build_diot_export"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:exportar_diot_txt",
-      "proposed_tool": "accounting_exportar_diot_txt_get_70200d",
+      "proposed_tool": "accounting_exportar_diot_txt_get_6ecdf9",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -34339,11 +34339,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "6606be90a59d",
+      "id": "ba5a27973aae",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 35090,
+      "line": 35091,
       "handler": "exportar_coi_poliza_gasto_excel",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/gastos/{gasto_id}/exportar-coi.xlsx"
@@ -34373,7 +34373,7 @@
         "build_expense_cfdi_for_export"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:exportar_coi_poliza_gasto_excel",
-      "proposed_tool": "accounting_exportar_coi_poliza_gasto_excel_get_6606be",
+      "proposed_tool": "accounting_exportar_coi_poliza_gasto_excel_get_ba5a27",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "gasto_id",
@@ -34392,11 +34392,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "5f4c3d94f8ad",
+      "id": "c2a92c86ef23",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 35178,
+      "line": 35179,
       "handler": "exportar_coi_poliza",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/{documento_id}/exportar-coi"
@@ -34445,7 +34445,7 @@
         "_build_documento_coi_bundle"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:exportar_coi_poliza",
-      "proposed_tool": "accounting_exportar_coi_poliza_get_5f4c3d",
+      "proposed_tool": "accounting_exportar_coi_poliza_get_c2a92c",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -34464,11 +34464,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "7b2e6aaadbd1",
+      "id": "f0852f660696",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 35241,
+      "line": 35242,
       "handler": "exportar_coi_poliza_excel",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/{documento_id}/exportar-coi.xlsx"
@@ -34517,7 +34517,7 @@
         "_build_documento_coi_bundle"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:exportar_coi_poliza_excel",
-      "proposed_tool": "accounting_exportar_coi_poliza_excel_get_7b2e6a",
+      "proposed_tool": "accounting_exportar_coi_poliza_excel_get_f0852f",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -34536,11 +34536,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "c1c71ffdd120",
+      "id": "ed795ebb3c85",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 35305,
+      "line": 35306,
       "handler": "preview_coi_poliza",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/{documento_id}/preview-coi"
@@ -34590,7 +34590,7 @@
         "build_coi_poliza_preview"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:preview_coi_poliza",
-      "proposed_tool": "accounting_preview_coi_poliza_get_c1c71f",
+      "proposed_tool": "accounting_preview_coi_poliza_get_ed795e",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -34609,11 +34609,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "a5236c072cac",
+      "id": "e5636b5ceea7",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 35555,
+      "line": 35556,
       "handler": "exportar_informe_gastos",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/{documento_id}/exportar-informe"
@@ -34664,7 +34664,7 @@
         "build_cuenta_contable_info"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:exportar_informe_gastos",
-      "proposed_tool": "documents_and_other_exportar_informe_gastos_get_a5236c",
+      "proposed_tool": "documents_and_other_exportar_informe_gastos_get_e5636b",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -34683,11 +34683,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ae3c0529d3be",
+      "id": "3e710d488a1d",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 36148,
+      "line": 36149,
       "handler": "documentos_pendientes_pago",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/pendientes-pago"
@@ -34734,7 +34734,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:documentos_pendientes_pago",
-      "proposed_tool": "payments_documentos_pendientes_pago_get_ae3c05",
+      "proposed_tool": "payments_documentos_pendientes_pago_get_3e710d",
       "scope_proposal": "payments:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -34752,11 +34752,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "27823cc55344",
+      "id": "ac8942b18462",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 36436,
+      "line": 36437,
       "handler": "nueva_solicitud_terceros_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/nueva-solicitud-terceros"
@@ -34803,7 +34803,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:nueva_solicitud_terceros_form",
-      "proposed_tool": "documents_and_other_nueva_solicitud_terceros_form_get_27823c",
+      "proposed_tool": "documents_and_other_nueva_solicitud_terceros_form_get_ac8942",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -34821,11 +34821,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "47b39c0663a2",
+      "id": "7ba6001ef930",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 36462,
+      "line": 36463,
       "handler": "legacy_solicitud_edit_redirect",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/solicitudes/{documento_id}/editar"
@@ -34853,7 +34853,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:legacy_solicitud_edit_redirect",
-      "proposed_tool": "documents_and_other_legacy_solicitud_edit_redirect_get_47b39c",
+      "proposed_tool": "documents_and_other_legacy_solicitud_edit_redirect_get_7ba600",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "documento_id"
@@ -34871,11 +34871,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "35a07f66336d",
+      "id": "838d3ba40d75",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 36473,
+      "line": 36474,
       "handler": "legacy_gastos_terceros_edit_redirect",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/gastos-terceros/{documento_id}/editar"
@@ -34922,7 +34922,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:legacy_gastos_terceros_edit_redirect",
-      "proposed_tool": "documents_and_other_legacy_gastos_terceros_edit_redirect_35a07f",
+      "proposed_tool": "documents_and_other_legacy_gastos_terceros_edit_redirect_838d3b",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "documento_id"
@@ -34940,11 +34940,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ac4f5cbb869a",
+      "id": "c6dcbb629151",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 36484,
+      "line": 36485,
       "handler": "editar_solicitud_terceros_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/{documento_id}/editar"
@@ -34993,7 +34993,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:editar_solicitud_terceros_form",
-      "proposed_tool": "documents_and_other_editar_solicitud_terceros_form_get_ac4f5c",
+      "proposed_tool": "documents_and_other_editar_solicitud_terceros_form_get_c6dcbb",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -35012,11 +35012,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "03e1f2944f81",
+      "id": "f0b17ce53bdb",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 37345,
+      "line": 37346,
       "handler": "crear_nueva_solicitud_terceros",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/nueva-solicitud-terceros"
@@ -35067,7 +35067,7 @@
         "build_solicitud_terceros_payload"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:crear_nueva_solicitud_terceros",
-      "proposed_tool": "documents_and_other_crear_nueva_solicitud_terceros_post_03e1f2",
+      "proposed_tool": "documents_and_other_crear_nueva_solicitud_terceros_post_f0b17c",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -35111,11 +35111,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "595273a65459",
+      "id": "78d7b1fcdfb7",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 37654,
+      "line": 37655,
       "handler": "editar_solicitud_terceros_post",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/{documento_id}/editar"
@@ -35167,7 +35167,7 @@
         "build_solicitud_terceros_payload"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:editar_solicitud_terceros_post",
-      "proposed_tool": "documents_and_other_editar_solicitud_terceros_post_post_595273",
+      "proposed_tool": "documents_and_other_editar_solicitud_terceros_post_post_78d7b1",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -35210,11 +35210,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "4b511f428410",
+      "id": "1c665c15197a",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 37821,
+      "line": 37822,
       "handler": "agregar_documento_adjuntos",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/{documento_id}/adjuntos"
@@ -35264,7 +35264,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:agregar_documento_adjuntos",
-      "proposed_tool": "documents_and_other_agregar_documento_adjuntos_post_4b511f",
+      "proposed_tool": "documents_and_other_agregar_documento_adjuntos_post_1c665c",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -35288,11 +35288,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "fc139b0a9ba4",
+      "id": "d86626793a01",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 38005,
+      "line": 38006,
       "handler": "eliminar_documento_adjunto",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/{documento_id}/adjuntos/{adjunto_id}/eliminar"
@@ -35341,7 +35341,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:eliminar_documento_adjunto",
-      "proposed_tool": "documents_and_other_eliminar_documento_adjunto_post_fc139b",
+      "proposed_tool": "documents_and_other_eliminar_documento_adjunto_post_d86626",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -35364,11 +35364,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "eed9ea453e10",
+      "id": "72efe5bb2711",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 38108,
+      "line": 38109,
       "handler": "nueva_solicitud_personal_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/nueva-solicitud-personal"
@@ -35415,7 +35415,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:nueva_solicitud_personal_form",
-      "proposed_tool": "documents_and_other_nueva_solicitud_personal_form_get_eed9ea",
+      "proposed_tool": "documents_and_other_nueva_solicitud_personal_form_get_72efe5",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -35433,11 +35433,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "6454457215d2",
+      "id": "5c965e7d995d",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 38122,
+      "line": 38123,
       "handler": "crear_nueva_solicitud_personal",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/documentos/nueva-solicitud-personal"
@@ -35484,7 +35484,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:crear_nueva_solicitud_personal",
-      "proposed_tool": "documents_and_other_crear_nueva_solicitud_personal_post_645445",
+      "proposed_tool": "documents_and_other_crear_nueva_solicitud_personal_post_5c965e",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -35505,11 +35505,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "cbe6efef015b",
+      "id": "a002ac3d7d91",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 38629,
+      "line": 38630,
       "handler": "ver_documento",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/documentos/{documento_id}"
@@ -35533,7 +35533,7 @@
         "src/devnous/gastos/routes/user_routes.py:11280:_can_add_solicitud_adjuntos",
         "src/devnous/gastos/routes/user_routes.py:11350:_can_finance_add_comprobante_pago",
         "src/devnous/gastos/routes/user_routes.py:11364:_can_finance_replace_comprobante_pago",
-        "src/devnous/gastos/routes/user_routes.py:46012:_can_submit_settlement"
+        "src/devnous/gastos/routes/user_routes.py:46038:_can_submit_settlement"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -35576,7 +35576,7 @@
         "str(getattr(rejection_employee, 'nombre', '') or '').strip"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:ver_documento",
-      "proposed_tool": "documents_and_other_ver_documento_get_cbe6ef",
+      "proposed_tool": "documents_and_other_ver_documento_get_a002ac",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -35596,11 +35596,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "080271dda383",
+      "id": "b1e0110aa349",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 40879,
+      "line": 40904,
       "handler": "api_cuentas_de_gastos_activas",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/api/informes-de-gastos/activas"
@@ -35628,7 +35628,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:api_cuentas_de_gastos_activas",
-      "proposed_tool": "documents_and_other_api_cuentas_de_gastos_activas_get_080271",
+      "proposed_tool": "documents_and_other_api_cuentas_de_gastos_activas_get_b1e011",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -35646,11 +35646,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "406a92d6800c",
+      "id": "a4a0e58687c4",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 40916,
+      "line": 40941,
       "handler": "crear_cuenta_de_gastos_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/informes-de-gastos/crear"
@@ -35698,7 +35698,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:crear_cuenta_de_gastos_form",
-      "proposed_tool": "documents_and_other_crear_cuenta_de_gastos_form_get_406a92",
+      "proposed_tool": "documents_and_other_crear_cuenta_de_gastos_form_get_a4a0e5",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -35716,11 +35716,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "903faf597a6e",
+      "id": "350543a24392",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 41357,
+      "line": 41382,
       "handler": "crear_cuenta_de_gastos_submit",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/informes-de-gastos/crear"
@@ -35771,7 +35771,7 @@
         "_validate_expense_metadata_for_tournament"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:crear_cuenta_de_gastos_submit",
-      "proposed_tool": "documents_and_other_crear_cuenta_de_gastos_submit_post_903faf",
+      "proposed_tool": "documents_and_other_crear_cuenta_de_gastos_submit_post_350543",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -35792,11 +35792,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "6b7b67cdcf0c",
+      "id": "4774a34ce1a6",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 41594,
+      "line": 41619,
       "handler": "adjuntar_gastos_a_cuenta",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/informes-de-gastos/adjuntar-gastos"
@@ -35846,7 +35846,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:adjuntar_gastos_a_cuenta",
-      "proposed_tool": "documents_and_other_adjuntar_gastos_a_cuenta_post_6b7b67",
+      "proposed_tool": "documents_and_other_adjuntar_gastos_a_cuenta_post_4774a3",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -35867,11 +35867,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d99390aefb07",
+      "id": "6f7b83450d89",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 42068,
+      "line": 42093,
       "handler": "cuentas_de_gastos_list",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/informes-de-gastos"
@@ -35921,7 +35921,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:cuentas_de_gastos_list",
-      "proposed_tool": "documents_and_other_cuentas_de_gastos_list_get_d99390",
+      "proposed_tool": "documents_and_other_cuentas_de_gastos_list_get_6f7b83",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "q",
@@ -35944,11 +35944,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d6a94a33df44",
+      "id": "3a2a8481a968",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 42729,
+      "line": 42754,
       "handler": "cancelar_informe_vacio_borrador",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/cancelar-borrador"
@@ -35998,7 +35998,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:cancelar_informe_vacio_borrador",
-      "proposed_tool": "documents_and_other_cancelar_informe_vacio_borrador_post_d6a94a",
+      "proposed_tool": "documents_and_other_cancelar_informe_vacio_borrador_post_3a2a84",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -36020,11 +36020,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "41675536be9e",
+      "id": "4cab51577ce6",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 43122,
+      "line": 43147,
       "handler": "crear_gasto_rapido_en_informe",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/gastos/quick"
@@ -36042,7 +36042,7 @@
         }
       ],
       "guard_definitions": [
-        "src/devnous/gastos/routes/user_routes.py:42865:_can_quick_capture_expense"
+        "src/devnous/gastos/routes/user_routes.py:42890:_can_quick_capture_expense"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -36076,7 +36076,7 @@
         "validate_solicitud_terceros_attachment"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:crear_gasto_rapido_en_informe",
-      "proposed_tool": "documents_and_other_crear_gasto_rapido_en_informe_post_416755",
+      "proposed_tool": "documents_and_other_crear_gasto_rapido_en_informe_post_4cab51",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -36130,11 +36130,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "055c97a2376f",
+      "id": "53c58568ae3b",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 43623,
+      "line": 43649,
       "handler": "actualizar_gastos_amex_en_informe",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/gastos/amex"
@@ -36183,7 +36183,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:actualizar_gastos_amex_en_informe",
-      "proposed_tool": "accounting_actualizar_gastos_amex_en_informe_post_055c97",
+      "proposed_tool": "accounting_actualizar_gastos_amex_en_informe_post_53c585",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -36207,11 +36207,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "df69012fef18",
+      "id": "e4388079983c",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 43713,
+      "line": 43739,
       "handler": "cuenta_de_gastos_detail",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/informes-de-gastos/{cuenta_id}"
@@ -36232,10 +36232,10 @@
         "src/devnous/gastos/routes/user_routes.py:10482:_can_view_all_cuentas_de_gastos",
         "src/devnous/gastos/routes/user_routes.py:10522:_can_mutate_cuenta_de_gastos",
         "src/devnous/gastos/routes/user_routes.py:10764:_can_cancel_empty_informe_draft",
-        "src/devnous/gastos/routes/user_routes.py:40649:_can_edit_cuenta_before_budget_assignment",
-        "src/devnous/gastos/routes/user_routes.py:42865:_can_quick_capture_expense",
-        "src/devnous/gastos/routes/user_routes.py:42873:_can_create_solicitud_from_cuenta",
-        "src/devnous/gastos/routes/user_routes.py:46012:_can_submit_settlement"
+        "src/devnous/gastos/routes/user_routes.py:40650:_can_edit_cuenta_before_budget_assignment",
+        "src/devnous/gastos/routes/user_routes.py:42890:_can_quick_capture_expense",
+        "src/devnous/gastos/routes/user_routes.py:42898:_can_create_solicitud_from_cuenta",
+        "src/devnous/gastos/routes/user_routes.py:46038:_can_submit_settlement"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -36268,7 +36268,7 @@
         "build_cuenta_debtor_auxiliary"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:cuenta_de_gastos_detail",
-      "proposed_tool": "documents_and_other_cuenta_de_gastos_detail_get_df6901",
+      "proposed_tool": "documents_and_other_cuenta_de_gastos_detail_get_e43880",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -36287,11 +36287,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "bdda5cb382e1",
+      "id": "d91396979171",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 44841,
+      "line": 44867,
       "handler": "editar_cuenta_de_gastos_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/editar"
@@ -36309,7 +36309,7 @@
         }
       ],
       "guard_definitions": [
-        "src/devnous/gastos/routes/user_routes.py:40649:_can_edit_cuenta_before_budget_assignment"
+        "src/devnous/gastos/routes/user_routes.py:40650:_can_edit_cuenta_before_budget_assignment"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -36339,7 +36339,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:editar_cuenta_de_gastos_form",
-      "proposed_tool": "documents_and_other_editar_cuenta_de_gastos_form_get_bdda5c",
+      "proposed_tool": "documents_and_other_editar_cuenta_de_gastos_form_get_d91396",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -36358,11 +36358,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "dfb4da7d7728",
+      "id": "61272528915c",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 45028,
+      "line": 45054,
       "handler": "editar_cuenta_de_gastos_submit",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/editar"
@@ -36380,7 +36380,7 @@
         }
       ],
       "guard_definitions": [
-        "src/devnous/gastos/routes/user_routes.py:40649:_can_edit_cuenta_before_budget_assignment"
+        "src/devnous/gastos/routes/user_routes.py:40650:_can_edit_cuenta_before_budget_assignment"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -36413,7 +36413,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:editar_cuenta_de_gastos_submit",
-      "proposed_tool": "documents_and_other_editar_cuenta_de_gastos_submit_post_dfb4da",
+      "proposed_tool": "documents_and_other_editar_cuenta_de_gastos_submit_post_612725",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -36435,11 +36435,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "4edd061164ac",
+      "id": "a315e9197860",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 45135,
+      "line": 45161,
       "handler": "api_documentos_cfdi_autofill",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/api/documentos/cfdi-autofill"
@@ -36467,7 +36467,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:api_documentos_cfdi_autofill",
-      "proposed_tool": "accounting_api_documentos_cfdi_autofill_post_4edd06",
+      "proposed_tool": "accounting_api_documentos_cfdi_autofill_post_a315e9",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -36490,11 +36490,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "17db283b3e78",
+      "id": "88a8c1b84a24",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 45181,
+      "line": 45207,
       "handler": "api_informes_cfdi_autofill",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/api/informes-de-gastos/cfdi-autofill"
@@ -36522,7 +36522,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:api_informes_cfdi_autofill",
-      "proposed_tool": "accounting_api_informes_cfdi_autofill_post_17db28",
+      "proposed_tool": "accounting_api_informes_cfdi_autofill_post_88a8c1",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -36545,11 +36545,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e7e8f61980a1",
+      "id": "170d0f29d945",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 45227,
+      "line": 45253,
       "handler": "api_empleado_bank_accounts",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/api/empleado-bank-accounts"
@@ -36577,7 +36577,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:api_empleado_bank_accounts",
-      "proposed_tool": "identity_api_empleado_bank_accounts_get_e7e8f6",
+      "proposed_tool": "identity_api_empleado_bank_accounts_get_170d0f",
       "scope_proposal": "identity:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -36597,11 +36597,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "9e8f0d533d72",
+      "id": "5a49b91671f4",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 45258,
+      "line": 45284,
       "handler": "nueva_solicitud_desde_cuenta_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/nueva-solicitud"
@@ -36647,7 +36647,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:nueva_solicitud_desde_cuenta_form",
-      "proposed_tool": "documents_and_other_nueva_solicitud_desde_cuenta_form_ge_9e8f0d",
+      "proposed_tool": "documents_and_other_nueva_solicitud_desde_cuenta_form_ge_5a49b9",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -36666,11 +36666,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "69b63b978870",
+      "id": "27896a6ee1b3",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 45499,
+      "line": 45525,
       "handler": "nueva_solicitud_desde_cuenta_submit",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/nueva-solicitud"
@@ -36718,7 +36718,7 @@
         "build_solicitud_personal_payload"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:nueva_solicitud_desde_cuenta_submit",
-      "proposed_tool": "documents_and_other_nueva_solicitud_desde_cuenta_submit__69b63b",
+      "proposed_tool": "documents_and_other_nueva_solicitud_desde_cuenta_submit__27896a",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -36740,11 +36740,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "0139f79c8ad1",
+      "id": "cf122232cc8f",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 45608,
+      "line": 45634,
       "handler": "cerrar_cuenta_de_gastos",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/cerrar"
@@ -36795,7 +36795,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:cerrar_cuenta_de_gastos",
-      "proposed_tool": "documents_and_other_cerrar_cuenta_de_gastos_post_0139f7",
+      "proposed_tool": "documents_and_other_cerrar_cuenta_de_gastos_post_cf1222",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -36819,11 +36819,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "5064dfc44dc8",
+      "id": "2079a5d05e6f",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 46045,
+      "line": 46071,
       "handler": "saldar_cuenta_form",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/saldar"
@@ -36841,8 +36841,8 @@
         }
       ],
       "guard_definitions": [
-        "src/devnous/gastos/routes/user_routes.py:45951:_can_access_reembolso_cuenta",
-        "src/devnous/gastos/routes/user_routes.py:46012:_can_submit_settlement"
+        "src/devnous/gastos/routes/user_routes.py:45977:_can_access_reembolso_cuenta",
+        "src/devnous/gastos/routes/user_routes.py:46038:_can_submit_settlement"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -36874,7 +36874,7 @@
         "validate_settlement_eligibility"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:saldar_cuenta_form",
-      "proposed_tool": "documents_and_other_saldar_cuenta_form_get_5064df",
+      "proposed_tool": "documents_and_other_saldar_cuenta_form_get_2079a5",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -36893,11 +36893,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "b43e50ab2417",
+      "id": "3ce533431d73",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 46277,
+      "line": 46303,
       "handler": "saldar_cuenta_submit",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/saldar"
@@ -36915,7 +36915,7 @@
         }
       ],
       "guard_definitions": [
-        "src/devnous/gastos/routes/user_routes.py:45951:_can_access_reembolso_cuenta"
+        "src/devnous/gastos/routes/user_routes.py:45977:_can_access_reembolso_cuenta"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -36945,7 +36945,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:saldar_cuenta_submit",
-      "proposed_tool": "documents_and_other_saldar_cuenta_submit_post_b43e50",
+      "proposed_tool": "documents_and_other_saldar_cuenta_submit_post_3ce533",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -36975,11 +36975,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "11cfd3ad388a",
+      "id": "adb553c1ffa2",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 46404,
+      "line": 46430,
       "handler": "ver_reembolso_cuenta",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/reembolsos/{reembolso_id}"
@@ -36997,7 +36997,7 @@
         }
       ],
       "guard_definitions": [
-        "src/devnous/gastos/routes/user_routes.py:45951:_can_access_reembolso_cuenta"
+        "src/devnous/gastos/routes/user_routes.py:45977:_can_access_reembolso_cuenta"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -37029,7 +37029,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:ver_reembolso_cuenta",
-      "proposed_tool": "payments_ver_reembolso_cuenta_get_11cfd3",
+      "proposed_tool": "payments_ver_reembolso_cuenta_get_adb553",
       "scope_proposal": "payments:read; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -37049,11 +37049,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e2154ac4c0e0",
+      "id": "3a155271eae8",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 46590,
+      "line": 46616,
       "handler": "cancelar_reembolso_cuenta",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "POST",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/reembolsos/{reembolso_id}/cancelar"
@@ -37099,7 +37099,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:cancelar_reembolso_cuenta",
-      "proposed_tool": "payments_cancelar_reembolso_cuenta_post_e2154a",
+      "proposed_tool": "payments_cancelar_reembolso_cuenta_post_3a1552",
       "scope_proposal": "payments:write; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -37123,11 +37123,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ecf1690e8391",
+      "id": "681f6bcffc99",
       "source": "src/devnous/gastos/routes/user_routes.py",
-      "line": 46651,
+      "line": 46677,
       "handler": "descargar_reembolso_adjunto",
-      "source_sha256": "83564782f01d882d48fc5f29d070c7286f135b5f78cd0ca3042f5932cb4c494e",
+      "source_sha256": "28219d7dd51bc5e5a3358a046a1cbb6731b12104789aedeb098a1c4ffd9c66a2",
       "method": "GET",
       "paths": [
         "/informes-de-gastos/{cuenta_id}/reembolsos/{reembolso_id}/adjuntos/{adjunto_id}"
@@ -37175,7 +37175,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/user_routes.py:descargar_reembolso_adjunto",
-      "proposed_tool": "payments_descargar_reembolso_adjunto_get_ecf169",
+      "proposed_tool": "payments_descargar_reembolso_adjunto_get_681f6b",
       "scope_proposal": "payments:read; never grants business authority",
       "object_parameters": [
         "cuenta_id",

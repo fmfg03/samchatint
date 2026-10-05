@@ -29207,7 +29207,8 @@ async def editar_gasto(
             )
         except (ExpenseCFDIDuplicateError, ValueError) as exc:
             return RedirectResponse(
-                url=_append_error_params(edit_form_url, error_msg=exc), status_code=303
+                url=_append_error_params(edit_form_url, error_msg=exc, request=request),
+                status_code=303,
             )
         if stored_manual_before != expense.cfdi_uuid_manual:
             old_values["cfdi_uuid_manual"] = stored_manual_before
@@ -40696,13 +40697,20 @@ def _append_error_params(
     *,
     error_msg: Optional[Union[str, ValueError]] = None,
     error: Optional[str] = None,
+    request: Optional[Request] = None,
 ) -> str:
     params: Dict[str, str] = {}
     if isinstance(error_msg, ExpenseCFDIDuplicateError):
         params["error"] = "expense_cfdi_duplicate"
-        if error_msg.duplicate_id is not None:
-            params["blocked_expense_id"] = str(error_msg.duplicate_id)
-        params["blocked_cfdi_uuid"] = error_msg.fiscal_uuid
+        if request is not None and "session" in request.scope:
+            contexts = request.session.setdefault("expense_block_contexts", {})
+            target = urlparse(url).path
+            contexts[target] = {
+                "expense_id": str(error_msg.duplicate_id or ""),
+                "fiscal_uuid": error_msg.fiscal_uuid,
+            }
+            while len(contexts) > 8:
+                del contexts[next(iter(contexts))]
         return _append_query_params(url, params)
     if error is not None:
         params["error"] = error
@@ -40732,9 +40740,11 @@ async def _expense_block_message(
         "Solicita a Finanzas y Operaciones que revisen la factura antes de continuar."
     )
     try:
-        duplicate_id = UUIDType(request.query_params.get("blocked_expense_id", ""))
+        contexts = request.scope.get("session", {}).get("expense_block_contexts", {})
+        context = contexts.pop(request.scope.get("path", ""), {})
+        duplicate_id = UUIDType(context.get("expense_id", ""))
         fiscal_uuid = normalize_cfdi_uuid_to_canonical(
-            request.query_params.get("blocked_cfdi_uuid", "")
+            context.get("fiscal_uuid", "")
         )
     except (ValueError, TypeError):
         return unavailable
@@ -40759,15 +40769,30 @@ async def _expense_block_message(
         if expense.cuenta_gastos_id
         else None
     )
-    beneficiary_id = document.beneficiario_empleado_id if document else None
-    beneficiary = (
-        await session.get(Empleado, beneficiary_id) if beneficiary_id else None
-    )
+    beneficiary = None
+    # Same party precedence as effective_document_beneficiary, with explicit reads.
+    for model, party_id in (
+        (Empleado, getattr(document, "beneficiario_empleado_id", None)),
+        (
+            ProveedorCliente,
+            getattr(document, "beneficiario_proveedor_cliente_id", None),
+        ),
+        (Empleado, getattr(cuenta, "beneficiario_empleado_id", None)),
+        (ProveedorCliente, getattr(cuenta, "beneficiario_proveedor_cliente_id", None)),
+        (Empleado, getattr(cuenta, "empleado_id", None)),
+        (ProveedorCliente, getattr(document, "proveedor_cliente_id", None)),
+        (Empleado, getattr(document, "empleado_id", None)),
+    ):
+        if party_id:
+            beneficiary = await session.get(model, party_id)
+            if beneficiary is not None:
+                break
     return duplicate_invoice_message(
         amount=Decimal(str(expense.gasto_cantidad)),
         currency=currency_for(expense),
         expense_reference=expense.numero_referencia,
         report_reference=document.numero_referencia if document else None,
+        document_type=getattr(document, "tipo", None),
         operations_reference=document.referencia_operaciones if document else None,
         report_name=cuenta.nombre if cuenta else None,
         beneficiary=beneficiary.nombre if beneficiary else None,
@@ -40778,6 +40803,7 @@ async def _expense_block_message(
         current_operations=(
             current_document.referencia_operaciones if current_document else None
         ),
+        current_document_type=getattr(current_document, "tipo", None),
     )
 
 
@@ -40789,8 +40815,7 @@ def _render_transient_message_query_cleanup_script() -> str:
             if (!window.history || !window.history.replaceState) return;
             const url = new URL(window.location.href);
             const transientKeys = [
-                "error", "error_msg", "success", "success_msg", "msg",
-                "blocked_expense_id", "blocked_cfdi_uuid"
+                "error", "error_msg", "success", "success_msg", "msg"
             ];
             let changed = false;
             transientKeys.forEach(function(key) {
@@ -43121,6 +43146,7 @@ async def _validate_quick_shared_cfdi_amount(
 @router.post("/informes-de-gastos/{cuenta_id}/gastos/quick")
 async def crear_gasto_rapido_en_informe(
     cuenta_id: UUIDType,
+    request: Request = None,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
     concepto: Optional[str] = Form(None),
@@ -43605,7 +43631,7 @@ async def crear_gasto_rapido_en_informe(
     except ValueError as exc:
         await session.rollback()
         return RedirectResponse(
-            url=_append_error_params(redirect_base, error_msg=exc),
+            url=_append_error_params(redirect_base, error_msg=exc, request=request),
             status_code=303,
         )
     except Exception as exc:

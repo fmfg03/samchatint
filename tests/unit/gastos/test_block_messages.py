@@ -11,6 +11,7 @@ from fastapi import APIRouter, FastAPI, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
+from starlette.middleware.sessions import SessionMiddleware
 
 from devnous.gastos.models import (
     CFDIReport,
@@ -18,6 +19,7 @@ from devnous.gastos.models import (
     Documento,
     Empleado,
     ExpenseReport,
+    ProveedorCliente,
 )
 from devnous.gastos.routes import user_routes
 from devnous.gastos.routes.block_messages import (
@@ -210,13 +212,20 @@ def test_duplicate_code_keeps_private_details_out_of_the_redirect():
     assert "error_msg" not in parse_qs(urlsplit(response.headers["location"]).query)
 
 
-def test_duplicate_redirect_contains_identifiers_not_private_details():
+def test_duplicate_redirect_uses_single_use_session_context_without_identifiers():
     duplicate_id = uuid4()
     error = ExpenseCFDIDuplicateError(FISCAL_UUID, duplicate_id)
-    location = user_routes._append_error_params("/gastos/test/editar", error_msg=error)
+    request = Request({"type": "http", "session": {}})
+    location = user_routes._append_error_params(
+        "/gastos/test/editar", error_msg=error, request=request
+    )
     params = parse_qs(urlsplit(location).query)
-    assert params["blocked_expense_id"] == [str(duplicate_id)]
-    assert params["blocked_cfdi_uuid"] == [FISCAL_UUID]
+    assert params == {"error": ["expense_cfdi_duplicate"]}
+    assert request.session["expense_block_contexts"]["/gastos/test/editar"] == {
+        "expense_id": str(duplicate_id),
+        "fiscal_uuid": FISCAL_UUID,
+    }
+    assert FISCAL_UUID not in location and str(duplicate_id) not in location
     assert "error_msg" not in params
     assert "beneficiario" not in location and "600.00" not in location
     assert "Confirma factura compartida" not in str(error)
@@ -297,6 +306,7 @@ def test_actual_quick_capture_rolls_back_and_preserves_the_blocking_record(monke
     session = CaptureSession()
     kwargs.update(
         cuenta_id=cuenta.id,
+        request=Request({"type": "http", "session": {}}),
         session=session,
         current_empleado=actor,
         concepto="Gasolina",
@@ -312,7 +322,11 @@ def test_actual_quick_capture_rolls_back_and_preserves_the_blocking_record(monke
     assert session.rollbacks == 1 and session.commits == 0
     assert response.status_code == 303
     assert params["error"] == ["expense_cfdi_duplicate"]
-    assert params["blocked_expense_id"] == [str(duplicate_id)]
+    assert params == {"error": ["expense_cfdi_duplicate"]}
+    context = kwargs["request"].session["expense_block_contexts"]
+    assert context[f"/informes-de-gastos/{cuenta.id}"]["expense_id"] == str(
+        duplicate_id
+    )
     assert "error_msg" not in params
     assert expense.informe_documento_id == document.id
 
@@ -345,6 +359,7 @@ def _duplicate_context(*, state="activo", manual_uuid=FISCAL_UUID, doc=True):
         cuenta_gastos_id=cuenta_id if doc else None,
     )
     document = SimpleNamespace(
+        tipo="INFORME",
         numero_referencia="I-123456",
         referencia_operaciones="101",
         estado="enviado",
@@ -359,14 +374,24 @@ def _duplicate_context(*, state="activo", manual_uuid=FISCAL_UUID, doc=True):
         (Empleado, beneficiary_id): SimpleNamespace(nombre="Persona Beneficiaria"),
         (CFDIReport, cfdi_id): SimpleNamespace(cfdi_uuid=FISCAL_UUID.lower()),
     }
-    params = (
-        f"error=expense_cfdi_duplicate&blocked_expense_id={duplicate_id}"
-        f"&blocked_cfdi_uuid={FISCAL_UUID.lower()}"
+    request = Request(
+        {
+            "type": "http",
+            "path": "/gastos/test/editar",
+            "query_string": b"error=expense_cfdi_duplicate",
+            "session": {
+                "expense_block_contexts": {
+                    "/gastos/test/editar": {
+                        "expense_id": str(duplicate_id),
+                        "fiscal_uuid": FISCAL_UUID.lower(),
+                    }
+                }
+            },
+        }
     )
-    request = Request({"type": "http", "query_string": params.encode()})
     actor = SimpleNamespace(id=actor_id, rol="usuario", correo="")
     current = SimpleNamespace(
-        numero_referencia="I-654321", referencia_operaciones="202"
+        numero_referencia="I-654321", referencia_operaciones="202", tipo="INFORME"
     )
     return request, ReadSession(records), actor, current
 
@@ -407,6 +432,86 @@ def test_unauthorized_reader_gets_no_other_report_details():
     for private in ("600", "123456", "Beneficiaria", "Caja chica", "101"):
         assert private not in message
     assert not any(model in {Documento, Empleado} for model, _ in session.reads)
+
+
+def test_duplicate_context_is_consumed_and_query_identifiers_are_not_trusted():
+    request, session, actor, current = _duplicate_context()
+    assert "I-123456" in asyncio.run(
+        user_routes._expense_block_message(request, session, actor)
+    )
+    assert "No se pudo confirmar" in asyncio.run(
+        user_routes._expense_block_message(request, session, actor)
+    )
+    request.scope["query_string"] += (
+        f"&blocked_expense_id={uuid4()}&blocked_cfdi_uuid={FISCAL_UUID}"
+    ).encode()
+    fresh = Request(request.scope)
+    assert "No se pudo confirmar" in asyncio.run(
+        user_routes._expense_block_message(fresh, session, actor)
+    )
+
+
+def test_browser_redirect_keeps_session_context_without_financial_query_values():
+    request, session, actor, current = _duplicate_context()
+    context = request.session["expense_block_contexts"]["/gastos/test/editar"]
+    app = FastAPI()
+    app.add_middleware(SessionMiddleware, secret_key="synthetic-test-secret")
+
+    @app.post("/capture")
+    async def capture(request: Request):
+        error = ExpenseCFDIDuplicateError(
+            context["fiscal_uuid"], user_routes.UUIDType(context["expense_id"])
+        )
+        return RedirectResponse(
+            user_routes._append_error_params(
+                "/gastos/test/editar", error_msg=error, request=request
+            ),
+            status_code=303,
+        )
+
+    @app.get("/gastos/test/editar")
+    async def detail(request: Request):
+        return {
+            "message": await user_routes._expense_block_message(request, session, actor)
+        }
+
+    with TestClient(app) as client:
+        redirect = client.post("/capture", follow_redirects=False)
+        location = redirect.headers["location"]
+        assert location == "/gastos/test/editar?error=expense_cfdi_duplicate"
+        assert "I-123456" in client.get(location).json()["message"]
+        assert "No se pudo confirmar" in client.get(location).json()["message"]
+
+
+@pytest.mark.parametrize("party_source", ["document", "account"])
+def test_provider_beneficiary_uses_document_then_account_precedence(party_source):
+    request, session, actor, current = _duplicate_context()
+    document = next(v for (m, _), v in session.records.items() if m is Documento)
+    account = next(v for (m, _), v in session.records.items() if m is CuentaDeGastos)
+    document.beneficiario_empleado_id = None
+    provider_id = uuid4()
+    target = document if party_source == "document" else account
+    target.beneficiario_proveedor_cliente_id = provider_id
+    session.records[(ProveedorCliente, provider_id)] = SimpleNamespace(
+        nombre="Proveedor de prueba"
+    )
+    message = asyncio.run(user_routes._expense_block_message(request, session, actor))
+    assert "Proveedor de prueba" in message
+    assert "Persona Beneficiaria" not in message
+
+
+def test_blocking_transfer_request_is_identified_as_solicitud():
+    request, session, actor, current = _duplicate_context()
+    document = next(v for (m, _), v in session.records.items() if m is Documento)
+    expense = next(v for (m, _), v in session.records.items() if m is ExpenseReport)
+    expense.documento_id = expense.informe_documento_id
+    expense.informe_documento_id = None
+    expense.cuenta_gastos_id = None
+    document.tipo = "SOLICITUD"
+    document.numero_referencia = "S-26000101"
+    message = asyncio.run(user_routes._expense_block_message(request, session, actor))
+    assert "solicitud S-26000101" in message
+    assert "informe S-26000101" not in message
 
 
 def test_existing_global_read_delegate_can_see_details_without_mutation():

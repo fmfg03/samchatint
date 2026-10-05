@@ -178,6 +178,8 @@ def duplicate_invoice_message(
     state: Optional[str],
     current_reference: Optional[str] = None,
     current_operations: Optional[str] = None,
+    document_type: Optional[str] = None,
+    current_document_type: Optional[str] = None,
 ) -> str:
     """Render only verified, authorized facts supplied by the read owner."""
     where = (
@@ -186,7 +188,10 @@ def duplicate_invoice_message(
         else " en otra partida"
     )
     if report_reference:
-        where += f", informe {report_reference}"
+        label = {"INFORME": "informe", "SOLICITUD": "solicitud"}.get(
+            (document_type or "").upper(), "documento"
+        )
+        where += f", {label} {report_reference}"
     if operations_reference:
         where += f", referencia de Operaciones {operations_reference}"
     if report_name:
@@ -196,8 +201,11 @@ def duplicate_invoice_message(
     cause = f"Esta factura ya está registrada por ${amount:,.2f} {currency}{where}."
     if state:
         cause += f" Estado del registro: {state}."
+    current_label = {"INFORME": "informe", "SOLICITUD": "solicitud"}.get(
+        (current_document_type or "").upper(), "documento"
+    )
     target = (
-        f" en tu informe {current_reference}"
+        f" en tu {current_label} {current_reference}"
         if current_reference
         else " en esta partida"
     )
