@@ -62,7 +62,10 @@ from ..models import (
     CentroDeCosto,
     ProveedorCliente,
     SolicitudPrestamo,
+    AmexAccountingCut,
 )
+from ..services.amex_cut_export_service import cut_expense_cfdis
+from ..services.amex_expense_service import is_company_amex_expense
 from ..status_semantics import payment_run_status_visual
 from ..workflow_guidance import (
     WorkflowGuidance,
@@ -81,6 +84,7 @@ from ..services.expense_coi_export_service import (
     assess_expense_coi_cleanup_ready,
     build_expense_cfdi_for_export,
     group_expense_cfdis_for_document,
+    expense_coi_batch_period_condition,
 )
 from ..services.import_coi_service import import_coi_workbook
 from ..services.import_proveedores_service import (
@@ -8979,8 +8983,7 @@ async def _build_finance_coi_batch_expenses(
         .where(
             and_(
                 ExpenseReport.estado_gasto != "cancelado",
-                ExpenseReport.fecha >= start,
-                ExpenseReport.fecha < end,
+                expense_coi_batch_period_condition(start, end),
             )
         )
         .order_by(ExpenseReport.fecha.asc(), ExpenseReport.numero_referencia.asc())
@@ -9065,6 +9068,27 @@ async def _build_finance_coi_batch_expenses(
         informes.values(), key=lambda item: item.numero_referencia or str(item.id)
     ):
         expenses = report_expenses_by_id.get(informe.id, [])
+        if any(is_company_amex_expense(expense) for expense in expenses):
+            cut_result = await session.execute(
+                select(AmexAccountingCut).where(
+                    AmexAccountingCut.informe_id == informe.id,
+                    AmexAccountingCut.kind == "initial",
+                )
+            )
+            cut = cut_result.scalar_one_or_none()
+            if cut is None:
+                raise ValueError(
+                    f"El Informe {informe.numero_referencia or informe.id} requiere "
+                    "la revisión AMEX y su corte contable antes de exportar."
+                )
+            output.extend(cut_expense_cfdis(cut))
+            grouped_expense_ids.update(expense.id for expense in expenses)
+            continue
+        if not getattr(informe, "aprobado_en", None):
+            raise ValueError(
+                f"Falta fecha de aprobación del Informe "
+                f"{informe.numero_referencia or informe.id} para definir su periodo COI."
+            )
         document_cfdis: list[ExpenseCFDI] = []
         for expense in expenses:
             ready, issues = await assess_expense_coi_cleanup_ready(session, expense)

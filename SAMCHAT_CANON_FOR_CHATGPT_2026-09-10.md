@@ -179,9 +179,15 @@ existing policy granularity.
 Amendment date: 2026-10-05. Reason: explicit human approval to remove the
 cross-month export restriction. Active items may have dates in different
 months or years while remaining under one complete `INFORME` policy. Their
-original expense dates and CFDI evidence are preserved; the existing policy
-date criterion is unchanged. Approval, accounting readiness, beneficiary and
-tax validations remain required. Evidence: the scoped correction in
+original expense dates and CFDI evidence are preserved. Each normal report is
+discovered only in its approval month for both monthly COI surfaces and Finance
+batches, including all its active items regardless of their dates. Missing
+approval dates remain explicit blockers, without a creation-date fallback.
+Company-AMEX reports retain their canonical cut controls and are exported only
+from the immutable initial cut in that cut's accounting month; this change does
+not authorize cross-month cut creation or rebuilding mutable classifications.
+Approval, accounting readiness, beneficiary and tax validations remain required.
+Evidence: the scoped correction in
 `user_routes.py` and `admin_routes.py`, with regression cases in
 `tests/unit/gastos/test_coi_exportable_status_ui.py`. This amendment describes
 the approved implementation scope; merge, deployment and Finance UAT remain

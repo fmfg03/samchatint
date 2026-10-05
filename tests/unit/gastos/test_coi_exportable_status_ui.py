@@ -8,14 +8,20 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 from openpyxl import load_workbook
+from sqlalchemy import create_engine, select
 from sqlalchemy.dialects import postgresql
 
+from devnous.gastos.models import Documento, ExpenseReport
 from devnous.gastos.routes import admin_routes, user_routes
 from devnous.gastos.services.coi_poliza_exporter import (
     ExpenseCFDI,
     generate_coi_poliza_csv,
     generate_coi_poliza_xlsx,
     generate_coi_poliza_zip,
+)
+from devnous.gastos.services.expense_coi_export_service import (
+    expense_coi_batch_period_condition,
+    informe_coi_period_condition,
 )
 
 
@@ -31,6 +37,72 @@ class _ScalarRows:
 
     def all(self):
         return self.rows
+
+
+@pytest.mark.parametrize("relation", ["documento", "informe", "cuenta"])
+@pytest.mark.parametrize("amex", [False, True])
+def test_cross_month_policy_is_discovered_in_only_one_batch_period(relation, amex):
+    """Execute both discovery predicates, including legacy ownership, in SQL."""
+    report_id, account_id = uuid4(), uuid4()
+    expense_ids = [uuid4(), uuid4()]
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE documentos (id TEXT, tipo TEXT, aprobado_en DATETIME, "
+            "cuenta_gastos_id TEXT)"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE expense_reports (id TEXT, estado_gasto TEXT, fecha DATETIME, "
+            "documento_id TEXT, informe_documento_id TEXT, cuenta_gastos_id TEXT, "
+            "pagado_con_amex_empresa BOOLEAN, origen TEXT)"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE amex_accounting_cuts (id TEXT, informe_id TEXT, kind TEXT, "
+            "accounting_date DATE)"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO documentos VALUES (?, 'INFORME', ?, ?)",
+            (report_id.hex, "2026-09-20" if amex else "2026-10-20", account_id.hex),
+        )
+        for expense_id, expense_date in zip(expense_ids, ("2026-08-31", "2026-09-01")):
+            connection.exec_driver_sql(
+                "INSERT INTO expense_reports VALUES (?, 'activo', ?, ?, ?, ?, ?, ?)",
+                (
+                    expense_id.hex,
+                    expense_date,
+                    report_id.hex if relation == "documento" else None,
+                    report_id.hex if relation == "informe" else None,
+                    account_id.hex if relation == "cuenta" else None,
+                    amex,
+                    "amex_batch" if amex else None,
+                ),
+            )
+        if amex:
+            connection.exec_driver_sql(
+                "INSERT INTO amex_accounting_cuts VALUES (?, ?, 'initial', '2026-10-15')",
+                (uuid4().hex, report_id.hex),
+            )
+        for month in (8, 9, 10, 11):
+            start, end = datetime(2026, month, 1), datetime(2026, month + 1, 1)
+            reports = (
+                connection.execute(
+                    select(Documento.id).where(informe_coi_period_condition(start, end))
+                )
+                .scalars()
+                .all()
+            )
+            expenses = (
+                connection.execute(
+                    select(ExpenseReport.id).where(
+                        expense_coi_batch_period_condition(start, end)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert reports == ([report_id] if month == 10 else [])
+            assert set(expenses) == (set(expense_ids) if month == 10 else set())
+    engine.dispose()
 
 
 def test_coi_exportable_rows_include_selection_and_status_controls():
@@ -144,7 +216,7 @@ def test_coi_view_separates_preparation_export_and_history_tasks():
     assert "3. Historial e imports" in view_source
 
 
-def test_coi_lote_filters_expenses_by_accounting_date_not_document_date():
+def test_coi_lote_preserves_standalone_expense_date_filters():
     from pathlib import Path
 
     source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
@@ -154,7 +226,7 @@ def test_coi_lote_filters_expenses_by_accounting_date_not_document_date():
 
     assert "ExpenseReport.fecha >= start_dt" in filter_source
     assert "ExpenseReport.fecha < end_dt" in filter_source
-    assert "Documento.aprobado_en >= start_dt" not in filter_source
+    assert "informe_coi_period_condition(start_dt, end_dt)" in filter_source
     assert "Documento.pagado_en >= start_dt" not in filter_source
 
 
@@ -243,7 +315,7 @@ async def test_coi_batch_export_commits_only_the_confirmed_visible_selection(
 
 
 @pytest.mark.asyncio
-async def test_informe_lote_query_is_correlated_to_expense_accounting_date():
+async def test_informe_lote_query_uses_approval_or_frozen_cut_period():
     class EmptyResult:
         def scalars(self):
             return self
@@ -269,8 +341,10 @@ async def test_informe_lote_query_is_correlated_to_expense_accounting_date():
     )
 
     assert "EXISTS" in compiled
-    assert "expense_reports.fecha >= '2026-09-01 00:00:00'" in compiled
-    assert "expense_reports.fecha < '2026-10-01 00:00:00'" in compiled
+    assert "documentos.aprobado_en >= '2026-09-01 00:00:00'" in compiled
+    assert "documentos.aprobado_en < '2026-10-01 00:00:00'" in compiled
+    assert "amex_accounting_cuts.accounting_date >= '2026-09-01'" in compiled
+    assert "amex_accounting_cuts.accounting_date < '2026-10-01'" in compiled
 
 
 @pytest.mark.asyncio
@@ -285,6 +359,7 @@ async def test_document_bundle_blocks_entire_informe_when_one_expense_is_not_rea
         estado="aprobado",
         cuenta_gastos_id=None,
         numero_referencia="I-26000001",
+        aprobado_en=datetime(2026, 9, 20),
     )
     expense = SimpleNamespace(
         id=uuid4(),
@@ -320,8 +395,9 @@ async def test_document_bundle_blocks_entire_informe_when_one_expense_is_not_rea
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("second_date", [datetime(2026, 9, 1), datetime(2027, 1, 1)])
+@pytest.mark.parametrize("has_approval_date", [False, True])
 async def test_document_bundle_exports_informe_spanning_accounting_months(
-    monkeypatch, second_date
+    monkeypatch, second_date, has_approval_date
 ):
     employee_id = uuid4()
     document = SimpleNamespace(
@@ -331,6 +407,7 @@ async def test_document_bundle_exports_informe_spanning_accounting_months(
         estado="aprobado",
         cuenta_gastos_id=None,
         numero_referencia="I-26000001",
+        aprobado_en=datetime(2026, 9, 20) if has_approval_date else None,
     )
     expenses = [
         SimpleNamespace(
@@ -369,6 +446,15 @@ async def test_document_bundle_exports_informe_spanning_accounting_months(
 
     monkeypatch.setattr(user_routes, "assess_expense_coi_cleanup_ready", ready)
     monkeypatch.setattr(user_routes, "build_expense_cfdi_for_export", build)
+    if not has_approval_date:
+        with pytest.raises(HTTPException, match="Falta fecha de aprobación"):
+            await user_routes._build_documento_coi_bundle(
+                document.id,
+                Session(),
+                SimpleNamespace(id=employee_id, rol="usuario"),
+                require_complete_informe=True,
+            )
+        return
     _, loaded, payloads = await user_routes._build_documento_coi_bundle(
         document.id,
         Session(),
@@ -440,16 +526,18 @@ async def test_single_expense_export_redirects_to_owning_informe(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outside_ready", [True, False])
+@pytest.mark.parametrize("has_approval_date", [True, False])
 async def test_monthly_batch_checks_all_informe_expenses_across_periods(
     monkeypatch,
     outside_ready,
+    has_approval_date,
 ):
     document = SimpleNamespace(
         id=uuid4(),
         tipo="INFORME",
         estado="aprobado",
         numero_referencia="I-26000001",
-        aprobado_en=datetime(2026, 9, 20),
+        aprobado_en=datetime(2026, 9, 20) if has_approval_date else None,
         creado_en=datetime(2026, 9, 1),
     )
     september = SimpleNamespace(
@@ -502,20 +590,27 @@ async def test_monthly_batch_checks_all_informe_expenses_across_periods(
 
     assert len(rows) == 1
     assert rows[0]["expenses"] == [august, september]
-    assert rows[0]["can_export"] is outside_ready
-    if outside_ready:
+    assert rows[0]["can_export"] is (outside_ready and has_approval_date)
+    if not has_approval_date:
+        assert "Falta fecha de aprobación" in rows[0]["block_reason"]
+        assert rows[0]["period_label"] == "-"
+    elif outside_ready:
         assert rows[0]["block_reason"] == ""
     else:
         assert "G-AUG: Falta cuenta contable" in rows[0]["block_reason"]
 
 
 @pytest.mark.asyncio
-async def test_finance_batch_groups_all_report_expenses_into_one_policy(monkeypatch):
+@pytest.mark.parametrize("has_approval_date", [True, False])
+async def test_finance_batch_groups_all_report_expenses_into_one_policy(
+    monkeypatch, has_approval_date
+):
     informe = SimpleNamespace(
         id=uuid4(),
         tipo="INFORME",
         estado="aprobado",
         numero_referencia="I-26000001",
+        aprobado_en=datetime(2026, 9, 20) if has_approval_date else None,
         cuenta_gastos_id=None,
     )
     expenses = [
@@ -553,6 +648,13 @@ async def test_finance_batch_groups_all_report_expenses_into_one_policy(monkeypa
 
     monkeypatch.setattr(admin_routes, "assess_expense_coi_cleanup_ready", ready)
     monkeypatch.setattr(admin_routes, "build_expense_cfdi_for_export", build)
+
+    if not has_approval_date:
+        with pytest.raises(ValueError, match="Falta fecha de aprobación"):
+            await admin_routes._build_finance_coi_batch_expenses(
+                Session(), year=2026, month=9
+            )
+        return
 
     year, month, payloads = await admin_routes._build_finance_coi_batch_expenses(
         Session(), year=2026, month=9
@@ -593,6 +695,68 @@ async def test_finance_batch_blocks_unapproved_informe():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cut_state", ["missing", "invalid", "frozen"])
+async def test_finance_amex_report_requires_frozen_cut(monkeypatch, cut_state):
+    informe = SimpleNamespace(
+        id=uuid4(),
+        tipo="INFORME",
+        estado="aprobado",
+        numero_referencia="I-AMEX",
+        cuenta_gastos_id=None,
+    )
+    expenses = [
+        SimpleNamespace(
+            id=uuid4(),
+            fecha=expense_date,
+            cuenta_gastos_id=None,
+            informe_documento=informe,
+            documento=None,
+        )
+        for expense_date in (datetime(2026, 8, 31), datetime(2026, 9, 1))
+    ]
+    cut = SimpleNamespace(id=uuid4())
+    responses = [expenses, expenses, [] if cut_state == "missing" else [cut]]
+
+    class Session:
+        async def execute(self, _statement):
+            return _ScalarRows(responses.pop(0))
+
+    def frozen(found_cut):
+        assert found_cut is cut
+        if cut_state == "invalid":
+            raise ValueError("El corte contiene evidencia incompleta o inválida.")
+        return [payload]
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("AMEX export must not rebuild mutable classifications")
+
+    payload = ExpenseCFDI(
+        fecha=datetime(2026, 9, 30),
+        total=200,
+        iva_amount=0,
+        subtotal_amount=200,
+        concepto="Corte congelado",
+        cuenta_contable="5000",
+        cuenta_contrapartida="1170",
+        poliza_group_key=f"amex-cut:{cut.id}",
+    )
+    monkeypatch.setattr(admin_routes, "is_company_amex_expense", lambda _: True)
+    monkeypatch.setattr(admin_routes, "cut_expense_cfdis", frozen)
+    monkeypatch.setattr(admin_routes, "assess_expense_coi_cleanup_ready", forbidden)
+    monkeypatch.setattr(admin_routes, "build_expense_cfdi_for_export", forbidden)
+    if cut_state != "frozen":
+        with pytest.raises(ValueError, match="corte"):
+            await admin_routes._build_finance_coi_batch_expenses(
+                Session(), year=2026, month=9
+            )
+    else:
+        _, _, payloads = await admin_routes._build_finance_coi_batch_expenses(
+            Session(), year=2026, month=9
+        )
+        assert payloads == [payload]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("relation", ["documento", "cuenta"])
 @pytest.mark.parametrize(
     "blocker", [None, "not_ready", "outside_period", "outside_not_ready"]
@@ -606,6 +770,7 @@ async def test_finance_report_ownership_and_atomic_blockers(
         tipo="INFORME",
         estado="aprobado",
         numero_referencia="I-ATOMIC",
+        aprobado_en=datetime(2026, 9, 20),
         cuenta_gastos_id=account_id,
     )
     expense = SimpleNamespace(
@@ -806,6 +971,7 @@ async def test_document_bundle_rejects_late_failure_after_ready_item(monkeypatch
         estado="aprobado",
         cuenta_gastos_id=None,
         numero_referencia="I-ATOMIC",
+        aprobado_en=datetime(2026, 9, 20),
     )
     expenses = [
         SimpleNamespace(
@@ -1086,10 +1252,12 @@ async def test_coi_loaders_eagerly_load_all_beneficiary_fallbacks(kind):
             dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
         )
     )
-    assert "expense_reports.fecha >= '2026-09-01 00:00:00'" in sql
-    assert "expense_reports.fecha < '2026-10-01 00:00:00'" in sql
     if kind == "INFORME":
         assert "documentos.estado = 'aprobado'" in sql
+        assert "documentos.aprobado_en >= '2026-09-01 00:00:00'" in sql
+    else:
+        assert "expense_reports.fecha >= '2026-09-01 00:00:00'" in sql
+        assert "expense_reports.fecha < '2026-10-01 00:00:00'" in sql
 
 
 @pytest.mark.asyncio

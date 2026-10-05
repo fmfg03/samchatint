@@ -22,16 +22,17 @@ canon edits silently.
 
 | Protected source path | SHA-256 at Line 0 baseline |
 | --- | --- |
-| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `76daebdef453526c01680493faa830be3bdb87b4d05def778a17311b59da1cdb` |
+| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `432113fb12e637077caab5b6d054a36274c2c44b0007553b1caa06e6363a3bbd` |
 | `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `f930556b0c6002d8d6242e5591fdce72362d922a39a0746d4fac04538580e433` |
-| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `22f0f1904bbc034b62c5357e9758878fef20256d21b97648a24cd6e5daea8bff` |
+| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `c84ba46a9b2d314b590fe96563d7390e8819d5a53c02e9212d47d9172e9ba08f` |
 
 | Canon amendment date | Affected sources | Reason and evidence | Evidence state |
 | --- | --- | --- | --- |
 | 2026-09-11 | Product and Engineering canons | This amendment governs the pending correction to #314/#315 from an external-client interpretation to internal Direction, position-scoped boards and reports. Production remains at `81335f8ddd7e103839719f62235a14d11bb2bd47` with the incorrect client-based interpretation; the correction is only an uncommitted isolated-worktree diff with focused authorization/reporting tests and route-contract validation. | `repo_live` only after merge; `deployed_verified` only after a new release plus authenticated smoke. UAT and real scope configuration remain pending; not `business_accepted`. |
 | 2026-09-12 | Product and Engineering canons | Human-approved expansion of `/direccion/tableros` to cross-domain, read-only Operations, Finance, and Marketing visibility inside assigned Direction portfolio/tournament scope. Evidence: scoped budget and tournament SOUL/entity-dossier integration, explicit gap inventory, aggregate age handling, focused tests, lint and diff validation. | Worktree implementation under review; not merged, deployed, UAT-validated, or business accepted. |
 | 2026-09-19 | Engineering canon | Human-approved correction for PR #350: its required CI gate replaces the obsolete Python 3.11/3.12 and non-blocking-security description with the Python 3.12-only direct-suite, exact pytest/Bandit baselines, changed-code coverage, and aggregate-gate contract. Evidence: focused contract tests, exact Bandit baseline verification, and diff hygiene in the isolated worktree. | Worktree implementation under review; not merged, deployed, or business accepted. |
-| 2026-09-29 | Product and Engineering canons | Human-approved accounting invariant: one atomic COI policy per `INFORME`, with all active expense movements and CFDI blocks grouped under one header; incomplete or cross-period reports fail closed without partial status updates. Evidence: isolated-worktree implementation and focused exporter, route, batch, and ZIP regression tests. | Worktree implementation under review; not merged, deployed, authenticated-UAT-validated, or business accepted. |
+| 2026-09-29 | Product and Engineering canons | Human-approved accounting invariant: one atomic COI policy per `INFORME`, with all active expense movements and CFDI blocks grouped under one header; incomplete or cross-period reports originally failed closed without partial status updates. The cross-period restriction is superseded by the human-approved 2026-10-05 amendment below. Evidence: isolated-worktree implementation and focused exporter, route, batch, and ZIP regression tests. | Worktree implementation under review; not merged, deployed, authenticated-UAT-validated, or business accepted. |
+| 2026-10-05 | Product and Engineering canons | Explicit human approval to permit normal reports with expense dates in different months, using one approval-month policy period for monthly discovery and Finance batches. Missing approval dates remain blockers. AMEX requires its immutable initial cut and that cut's accounting month, retaining cut-creation controls. Evidence: PR #458 shared period predicates, SQL-backed discovery tests, complete CSV/XLSX/ZIP exports and frozen-cut regressions. | Source changes under PR review; deployment, authenticated UAT and business acceptance remain pending. |
 
 ## Work lanes and gates
 
