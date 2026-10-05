@@ -25,6 +25,11 @@ _NON_FISCAL_ACCOUNT_NAMES = {
     "sin requisitos fiscales",
     "no deducible",
     "gastos no deducibles",
+    "gastos no deducibles ctt",
+    "gastos no deducibles dcc",
+    "gastos no deducibles del cutt",
+    "gastos no deducibles de md",
+    "gastos no deducibles ltb",
 }
 
 
