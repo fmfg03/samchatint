@@ -1,0 +1,3183 @@
+{
+  "summary": [
+    {
+      "tag": "LABEL",
+      "text": "Edición",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Cartera (filtro opcional)Todas mis carteras asignadasCartera",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Torneos · 2 de 2 del filtro",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Desde",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Hasta",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Actualizar contexto",
+      "ratio": 7.558460559570303,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Contexto vigente: 2 seleccionados · 2 en el filtro · 2 accesibles. Fil",
+      "ratio": 6.118031439030785,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "VISIÓN EJECUTIVA",
+      "ratio": 6.048701604486511,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H1",
+      "text": "El panorama, con claridad.",
+      "ratio": 16.634504710877508,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Liquidez disponible: cobertura pendiente",
+      "ratio": 7.060660404461981,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Periodo, fuentes y validación · MXN",
+      "ratio": 16.634504710877508,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Resumen",
+      "ratio": 7.6887222835581,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Presupuesto vs Real",
+      "ratio": 6.336344981701214,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Flujo de efectivo",
+      "ratio": 6.336344981701214,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "PDF",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Excel",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Consultar con Sam",
+      "ratio": 7.558460559570303,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "El reporte conserva las cifras reales de este corte.",
+      "ratio": 7.060660404461981,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Ejercido documental",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "STRONG",
+      "text": "$400,000.00 MXN",
+      "ratio": 11.317468764995137,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Fuente disponible · validación pendiente · 2/2 torneos",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Consultar esta cifra con Sam →",
+      "ratio": 6.6121645033709955,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Periodo, corte y definición",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Comprometido documental",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "STRONG",
+      "text": "$360,000.00 MXN",
+      "ratio": 11.317468764995137,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Fuente disponible · validación pendiente · 2/2 torneos",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Consultar esta cifra con Sam →",
+      "ratio": 6.6121645033709955,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Periodo, corte y definición",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Pagado documental",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "STRONG",
+      "text": "$190,000.00 MXN",
+      "ratio": 11.317468764995137,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Fuente disponible · validación pendiente · 2/2 torneos",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Consultar esta cifra con Sam →",
+      "ratio": 6.6121645033709955,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Periodo, corte y definición",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Obligaciones próximas · 30 días",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "STRONG",
+      "text": "$24,000.00 MXN",
+      "ratio": 11.317468764995137,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Fuente disponible · validación pendiente · 2/2 torneos",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Consultar esta cifra con Sam →",
+      "ratio": 6.6121645033709955,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Periodo, corte y definición",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "STRONG",
+      "text": "Cómo leer estas cifras",
+      "ratio": 12.353179757258891,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Ejercido: fecha del gasto y base fiscal. Comprometido y pagado documen",
+      "ratio": 6.712900549448844,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Ejemplo: una solicitud de septiembre pagada en octubre aparece pagada ",
+      "ratio": 6.712900549448844,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Caja: solo movimientos bancarios conciliados por su fecha efectiva. Ej",
+      "ratio": 6.712900549448844,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Fuentes por completar · 6 indicadores",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H2",
+      "text": "Ejecución contra presupuesto",
+      "ratio": 17.85253496299567,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "La barra compara ejercido del intervalo con presupuesto anual. No apil",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H3",
+      "text": "Torneo sintético Norte",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Ejercido: $240,000.00 MXN · presupuesto anual: Sin dato",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Sin base comparable para graficar.",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Comprometido: $180,000.00 MXN · pagado documental: $95,000.00 MXN",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Fuente y cobertura",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H3",
+      "text": "Torneo sintético Sur",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Ejercido: $160,000.00 MXN · presupuesto anual: Sin dato",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Sin base comparable para graficar.",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Comprometido: $180,000.00 MXN · pagado documental: $95,000.00 MXN",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Fuente y cobertura",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H2",
+      "text": "Evolución mensual del ejercido",
+      "ratio": 17.85253496299567,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Misma base y alcance del agregado; meses de inicio y fin pueden ser pa",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H3",
+      "text": "Torneo sintético Norte",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "$240,000.00 MXN",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "2026-06",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H3",
+      "text": "Torneo sintético Sur",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "$160,000.00 MXN",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "2026-06",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H2",
+      "text": "Asuntos prioritarios",
+      "ratio": 17.85253496299567,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "STRONG",
+      "text": "Liquidez disponible: cobertura pendiente",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Falta saldo bancario conciliado atribuible al alcance; no se usa flujo",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Abrir con Sam",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "STRONG",
+      "text": "Cobranza pendiente: cobertura pendiente",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Falta atribución y cobro aceptado.",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Abrir con Sam",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H2",
+      "text": "Operación respaldada",
+      "ratio": 17.85253496299567,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Conteos de la edición 2026; no se filtran por el intervalo financiero.",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Torneo",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Equipos",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Jugadores",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Avance",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Torneo sintético Norte",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "Sin dato",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "Sin dato",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "Sin meta aprobada",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Torneo sintético Sur",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "Sin dato",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "Sin dato",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "Sin meta aprobada",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "FOOTER",
+      "text": "Los cortes individuales de fuentes pueden diferir; no se afirma atomic",
+      "ratio": 5.297379976484017,
+      "required": 4.5,
+      "gradient": false
+    }
+  ],
+  "selector": [
+    {
+      "tag": "LABEL",
+      "text": "Edición",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Cartera (filtro opcional)Todas mis carteras asignadasCartera",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Torneos · 2 de 2 del filtro",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Este filtro contiene 2 de los 2 torneos accesibles. Sin selección indi",
+      "ratio": 7.0714652520445895,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Todos los 2 de este filtro",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Torneo sintético Norte",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Torneo sintético Sur",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Desde",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Hasta",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Actualizar contexto",
+      "ratio": 7.558460559570303,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Contexto vigente: 2 seleccionados · 2 en el filtro · 2 accesibles. Fil",
+      "ratio": 6.118031439030785,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "VISIÓN EJECUTIVA",
+      "ratio": 6.048701604486511,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H1",
+      "text": "El panorama, con claridad.",
+      "ratio": 16.634504710877508,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Liquidez disponible: cobertura pendiente",
+      "ratio": 7.060660404461981,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Periodo, fuentes y validación · MXN",
+      "ratio": 16.634504710877508,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Resumen",
+      "ratio": 7.6887222835581,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Presupuesto vs Real",
+      "ratio": 6.336344981701214,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Flujo de efectivo",
+      "ratio": 6.336344981701214,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "PDF",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Excel",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Consultar con Sam",
+      "ratio": 7.558460559570303,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "El reporte conserva las cifras reales de este corte.",
+      "ratio": 7.060660404461981,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Ejercido documental",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "STRONG",
+      "text": "$400,000.00 MXN",
+      "ratio": 11.317468764995137,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Fuente disponible · validación pendiente · 2/2 torneos",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Consultar esta cifra con Sam →",
+      "ratio": 6.6121645033709955,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Periodo, corte y definición",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Comprometido documental",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "STRONG",
+      "text": "$360,000.00 MXN",
+      "ratio": 11.317468764995137,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Fuente disponible · validación pendiente · 2/2 torneos",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Consultar esta cifra con Sam →",
+      "ratio": 6.6121645033709955,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Periodo, corte y definición",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Pagado documental",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "STRONG",
+      "text": "$190,000.00 MXN",
+      "ratio": 11.317468764995137,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Fuente disponible · validación pendiente · 2/2 torneos",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Consultar esta cifra con Sam →",
+      "ratio": 6.6121645033709955,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Periodo, corte y definición",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Obligaciones próximas · 30 días",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "STRONG",
+      "text": "$24,000.00 MXN",
+      "ratio": 11.317468764995137,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Fuente disponible · validación pendiente · 2/2 torneos",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Consultar esta cifra con Sam →",
+      "ratio": 6.6121645033709955,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Periodo, corte y definición",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "STRONG",
+      "text": "Cómo leer estas cifras",
+      "ratio": 12.353179757258891,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Ejercido: fecha del gasto y base fiscal. Comprometido y pagado documen",
+      "ratio": 6.712900549448844,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Ejemplo: una solicitud de septiembre pagada en octubre aparece pagada ",
+      "ratio": 6.712900549448844,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Caja: solo movimientos bancarios conciliados por su fecha efectiva. Ej",
+      "ratio": 6.712900549448844,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Fuentes por completar · 6 indicadores",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H2",
+      "text": "Ejecución contra presupuesto",
+      "ratio": 17.85253496299567,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "La barra compara ejercido del intervalo con presupuesto anual. No apil",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H3",
+      "text": "Torneo sintético Norte",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Ejercido: $240,000.00 MXN · presupuesto anual: Sin dato",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Sin base comparable para graficar.",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Comprometido: $180,000.00 MXN · pagado documental: $95,000.00 MXN",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Fuente y cobertura",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H3",
+      "text": "Torneo sintético Sur",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Ejercido: $160,000.00 MXN · presupuesto anual: Sin dato",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Sin base comparable para graficar.",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Comprometido: $180,000.00 MXN · pagado documental: $95,000.00 MXN",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Fuente y cobertura",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H2",
+      "text": "Evolución mensual del ejercido",
+      "ratio": 17.85253496299567,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Misma base y alcance del agregado; meses de inicio y fin pueden ser pa",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H3",
+      "text": "Torneo sintético Norte",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "$240,000.00 MXN",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "2026-06",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H3",
+      "text": "Torneo sintético Sur",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "$160,000.00 MXN",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "2026-06",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H2",
+      "text": "Asuntos prioritarios",
+      "ratio": 17.85253496299567,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "STRONG",
+      "text": "Liquidez disponible: cobertura pendiente",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Falta saldo bancario conciliado atribuible al alcance; no se usa flujo",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Abrir con Sam",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "STRONG",
+      "text": "Cobranza pendiente: cobertura pendiente",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Falta atribución y cobro aceptado.",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Abrir con Sam",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H2",
+      "text": "Operación respaldada",
+      "ratio": 17.85253496299567,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Conteos de la edición 2026; no se filtran por el intervalo financiero.",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Torneo",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Equipos",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Jugadores",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Avance",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Torneo sintético Norte",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "Sin dato",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "Sin dato",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "Sin meta aprobada",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Torneo sintético Sur",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "Sin dato",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "Sin dato",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "Sin meta aprobada",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "FOOTER",
+      "text": "Los cortes individuales de fuentes pueden diferir; no se afirma atomic",
+      "ratio": 5.297379976484017,
+      "required": 4.5,
+      "gradient": false
+    }
+  ],
+  "budget": [
+    {
+      "tag": "LABEL",
+      "text": "Edición",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Cartera (filtro opcional)Todas mis carteras asignadasCartera",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Torneos · 2 de 2 del filtro",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Desde",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Hasta",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Actualizar contexto",
+      "ratio": 7.558460559570303,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Contexto vigente: 2 seleccionados · 2 en el filtro · 2 accesibles. Fil",
+      "ratio": 6.118031439030785,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "VISIÓN EJECUTIVA",
+      "ratio": 6.048701604486511,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H1",
+      "text": "El panorama, con claridad.",
+      "ratio": 16.634504710877508,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Liquidez disponible: cobertura pendiente",
+      "ratio": 7.060660404461981,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Periodo, fuentes y validación · MXN",
+      "ratio": 16.634504710877508,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Resumen",
+      "ratio": 6.336344981701214,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Presupuesto vs Real",
+      "ratio": 7.625882516898798,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Flujo de efectivo",
+      "ratio": 6.336344981701214,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "PDF",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Excel",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Consultar con Sam",
+      "ratio": 7.558460559570303,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "El reporte conserva las cifras reales de este corte.",
+      "ratio": 7.060660404461981,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "CONTROL FINANCIERO",
+      "ratio": 6.49160637792906,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H2",
+      "text": "Presupuesto vs Real",
+      "ratio": 17.85253496299567,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "MXN · sin escala",
+      "ratio": 7.964396945205034,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Mes de corte 2026-06 · acumulado desde enero. Variación = presupuesto ",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Fuente validada para las partidas mostradas.",
+      "ratio": 8.224179782578343,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Finanzas: vincular cada partida con su concepto y plan mensual aprobad",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "26 renglones · expandir grupos para ver partidas · — = sin fuente · po",
+      "ratio": 7.0714652520445895,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Concepto",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Presupuesto",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Real",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Variación",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Mes",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Acumulado",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Mes",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Acumulado",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Mes",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Acumulado",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Ingresos",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "6,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "800.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "4,800.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "200.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Desfavorable",
+      "ratio": 7.273914118848372,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,200.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Desfavorable",
+      "ratio": 7.273914118848372,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Costos Directos",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "14,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "84,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "11,200.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "67,200.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "2,800.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "16,800.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "＋ Generales",
+      "ratio": 12.199666725913586,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "2,000.00",
+      "ratio": 6.787604022401941,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "12,000.00",
+      "ratio": 6.787604022401941,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,600.00",
+      "ratio": 6.787604022401941,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "9,600.00",
+      "ratio": 6.787604022401941,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "400.00",
+      "ratio": 6.787604022401941,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 6.7622893531203045,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "2,400.00",
+      "ratio": 6.787604022401941,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 6.7622893531203045,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Partida 1",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "6,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "800.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "4,800.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "200.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,200.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Partida 2",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "6,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "800.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "4,800.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "200.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,200.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "＋ Inscripción",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "2,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "12,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,600.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "9,600.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "400.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "2,400.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "＋ Cena / Bienvenida",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "2,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "12,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,600.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "9,600.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "400.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "2,400.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "＋ Fase Colectiva",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "2,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "12,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,600.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "9,600.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "400.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "2,400.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "＋ Estatal",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "2,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "12,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,600.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "9,600.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "400.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "2,400.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "＋ Nacional",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "2,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "12,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,600.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "9,600.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "400.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "2,400.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "＋ Viaje campeones",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "2,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "12,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,600.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "9,600.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "400.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "2,400.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Transmisión y RRSS",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "6,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "800.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "4,800.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "200.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,200.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Patrocinios",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "6,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "800.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "4,800.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "200.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "1,200.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Remanente",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "-15,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "-90,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "-12,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "-72,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "-3,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "-18,000.00",
+      "ratio": 7.291949779700102,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Favorable",
+      "ratio": 7.264754130619487,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Fuente: Correspondencia explícita con fuentes canónicas; nunca importe",
+      "ratio": 6.566012758924041,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "FOOTER",
+      "text": "Los cortes individuales de fuentes pueden diferir; no se afirma atomic",
+      "ratio": 5.297379976484017,
+      "required": 4.5,
+      "gradient": false
+    }
+  ],
+  "cashflow": [
+    {
+      "tag": "LABEL",
+      "text": "Edición",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Cartera (filtro opcional)Todas mis carteras asignadasCartera",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Torneos · 2 de 2 del filtro",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Desde",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Hasta",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Actualizar contexto",
+      "ratio": 7.558460559570303,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Contexto vigente: 2 seleccionados · 2 en el filtro · 2 accesibles. Fil",
+      "ratio": 6.118031439030785,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "VISIÓN EJECUTIVA",
+      "ratio": 6.048701604486511,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H1",
+      "text": "El panorama, con claridad.",
+      "ratio": 16.634504710877508,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Liquidez disponible: cobertura pendiente",
+      "ratio": 7.060660404461981,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Periodo, fuentes y validación · MXN",
+      "ratio": 16.634504710877508,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Resumen",
+      "ratio": 6.336344981701214,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Presupuesto vs Real",
+      "ratio": 6.336344981701214,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Flujo de efectivo",
+      "ratio": 7.6887222835581,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "PDF",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Excel",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Consultar con Sam",
+      "ratio": 7.558460559570303,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "El reporte conserva las cifras reales de este corte.",
+      "ratio": 7.060660404461981,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "TESORERÍA",
+      "ratio": 6.49160637792906,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "H2",
+      "text": "Flujo de efectivo",
+      "ratio": 17.85253496299567,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Miles de MXN",
+      "ratio": 7.964396945205034,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Junio 2026 · sintético",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Apertura + orígenes − aplicaciones = cierre.",
+      "ratio": 8.224179782578343,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "Saldo inicial",
+      "ratio": 12.562549029799841,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "0.10",
+      "ratio": 6.56927661318154,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Miles de MXN",
+      "ratio": 6.826674908139931,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "+ Orígenes",
+      "ratio": 12.562549029799841,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "0.06",
+      "ratio": 6.56927661318154,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Miles de MXN",
+      "ratio": 6.826674908139931,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "− Aplicaciones",
+      "ratio": 12.562549029799841,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "0.03",
+      "ratio": 6.56927661318154,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Miles de MXN",
+      "ratio": 6.826674908139931,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SPAN",
+      "text": "= Saldo final",
+      "ratio": 12.195110545079851,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "0.13",
+      "ratio": 6.377133677959709,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "SMALL",
+      "text": "Miles de MXN",
+      "ratio": 6.6270034021443935,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Los saldos son existencias al inicio y al cierre; no se suman como acu",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Orígenes · 6 partidas",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "CAPTION",
+      "text": "Orígenes · miles de MXN",
+      "ratio": 6.475447285423872,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Conceptos/Proyectos",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "0.01",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Conceptos/Proyectos",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "0.01",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Conceptos/Proyectos",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "0.01",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Conceptos/Proyectos",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "0.01",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Conceptos/Proyectos",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "0.01",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Conceptos/Proyectos",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "0.01",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Aplicaciones · 6 partidas",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Periodos comparativos y fuentes",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Tres espacios mensuales y tres acumulados. Cada comparación requiere i",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "CAPTION",
+      "text": "Comparativos · miles de MXN · sin periodo acreditado no hay cifra",
+      "ratio": 6.475447285423872,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Concepto",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Junio 2026 · sintético",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Mensual · periodo pendiente",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Mensual · periodo pendiente",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Acumulado · periodo pendiente",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Acumulado · periodo pendiente",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Acumulado · periodo pendiente",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Apertura",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "0.10",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Orígenes",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "0.06",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Aplicaciones",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "0.03",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TH",
+      "text": "Cierre",
+      "ratio": 8.243857724206409,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "0.13",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "TD",
+      "text": "—",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Saldo y movimientos bancarios conciliados, clasificados y atribuibles ",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "FOOTER",
+      "text": "Los cortes individuales de fuentes pueden diferir; no se afirma atomic",
+      "ratio": 5.297379976484017,
+      "required": 4.5,
+      "gradient": false
+    }
+  ],
+  "sam": [
+    {
+      "tag": "H2",
+      "text": "Sam, en este contexto",
+      "ratio": 17.85253496299567,
+      "required": 3,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Cerrar ✕",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Explica desviaciones, compara periodos equivalentes y evalúa alternati",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "DIV",
+      "text": "Presupuesto autorizado · Edición 2026 · anual · Torneo sintético Norte",
+      "ratio": 12.353179757258891,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "DIV",
+      "text": "Presupuesto autorizado: Sin dato. Líneas de gasto de versión aprobada ",
+      "ratio": 13.944530276973008,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "¿Qué explica esto?",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Comparar torneos",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Fuente y definición",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "¿Dónde nos pasamos?",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "¿Cómo vamos a cerrar?",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "¿Qué harías tú?",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Comparar periodos",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Preguntar",
+      "ratio": 7.558460559570303,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "SUMMARY",
+      "text": "Calcular un escenario",
+      "ratio": 17.85253496299567,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Hipotético y separado del real. Gasto observado es contrafactual; gast",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "AlternativaReducir gastoAcelerar cobranzaDiferir pagos",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "TorneoTodos los del contextoTorneo sintético NorteTorneo sintético Sur",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "BaseGasto futuro estimadoGasto observado (contrafactual)",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "ConceptoTotal de la base seleccionada",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Porcentaje",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "LABEL",
+      "text": "Días a diferir",
+      "ratio": 7.577663953533317,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Calcular alternativa",
+      "ratio": 7.558460559570303,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Reporte para consejo · PDF",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "BUTTON",
+      "text": "Respaldo · Excel",
+      "ratio": 13.61264165369811,
+      "required": 4.5,
+      "gradient": false
+    },
+    {
+      "tag": "P",
+      "text": "Las recomendaciones son opiniones vinculadas a evidencia. Los escenari",
+      "ratio": 5.685270639925485,
+      "required": 4.5,
+      "gradient": false
+    }
+  ]
+}

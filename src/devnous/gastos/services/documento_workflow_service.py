@@ -21,6 +21,11 @@ from ..models import (
     Reembolso,
 )
 from ..utils.mexico_city_dates import utc_now
+from .cuenta_settlement_service import (
+    PREAPPROVAL_INFORME_STATES,
+    CuentaSettlementValidationError,
+    validate_cuenta_surplus_is_returned,
+)
 from .payment_schedule_service import assign_fecha_pago_on_solicitud_approval
 from .amex_accounting_posting_service import ensure_amex_report_approval_posting
 from .employee_debtor_accounting_service import (
@@ -36,14 +41,14 @@ from .documento_semantics import (
     approval_subject_empleado,
 )
 from .documento_service import (
-    allocate_next_referencia_operaciones,
     validate_shared_cfdi_payment_amount,
 )
 from .cfdi_ingestion_service import find_blocking_cfdi_usage
 from .project_authorization_service import (
     actor_is_route_approver,
     invalidate_document_route,
-    resolve_and_snapshot_document_route,
+    prepare_document_authorization_route,
+    has_operations_reference,
 )
 
 logger = logging.getLogger(__name__)
@@ -296,6 +301,11 @@ async def approve_reimbursement_solicitud_for_approved_informe(
     aprobador_id = await _linked_informe_approval_actor_id(session, documento)
     if aprobador_id is None:
         return None
+    await prepare_document_authorization_route(session, documento)
+    if has_operations_reference(documento) and not await actor_is_route_approver(
+        session, actor_id=aprobador_id, documento_id=documento.id
+    ):
+        return None
     aprobacion = _auto_approve_solicitud_with_approved_informe(
         documento=documento,
         aprobador_id=aprobador_id,
@@ -472,9 +482,17 @@ async def documento_financial_terminal_reason(
     reembolso_filters = [Reembolso.documento_id == documento.id]
     if getattr(documento, "cuenta_gastos_id", None):
         reembolso_filters.append(Reembolso.cuenta_gastos_id == documento.cuenta_gastos_id)
+    settlement_filters = []
+    if documento.tipo == "INFORME" and estado in PREAPPROVAL_INFORME_STATES:
+        # Returning an advance does not approve its expenses. The INFORME must
+        # still complete its first authorization cycle; reimbursements stay locked.
+        settlement_filters.append(
+            func.lower(func.coalesce(Reembolso.tipo, "")) != "devolucion"
+        )
     reembolso_result = await session.execute(
         select(func.count(Reembolso.id)).where(
             or_(*reembolso_filters),
+            *settlement_filters,
             func.lower(func.coalesce(Reembolso.estado, "")).notin_(
                 NON_TERMINAL_SETTLEMENT_STATES
             ),
@@ -495,6 +513,18 @@ async def documento_has_approval(session: AsyncSession, documento: Documento) ->
         )
     )
     return int(result.scalar_one() or 0) > 0
+
+
+async def validate_informe_surplus_before_submission(
+    session: AsyncSession, documento: Documento
+) -> None:
+    """Apply the same surplus invariant to closing, sending, and approval."""
+    if documento.tipo != "INFORME" or documento.cuenta_gastos_id is None:
+        return
+    try:
+        await validate_cuenta_surplus_is_returned(session, documento.cuenta_gastos_id)
+    except CuentaSettlementValidationError as exc:
+        raise DocumentoWorkflowValidationError(exc.code, exc.message) from exc
 
 
 async def documento_workflow_locked_reason(
@@ -595,6 +625,7 @@ async def transition_documento_workflow(
                 "El documento solo puede enviarse cuando está en estado 'borrador'.",
             )
         if documento.tipo == "INFORME":
+            await validate_informe_surplus_before_submission(session, documento)
             gastos_count = await _count_active_document_expenses(
                 session,
                 documento_id=documento_uuid,
@@ -616,6 +647,9 @@ async def transition_documento_workflow(
                 "pasará a Programación de Pago cuando se apruebe el informe "
                 "de gastos vinculado.",
             )
+        if not has_operations_reference(documento):
+            await invalidate_document_route(session, documento.id)
+        await prepare_document_authorization_route(session, documento)
         if documento_requires_budget_control(documento):
             documento.estado = BUDGET_CONTROL_STATE
             documento.enviado_en = None
@@ -633,16 +667,17 @@ async def transition_documento_workflow(
             informe_aprobador_id = await _linked_informe_approval_actor_id(
                 session, documento
             )
-            if informe_aprobador_id is not None:
+            if informe_aprobador_id is not None and (
+                not has_operations_reference(documento)
+                or await actor_is_route_approver(
+                    session, actor_id=informe_aprobador_id, documento_id=documento.id
+                )
+            ):
                 auto_aprobacion = _auto_approve_solicitud_with_approved_informe(
                     documento=documento,
                     aprobador_id=informe_aprobador_id,
                     now=now,
                 )
-        await invalidate_document_route(session, documento.id)
-        route = await resolve_and_snapshot_document_route(session, documento)
-        if route and route.requires_operations_reference and not documento.referencia_operaciones:
-            documento.referencia_operaciones = await allocate_next_referencia_operaciones(session)
 
     elif normalized_action == "approve":
         if documento.estado != "enviado":
@@ -650,6 +685,7 @@ async def transition_documento_workflow(
                 "invalid_estado",
                 "El documento solo puede aprobarse cuando está en estado 'enviado'.",
             )
+        await validate_informe_surplus_before_submission(session, documento)
         if is_employee_reimbursement_solicitud(
             documento
         ) and not await _solicitud_linked_informe_is_approved(session, documento):
@@ -662,23 +698,20 @@ async def transition_documento_workflow(
             await _document_has_recorded_approval(session, documento_uuid)
         )
         route_exists = (
-            (
-                await session.execute(
-                    text(
-                        "SELECT 1 FROM documento_authorization_routes "
-                        "WHERE documento_id = :documento_id"
-                    ),
-                    {"documento_id": str(documento.id)},
-                )
-            ).scalar_one_or_none()
-            is not None
-        )
-        if route_exists:
-            if (
-                not await actor_is_route_approver(
-                    session, actor_id=actor.id, documento_id=documento.id
-                )
-                and actor.rol not in {"superadmin", "super_admin"}
+            await session.execute(
+                text(
+                    "SELECT 1 FROM documento_authorization_routes "
+                    "WHERE documento_id = :documento_id"
+                ),
+                {"documento_id": str(documento.id)},
+            )
+        ).scalar_one_or_none() is not None
+        if route_exists or has_operations_reference(documento):
+            if not await actor_is_route_approver(
+                session, actor_id=actor.id, documento_id=documento.id
+            ) and (
+                has_operations_reference(documento)
+                or actor.rol not in {"superadmin", "super_admin"}
             ):
                 raise DocumentoWorkflowValidationError(
                     "not_route_approver",
@@ -790,12 +823,12 @@ async def transition_documento_workflow(
             ).scalar_one_or_none()
             is not None
         )
-        if route_exists:
-            if (
-                not await actor_is_route_approver(
-                    session, actor_id=actor.id, documento_id=documento.id
-                )
-                and actor.rol not in {"superadmin", "super_admin"}
+        if route_exists or has_operations_reference(documento):
+            if not await actor_is_route_approver(
+                session, actor_id=actor.id, documento_id=documento.id
+            ) and (
+                has_operations_reference(documento)
+                or actor.rol not in {"superadmin", "super_admin"}
             ):
                 raise DocumentoWorkflowValidationError(
                     "not_route_approver",

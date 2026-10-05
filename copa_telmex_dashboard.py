@@ -4124,7 +4124,12 @@ async def startup_event():
     try:
         # Create all tables (including CFDIReport)
         async with db_engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+            from devnous.gastos.amex_schema_policy import runtime_managed_tables
+
+            await conn.run_sync(
+                Base.metadata.create_all,
+                tables=runtime_managed_tables(Base.metadata),
+            )
             guard_report = await apply_schema_guard(conn, logger=logger, strict=False)
             health_report = await check_schema_health(conn)
         logger.info("✅ Database tables created/verified")

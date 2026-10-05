@@ -211,6 +211,23 @@ Repository status at this baseline:
 Do not describe the safety invariant as business-closed until the historical
 reconciliation, affected-reference verification, and Finance UAT are evidenced.
 
+#### 8.2.1 One COI policy per expense report
+
+For COI export, the canonical grouping key is the owning `INFORME`, not the
+individual `ExpenseReport` row. All active expenses owned by one `INFORME`
+share one policy header and one `FIN_PARTIDAS` closure while preserving each
+expense's movement lines, tax splits, and CFDI block.
+
+The document, preview, monthly batch, consolidated workbook, and ZIP paths must
+use the same grouping contract. A per-expense download must resolve and redirect
+to the owning `INFORME` when one exists. Standalone third-party requests remain
+ungrouped unless their owning workflow defines a separate document policy.
+
+An `INFORME` export fails closed when any active expense is not COI-ready or
+when active expenses cross accounting-month boundaries. The failure must not
+emit a partial policy or update any expense to `contabilizado`. Successful batch
+status updates apply to all included report expenses in one transaction.
+
 ### 8.3 Payment Run
 
 Canonical states visible to Payment Run are:
@@ -371,3 +388,28 @@ SamChat is a multi-surface repository centered on the `copa_telmex_dashboard.py`
 ## 17. Final rule
 
 When a clean product narrative conflicts with code, deployed behavior, or business evidence, preserve the conflict and state it explicitly.
+
+## 18. Direction report scope amendment
+
+Date: 2026-10-02. Proposed for explicit human review in the report redesign draft
+PR, implementing Francisco's explicit 18:27 UTC authorization for SUPERADMIN.
+
+For read-only Direction surfaces, SUPERADMIN may resolve all active rows of the
+current installation's local `tournaments` catalog without manufacturing portfolio
+assignments. The present local schema has no cross-organization tournament
+directory; this exception must never become a global external-catalog fallback.
+If the installation becomes multi-tenant, this read needs an explicit tenant
+predicate before it may be reused. Position/cartera rules for other profiles,
+explicit source/action denials, publication and financial write authority remain.
+
+One, several or all authorized tournament UUIDs define the signed context. Every
+ID is validated before source reads and revalidated for Sam and PDF/XLSX. Changing
+the resolved all-selection invalidates an old context. Documentary facts are read
+independently of budget versions via the budgets-owned fiscal-base helper and the
+gastos-owned payable-amount resolver, using a set-scoped read per source and
+identity deduplication. Missing amount, currency, attribution, shared allocation,
+date and truncation coverage are source-specific; no budget artifact fallback
+supplies factual values. No DDL or financial state writes are introduced.
+
+Evidence level: isolated implementation and synthetic verification, pending draft
+PR review. Production reconciliation, deployment and business UAT are not implied.

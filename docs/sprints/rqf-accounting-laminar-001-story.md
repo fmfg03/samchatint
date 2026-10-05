@@ -5,6 +5,10 @@ Date: 2026-08-27
 Branch: `codex/rqf-accounting-laminar-001`
 Scope: historia funcional, límites de cierre, servicios de contabilización y cableado inicial de eventos productivos.
 
+Amendment: 2026-10-01, reglas AMEX y especificación de corte aprobadas por el
+usuario. Las reglas 1 a 8 permanecen como contrato; esta implementación se
+limita al reconocimiento compartido AMEX, revisión y cortes de un informe.
+
 ## Problema
 
 SamChat tiene varios disparadores contables para solicitudes, anticipos,
@@ -51,7 +55,7 @@ determinista:
 | --- | --- | --- |
 | Deudores empleados | `1170-001-XXX` | Cuenta activa del empleado, resuelta por identidad explícita. |
 | Deudores socios | `1170-002-XXX` | Cuenta activa del socio, resuelta por identidad explícita. |
-| AMEX de Odilón en informe | `1170-002-004` | Cuenta fija para la regla 9. |
+| Cargo AMEX al socio | `1170-002-XXX` | Cuenta activa elegida explícitamente; cargo por el total de la partida. |
 | Banco Santander | `1120-001-001` | Única cuenta bancaria de abono en estas reglas. |
 | Pasivos AMEX por tarjeta | `2120-002-062`, `2120-002-063`, `2120-002-064`, `2120-002-065`, `2120-002-066`, `2120-002-067`, `2120-002-100` | Se elige por la tarjeta AMEX identificada. |
 
@@ -134,19 +138,27 @@ Al aprobar un Informe de Gastos clasificado como reembolso directo:
 
 ### AC-LAM-009 — Informe AMEX aprobado
 
-Al aprobar un Informe de Gastos clasificado como AMEX bajo esta modalidad:
+La aprobación del informe habilita su revisión contable; no sustituye el check
+de Finanzas ni genera por sí misma una póliza AMEX. En Contabilidad, cada
+partida requiere revisión explícita y elección de gasto o cargo al socio.
 
-- Debe: gasto por concepto presupuestal, No Deducibles e impuestos aplicables.
-- Haber: `1170-002-004` AMEX Odilón.
-- No se acepta otra subcuenta por coincidencia de nombre ni un fallback de
-  empleado.
+- Gasto: Debe a gasto presupuestal, No Deducibles e impuestos aplicables.
+- Socio: Debe por el total de la partida a una cuenta activa `1170-002-XXX`
+  elegida expresamente, aunque haya factura y clasificación automática previa.
+  No se separa gasto, IVA ni otros impuestos en esa modalidad.
+- Haber: el pasivo configurado para la tarjeta de la empresa.
+- Confirmar un corte completo de un solo informe produce una única póliza con
+  todas sus partidas activas revisadas; nunca una póliza por partida.
+- Un corte de ajuste autorizado agrupa las reclasificaciones gasto→socio en
+  una sola póliza, preserva la original y no modifica el saldo AMEX.
 
 ### AC-LAM-010 — Conciliación AMEX
 
-Al autorizar una conciliación cargo AMEX contra sus facturas:
+La conciliación automática prepara evidencia y clasificación para revisión;
+no genera un segundo reconocimiento ni prevalece sobre la elección manual.
+La identidad del consumo es compartida con el informe y su corte.
 
-- Debe: gasto por concepto presupuestal, No Deducibles e impuestos aplicables.
-- Haber: el pasivo configurado para la tarjeta seleccionada entre
+- El pasivo se configura para la tarjeta seleccionada entre
   `2120-002-062`, `2120-002-063`, `2120-002-064`, `2120-002-065`,
   `2120-002-066`, `2120-002-067` y `2120-002-100`.
 - La tarjeta debe quedar identificada por un registro activo y unívoco; no se
@@ -177,10 +189,12 @@ concurrentes devuelven el mismo recibo y no crean otra póliza.
 
 ### AC-SAFE-003 — Prevención de doble contabilización
 
-Un gasto AMEX tiene un solo propietario contable. Si el mismo hecho económico
-ya fue contabilizado por la regla 9, la regla 10 no vuelve a cargar el gasto, y
-viceversa. Hasta que exista una reclasificación explícita y aprobada entre
-ambas modalidades, la colisión queda `BLOCKED` con evidencia del recibo previo.
+Un consumo AMEX tiene identidad y evidencia compartidas. La conciliación y
+el informe no generan dos cargos. Un reintento de corte devuelve la misma
+póliza. Las decisiones manuales requieren actor, motivo, versión y evidencia
+de la partida revisada; datos modificados después del check bloquean el corte.
+La reclasificación gasto→socio es explícita, autorizada, idempotente y agrupada
+por corte; revierte exactamente el desglose anterior y preserva su evidencia.
 
 ### AC-SAFE-004 — Autoridad separada
 
@@ -209,9 +223,11 @@ autorizado y auditable.
 - Backfill o reparación automática de pólizas históricas.
 - Migración masiva `1700` → `1170`.
 - Cambio de catálogo contable o creación automática de cuentas.
-- Rediseño de UI, COI, DIOT o reportes fiscales.
+- Rediseño general de UI, DIOT o reportes fiscales; se incluyen sólo la revisión
+  AMEX y exportación COI desde el corte autorizado.
 - Activación de writes contables en producción dentro de esta story/spec.
-- Definición de una póliza de reclasificación entre las reglas 9 y 10.
+- Reclasificaciones automáticas o reparación de pólizas históricas sin
+  identidad y desglose verificables.
 
 ## Evidencia de cierre requerida
 
@@ -222,4 +238,3 @@ autorizado y auditable.
 - Prueba de que ninguna línea nueva usa `1700-*`.
 - Prueba de que no se mutan pólizas anteriores al corte.
 - Trazabilidad desde evento de negocio hasta recibo y póliza.
-

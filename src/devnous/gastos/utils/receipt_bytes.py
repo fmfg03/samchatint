@@ -8,11 +8,12 @@ from __future__ import annotations
 import base64
 import binascii
 import re
+import unicodedata
 from dataclasses import dataclass
 from html import escape
 from ipaddress import ip_address, ip_network
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from uuid import UUID
 
 import httpx
@@ -155,9 +156,43 @@ def resolve_media_type(filename: Optional[str], raw: bytes) -> str:
 def comprobante_response_headers(
     filename: Optional[str], media_type: str
 ) -> Tuple[str, str]:
-    """Return (media_type, Content-Disposition value)."""
-    safe = (filename or "comprobante").replace('"', "_").replace("\r", "").replace("\n", "")
-    disp = f'inline; filename="{safe}"'
+    """Return (media_type, Content-Disposition value) safe for Unicode filenames."""
+    safe = unicodedata.normalize(
+        "NFC",
+        (
+            (filename or "comprobante")
+            .replace('"', "_")
+            .replace("\\", "_")
+            .replace("/", "_")
+            .replace("\r", "")
+            .replace("\n", "")
+        ),
+    )
+    if not safe:
+        safe = "comprobante"
+
+    try:
+        safe.encode("ascii")
+    except UnicodeEncodeError:
+        # Starlette serializes response headers as latin-1. A filename coming
+        # from macOS or a browser can contain decomposed accents (for example
+        # O + U+0301) or other Unicode that cannot be represented safely there.
+        # Keep a readable ASCII fallback and preserve the normalized filename
+        # through RFC 5987's filename* parameter.
+        fallback = (
+            unicodedata.normalize("NFKD", safe)
+            .encode("ascii", errors="ignore")
+            .decode("ascii")
+            .strip()
+            or "comprobante"
+        )
+        encoded = quote(safe, safe="!#&+-.^_|~")
+        disp = (
+            f'inline; filename="{fallback}"; '
+            f"filename*=UTF-8''{encoded}"
+        )
+    else:
+        disp = f'inline; filename="{safe}"'
     return media_type, disp
 
 
@@ -246,6 +281,7 @@ class DocumentoAdjuntoMeta:
     mime_type: Optional[str]
     tipo_archivo: Optional[str]
     nombre_archivo: Optional[str]
+    activo: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -453,7 +489,7 @@ def _label_for_documento_meta(m: DocumentoAdjuntoMeta, index: int) -> str:
     if cat == "cfdi_xml":
         return "XML"
     if cat == "comprobante_pago":
-        return "Comprobante pago"
+        return "Comprobante pago (sustituido)" if m.activo is False else "Comprobante pago"
     if cat == "supporting" and m.nombre_archivo:
         return _truncated_attachment_label(m.nombre_archivo)
     mime = (m.mime_type or m.tipo_archivo or "").lower()
@@ -543,11 +579,13 @@ def html_documento_archivos_detail(
     metas: Sequence[DocumentoAdjuntoMeta],
     *,
     removable_adjunto_ids: Optional[Set[UUID]] = None,
+    replaceable_adjunto_ids: Optional[Set[UUID]] = None,
 ) -> str:
     """Labeled file list for document detail views."""
     if not metas:
         return "—"
     removable = removable_adjunto_ids or set()
+    replaceable = replaceable_adjunto_ids or set()
     items: List[str] = []
     for m in sorted(metas, key=_documento_meta_sort_key):
         cat = _documento_meta_category(m)
@@ -571,12 +609,42 @@ def html_documento_archivos_detail(
                 f'style="padding:4px 10px;font-size:12px;">Eliminar</button>'
                 f"</form>"
             )
+        replace_control = ""
+        if (
+            cat == "comprobante_pago"
+            and m.id in replaceable
+            and m.activo is not False
+        ):
+            replace_control = (
+                f'<details style="display:inline-block;margin-left:10px;vertical-align:top;">'
+                f'<summary class="button secondary" '
+                f'style="padding:4px 10px;font-size:12px;cursor:pointer;list-style:none;">'
+                f'Corregir comprobante</summary>'
+                f'<form method="POST" enctype="multipart/form-data" '
+                f'action="/admin/finanzas/payment-run/documento/{documento_id}/sustituir-comprobante" '
+                f'style="display:grid;gap:8px;margin-top:8px;min-width:280px;max-width:420px;" '
+                f'onsubmit="return confirm(\'¿Sustituir el comprobante vigente? El anterior quedará en auditoría.\');">'
+                f'<input type="hidden" name="previous_id" value="{m.id}">'
+                f'<input type="hidden" name="return_to" value="/documentos/{documento_id}">'
+                f'<label>Nuevo comprobante'
+                f'<input type="file" name="comprobante_pago" required '
+                f'accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,application/pdf,image/*"></label>'
+                f'<label>Motivo de la corrección'
+                f'<input type="text" name="motivo" required maxlength="500" '
+                f'placeholder="Ej. Se adjuntó el comprobante de otro pago"></label>'
+                f'<small>El archivo anterior no se borra: queda marcado como sustituido para auditoría.</small>'
+                f'<button type="submit" class="button primary" '
+                f'style="padding:6px 10px;font-size:12px;">Sustituir archivo</button>'
+                f"</form></details>"
+            )
         items.append(
             "<li style=\"display:flex;align-items:center;flex-wrap:wrap;gap:4px;\">"
             f"<strong>{escape(title)}:</strong> "
             f'<a href="{escape(href, quote=True)}" target="_blank" rel="noopener noreferrer">'
             f"{escape(filename)}</a>"
+            f"{' (sustituido)' if m.activo is False and cat == 'comprobante_pago' else ''}"
             f"{remove_control}"
+            f"{replace_control}"
             "</li>"
         )
     return (
@@ -705,6 +773,7 @@ async def fetch_documento_adjuntos_meta_batch(
             _adjunto_expr("mime_type", available),
             Adjunto.tipo_archivo,
             _adjunto_expr("nombre_archivo", available),
+            _adjunto_expr("activo", available),
         )
         .where(Adjunto.documento_id.in_(list(documento_ids)))
         .order_by(Adjunto.subido_en.asc())
@@ -722,6 +791,7 @@ async def fetch_documento_adjuntos_meta_batch(
                 mime_type=row.mime_type,
                 tipo_archivo=row.tipo_archivo,
                 nombre_archivo=row.nombre_archivo,
+                activo=row.activo,
             )
         )
     return by_doc

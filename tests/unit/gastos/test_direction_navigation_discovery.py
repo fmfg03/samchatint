@@ -79,11 +79,11 @@ def test_top_navigation_requires_route_owned_discovery_flag():
     employee = _employee(visible_tool_keys={"direccion.tableros_ejecutivos"})
 
     html = user_routes.render_top_navigation(employee)
-    assert 'href="/direccion/tableros"' not in html
+    assert 'href="/direccion/inicio"' not in html
 
     employee.direction_entry_visible = True
     html = user_routes.render_top_navigation(employee)
-    assert 'href="/direccion/tableros"' in html
+    assert 'href="/direccion/inicio"' in html
     assert ">Dirección</a>" in html
 
 
@@ -92,7 +92,7 @@ def test_generic_admin_role_does_not_create_direction_discovery():
 
     html = user_routes.render_top_navigation(employee)
 
-    assert 'href="/direccion/tableros"' not in html
+    assert 'href="/direccion/inicio"' not in html
 
 
 @pytest.mark.asyncio
@@ -137,6 +137,6 @@ async def test_panel_derives_direction_entry_from_route_owned_discovery(monkeypa
     html = await user_routes.panel(object(), object(), employee)
 
     assert employee.direction_entry_visible is True
-    assert 'href="/direccion/tableros"' in html
+    assert 'href="/direccion/inicio"' in html
     assert ">Dirección</a>" in html
     assert "Tableros ejecutivos de solo lectura dentro de tu alcance asignado." in html

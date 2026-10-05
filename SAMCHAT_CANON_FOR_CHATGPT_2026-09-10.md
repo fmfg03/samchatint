@@ -161,6 +161,26 @@ The deployed guard does not by itself close the business incident: historical
 reconciliation and affected-reference verification remain required, and Finance
 UAT is separate evidence.
 
+### 9.1 Expense-report COI policy granularity
+
+Date: 2026-09-29
+
+An `INFORME` is the accounting export unit. Its active expense items, tax
+movements, and CFDI evidence must be emitted under exactly one COI policy
+header. A single expense that belongs to an `INFORME` must not be exported as
+an independent policy.
+
+The export is atomic. If any active item is not COI-ready, or if the active
+items span more than one accounting month, the complete `INFORME` policy is
+blocked. No partial file is generated and no item is marked `contabilizado`.
+Cancelled items remain excluded. Standalone third-party requests retain their
+existing policy granularity.
+
+Repository evidence for this amendment is the approved 2026-09-29 correction
+that groups XLSX, CSV, ZIP, document, and batch exports by `INFORME` and adds
+focused regression coverage. Merge, deployment, authenticated Finance UAT, and
+business acceptance remain separate evidence.
+
 ## 10. Current closure gates
 
 A finance capability is not “done” until it passes a real UAT path showing:
@@ -249,3 +269,28 @@ portfolio and tournament scope was configured for the eligible Direction
 positions. The expanded executive dossier remains an approved repository
 change under review until its own merge and deployment. Authenticated UAT and
 business acceptance remain pending.
+
+## 15. Direction supervision and independent documentary facts amendment
+
+Date: 2026-10-02. Human authorization: Francisco explicitly authorized SUPERADMIN
+to read all active tournaments in these boards, relayed at 18:27 UTC. This
+amendment is proposed in a draft PR and requires human review before merge.
+
+SUPERADMIN supervision now includes the active tournament catalog of the current
+Plataforma Sports installation even without portfolio membership. It does not
+include unrelated organizations, external catalogs, inactive tournaments, or any
+new action authority. Other profiles retain their assigned active portfolios and
+positions. An explicit portfolio filter narrows even SUPERADMIN's selection;
+explicit denials still prevail. No persistent assignment is created by a read.
+
+Documentary facts with their own verified source coverage must remain visible
+without an approved budget. Absence of an approved budget is not an authorized
+zero. Expenses use the canonical fiscal base and expense date; commitments and
+documentary paid amounts use the canonical payable amount in the request creation
+cohort. These stages are not added together, and none proves bank cash. Monthly
+budget, operating classifications, reconciled cash and comparative periods require
+their own source evidence; the supplied workbook examples are not production data.
+
+Evidence: isolated worktree from PR452, synthetic unit/browser/export verification
+and draft review evidence in `docs/evidence/direction-report-redesign`. No production
+access, merge, deployment, or business acceptance is claimed.

@@ -5,6 +5,12 @@ Date: 2026-08-27
 Depends on: `rqf-accounting-laminar-001-story.md`
 Scope of this cut: contrato ejecutable, servicios de contabilización y cableado de eventos productivos sin backfill histórico.
 
+Amendment: 2026-10-01, especificación de revisión y corte AMEX aprobada.
+El detalle implementable actualizado está en
+`rqf-accounting-amex-cut-20261001-spec.md`; prevalece para reglas 9 a 11,
+identidad compartida, revisión manual y ajustes. No declara cerradas las demás
+reglas ni la aceptación en producción.
+
 ## 1. Objetivo técnico
 
 Definir y cablear una frontera única entre las transiciones operativas y la generación de
@@ -93,7 +99,6 @@ Constantes canónicas:
 ```text
 EMPLOYEE_DEBTOR_PREFIX   = 1170-001-
 PARTNER_DEBTOR_PREFIX    = 1170-002-
-ODILON_AMEX_DEBTOR       = 1170-002-004
 SANTANDER_BANK           = 1120-001-001
 AMEX_LIABILITIES         = {
   2120-002-062, 2120-002-063, 2120-002-064, 2120-002-065,
@@ -128,12 +133,12 @@ Condiciones:
 | LAM-006 | Reembolso pagado | Deudor `1170-001-*` o `1170-002-*` | `1120-001-001` | `reimbursement_payment` |
 | LAM-007 | Informe de comprobación aprobado | Gasto + No Deducibles + impuestos | Deudor `1170-001-*` o `1170-002-*` | `advance_expense_report` |
 | LAM-008 | Informe de reembolso aprobado | Gasto + No Deducibles + impuestos | Deudor `1170-001-*` o `1170-002-*` | `reimbursement_expense_report` |
-| LAM-009 | Informe AMEX aprobado | Gasto + No Deducibles + impuestos | `1170-002-004` | `amex_expense_report` |
-| LAM-010 | Conciliación AMEX autorizada | Gasto + No Deducibles + impuestos | Pasivo de tarjeta permitido | `amex_reconciliation` |
+| LAM-009 | Corte contable de informe AMEX revisado | Gasto + No Deducibles + impuestos, o total a deudor socio elegido | Pasivo de tarjeta permitido | `amex_report_cut` |
+| LAM-010 | Conciliación AMEX automática | Preparación de evidencia/clasificación; sin nuevo asiento | Sin nuevo asiento | `amex_preparation` |
 | LAM-011 | Pago AMEX confirmado | Pasivo de la tarjeta | `1120-001-001` | `amex_payment` |
 
 Para LAM-001/LAM-002, el pasivo se resuelve una vez al aprobar y se reutiliza
-desde el recibo. Para LAM-010/LAM-011 ocurre lo mismo con el pasivo de tarjeta.
+desde el recibo. Para LAM-009/LAM-011 ocurre lo mismo con el pasivo de tarjeta.
 
 ## 6. Resolución por tipo de dependencia
 
@@ -196,11 +201,11 @@ restricción semántica.
 - LAM-007, LAM-008 y LAM-009 son clasificaciones mutuamente excluyentes del
   informe.
 - LAM-009 y LAM-010 no pueden cargar el mismo consumo.
-- Si ya existe un recibo `POSTED` con otro propietario para el mismo
-  `economic_spend_id`, el segundo evento termina `BLOCKED` con
-  `economic_spend_already_owned`.
-- No se genera automáticamente una reversa o reclasificación. Esa capacidad
-  requiere otra historia, autoridad explícita y evidencia de compensación.
+- LAM-009 y LAM-010 comparten identidad explícita, sin crear propietarios
+  contables independientes. El corte es el único reconocimiento final.
+- No se genera automáticamente una reversa o reclasificación. El ajuste
+  gasto→socio requiere check, cuenta activa, actor de Finanzas, motivo,
+  versiones vigentes, período abierto y póliza compensatoria agrupada.
 
 ## 9. Fail-closed y códigos de bloqueo
 
@@ -264,7 +269,7 @@ Contabilidad.
 | CT-LAM-015 | Beneficiario empleado/socio | Selecciona segmento por clasificación, no por nombre. |
 | CT-LAM-016 | Reintento secuencial | Una póliza, mismo recibo. |
 | CT-LAM-017 | Reintento concurrente | Una póliza, un recibo durable. |
-| CT-LAM-018 | Colisión LAM-009/LAM-010 | Segundo propietario bloqueado. |
+| CT-LAM-018 | Conciliación e informe del mismo consumo | Un único reconocimiento desde el corte. |
 | CT-LAM-019 | Cuenta/mapeo faltante | Cero pólizas parciales. |
 | CT-LAM-020 | Evento previo al corte | No modifica ni completa historia. |
 | CT-LAM-021 | Catálogo cambia tras aprobación | Pago usa snapshot del recibo previo. |
@@ -290,6 +295,8 @@ matriz a servicios reales, transacciones y base de datos concurrente.
 - Esta spec no demuestra que el código actual cumpla las once reglas.
 - La prueba ejecutable incluida valida el contrato, no el wiring productivo.
 - No se activan pólizas, migraciones, backfills ni correcciones históricas.
-- No se resuelve automáticamente la colisión económica entre LAM-009 y LAM-010;
-  se bloquea para evitar doble gasto.
-
+- Límite histórico de esta spec base: la colisión económica entre LAM-009 y
+  LAM-010 se bloqueaba para evitar doble gasto. Para el alcance AMEX aprobado
+  este límite queda sustituido por `rqf-accounting-amex-cut-20261001-spec.md`:
+  identidad compartida y un corte contable completo evitan el doble reconocimiento;
+  la identidad ambigua o histórica sin evidencia verificable sigue bloqueada.

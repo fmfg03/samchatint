@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models import ExpenseReport
+from ..models import CuentaDeGastos, ExpenseReport
+from .amex_expense_service import is_company_amex_expense
 from .coi_poliza_exporter import ExpenseCFDI
+from .employee_debtor_accounting_service import (
+    debtor_account_block_label_for_employee,
+    resolve_cuenta_debtor_account,
+    resolve_cuenta_debtor_empleado,
+)
 from .expense_accounting_cleanup_service import build_cleanup_preview
 from .expense_accounting_service import build_expense_accounting_preview
 
@@ -29,14 +35,92 @@ def allows_coi_without_cfdi(account: object) -> bool:
     return name in _NON_FISCAL_ACCOUNT_NAMES
 
 
+async def _resolve_informe_detail_counterpart(
+    session: AsyncSession,
+    expense: ExpenseReport,
+) -> Optional[str]:
+    """Resolve the beneficiary detail account for employee-paid report expenses.
+
+    The resolution is cached on the request/session object by CuentaDeGastos so
+    a grouped COI policy does not repeat beneficiary and chart-account lookups
+    for every expense line.
+    """
+    cuenta_gastos_id = getattr(expense, "cuenta_gastos_id", None)
+    if not cuenta_gastos_id or is_company_amex_expense(expense):
+        return None
+
+    cache_attr = "_samchat_informe_counterpart_cache"
+    cache = getattr(session, cache_attr, None)
+    if cache is None:
+        cache = {}
+        try:
+            setattr(session, cache_attr, cache)
+        except (AttributeError, TypeError):
+            pass
+
+    cache_key = str(cuenta_gastos_id)
+    if cache_key in cache:
+        cached_code, cached_error = cache[cache_key]
+        if cached_error:
+            raise ValueError(cached_error)
+        return cached_code
+
+    cuenta = await session.get(CuentaDeGastos, cuenta_gastos_id)
+    if cuenta is None:
+        error = (
+            "El gasto pertenece a un Informe de Gastos sin cuenta vinculada válida."
+        )
+        cache[cache_key] = (None, error)
+        raise ValueError(error)
+
+    empleado = await resolve_cuenta_debtor_empleado(session, cuenta)
+    debtor_account = await resolve_cuenta_debtor_account(session, cuenta, empleado)
+    code = str(getattr(debtor_account, "codigo", "") or "").strip()
+    if code:
+        cache[cache_key] = (code, None)
+        return code
+
+    block = debtor_account_block_label_for_employee(empleado)
+    error = (
+        "Falta subcuenta contable de detalle para el beneficiario del Informe "
+        f"de Gastos ({block})."
+    )
+    cache[cache_key] = (None, error)
+    raise ValueError(error)
+
+
+def group_expense_cfdis_for_document(
+    expense_cfdis: List[ExpenseCFDI],
+    documento: Any,
+) -> List[ExpenseCFDI]:
+    """Bind all INFORME expenses to one COI policy without changing SOLICITUD."""
+    if getattr(documento, "tipo", None) != "INFORME":
+        return expense_cfdis
+    reference = str(
+        getattr(documento, "numero_referencia", None)
+        or getattr(documento, "id", "INFORME")
+    )
+    group_key = f"informe:{getattr(documento, 'id', reference)}"
+    description = f"Informe de Gastos {reference}"
+    for expense_cfdi in expense_cfdis:
+        expense_cfdi.poliza_group_key = group_key
+        expense_cfdi.poliza_reference = reference
+        expense_cfdi.poliza_description = description
+    return expense_cfdis
+
+
 async def assess_expense_coi_cleanup_ready(
     session: AsyncSession,
     expense: ExpenseReport,
 ) -> Tuple[bool, List[str]]:
-    """True when the expense matches Centro de Limpieza 'Listo COI' after save."""
+    """True when the expense is safe to emit in a COI policy."""
     state = await build_cleanup_preview(session, expense)
     issues = list(state.get("issues") or [])
-    return state.get("status") == "Listo COI", issues
+    try:
+        await _resolve_informe_detail_counterpart(session, expense)
+    except ValueError as exc:
+        issues.append(str(exc))
+    return state.get("status") == "Listo COI" and not issues, issues
 
 
 async def build_expense_cfdi_for_export(
@@ -50,10 +134,15 @@ async def build_expense_cfdi_for_export(
 
     Requires persisted cleanup fields (cuenta, contrapartida, CFDI unless non-fiscal).
     """
-    ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
-    if require_cleanup_ready and not ready:
-        detail = "; ".join(issues) if issues else "Gasto pendiente de limpieza contable."
-        raise ValueError(detail)
+    if require_cleanup_ready:
+        ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
+        if not ready:
+            detail = (
+                "; ".join(issues)
+                if issues
+                else "Gasto pendiente de limpieza contable."
+            )
+            raise ValueError(detail)
 
     cuenta_contable = getattr(expense, "cuenta_contable", None)
     contra_cuenta = getattr(expense, "contra_cuenta_contable", None)
@@ -78,6 +167,11 @@ async def build_expense_cfdi_for_export(
         or (contra_cuenta.codigo if contra_cuenta else "")
         or ""
     ).strip()
+    informe_detail_counterpart = await _resolve_informe_detail_counterpart(
+        session, expense
+    )
+    if informe_detail_counterpart:
+        contra_codigo = informe_detail_counterpart
     if not contra_codigo:
         raise ValueError("Falta contrapartida persistida en el gasto.")
 
@@ -168,5 +262,6 @@ __all__ = [
     "allows_coi_without_cfdi",
     "assess_expense_coi_cleanup_ready",
     "build_expense_cfdi_for_export",
+    "group_expense_cfdis_for_document",
     "load_expense_for_coi_export",
 ]

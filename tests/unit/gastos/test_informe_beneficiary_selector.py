@@ -481,6 +481,12 @@ async def test_crear_informe_submit_rejects_other_beneficiary_for_unauthorized_u
 
 @pytest.mark.asyncio
 async def test_sync_informe_to_control_presupuestal_records_requester_actor_not_beneficiary(monkeypatch):
+    monkeypatch.setattr(
+        user_routes, "prepare_document_authorization_route", AsyncMock()
+    )
+    monkeypatch.setattr(
+        user_routes, "validate_informe_surplus_before_submission", AsyncMock()
+    )
     cuenta = SimpleNamespace(id=uuid4(), empleado_id=uuid4(), beneficiario_empleado_id=uuid4())
     informe = SimpleNamespace(id=uuid4(), estado="borrador", enviado_en=None, budget_concept_id=None)
     requester_actor = SimpleNamespace(id=uuid4())
@@ -491,6 +497,12 @@ async def test_sync_informe_to_control_presupuestal_records_requester_actor_not_
         return 1
 
     monkeypatch.setattr(user_routes, "_count_active_cuenta_expenses", fake_count)
+    monkeypatch.setattr(
+        user_routes, "reserve_documento_cfdis_or_raise", AsyncMock()
+    )
+    monkeypatch.setattr(
+        user_routes, "_informe_has_unassigned_budget_lines", AsyncMock(return_value=False)
+    )
 
     changed = await user_routes._sync_informe_documento_to_enviado(
         session,
@@ -511,6 +523,12 @@ async def test_sync_informe_to_control_presupuestal_records_requester_actor_not_
 
 @pytest.mark.asyncio
 async def test_sync_informe_to_enviado_when_budget_concept_is_assigned(monkeypatch):
+    monkeypatch.setattr(
+        user_routes, "prepare_document_authorization_route", AsyncMock()
+    )
+    monkeypatch.setattr(
+        user_routes, "validate_informe_surplus_before_submission", AsyncMock()
+    )
     cuenta = SimpleNamespace(id=uuid4(), empleado_id=uuid4(), beneficiario_empleado_id=uuid4())
     informe = SimpleNamespace(id=uuid4(), estado="borrador", enviado_en=None, budget_concept_id=uuid4())
     requester_actor = SimpleNamespace(id=uuid4())
@@ -521,6 +539,12 @@ async def test_sync_informe_to_enviado_when_budget_concept_is_assigned(monkeypat
         return 1
 
     monkeypatch.setattr(user_routes, "_count_active_cuenta_expenses", fake_count)
+    monkeypatch.setattr(
+        user_routes, "reserve_documento_cfdis_or_raise", AsyncMock()
+    )
+    monkeypatch.setattr(
+        user_routes, "_informe_has_unassigned_budget_lines", AsyncMock(return_value=False)
+    )
 
     changed = await user_routes._sync_informe_documento_to_enviado(
         session,

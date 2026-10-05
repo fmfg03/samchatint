@@ -312,9 +312,8 @@ async def test_superadmin_reads_all_tournaments_without_a_portfolio_position():
     class Session:
         async def execute(self, statement, _params=None):
             rendered = str(statement)
-            assert "client_executive_portfolio_tournaments assignment" in rendered
-            assert "portfolio.active = TRUE" in rendered
-            assert "assignment.active = TRUE" in rendered
+            assert "FROM tournaments t" in rendered
+            assert "client_executive_portfolio_tournaments" not in rendered
             assert "t.active = TRUE" in rendered
             return Result()
 
@@ -411,3 +410,17 @@ async def test_strict_tournament_scope_uses_only_uuid_and_never_falls_back(monke
     assert " OR " not in session.statement
     assert snapshot["source"] == "budget_scope_unavailable"
     assert snapshot["summary"]["budget_total"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_superadmin_portfolio_reader_does_not_require_assignments():
+    class Session:
+        async def execute(self, statement):
+            sql = str(statement)
+            assert "active = TRUE" in sql
+            assert "authorization_position_assignments" not in sql
+            return [SimpleNamespace(id="active-portfolio")]
+
+    assert await service.authorized_direction_portfolio_ids(
+        Session(), "unassigned-superadmin", is_superadmin=True
+    ) == ["active-portfolio"]
