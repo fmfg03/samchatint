@@ -35,6 +35,43 @@ def _mutation_home(page: Page, browser_server: str) -> None:
     ).to_be_visible()
 
 
+def test_document_guidance_explains_rejection_approval_status_and_payment(
+    page: Page, browser_server: str
+) -> None:
+    expectations = {
+        "rejected": (
+            "Solicitante",
+            "Corregir y reenviar",
+            "Falta la orden de compra",
+        ),
+        "approval": (
+            "Aprobador autorizado (tú)",
+            "Revisar evidencia y decidir",
+            "Sin bloqueo registrado",
+        ),
+        "status": (
+            "Finanzas / Tesorería",
+            "Incluir en el siguiente corte de pagos",
+            "Sin bloqueo registrado",
+        ),
+        "paid": (
+            "Sin responsable pendiente",
+            "Sin acción operativa pendiente",
+            "Sin bloqueo registrado",
+        ),
+    }
+
+    for scenario, expected_texts in expectations.items():
+        response = page.goto(f"{browser_server}/_test/workflow-guidance/{scenario}")
+        assert response is not None
+        assert response.status == 200
+        expect(page.get_by_role("heading", name="Qué pasa ahora")).to_be_visible()
+        for expected_text in expected_texts:
+            expect(page.get_by_text(expected_text, exact=False).first).to_be_visible()
+        expect(page.locator("[data-workflow-guidance] form")).to_have_count(0)
+        expect(page.locator("[data-workflow-guidance] button")).to_have_count(0)
+
+
 def test_employee_transfer_request_reaches_canonical_creation_form(
     page: Page, browser_server: str
 ) -> None:
@@ -129,11 +166,16 @@ def test_approver_reaches_real_pending_queue_with_decision_context(
     ).to_be_visible()
 
     approve = page.get_by_role("button", name="Aprobar", exact=True)
-    reject = page.get_by_role("button", name="Rechazar", exact=True)
+    reject = page.locator("details.approval-rejection > summary")
     expect(approve).to_be_visible()
     expect(reject).to_be_visible()
+    reject.click()
+    expect(page.get_by_label("Motivo de rechazo")).to_be_visible()
     expect(
-        page.get_by_text("Documentos esperando tu decisión", exact=False)
+        page.get_by_role("button", name="Confirmar rechazo", exact=True)
+    ).to_be_visible()
+    expect(
+        page.get_by_text("Documentos pendientes de aprobación", exact=False)
     ).to_be_visible()
     _capture(page, "approver-pending-queue")
 
@@ -170,9 +212,11 @@ def test_approver_decision_actions_stay_in_view_at_1280(
 
     cell = page.locator("td.approval-actions-cell").first
     approve = cell.get_by_role("button", name="Aprobar", exact=True)
-    reject = cell.get_by_role("button", name="Rechazar", exact=True)
+    reject = cell.locator("details.approval-rejection > summary")
     expect(approve).to_be_visible()
     expect(reject).to_be_visible()
+    reject.click()
+    expect(cell.get_by_label("Motivo de rechazo")).to_be_visible()
     assert cell.evaluate("(el) => getComputedStyle(el).position") == "sticky"
 
     shell_box = shell.bounding_box()
@@ -384,6 +428,11 @@ def test_finance_reaches_payment_run_and_state_boundary_is_explicit(
         page.get_by_text("Hospedaje aprobado para corte", exact=False)
     ).to_be_visible()
     expect(page.get_by_role("button", name="Cerrar corte", exact=True)).to_be_visible()
+    expect(
+        page.locator("#programa-de-pagos").get_by_text(
+            "Seleccionar para el siguiente corte", exact=False
+        )
+    ).to_be_visible()
 
     expect(
         page.locator("#comprobantes-pendientes").get_by_text(
@@ -401,6 +450,11 @@ def test_finance_reaches_payment_run_and_state_boundary_is_explicit(
         )
     ).to_be_visible()
     expect(page.get_by_text("S-PAY-0002", exact=True)).to_be_visible()
+    expect(
+        page.locator("#comprobantes-pendientes").get_by_text(
+            "Cargar o revisar el comprobante", exact=False
+        )
+    ).to_be_visible()
     expect(
         page.locator("#programa-de-pagos").get_by_text("Programa de pagos", exact=True)
     ).to_be_hidden()
@@ -530,14 +584,26 @@ def test_finance_cxc_keeps_candidate_separate_until_acceptance(
     assert response is not None
     assert response.status == 200
 
-    expect(page.get_by_text("Cuentas por Cobrar", exact=True).first).to_be_visible()
+    expect(
+        page.get_by_text("Workbench CxC: facturación y cobranza", exact=True)
+    ).to_be_visible()
     expect(
         page.get_by_text(
             "Un CFDI vinculado no prueba pago; solo los matches aceptados cuentan como cobro.",
             exact=False,
         )
     ).to_be_visible()
-    expect(page.get_by_text("Evidencia candidata; no prueba cobranza hasta su aceptación.")).to_be_visible()
+    expect(
+        page.get_by_text("Conciliación CxC: evidencia y decisión", exact=True)
+    ).to_be_visible()
+    expect(
+        page.get_by_text("1. Evidencia candidata — requiere decisión", exact=True)
+    ).to_be_visible()
+    expect(
+        page.get_by_text(
+            "Un candidato bancario es evidencia para revisar, no prueba de cobranza."
+        )
+    ).to_be_visible()
     expect(page.get_by_text("Cobranza desconocida", exact=True).first).to_be_visible()
 
     row = page.locator("tbody tr").filter(has_text="cfdi:UX-CXC-001").last
@@ -548,6 +614,12 @@ def test_finance_cxc_keeps_candidate_separate_until_acceptance(
 
     expect(page).to_have_url(f"{browser_server}/admin/finanzas/cuentas-por-cobrar")
     expect(page.get_by_text("accepted_collection_match", exact=True)).to_be_visible()
+    expect(
+        page.get_by_text(
+            "2. Matches AR aceptados — cobranza comprobada", exact=True
+        )
+    ).to_be_visible()
+    expect(page.get_by_text("Reversión auditada", exact=True)).to_be_visible()
     operational = page.locator("tbody tr").filter(has_text="UX-CXC-001").first
     expect(operational.get_by_text("Cobrado", exact=True)).to_be_visible()
     _capture(page, "finance-cxc-accepted-match")
@@ -577,16 +649,51 @@ def test_finance_cxc_exposes_prepolliza_and_accounting_context(
     expect(prepoliza).to_have_attribute(
         "href", "/admin/finanzas/cuentas-por-cobrar/prepolizas-coi.xlsx"
     )
-    accounting = page.get_by_role("link", name="Vista contable", exact=True)
+    accounting = page.get_by_role(
+        "link", name="Vista contable: CFDI y pólizas", exact=True
+    )
     expect(accounting).to_be_visible()
     accounting.click()
     expect(page).to_have_url(
         f"{browser_server}/admin/contabilidad/cuentas-por-cobrar"
     )
-    expect(page.get_by_role("heading", name="Vista contable CxC")).to_be_visible()
+    expect(
+        page.get_by_role("heading", name="Vista contable CxC: CFDI y pólizas")
+    ).to_be_visible()
     expect(
         page.get_by_text("Esta vista no acepta ni revierte matches de cobranza.")
     ).to_be_visible()
+
+
+def test_finance_and_accounting_cxc_preserve_only_compatible_context(
+    page: Page, browser_server: str
+) -> None:
+    response = page.goto(
+        f"{browser_server}/admin/finanzas/cuentas-por-cobrar?edition_year=2026"
+        "&tournament_id=torneo-1&cliente=Cliente+UX&dias_credito=30"
+        "&estado=Vencido"
+    )
+    assert response is not None
+    assert response.status == 200
+
+    accounting = page.get_by_role(
+        "link", name="Vista contable: CFDI y pólizas", exact=True
+    )
+    expect(accounting).to_have_attribute(
+        "href",
+        "/admin/contabilidad/cuentas-por-cobrar?edition_year=2026"
+        "&torneo_id=torneo-1&cliente=Cliente+UX&dias_credito=30"
+        "&estado=vencido",
+    )
+    accounting.click()
+    workbench = page.get_by_role(
+        "link", name="Workbench CxC: facturación y cobranza", exact=True
+    )
+    expect(workbench).to_have_attribute(
+        "href",
+        "/admin/finanzas/cuentas-por-cobrar?edition_year=2026"
+        "&tournament_id=torneo-1&cliente=Cliente+UX&dias_credito=30",
+    )
 
 
 def test_finance_cxc_remains_operable_without_mobile_body_overflow(
@@ -599,7 +706,9 @@ def test_finance_cxc_remains_operable_without_mobile_body_overflow(
     assert response is not None
     assert response.status == 200
 
-    expect(page.get_by_text("Pre-matching AR", exact=True)).to_be_visible()
+    expect(
+        page.get_by_text("Conciliación CxC: evidencia y decisión", exact=True)
+    ).to_be_visible()
     _assert_no_body_overflow(page)
     accept = page.get_by_role("button", name="Aceptar match", exact=True)
     expect(accept).to_be_visible()
@@ -656,6 +765,7 @@ def test_isolated_payment_cutoff_proof_and_duplicate_guard(
     page: Page, browser_server: str
 ) -> None:
     _mutation_home(page, browser_server)
+    page.locator('input[name="fecha_pago_efectiva"]').fill("2026-09-22")
     page.get_by_role("button", name="Registrar comprobante y pago", exact=True).click()
     expect(page.get_by_text("Resultado: Pago rechazado", exact=True)).to_be_visible()
     expect(page.get_by_text("Se requiere corte previo", exact=False)).to_be_visible()
@@ -683,6 +793,7 @@ def test_isolated_payment_proof_marks_paid_with_actor_and_cleanup_is_row_scoped(
             "buffer": b"browser fixture proof",
         },
     )
+    page.locator('input[name="fecha_pago_efectiva"]').fill("2026-09-22")
     page.get_by_role("button", name="Registrar comprobante y pago", exact=True).click()
     expect(page.get_by_text("Resultado: Pago registrado", exact=True)).to_be_visible()
     expect(page.get_by_text("Estado: pagado", exact=True)).to_be_visible()

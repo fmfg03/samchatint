@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from samchat.ar.admin_ui import (
+    _accounting_cxc_href,
     render_ar_item_detail_html,
     render_ar_matching_workbench_html,
     render_ar_read_model_html,
@@ -89,7 +90,7 @@ def _payload() -> dict:
 def test_render_ar_read_model_html_includes_expected_sections():
     html = render_ar_read_model_html(_payload())
 
-    assert "Cuentas por Cobrar" in html
+    assert "Workbench CxC: facturación y cobranza" in html
     assert "Lectura ejecutiva CxC" in html
     assert "Cartera filtrada" in html
     assert "Prioridad ejecutiva de cartera" in html
@@ -105,6 +106,29 @@ def test_render_ar_read_model_html_includes_expected_sections():
     assert "collection_unknown" in html
     assert "Descargar Excel CxC" in html
     assert "Descargar prepólizas CxC" in html
+    assert "Vista contable: CFDI y pólizas" in html
+
+
+def test_accounting_cxc_href_preserves_only_equivalent_finance_context():
+    href = _accounting_cxc_href(
+        "/admin/finanzas/cuentas-por-cobrar?edition_year=2026"
+        "&budget_version_id=version-1&tournament_id=torneo-1&cliente=Cliente+UX"
+        "&dias_credito=30&estado=Vencido"
+    )
+
+    assert href == (
+        "/admin/contabilidad/cuentas-por-cobrar?edition_year=2026"
+        "&torneo_id=torneo-1&cliente=Cliente+UX&dias_credito=30"
+        "&estado=vencido"
+    )
+
+
+def test_accounting_cxc_href_does_not_invent_an_accounting_status():
+    href = _accounting_cxc_href(
+        "/admin/finanzas/cuentas-por-cobrar?estado=Cobranza+desconocida"
+    )
+
+    assert href == "/admin/contabilidad/cuentas-por-cobrar"
 
 
 def test_render_ar_read_model_html_includes_executive_cxc_kpis():
@@ -302,12 +326,47 @@ def test_render_ar_matching_workbench_html_includes_candidate_notice():
         ],
     )
 
-    assert "Pre-matching AR" in html
-    assert "Evidencia candidata; no prueba cobranza" in html
+    assert "Conciliación CxC: evidencia y decisión" in html
+    assert "1. Evidencia candidata — requiere decisión" in html
+    assert (
+        "Un candidato bancario es evidencia para revisar, no prueba de cobranza."
+        in html
+    )
     assert "candidate_match" in html
     assert "bank-1" in html
     assert 'value="bank-account-1"' in html
     assert "1020-001 · Banco CxC" in html
+
+
+def test_render_ar_matching_workbench_orders_evidence_before_accepted_matches():
+    html = render_ar_matching_workbench_html(
+        {
+            "summary": {},
+            "items": [
+                {
+                    "ar_item_id": "linked:1",
+                    "source": "issued_linked",
+                    "amount": 100,
+                    "status": "candidate_match",
+                    "candidate_evidence": [{"bank_movement_id": "bank-1"}],
+                }
+            ],
+            "accepted_matches": [
+                {"id": "match-1", "status": "accepted_collection_match"}
+            ],
+            "unmatched_bank_inflows": [],
+        }
+    )
+
+    candidate_heading = "1. Evidencia candidata — requiere decisión"
+    accepted_heading = "2. Matches AR aceptados — cobranza comprobada"
+    assert html.index(candidate_heading) < html.index(accepted_heading)
+    assert "Reversión auditada" in html
+    assert (
+        "la reversión requiere una razón y conserva la auditoría del match"
+        in html
+    )
+    assert "3. Entradas bancarias sin AR — pendientes de investigación" in html
 
 
 def test_render_ar_matching_workbench_html_does_not_confirm_collection():

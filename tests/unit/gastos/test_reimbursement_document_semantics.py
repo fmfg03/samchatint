@@ -1095,7 +1095,9 @@ def test_document_detail_approval_actions_prioritize_persisted_project_route() -
 
     assert "documento_authorization_routes" in block
     assert "await actor_is_route_approver(" in block
-    assert "if route_exists:" in block
+    assert (
+        "if route_exists or has_operations_reference(documento):" in block
+    )
     assert "approval_subject = approval_subject_empleado(documento) or empleado" in block
     assert "approval_subject.aprobador_id == current_empleado.id" in block
 
@@ -1123,9 +1125,12 @@ def test_document_detail_authorizes_before_pending_payment_side_effects() -> Non
 
     assert "selectinload(Documento.empleado)" in block
     assert block.index("documento.empleado_id != current_empleado.id") < block.index(
-        "if ensure_fecha_pago_for_approved_solicitud(documento)"
+        "is_read_only_operations_observer"
     )
-    assert block.index("documento.empleado_id != current_empleado.id") < block.index(
+    assert block.index("is_read_only_operations_observer") < block.index(
+        "await session.commit()"
+    )
+    assert block.index("is_read_only_operations_observer") < block.index(
         "await ensure_finance_pending_payment_notifications(session, documento)"
     )
 

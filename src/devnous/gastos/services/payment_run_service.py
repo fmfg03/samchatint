@@ -387,11 +387,14 @@ async def list_payment_run_items(
         filters.append("d.pagado_en IS NULL")
         filters.append("ci.documento_id IS NULL")
 
+    report_date_column = (
+        "d.fecha_pago_efectiva" if normalized_status == "pagadas" else "d.fecha_pago"
+    )
     if date_from:
-        filters.append("d.fecha_pago >= :date_from")
+        filters.append(f"{report_date_column} >= :date_from")
         params["date_from"] = date_from
     if date_to:
-        filters.append("d.fecha_pago <= :date_to")
+        filters.append(f"{report_date_column} <= :date_to")
         params["date_to"] = date_to
     if query:
         filters.append(
@@ -427,6 +430,7 @@ async def list_payment_run_items(
                 d.referencia_operaciones,
                 d.estado,
                 d.fecha_pago,
+                d.fecha_pago_efectiva,
                 d.aprobado_en,
                 d.pagado_en,
                 d.pago_urgente,
@@ -451,7 +455,7 @@ async def list_payment_run_items(
             LEFT JOIN closure_items ci ON ci.documento_id = d.id
             WHERE {" AND ".join(filters)}
             ORDER BY
-                d.fecha_pago NULLS LAST,
+                {report_date_column} NULLS LAST,
                 d.aprobado_en NULLS LAST,
                 d.creado_en DESC
             LIMIT :limit

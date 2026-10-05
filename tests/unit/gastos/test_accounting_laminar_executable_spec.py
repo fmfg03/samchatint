@@ -11,14 +11,12 @@ from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[3]
 STORY = ROOT / "docs/sprints/rqf-accounting-laminar-001-story.md"
 SPEC = ROOT / "docs/sprints/rqf-accounting-laminar-001-spec.md"
 
 EMPLOYEE_DEBTOR = "1170-001-042"
 PARTNER_DEBTOR = "1170-002-007"
-ODILON_AMEX_DEBTOR = "1170-002-004"
 SANTANDER = "1120-001-001"
 BUDGET_EXPENSE = "5300-010-001"
 NON_DEDUCTIBLE = "5500-001-001"
@@ -70,9 +68,8 @@ POSTING_ORACLE = {
     ),
     "LAM-007": _expense_debits() + (Line(EMPLOYEE_DEBTOR, credit=Decimal("120.00")),),
     "LAM-008": _expense_debits() + (Line(PARTNER_DEBTOR, credit=Decimal("120.00")),),
-    "LAM-009": _expense_debits()
-    + (Line(ODILON_AMEX_DEBTOR, credit=Decimal("120.00")),),
-    "LAM-010": _expense_debits() + (Line(AMEX_LIABILITY, credit=Decimal("120.00")),),
+    "LAM-009": _expense_debits() + (Line(AMEX_LIABILITY, credit=Decimal("120.00")),),
+    "LAM-010": (),
     "LAM-011": (
         Line(AMEX_LIABILITY, debit=Decimal("120.00")),
         Line(SANTANDER, credit=Decimal("120.00")),
@@ -89,8 +86,13 @@ REQUIRED_CONTEXT = {
     "LAM-006": {"beneficiary_kind", "debtor_account", "santander"},
     "LAM-007": {"budget_expense", "fiscal_breakdown", "debtor_account"},
     "LAM-008": {"budget_expense", "fiscal_breakdown", "debtor_account"},
-    "LAM-009": {"budget_expense", "fiscal_breakdown", "odilon_amex_debtor"},
-    "LAM-010": {"budget_expense", "fiscal_breakdown", "amex_card_mapping"},
+    "LAM-009": {
+        "budget_expense",
+        "fiscal_breakdown",
+        "amex_card_mapping",
+        "reviewed_cut",
+    },
+    "LAM-010": {"amex_card_mapping"},
     "LAM-011": {"amex_payment_receipt", "santander"},
 }
 
@@ -143,7 +145,6 @@ def test_canonical_accounts_exclude_transcription_alias_1700():
     assert all(not account.startswith("1700-") for account in persisted_accounts)
     assert EMPLOYEE_DEBTOR.startswith("1170-001-")
     assert PARTNER_DEBTOR.startswith("1170-002-")
-    assert ODILON_AMEX_DEBTOR == "1170-002-004"
     assert SANTANDER == "1120-001-001"
 
 
@@ -153,9 +154,9 @@ def test_amex_rules_use_only_governed_counterparties():
         line.account for line in POSTING_ORACLE["LAM-010"] if line.credit
     }
     rule_11_debits = {line.account for line in POSTING_ORACLE["LAM-011"] if line.debit}
-    assert rule_9_credits == {ODILON_AMEX_DEBTOR}
-    assert rule_10_credits <= ALLOWED_AMEX_LIABILITIES
-    assert rule_11_debits == rule_10_credits
+    assert rule_9_credits <= ALLOWED_AMEX_LIABILITIES
+    assert rule_10_credits == set()
+    assert rule_11_debits == rule_9_credits
 
 
 def test_payment_rules_credit_only_exact_santander_account():
@@ -202,8 +203,8 @@ def test_story_and_spec_preserve_non_backfill_and_double_post_guards():
     combined = f"{story}\n{spec}"
 
     assert "Sin backfill histórico" in story
-    assert "economic_spend_already_owned" in spec
+    assert "comparten identidad explícita" in spec
     assert "No se genera automáticamente una reversa" in spec
     assert "no autoriza rellenar recibos o pólizas antiguas" in spec
-    assert "1170-002-004" in combined
+    assert "1170-002-XXX" in combined
     assert "1120-001-001" in combined

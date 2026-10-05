@@ -10,6 +10,7 @@ from devnous.gastos.services.employee_debtor_accounting_service import (
     _debtor_account_match_score,
     _debtor_name_match_score,
     _format_missing_expense_accounts,
+    _sum_posted_comprobacion,
 )
 
 
@@ -76,6 +77,68 @@ def test_debtor_accounting_is_visible_in_both_approved_views():
     assert "build_cuenta_debtor_auxiliary" in user_routes
     assert '"/admin/contabilidad/deudores"' in admin_routes
     assert "Empleados sin subcuenta de deudores" in admin_routes
+
+
+def test_requested_total_excludes_rejected_and_cancelled_but_keeps_pending():
+    requests = [
+        SimpleNamespace(estado="pagado", monto_solicitado="32370.00"),
+        SimpleNamespace(estado="Rechazado", monto_solicitado="45000.00"),
+        SimpleNamespace(estado="cancelado", monto_solicitado="1000.00"),
+        SimpleNamespace(estado="enviado", monto_solicitado="12.34"),
+        SimpleNamespace(estado="borrador", monto_solicitado="0.01"),
+    ]
+    assert amex_expense_service.sum_active_solicitud_amounts(requests) == 32382.35
+    assert amex_expense_service.sum_paid_solicitud_amounts(requests) == 32370.0
+
+
+def test_expense_report_shows_unposted_comprobacion_separately_from_ledger():
+    routes = read("src/devnous/gastos/routes/user_routes.py")
+    accounting = read("src/devnous/gastos/services/employee_debtor_accounting_service.py")
+    assert "sum_active_solicitud_amounts(solicitudes_list)" in routes
+    assert "Saldo estimado tras esa comprobación" in routes
+    assert '"comprobado": round(comprobado, 2)' in accounting
+
+
+def test_comprobacion_credit_only_counts_debtor_postings():
+    def line(origin, code, amount):
+        return SimpleNamespace(
+            poliza=SimpleNamespace(origen=origin), cuenta_codigo=code, haber=amount
+        )
+
+    assert _sum_posted_comprobacion([
+        line("deudores_comprobacion", "1170-001-021", 8760),
+        line("deudores_devolucion", "1170-001-021", 200),
+        line("deudores_comprobacion", "1100-001-001", 500),
+    ]) == 8760
+
+
+def test_unapproved_report_displays_estimate_without_changing_ledger():
+    from devnous.gastos.routes.user_routes import _render_debtor_auxiliary_section
+
+    html = _render_debtor_auxiliary_section(
+        {"status": "diferencia_contable", "debe": 17100, "haber": 0,
+         "saldo": 17100, "comprobado": 0, "lines": []},
+        employee_paid=8760,
+        informe_estado="borrador",
+    )
+    assert "Pendiente" in html
+    assert "Saldo contable</span><strong>$17,100.00" in html
+    assert "Saldo estimado tras esa comprobación: $8,340.00" in html
+    assert "Haber deudores</span><strong>$0.00" in html
+
+
+def test_approved_report_with_missing_comprobacion_requests_reconciliation():
+    from devnous.gastos.routes.user_routes import _render_debtor_auxiliary_section
+
+    html = _render_debtor_auxiliary_section(
+        {"status": "diferencia_contable", "saldo": 17100,
+         "comprobado": 0, "lines": []},
+        employee_paid=8760,
+        informe_estado="aprobado",
+    )
+    assert "Diferencia contable" in html
+    assert "Contabilidad debe conciliar" in html
+    assert "Saldo estimado" not in html
 
 
 def test_debtor_accounting_uses_cuenta_beneficiary_not_requester_for_reports():

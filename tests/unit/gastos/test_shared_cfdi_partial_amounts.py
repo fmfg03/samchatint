@@ -94,6 +94,40 @@ async def test_shared_cfdi_amount_validation_locks_and_reads_existing_reservatio
 
 
 @pytest.mark.asyncio
+async def test_shared_expense_amount_validation_excludes_current_row_and_tips() -> None:
+    expense_id = uuid4()
+    session = _AmountSession([], [Decimal("5800.00")])
+    report = SimpleNamespace(id=uuid4(), total=13366.00)
+
+    remaining = await documento_service.validate_shared_cfdi_payment_amount(
+        session,
+        cfdi_report=report,
+        requested_amount=Decimal("7566.00"),
+        exclude_expense_id=expense_id,
+    )
+
+    assert remaining == Decimal("7566.00")
+    expense_query = session.calls[2][0]
+    assert expense_id in expense_query.compile().params.values()
+    assert "expense_reports.id !=" in str(expense_query)
+    assert "coalesce(expense_reports.propina_no_deducible" in str(expense_query)
+    assert "documentos.cfdi_report_id" in str(expense_query)
+
+
+@pytest.mark.asyncio
+async def test_shared_expense_rejects_one_cent_above_remaining() -> None:
+    session = _AmountSession([], [Decimal("5800.00")])
+    with pytest.raises(SolicitudValidationError) as raised:
+        await documento_service.validate_shared_cfdi_payment_amount(
+            session,
+            cfdi_report=SimpleNamespace(id=uuid4(), total=13366.00),
+            requested_amount=Decimal("7566.01"),
+            exclude_expense_id=uuid4(),
+        )
+    assert raised.value.code == "cfdi_amount_exceeds_remaining"
+
+
+@pytest.mark.asyncio
 async def test_shared_cfdi_amount_validation_excludes_expenses_reserved_by_any_linked_document() -> None:
     current_document_id = uuid4()
     session = _AmountSession([Decimal("50000.00")], [Decimal("52312.00")])

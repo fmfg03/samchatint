@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import unicodedata
-from datetime import datetime, timezone
+from collections import OrderedDict
+from datetime import date, datetime, timezone
 from typing import Any, Optional
+from weakref import WeakKeyDictionary
 
 from sqlalchemy import text
 
@@ -84,12 +87,11 @@ async def _authorized_tournaments(
     """
     if is_superadmin:
         result = await session.execute(
-            text("""SELECT DISTINCT t.id::text AS id, t.name, NULL::text AS slug
-                FROM client_executive_portfolio_tournaments assignment
-                JOIN client_executive_portfolios portfolio
-                  ON portfolio.id = assignment.portfolio_id AND portfolio.active = TRUE
-                JOIN tournaments t ON t.id = assignment.tournament_id AND t.active = TRUE
-                WHERE assignment.active = TRUE
+            # This catalog belongs to the current installation, not an external
+            # organization directory. No Supabase/global catalog is consulted.
+            text("""SELECT t.id::text AS id, t.name, NULL::text AS slug
+                FROM tournaments t
+                WHERE t.active = TRUE
                 ORDER BY t.name ASC""")
         )
         return [
@@ -124,13 +126,20 @@ async def _authorized_tournaments(
 
 
 async def authorized_direction_portfolio_ids(
-    session: Any, empleado_id: str, *, is_superadmin: bool = False
+    session: Any,
+    empleado_id: str,
+    *,
+    is_superadmin: bool = False,
+    limit: int | None = None,
 ) -> list[str]:
     """Return active Direction portfolios visible to an internal identity."""
+    if limit is not None and limit != 1:
+        raise ValueError("Only an existence probe may limit authorized portfolios")
     if is_superadmin:
         result = await session.execute(
             text(
                 "SELECT id::text AS id FROM client_executive_portfolios WHERE active = TRUE"
+                + (" LIMIT 1" if limit else "")
             )
         )
     else:
@@ -146,13 +155,147 @@ async def authorized_direction_portfolio_ids(
                   AND holder.active = TRUE
                   AND holder.position_key = ANY(:position_keys)
                 ORDER BY portfolio.id::text
-                """),
+                """ + (" LIMIT 1" if limit else "")),
             {
                 "empleado_id": str(empleado_id),
                 "position_keys": sorted(DIRECTION_POSITION_KEYS),
             },
         )
     return [str(row.id) for row in result]
+
+
+# Per-engine and per-identity metadata only, never financial facts or labels.
+# PostgreSQL validates the MVCC revision in the SAME statement as every page.
+_CATALOG_METADATA = WeakKeyDictionary()
+
+
+async def authorized_direction_catalog_page(
+    session: Any,
+    actor: str,
+    *,
+    is_superadmin: bool,
+    offset: int,
+    limit: int = 25,
+    after_portfolio: str | None = None,
+    after_tournament: str | None = None,
+) -> dict:
+    """Return one bounded catalog page plus a current full-scope digest/count.
+
+    Metadata is reused only while PostgreSQL's MVCC snapshot is identical and
+    this transaction has no assigned write XID. Any concurrent commit or own
+    write forces recomputation; scope/role predicates still guard every page.
+    Keyset selectors avoid rescanning prior pages. No organization is inferred.
+    """
+    if type(offset) is not int or offset < 0 or limit != 25:
+        raise ValueError("Invalid catalog page")
+    # Engines isolate databases; actors/roles isolate authorization decisions.
+    # A small LRU bounds memory; eviction only causes safe recomputation.
+    bind = session.get_bind() if callable(getattr(session, "get_bind", None)) else None
+    engine = getattr(bind, "engine", bind)
+    cache = (
+        _CATALOG_METADATA.setdefault(engine, OrderedDict())
+        if engine is not None
+        else OrderedDict()
+    )
+    key = (str(actor), bool(is_superadmin))
+    cached = cache.get(key, {})
+    portfolio_predicate = (
+        "TRUE"
+        if is_superadmin
+        else """EXISTS (
+        SELECT 1 FROM authorization_position_assignments holder
+        JOIN client_executive_portfolio_positions position
+          ON position.position_key = holder.position_key AND position.active = TRUE
+        WHERE holder.empleado_id = :actor AND holder.active = TRUE
+          AND holder.position_key = ANY(:position_keys)
+          AND position.portfolio_id = p.id)"""
+    )
+    tournament_predicate = (
+        "TRUE"
+        if is_superadmin
+        else """EXISTS (
+        SELECT 1 FROM client_executive_portfolio_tournaments assignment
+        JOIN portfolios p ON p.id = assignment.portfolio_id
+        WHERE assignment.tournament_id = t.id AND assignment.active = TRUE)"""
+    )
+    result = await session.execute(
+        text(f"""
+        WITH revision AS MATERIALIZED (
+            SELECT pg_current_snapshot()::text AS value,
+                   pg_current_xact_id_if_assigned() IS NULL AS reusable
+        ), reuse AS MATERIALIZED (
+            SELECT CAST(:cached AS jsonb) AS value FROM revision
+            WHERE reusable AND value = :cached_revision
+        ), portfolios AS NOT MATERIALIZED (
+            SELECT p.id, p.label FROM client_executive_portfolios p
+            WHERE p.active = TRUE AND {portfolio_predicate}
+        ), tournaments AS NOT MATERIALIZED (
+            SELECT t.id, t.name AS label FROM tournaments t
+            WHERE t.active = TRUE AND {tournament_predicate}
+        ), fresh AS MATERIALIZED (
+            SELECT
+              (SELECT COALESCE(jsonb_agg(id::text ORDER BY id), '[]'::jsonb) FROM portfolios) AS pids,
+              (SELECT COALESCE(jsonb_agg(id::text ORDER BY id), '[]'::jsonb) FROM tournaments) AS tids
+            FROM revision WHERE NOT EXISTS (SELECT 1 FROM reuse)
+        ), metadata AS (
+            SELECT (value->>'portfolio_count')::int AS portfolio_count,
+                   (value->>'tournament_count')::int AS tournament_count,
+                   value->'portfolio_ids' AS portfolio_ids,
+                   value->>'scope_digest' AS scope_digest FROM reuse
+            UNION ALL
+            SELECT jsonb_array_length(pids), jsonb_array_length(tids),
+                   CASE WHEN jsonb_array_length(pids) <= 200 THEN pids ELSE '[]'::jsonb END,
+                   encode(sha256(convert_to(
+                       '{{"portfolio_id": null, "portfolio_ids": ' || pids::text ||
+                       ', "tournament_id": null, "tournament_ids": ' || tids::text || '}}',
+                       'UTF8')), 'hex') FROM fresh
+        )
+        SELECT metadata.*, revision.value AS _revision, revision.reusable AS _reusable,
+               (SELECT COALESCE(jsonb_agg(page ORDER BY id), '[]'::jsonb)
+                FROM (SELECT * FROM portfolios
+                      WHERE CAST(:after_portfolio AS uuid) IS NULL OR id > CAST(:after_portfolio AS uuid)
+                      ORDER BY id LIMIT :limit OFFSET :portfolio_offset) page) AS portfolios,
+               (SELECT COALESCE(jsonb_agg(page ORDER BY id), '[]'::jsonb)
+                FROM (SELECT * FROM tournaments
+                      WHERE CAST(:after_tournament AS uuid) IS NULL OR id > CAST(:after_tournament AS uuid)
+                      ORDER BY id LIMIT :limit OFFSET :tournament_offset) page) AS tournaments
+        FROM metadata CROSS JOIN revision
+    """),
+        {
+            "actor": actor,
+            "position_keys": sorted(DIRECTION_POSITION_KEYS),
+            "portfolio_offset": 0 if after_portfolio is not None else offset,
+            "tournament_offset": 0 if after_tournament is not None else offset,
+            "after_portfolio": after_portfolio,
+            "after_tournament": after_tournament,
+            "limit": limit,
+            "cached_revision": cached.get("revision"),
+            "cached": json.dumps(cached.get("metadata", {})),
+        },
+    )
+    row = dict(result.mappings().first())
+    revision, reusable = row.pop("_revision"), row.pop("_reusable")
+    if reusable:
+        cache[key] = {
+            "revision": revision,
+            "metadata": {
+                k: list(row[k]) if k == "portfolio_ids" else row[k]
+                for k in (
+                    "portfolio_count",
+                    "tournament_count",
+                    "portfolio_ids",
+                    "scope_digest",
+                )
+            },
+        }
+        cache.move_to_end(key)
+        while len(cache) > 64:
+            cache.popitem(last=False)
+    else:
+        cache.pop(key, None)
+    if not row["portfolio_count"] and not is_superadmin:
+        raise ClientExecutiveAccessError("No active Direction portfolio assignment")
+    return row
 
 
 def _optional_money(mapping: dict[str, Any], *keys: str) -> Optional[float]:
@@ -347,7 +490,11 @@ def _exact_name_snapshot_matches(
 
 
 async def _load_soul_snapshot(
-    tournament: dict[str, str], *, edition_year: int, include_registration: bool = True
+    tournament: dict[str, str],
+    *,
+    edition_year: int,
+    include_registration: bool = True,
+    client: Any = None,
 ) -> tuple[Optional[dict[str, Any]], str]:
     """Resolve SOUL without allowing display names to broaden Direction scope."""
     observed_wrong_edition = False
@@ -362,6 +509,7 @@ async def _load_soul_snapshot(
             include_media=True,
             limit=1000,
             **registration_options,
+            **({"client": client} if client is not None else {}),
         )
     except TournamentsV2Error:
         uuid_snapshot = None
@@ -388,6 +536,7 @@ async def _load_soul_snapshot(
                 include_media=True,
                 limit=1000,
                 **registration_options,
+                **({"client": client} if client is not None else {}),
             )
         except TournamentsV2Error:
             name_snapshot = None
@@ -411,13 +560,17 @@ async def _build_operational_dossier(
     *,
     edition_year: int,
     include_registration: bool = True,
+    client: Any = None,
 ) -> dict[str, Any]:
     """Build one strictly tournament-scoped dossier without operational writes."""
     registration_options: dict[str, Any] = (
         {} if include_registration else {"include_registration": False}
     )
     snapshot, bridge = await _load_soul_snapshot(
-        tournament, edition_year=edition_year, **registration_options
+        tournament,
+        edition_year=edition_year,
+        **registration_options,
+        **({"client": client} if client is not None else {}),
     )
     if snapshot is None:
         unavailable = _unavailable_dossier(tournament)
@@ -470,6 +623,43 @@ async def _build_operational_dossier(
     dossier["national_phase"] = national_phase
     dossier["marketing"] = marketing
     return dossier
+
+
+async def _build_operational_summaries(tournaments, *, edition_year, client=None):
+    """Batch canonical SOUL reads for the two counts consumed by Direction home."""
+    import asyncio
+
+    from samchat.tournaments_v2.config import load_tournaments_v2_config
+    from samchat.tournaments_v2.services.summary_batches import SummaryBatchClient
+    from samchat.tournaments_v2.supabase_client import SupabaseRestClient
+
+    client = SummaryBatchClient(
+        client or SupabaseRestClient(load_tournaments_v2_config())
+    )
+    summaries = {}
+
+    async def read(tournament):
+        try:
+            dossier = await _build_operational_dossier(
+                tournament, edition_year=edition_year, client=client
+            )
+            if dossier.get("source_status") == "available":
+                summary = dossier.get("summary") or {}
+                return {
+                    key: summary.get(key) for key in ("teams_count", "players_count")
+                }
+        except Exception:
+            pass
+        return None
+
+    try:
+        for offset in range(0, len(tournaments), 25):
+            chunk = tournaments[offset : offset + 25]
+            values = await asyncio.gather(*(read(t) for t in chunk))
+            summaries.update({t["id"]: value for t, value in zip(chunk, values)})
+    finally:
+        await client.close()
+    return summaries
 
 
 async def _budget_alias_bridge_is_safe(
@@ -599,8 +789,16 @@ async def _build_direction_budget_snapshot(
     *,
     tournament: dict[str, str],
     edition_year: int,
+    executive_read: bool = False,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
 ) -> dict[str, Any]:
     """Read budget truth with a guarded bridge for legacy name/code rows."""
+    extra = (
+        {"executive_read": True, "date_from": date_from, "date_to": date_to}
+        if executive_read
+        else {}
+    )
     strict = await build_budget_snapshot(
         session,
         tournament_id=tournament["id"],
@@ -609,6 +807,7 @@ async def _build_direction_budget_snapshot(
         edition_year=edition_year,
         ensure_schema=False,
         strict_tournament_scope=True,
+        **extra,
     )
     if strict.get("source") != "budget_scope_unavailable":
         return strict
@@ -640,6 +839,7 @@ async def _build_direction_budget_snapshot(
             version_id=version_id,
             ensure_schema=False,
             strict_tournament_scope=False,
+            **extra,
         )
     except _DirectionBudgetScopeViolation:
         return strict

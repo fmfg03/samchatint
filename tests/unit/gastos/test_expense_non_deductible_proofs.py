@@ -189,6 +189,40 @@ def test_shared_manual_uuid_requires_reason_and_records_audit() -> None:
     assert session.added[0].accion == "confirmar_cfdi_compartido"
 
 
+def test_first_shared_expense_keeps_confirmation_and_audit() -> None:
+    session = _SessionStub()
+    expense = _expense_stub()
+    asyncio.run(
+        _enforce_expense_cfdi_uniqueness(
+            session,
+            expense=expense,
+            report=None,
+            allow_shared=True,
+            shared_reason="Comprobación de dos anticipos en informes diferentes",
+            actor_id=uuid4(),
+        )
+    )
+    assert expense.cfdi_compartido_confirmado is True
+    assert expense.cfdi_compartido_motivo
+    assert session.added[0].accion == "confirmar_cfdi_compartido"
+    assert "Primera partida" in session.added[0].comentario
+
+
+@pytest.mark.parametrize("reason,actor", [(None, uuid4()), ("División", None)])
+def test_first_shared_expense_requires_reason_and_actor(reason, actor) -> None:
+    with pytest.raises(ValueError):
+        asyncio.run(
+            _enforce_expense_cfdi_uniqueness(
+                _SessionStub(),
+                expense=_expense_stub(),
+                report=None,
+                allow_shared=True,
+                shared_reason=reason,
+                actor_id=actor,
+            )
+        )
+
+
 def test_replacement_and_logical_deletion_preserve_prior_proof() -> None:
     gasto_id, actor_id = uuid4(), uuid4()
     prior = Adjunto(

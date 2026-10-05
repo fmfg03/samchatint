@@ -83,6 +83,7 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("documentos", "beneficiario_proveedor_cliente_id"),
     RequiredColumn("documentos", "beneficiario_alterno_tipo"),
     RequiredColumn("documentos", "fecha_pago"),
+    RequiredColumn("documentos", "fecha_pago_efectiva"),
     RequiredColumn("documentos", "concepto_pago"),
     RequiredColumn("documentos", "numero_factura"),
     RequiredColumn("documentos", "referencia_pago"),
@@ -1764,6 +1765,14 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "documentos_fecha_pago_column",
         "ALTER TABLE IF EXISTS documentos ADD COLUMN IF NOT EXISTS fecha_pago DATE NULL",
+    ),
+    (
+        "documentos_fecha_pago_efectiva_column",
+        "ALTER TABLE IF EXISTS documentos ADD COLUMN IF NOT EXISTS fecha_pago_efectiva DATE NULL",
+    ),
+    (
+        "documentos_fecha_pago_efectiva_index",
+        "CREATE INDEX IF NOT EXISTS ix_documentos_fecha_pago_efectiva ON documentos (fecha_pago_efectiva)",
     ),
     (
         "documentos_concepto_pago_column",

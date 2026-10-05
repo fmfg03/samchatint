@@ -775,6 +775,12 @@ class _MutationResult:
     def __init__(self, rows=()):
         self._rows = list(rows)
 
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
     def scalars(self):
         return _FakeScalarRows(self._rows)
 
@@ -1084,6 +1090,46 @@ async def health():
     return {"ok": True}
 
 
+@app.get("/_test/workflow-guidance/{scenario}", response_class=HTMLResponse)
+async def workflow_guidance_preview(scenario: str):
+    scenarios = {
+        "rejected": dict(
+            state="rechazado",
+            document_type="SOLICITUD",
+            is_owner=True,
+            can_approve_or_reject=False,
+            rejection_reason="Falta la orden de compra",
+            rejection_actor="Aprobador Browser UX",
+        ),
+        "approval": dict(
+            state="enviado",
+            document_type="SOLICITUD",
+            is_owner=False,
+            can_approve_or_reject=True,
+        ),
+        "status": dict(
+            state="aprobado",
+            document_type="SOLICITUD",
+            is_owner=True,
+            can_approve_or_reject=False,
+        ),
+        "paid": dict(
+            state="pagado",
+            document_type="SOLICITUD",
+            is_owner=True,
+            can_approve_or_reject=False,
+            has_payment_timestamp=True,
+            has_payment_proof=True,
+        ),
+    }
+    payload = scenarios.get(scenario)
+    if payload is None:
+        return HTMLResponse("Escenario no encontrado", status_code=404)
+    guidance = user_routes.build_document_workflow_guidance(**payload)
+    body = user_routes._render_document_workflow_guidance_html(guidance)
+    return HTMLResponse(f"<!doctype html><html><body><main>{body}</main></body></html>")
+
+
 def _mutation_page(receipt: str = "") -> HTMLResponse:
     payment = MUTATIONS.documentos[MUTATIONS.payment_id]
     return HTMLResponse(f"""<!doctype html><html><body><main>
@@ -1114,6 +1160,7 @@ def _mutation_page(receipt: str = "") -> HTMLResponse:
         <form method="post" action="/_test/mutations/proof"
               enctype="multipart/form-data">
           <label>Comprobante <input type="file" name="proof"></label>
+          <label>Fecha efectiva <input type="date" name="fecha_pago_efectiva" required></label>
           <button>Registrar comprobante y pago</button>
         </form></section>
         <section><h2>Limpieza contable</h2>
@@ -1237,7 +1284,10 @@ async def mutation_cutoff():
 
 
 @app.post("/_test/mutations/proof", response_class=HTMLResponse)
-async def mutation_proof(proof: UploadFile | None = File(None)):
+async def mutation_proof(
+    proof: UploadFile | None = File(None),
+    fecha_pago_efectiva: str | None = Form(None),
+):
     document = MUTATIONS.documentos[MUTATIONS.payment_id]
     if document.estado != "en_proceso_pago":
         return _mutation_receipt(
@@ -1259,6 +1309,7 @@ async def mutation_proof(proof: UploadFile | None = File(None)):
         MUTATIONS.session,
         MUTATIONS.accounting,
         proof,
+        fecha_pago_efectiva=fecha_pago_efectiva,
     )
     stored = MUTATIONS.proofs[-1] if MUTATIONS.proofs else None
     if response.status_code != 303 or stored is None:
@@ -1720,19 +1771,24 @@ def _ar_shell(*, title: str, body: str) -> HTMLResponse:
 
 
 @app.get("/admin/finanzas/cuentas-por-cobrar", response_class=HTMLResponse)
-async def journey_finance_accounts_receivable(reset: bool = False):
+async def journey_finance_accounts_receivable(
+    request: Request, reset: bool = False
+):
     """Test-only shell over the canonical AR read and matching renderers."""
     if reset:
         AR_FIXTURE.reset()
     read_model = AR_FIXTURE.read_model()
+    base_url = str(request.url.path)
+    if request.url.query:
+        base_url = f"{base_url}?{request.url.query}"
     body = ar_admin_ui.render_ar_read_model_html(
         read_model,
-        base_url="/admin/finanzas/cuentas-por-cobrar",
+        base_url=base_url,
         export_url="/admin/finanzas/cuentas-por-cobrar/export.xlsx",
         prepoliza_export_url=(
             "/admin/finanzas/cuentas-por-cobrar/prepolizas-coi.xlsx"
         ),
-        return_to="/admin/finanzas/cuentas-por-cobrar",
+        return_to=base_url,
     )
     body += ar_admin_ui.render_ar_matching_workbench_html(
         AR_FIXTURE.matching_workbench(),
@@ -1800,13 +1856,20 @@ async def journey_finance_ar_prepoliza_export():
 
 
 @app.get("/admin/contabilidad/cuentas-por-cobrar", response_class=HTMLResponse)
-async def journey_accounting_accounts_receivable():
+async def journey_accounting_accounts_receivable(request: Request):
     """Isolated destination proving the accounting CxC purpose remains distinct."""
+    finance_href = user_routes._finance_cxc_workbench_href(
+        edition_year=request.query_params.get("edition_year"),
+        tournament_id=request.query_params.get("torneo_id"),
+        client=request.query_params.get("cliente"),
+        credit_days=int(request.query_params.get("dias_credito") or 0),
+    )
     return _ar_shell(
-        title="Vista contable CxC",
+        title="Vista contable CxC: CFDI y pólizas",
         body="""
-        <section class="workspace-card"><h1>Vista contable CxC</h1>
+        <section class="workspace-card"><h1>Vista contable CxC: CFDI y pólizas</h1>
         <p>Consulta de CFDI emitidos y pólizas de ingreso cobrado.</p>
-        <p>Esta vista no acepta ni revierte matches de cobranza.</p></section>
-        """,
+        <p>Esta vista no acepta ni revierte matches de cobranza.</p>
+        """
+        + f'<a class="button secondary" href="{escape(finance_href, quote=True)}">Workbench CxC: facturación y cobranza</a></section>',
     )

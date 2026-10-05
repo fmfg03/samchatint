@@ -433,11 +433,14 @@ async def test_configured_dashboard_excludes_registration_before_soul_load(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("client", [None, object()])
 async def test_dossier_exclusion_preserves_other_domains_without_roster_payload(
     monkeypatch,
+    client,
 ):
     async def other_domains(**kwargs):
         assert kwargs["include_registration"] is False
+        assert kwargs.get("client") is client
         return {
             "tournaments": [{"id": "scope", "start_date": "2026-01-01"}],
             "entities": [{"team_count": 999}],
@@ -457,6 +460,7 @@ async def test_dossier_exclusion_preserves_other_domains_without_roster_payload(
         {"id": "scope", "name": "Copa", "slug": ""},
         edition_year=2026,
         include_registration=False,
+        client=client,
     )
     assert dossier["entities"] == []
     assert dossier["summary"] == {}
