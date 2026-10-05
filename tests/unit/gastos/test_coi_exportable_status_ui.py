@@ -2,7 +2,9 @@ import csv
 import io
 import zipfile
 from datetime import datetime
+from html import unescape
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -171,6 +173,100 @@ def test_coi_blocked_report_has_no_selectable_partial_policy():
 
     assert 'name="selected_documento_id"' not in html
     assert "Bloqueada: O-1: falta cuenta contable" in html
+
+
+def test_blocked_amex_report_links_existing_review_workpaper():
+    cuenta_id, documento_id, expense_id = uuid4(), uuid4(), uuid4()
+    html = user_routes._render_coi_exportable_lote_rows_html(
+        [
+            {
+                "tipo_lote": "INFORME",
+                "documento": SimpleNamespace(
+                    id=documento_id,
+                    cuenta_gastos_id=cuenta_id,
+                    numero_referencia="I-AMEX",
+                    estado="aprobado",
+                ),
+                "expenses": [
+                    SimpleNamespace(
+                        id=expense_id,
+                        numero_referencia="O-AMEX",
+                        concepto="Cargo AMEX",
+                        gasto_cantidad=100,
+                        fecha=datetime(2026, 8, 20),
+                        pagado_con_amex_empresa=True,
+                    )
+                ],
+                "period_label": "2026-08",
+                "can_export": False,
+                "block_reason": "Falta corte AMEX",
+            }
+        ]
+    )
+
+    assert "Bloqueada: Falta corte AMEX" in html
+    assert f'/informes-de-gastos/{cuenta_id}/papel-poliza.xlsx' in html
+    assert "Descargar papel de revisión" in html
+    assert 'name="selected_documento_id"' not in html
+
+
+def test_coi_status_form_keeps_month_filters_and_expense_anchor():
+    expense_id = uuid4()
+    return_to = (
+        "/admin/contabilidad/coi?year=2026&month=8&tipo=Eg"
+        "&q=tarjeta+%26+taxis"
+    )
+    html = unescape(
+        user_routes._render_coi_expense_status_form(
+            SimpleNamespace(
+                id=expense_id,
+                numero_referencia="O-AMEX",
+                coi_estado="pendiente",
+            ),
+            {},
+            return_to=return_to,
+        )
+    )
+
+    assert f'id="coi-expense-{expense_id}"' in html
+    assert f'name="next" value="{return_to}"' in html
+
+
+@pytest.mark.asyncio
+async def test_coi_status_save_returns_to_filtered_expense():
+    expense_id = uuid4()
+    expense = SimpleNamespace(id=expense_id, coi_exported_at=None)
+    session = SimpleNamespace(
+        execute=AsyncMock(return_value=_ScalarRows([expense])),
+        commit=AsyncMock(),
+    )
+
+    response = await user_routes.actualizar_estado_coi_gasto(
+        expense_id,
+        request=SimpleNamespace(),
+        session=session,
+        current_empleado=SimpleNamespace(id=uuid4()),
+        coi_estado="reversar",
+        next=(
+            "/admin/contabilidad/coi?year=2026&month=8&tipo=Eg"
+            "&q=tarjeta+%26+taxis"
+        ),
+    )
+
+    location = response.headers["location"]
+    assert response.status_code == 303
+    assert location.startswith(
+        "/admin/contabilidad/coi?year=2026&month=8&tipo=Eg"
+        "&q=tarjeta+%26+taxis&success_msg="
+    )
+    assert location.endswith(f"#coi-expense-{expense_id}")
+    assert expense.coi_estado == "reversar"
+    session.commit.assert_awaited_once()
+
+
+def test_coi_status_return_path_rejects_external_or_other_admin_pages():
+    for raw in ("//example.org/path", "/admin/contabilidad/manual"):
+        assert user_routes._coi_status_return_path(raw) == "/admin/contabilidad/coi"
 
 
 def test_coi_export_page_requires_explicit_visible_selection():
