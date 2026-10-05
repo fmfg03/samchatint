@@ -4809,14 +4809,16 @@ def _coi_estado_options(selected: Any) -> str:
 def _render_coi_expense_status_form(
     expense: ExpenseReport,
     audit: dict[str, str],
+    *,
+    return_to: str = "/admin/contabilidad/coi",
 ) -> str:
     reference = escape(expense.numero_referencia or str(expense.id)[:8])
     return (
-        f'<div style="margin-bottom:8px;">'
+        f'<div id="coi-expense-{expense.id}" style="margin-bottom:8px;">'
         f'{_coi_estado_badge(getattr(expense, "coi_estado", None))} {reference}'
         f'<form method="POST" action="/admin/contabilidad/coi/gastos/{expense.id}/estado" '
         f'style="display:flex;gap:6px;align-items:center;min-width:170px;margin-top:4px;">'
-        f'<input type="hidden" name="next" value="/admin/contabilidad/coi">'
+        f'<input type="hidden" name="next" value="{escape(return_to, quote=True)}">'
         f'<select name="coi_estado" style="min-width:130px;padding:6px 8px;">'
         f'{_coi_estado_options(getattr(expense, "coi_estado", None))}</select>'
         f'<button type="submit" class="button secondary" '
@@ -4829,7 +4831,41 @@ def _render_coi_expense_status_form(
     )
 
 
-def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
+async def _coi_readable_workpaper_account_ids(
+    session: AsyncSession,
+    rows: List[dict[str, Any]],
+    empleado: Empleado,
+) -> set[str]:
+    """Limit review links to accounts this Finance viewer can already read."""
+    candidate_ids = {
+        row["documento"].cuenta_gastos_id
+        for row in rows
+        if row.get("tipo_lote") == "INFORME"
+        and not row.get("can_export")
+        and row["documento"].cuenta_gastos_id
+        and any(is_company_amex_expense(expense) for expense in row.get("expenses") or [])
+    }
+    if not candidate_ids:
+        return set()
+    if _can_view_all_cuentas_de_gastos(empleado):
+        return {str(account_id) for account_id in candidate_ids}
+    owned_accounts = (
+        await session.execute(
+            select(CuentaDeGastos.id).where(
+                CuentaDeGastos.id.in_(candidate_ids),
+                CuentaDeGastos.empleado_id == empleado.id,
+            )
+        )
+    ).scalars().all()
+    return {str(account_id) for account_id in owned_accounts}
+
+
+def _render_coi_exportable_lote_rows_html(
+    rows: List[dict[str, Any]],
+    *,
+    return_to: str = "/admin/contabilidad/coi",
+    readable_workpaper_account_ids: Optional[set[str]] = None,
+) -> str:
     if not rows:
         return (
             '<tr><td colspan="11" class="muted">'
@@ -4864,6 +4900,9 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
             if max(expense_dates) != min(expense_dates):
                 fecha_gasto += f" a {max(expense_dates).isoformat()}"
         is_report = tipo_lote == "INFORME"
+        is_amex_report = is_report and any(
+            is_company_amex_expense(expense) for expense in expenses
+        )
         selection_name = "selected_documento_id" if is_report else "selected_gasto_id"
         selection_id = documento_id if is_report else str(expenses[0].id)
         export_path = (
@@ -4879,6 +4918,7 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
             _render_coi_expense_status_form(
                 expense,
                 audit_by_expense.get(expense.id) or {},
+                return_to=return_to,
             )
             for expense in expenses
         )
@@ -4890,7 +4930,7 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
             if row.get("can_export")
             else '<span title="Póliza bloqueada">⛔</span>'
         )
-        if is_report and any(is_company_amex_expense(expense) for expense in expenses):
+        if is_amex_report:
             coi_action += (
                 f' <a href="/admin/contabilidad/amex/informes/{documento_id}">'
                 "Revisar partidas y cortes AMEX</a>"
@@ -4902,7 +4942,19 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
                 f'<span class="muted">Bloqueada: {block_reason}</span>'
                 + (
                     f' <a href="/admin/contabilidad/amex/informes/{documento_id}">Revisar AMEX</a>'
-                    if is_report and any(is_company_amex_expense(expense) for expense in expenses)
+                    if is_amex_report
+                    else ""
+                )
+                + (
+                    f' <a href="/informes-de-gastos/{documento.cuenta_gastos_id}/papel-poliza.xlsx" '
+                    'title="Papel de revisión; no contabilizado">'
+                    "Descargar papel de revisión</a>"
+                    if (
+                        is_amex_report
+                        and documento.cuenta_gastos_id
+                        and str(documento.cuenta_gastos_id)
+                        in (readable_workpaper_account_ids or set())
+                    )
                     else ""
                 )
             )
@@ -5215,6 +5267,9 @@ async def contabilidad_coi_view(
         end_date=end_date,
         search_q=selected_q,
     )
+    workpaper_account_ids = await _coi_readable_workpaper_account_ids(
+        session, exportable_rows, current_empleado
+    )
     exportable_document_ids = {str(row["documento"].id) for row in exportable_rows}
     exportable_expense_count = sum(
         len(row.get("expenses") or []) for row in exportable_rows
@@ -5223,7 +5278,19 @@ async def contabilidad_coi_view(
         1 for row in exportable_rows if row.get("can_export")
     )
     blocked_policy_count = len(exportable_rows) - exportable_policy_count
-    exportable_rows_html = _render_coi_exportable_lote_rows_html(exportable_rows)
+    return_to = "/admin/contabilidad/coi?" + urlencode(
+        {
+            "year": selected_year,
+            "month": selected_month,
+            "tipo": selected_tipo,
+            "q": selected_q,
+        }
+    )
+    exportable_rows_html = _render_coi_exportable_lote_rows_html(
+        exportable_rows,
+        return_to=return_to,
+        readable_workpaper_account_ids=workpaper_account_ids,
+    )
 
     conditions = []
     if selected_tipo != "all":
@@ -5503,6 +5570,28 @@ async def contabilidad_coi_view(
     return html
 
 
+def _coi_status_return_path(raw: str) -> str:
+    """Keep COI status redirects on this view with only its supported filters."""
+    base = "/admin/contabilidad/coi"
+    parsed = urlparse(raw or "")
+    if parsed.scheme or parsed.netloc or parsed.path != base:
+        return base
+    supplied = parse_qs(parsed.query, keep_blank_values=True)
+    filters: dict[str, str] = {}
+    year = (supplied.get("year") or [""])[-1]
+    month = (supplied.get("month") or [""])[-1]
+    tipo = (supplied.get("tipo") or [""])[-1]
+    if year.isdigit() and int(year) > 0:
+        filters["year"] = year
+    if month.isdigit() and 1 <= int(month) <= 12:
+        filters["month"] = month
+    if tipo in {"all", "Eg", "Ig", "Di"}:
+        filters["tipo"] = tipo
+    if "q" in supplied:
+        filters["q"] = supplied["q"][-1]
+    return base + ("?" + urlencode(filters) if filters else "")
+
+
 @router.post("/admin/contabilidad/coi/gastos/{expense_id}/estado")
 async def actualizar_estado_coi_gasto(
     expense_id: UUIDType,
@@ -5513,11 +5602,12 @@ async def actualizar_estado_coi_gasto(
     next: str = Form("/admin/contabilidad/coi"),
 ) -> RedirectResponse:
     allowed = {"pendiente", "contabilizado", "reversar"}
-    redirect_next = next if (next or "").startswith("/") else "/admin/contabilidad/coi"
+    redirect_next = _coi_status_return_path(next)
+    anchor = f"#coi-expense-{expense_id}"
     estado_norm = (coi_estado or "").strip().lower()
     if estado_norm not in allowed:
         return RedirectResponse(
-            url=_append_error_params(redirect_next, error_msg="Estatus COI invalido."),
+            url=_append_error_params(redirect_next, error_msg="Estatus COI invalido.") + anchor,
             status_code=303,
         )
     expense = (
@@ -5536,7 +5626,7 @@ async def actualizar_estado_coi_gasto(
         expense.coi_exported_by_id = current_empleado.id
     await session.commit()
     return RedirectResponse(
-        url=_append_success_params(redirect_next, success_msg="Estatus COI actualizado."),
+        url=_append_success_params(redirect_next, success_msg="Estatus COI actualizado.") + anchor,
         status_code=303,
     )
 
