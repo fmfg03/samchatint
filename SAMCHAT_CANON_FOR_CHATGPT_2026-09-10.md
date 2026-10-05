@@ -170,11 +170,28 @@ movements, and CFDI evidence must be emitted under exactly one COI policy
 header. A single expense that belongs to an `INFORME` must not be exported as
 an independent policy.
 
-The export is atomic. If any active item is not COI-ready, or if the active
-items span more than one accounting month, the complete `INFORME` policy is
-blocked. No partial file is generated and no item is marked `contabilizado`.
+The export is atomic. If any active item is not COI-ready, the complete
+`INFORME` policy is blocked. No partial file is generated and no item is
+marked `contabilizado`.
 Cancelled items remain excluded. Standalone third-party requests retain their
 existing policy granularity.
+
+Amendment date: 2026-10-05. Reason: explicit human approval to remove the
+cross-month export restriction. Active items may have dates in different
+months or years while remaining under one complete `INFORME` policy. Their
+original expense dates and CFDI evidence are preserved. Each normal report is
+discovered only in its approval month for both monthly COI surfaces and Finance
+batches, including all its active items regardless of their dates. Missing
+approval dates remain explicit blockers, without a creation-date fallback.
+Company-AMEX reports retain their canonical cut controls and are exported only
+from the immutable initial cut in that cut's accounting month; this change does
+not authorize cross-month cut creation or rebuilding mutable classifications.
+Approval, accounting readiness, beneficiary and tax validations remain required.
+Evidence: the scoped correction in
+`user_routes.py` and `admin_routes.py`, with regression cases in
+`tests/unit/gastos/test_coi_exportable_status_ui.py`. This amendment describes
+the approved implementation scope; merge, deployment and Finance UAT remain
+pending their own evidence.
 
 Repository evidence for this amendment is the approved 2026-09-29 correction
 that groups XLSX, CSV, ZIP, document, and batch exports by `INFORME` and adds

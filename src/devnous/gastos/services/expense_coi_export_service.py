@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, List, Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
-from ..models import CuentaDeGastos, ExpenseReport
-from .amex_expense_service import is_company_amex_expense
+from ..models import AmexAccountingCut, CuentaDeGastos, Documento, ExpenseReport
+from .amex_expense_service import company_amex_sql_condition, is_company_amex_expense
 from .coi_poliza_exporter import ExpenseCFDI
 from .employee_debtor_accounting_service import (
     debtor_account_block_label_for_employee,
@@ -24,6 +26,74 @@ _NON_FISCAL_ACCOUNT_NAMES = {
     "no deducible",
     "gastos no deducibles",
 }
+
+
+def informe_expense_link_condition(
+    expense_model: Any = ExpenseReport,
+) -> ColumnElement[bool]:
+    """Canonical direct and legacy links from an expense to its INFORME."""
+    return or_(
+        expense_model.documento_id == Documento.id,
+        expense_model.informe_documento_id == Documento.id,
+        and_(
+            Documento.cuenta_gastos_id.isnot(None),
+            expense_model.cuenta_gastos_id == Documento.cuenta_gastos_id,
+        ),
+    )
+
+
+def informe_coi_period_condition(start: datetime, end: datetime) -> ColumnElement[bool]:
+    """Select one policy period; incomplete period evidence stays visibly blocked.
+
+    Normal reports belong to their approval month. AMEX belongs to its frozen
+    initial cut month. Expense dates locate missing evidence only, never authorize
+    a policy in another period.
+    """
+    expense = aliased(ExpenseReport)
+    active_link = and_(
+        expense.estado_gasto != "cancelado", informe_expense_link_condition(expense)
+    )
+    has_amex = exists(
+        select(expense.id).where(active_link, company_amex_sql_condition(expense))
+    ).correlate(Documento)
+    expense_in_period = exists(
+        select(expense.id).where(
+            active_link, expense.fecha >= start, expense.fecha < end
+        )
+    ).correlate(Documento)
+    cut_link = and_(
+        AmexAccountingCut.informe_id == Documento.id,
+        AmexAccountingCut.kind == "initial",
+    )
+    has_cut = exists(select(AmexAccountingCut.id).where(cut_link)).correlate(Documento)
+    cut_in_period = exists(
+        select(AmexAccountingCut.id).where(
+            cut_link,
+            AmexAccountingCut.accounting_date >= start.date(),
+            AmexAccountingCut.accounting_date < end.date(),
+        )
+    ).correlate(Documento)
+    return or_(
+        and_(~has_amex, Documento.aprobado_en >= start, Documento.aprobado_en < end),
+        and_(~has_amex, Documento.aprobado_en.is_(None), expense_in_period),
+        and_(has_amex, cut_in_period),
+        and_(has_amex, ~has_cut, expense_in_period),
+    )
+
+
+def expense_coi_batch_period_condition(
+    start: datetime, end: datetime
+) -> ColumnElement[bool]:
+    """Use the owner's policy period, retaining expense dates for standalone rows."""
+    owner = and_(Documento.tipo == "INFORME", informe_expense_link_condition())
+    has_owner = exists(select(Documento.id).where(owner)).correlate(ExpenseReport)
+    owner_in_period = exists(
+        select(Documento.id).where(owner, informe_coi_period_condition(start, end))
+    ).correlate(ExpenseReport)
+    return or_(
+        owner_in_period,
+        and_(~has_owner, ExpenseReport.fecha >= start, ExpenseReport.fecha < end),
+    )
 
 
 def _normalize_account_name(value: object) -> str:
@@ -67,9 +137,7 @@ async def _resolve_informe_detail_counterpart(
 
     cuenta = await session.get(CuentaDeGastos, cuenta_gastos_id)
     if cuenta is None:
-        error = (
-            "El gasto pertenece a un Informe de Gastos sin cuenta vinculada válida."
-        )
+        error = "El gasto pertenece a un Informe de Gastos sin cuenta vinculada válida."
         cache[cache_key] = (None, error)
         raise ValueError(error)
 
@@ -138,9 +206,7 @@ async def build_expense_cfdi_for_export(
         ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
         if not ready:
             detail = (
-                "; ".join(issues)
-                if issues
-                else "Gasto pendiente de limpieza contable."
+                "; ".join(issues) if issues else "Gasto pendiente de limpieza contable."
             )
             raise ValueError(detail)
 
@@ -259,6 +325,9 @@ async def load_expense_for_coi_export(
 
 
 __all__ = [
+    "informe_expense_link_condition",
+    "informe_coi_period_condition",
+    "expense_coi_batch_period_condition",
     "allows_coi_without_cfdi",
     "assess_expense_coi_cleanup_ready",
     "build_expense_cfdi_for_export",

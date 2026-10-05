@@ -223,10 +223,25 @@ use the same grouping contract. A per-expense download must resolve and redirect
 to the owning `INFORME` when one exists. Standalone third-party requests remain
 ungrouped unless their owning workflow defines a separate document policy.
 
-An `INFORME` export fails closed when any active expense is not COI-ready or
-when active expenses cross accounting-month boundaries. The failure must not
+An `INFORME` export fails closed when any active expense is not COI-ready.
+Expense dates in different accounting months do not by themselves block a
+normal report. The failure must not
 emit a partial policy or update any expense to `contabilizado`. Successful batch
 status updates apply to all included report expenses in one transaction.
+
+Amendment date: 2026-10-05. Reason: explicit human approval to remove the
+cross-month restriction and address PR #458 review findings. Monthly COI and
+Finance discovery use the same canonical policy period: `Documento.aprobado_en`
+for normal reports, and the immutable initial `AmexAccountingCut.accounting_date`
+for company-AMEX reports. Both include all active items under one complete
+policy, even when expense dates differ from the discovery period. Missing
+approval dates or AMEX cuts stay visible as blockers in expense-period discovery
+and never authorize a partial or fallback export. AMEX exports must use
+`cut_expense_cfdis`, preserving existing cut-creation and evidence controls.
+Evidence: shared predicates in `expense_coi_export_service.py`, route integration,
+SQL-backed period-selection tests and frozen-cut regression tests in
+`tests/unit/gastos/test_coi_exportable_status_ui.py`. These are approved source
+changes under PR review; deployment and authenticated UAT remain unproven.
 
 ### 8.3 Payment Run
 

@@ -181,6 +181,7 @@ from ..services.expense_coi_export_service import (
     assess_expense_coi_cleanup_ready,
     build_expense_cfdi_for_export,
     group_expense_cfdis_for_document,
+    informe_coi_period_condition,
     load_expense_for_coi_export,
 )
 from ..services.documento_service import (
@@ -4407,22 +4408,7 @@ async def _load_coi_lote_informe_documentos(
     start_dt: datetime,
     end_dt: datetime,
 ) -> List[Documento]:
-    """Approved INFORME documents with an active expense on the accounting period."""
-    expense_in_period = exists(
-        select(ExpenseReport.id).where(
-            ExpenseReport.estado_gasto != "cancelado",
-            ExpenseReport.fecha >= start_dt,
-            ExpenseReport.fecha < end_dt,
-            or_(
-                ExpenseReport.documento_id == Documento.id,
-                ExpenseReport.informe_documento_id == Documento.id,
-                and_(
-                    Documento.cuenta_gastos_id.isnot(None),
-                    ExpenseReport.cuenta_gastos_id == Documento.cuenta_gastos_id,
-                ),
-            ),
-        )
-    )
+    """Approved reports in their single policy period, including blocked gaps."""
     return (
         await session.execute(
             select(Documento)
@@ -4444,7 +4430,7 @@ async def _load_coi_lote_informe_documentos(
             .where(
                 Documento.tipo == "INFORME",
                 Documento.estado == "aprobado",
-                expense_in_period,
+                informe_coi_period_condition(start_dt, end_dt),
             )
             .order_by(
                 Documento.numero_referencia.asc(),
@@ -4583,8 +4569,6 @@ def _coi_lote_documento_period_label(
     if tipo_lote == "INFORME":
         if documento.aprobado_en:
             return documento.aprobado_en.date().isoformat()
-        if documento.creado_en:
-            return documento.creado_en.date().isoformat()
         return "-"
     if documento.pagado_en:
         return documento.pagado_en.date().isoformat()
@@ -4669,21 +4653,6 @@ async def _build_coi_exportable_lote_rows(
                 expenses = await _load_documento_active_coi_expenses(
                     session, documento
                 )
-                period_ids = {expense.id for expense in period_expenses}
-                outside_period = [
-                    expense for expense in expenses if expense.id not in period_ids
-                ]
-                if outside_period:
-                    references = ", ".join(
-                        expense.numero_referencia or str(expense.id)[:8]
-                        for expense in outside_period[:6]
-                    )
-                    if len(outside_period) > 6:
-                        references += f" y {len(outside_period) - 6} más"
-                    block_reasons.append(
-                        "El informe contiene partidas de otro periodo contable: "
-                        + references
-                    )
             if not expenses:
                 continue
             if tipo_lote != "INFORME":
@@ -4710,6 +4679,7 @@ async def _build_coi_exportable_lote_rows(
                         }
                     )
                 continue
+            period_label = _coi_lote_documento_period_label(documento, tipo_lote)
             if any(is_company_amex_expense(expense) for expense in expenses):
                 cut = await _load_initial_amex_cut(session, documento.id)
                 if cut is None:
@@ -4717,9 +4687,14 @@ async def _build_coi_exportable_lote_rows(
                 else:
                     try:
                         cut_expense_cfdis(cut)
+                        period_label = cut.accounting_date.isoformat()
                     except ValueError as exc:
                         block_reasons.append(str(exc))
             else:
+                if not getattr(documento, "aprobado_en", None):
+                    block_reasons.append(
+                        "Falta fecha de aprobación del Informe para definir su periodo COI."
+                    )
                 for expense in expenses:
                     ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
                     if not ready:
@@ -4733,7 +4708,6 @@ async def _build_coi_exportable_lote_rows(
                 search_q=search_q,
             ):
                 continue
-            period_label = _coi_lote_documento_period_label(documento, tipo_lote)
             rows.append(
                 {
                     "tipo_lote": tipo_lote,
@@ -34653,21 +34627,10 @@ async def _build_documento_coi_bundle(
                 return documento, expenses, cut_expense_cfdis(cut)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-        accounting_periods = {
-            (expense.fecha.year, expense.fecha.month)
-            for expense in expenses
-            if expense.fecha is not None
-        }
-        if len(accounting_periods) > 1:
-            period_labels = ", ".join(
-                f"{year}-{month:02d}" for year, month in sorted(accounting_periods)
-            )
+        if not getattr(documento, "aprobado_en", None):
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "No se generó una póliza parcial. Las partidas del Informe de "
-                    f"Gastos pertenecen a más de un periodo contable: {period_labels}."
-                ),
+                detail="Falta fecha de aprobación del Informe para definir su periodo COI.",
             )
 
     expense_cfdi_list: list[ExpenseCFDI] = []
