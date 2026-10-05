@@ -33,6 +33,7 @@ _NON_FISCAL_ACCOUNT_NAMES = {
     "gastos no deducibles del cutt",
     "gastos no deducibles de md",
     "gastos no deducibles ltb",
+    "gastos no deducibles hwc",
 }
 from .budget_concept_account_service import (
     cleanup_expense_loader_options,

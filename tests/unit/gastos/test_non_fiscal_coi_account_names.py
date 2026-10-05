@@ -31,6 +31,7 @@ from devnous.gastos.services.expense_coi_export_service import (
         "GASTOS NO DEDUCIBLES DEL CUTT",
         "GASTOS NO DEDUCIBLES DE MD",
         "GASTOS NO DEDUCIBLES LTB",
+        "GASTOS NO DEDUCIBLES HWC",
     ],
 )
 def test_cataloged_non_fiscal_names_are_allowed_across_coi_paths(name):
