@@ -600,6 +600,13 @@ def test_dynamic_text_is_escaped_by_the_html_views():
     assert "&lt;script&gt;" in rendered and "A &amp; B" in rendered
 
 
+def test_edit_expense_form_resolves_escape_from_module_scope():
+    code = user_routes.editar_gasto_form.__code__
+
+    assert "escape" in code.co_names
+    assert "escape" not in code.co_varnames
+
+
 @pytest.mark.parametrize(
     ("invoice_state", "doc_state", "expected"),
     [

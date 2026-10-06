@@ -27974,7 +27974,6 @@ async def editar_gasto_form(
 
     # Prepare cuentas data for JSON
     import json
-    from html import escape
     cuentas_data = []
     for cuenta in cuentas_contables:
         cuentas_data.append({
