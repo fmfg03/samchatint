@@ -1,6 +1,6 @@
 {
   "baseline": "6cd122f1030ab39631d77e706a9f5a1a7192231d",
-  "source_file_count": 414,
+  "source_file_count": 417,
   "exclusions": [
     "Private plugin integration package excluded from business-source inventory; baseline pinned deliberately, source hashes detect changes",
     "Active frontend is not versioned here; UI function/profile parity remains UNPROVEN",
@@ -37515,11 +37515,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "5c2f5638e384",
+      "id": "8b0d3012c2ac",
       "source": "src/samchat/assistant/router.py",
-      "line": 10816,
+      "line": 10845,
       "handler": "create_conversation",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/conversations",
@@ -37568,7 +37568,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:create_conversation",
-      "proposed_tool": "assistant_create_conversation_post_5c2f56",
+      "proposed_tool": "assistant_create_conversation_post_8b0d30",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -37590,11 +37590,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "5967d725304c",
+      "id": "95bc876d8809",
       "source": "src/samchat/assistant/router.py",
-      "line": 10886,
+      "line": 10915,
       "handler": "list_conversations",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/conversations",
@@ -37642,7 +37642,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:list_conversations",
-      "proposed_tool": "assistant_list_conversations_get_5967d7",
+      "proposed_tool": "assistant_list_conversations_get_95bc87",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "external_session_id",
@@ -37661,11 +37661,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e5851c301a15",
+      "id": "37e14f97a715",
       "source": "src/samchat/assistant/router.py",
-      "line": 10914,
+      "line": 10943,
       "handler": "assistant_me",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/me",
@@ -37718,7 +37718,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:assistant_me",
-      "proposed_tool": "assistant_assistant_me_get_e5851c",
+      "proposed_tool": "assistant_assistant_me_get_37e14f",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -37736,11 +37736,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "0635e033a896",
+      "id": "8584e93516df",
       "source": "src/samchat/assistant/router.py",
-      "line": 10959,
+      "line": 10988,
       "handler": "assistant_owner_pack_readiness_dashboard",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/owner-pack/readiness-dashboard",
@@ -37789,7 +37789,7 @@
         "_build_owner_pack_readiness_dashboard_payload"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:assistant_owner_pack_readiness_dashboard",
-      "proposed_tool": "assistant_assistant_owner_pack_readiness_dashboard_get_0635e0",
+      "proposed_tool": "assistant_assistant_owner_pack_readiness_dashboard_get_8584e9",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "scope",
@@ -37810,11 +37810,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "a2419092e2f5",
+      "id": "6d7d050c2e2a",
       "source": "src/samchat/assistant/router.py",
-      "line": 10976,
+      "line": 11005,
       "handler": "assistant_owner_pack_export_preview",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/owner-pack/export-preview",
@@ -37863,7 +37863,7 @@
         "_build_owner_pack_export_preview_payload"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:assistant_owner_pack_export_preview",
-      "proposed_tool": "assistant_assistant_owner_pack_export_preview_get_a24190",
+      "proposed_tool": "assistant_assistant_owner_pack_export_preview_get_6d7d05",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "scope",
@@ -37884,11 +37884,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "7c9056ca4a47",
+      "id": "839ff5268535",
       "source": "src/samchat/assistant/router.py",
-      "line": 10989,
+      "line": 11018,
       "handler": "assistant_owner_pack_export_preview_html",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/owner-pack/export-preview.html",
@@ -37937,7 +37937,7 @@
         "_build_owner_pack_export_preview_payload"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:assistant_owner_pack_export_preview_html",
-      "proposed_tool": "assistant_assistant_owner_pack_export_preview_html_get_7c9056",
+      "proposed_tool": "assistant_assistant_owner_pack_export_preview_html_get_839ff5",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "scope",
@@ -37959,11 +37959,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "aeea4f3f01d9",
+      "id": "16d995b9f7c1",
       "source": "src/samchat/assistant/router.py",
-      "line": 11005,
+      "line": 11034,
       "handler": "assistant_owner_pack_export_preview_csv",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/owner-pack/export-preview.csv",
@@ -38012,7 +38012,7 @@
         "_build_owner_pack_export_preview_payload"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:assistant_owner_pack_export_preview_csv",
-      "proposed_tool": "assistant_assistant_owner_pack_export_preview_csv_get_aeea4f",
+      "proposed_tool": "assistant_assistant_owner_pack_export_preview_csv_get_16d995",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "scope",
@@ -38033,11 +38033,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "038627e128ca",
+      "id": "3fad51776260",
       "source": "src/samchat/assistant/router.py",
-      "line": 11024,
+      "line": 11053,
       "handler": "assistant_owner_pack_export_preview_pdf",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/owner-pack/export-preview.pdf",
@@ -38086,7 +38086,7 @@
         "_build_owner_pack_export_preview_payload"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:assistant_owner_pack_export_preview_pdf",
-      "proposed_tool": "assistant_assistant_owner_pack_export_preview_pdf_get_038627",
+      "proposed_tool": "assistant_assistant_owner_pack_export_preview_pdf_get_3fad51",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "scope",
@@ -38107,11 +38107,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "193baf65eb69",
+      "id": "232deade0c14",
       "source": "src/samchat/assistant/router.py",
-      "line": 11046,
+      "line": 11075,
       "handler": "assistant_tournament_registration_reports",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/reports/tournament-registrations",
@@ -38135,7 +38135,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5371:_can_view_tournament_registration_reports"
+        "src/samchat/assistant/router.py:5376:_can_view_tournament_registration_reports"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -38162,7 +38162,7 @@
         "execute_canonical_action"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:assistant_tournament_registration_reports",
-      "proposed_tool": "assistant_assistant_tournament_registration_reports_get_193baf",
+      "proposed_tool": "assistant_assistant_tournament_registration_reports_get_232dea",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "tournament_slug",
@@ -38183,11 +38183,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "8907879fcd23",
+      "id": "1d2401bb8385",
       "source": "src/samchat/assistant/router.py",
-      "line": 11087,
+      "line": 11116,
       "handler": "assistant_auth_bridge_supabase",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/auth/bridge-supabase",
@@ -38236,7 +38236,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:assistant_auth_bridge_supabase",
-      "proposed_tool": "assistant_assistant_auth_bridge_supabase_post_890787",
+      "proposed_tool": "assistant_assistant_auth_bridge_supabase_post_1d2401",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -38258,11 +38258,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ad2e2c705a3a",
+      "id": "07bfc4a40476",
       "source": "src/samchat/assistant/router.py",
-      "line": 11211,
+      "line": 11240,
       "handler": "synthetic_data_seed",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/admin/synthetic-data/seed",
@@ -38309,7 +38309,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:synthetic_data_seed",
-      "proposed_tool": "assistant_synthetic_data_seed_post_ad2e2c",
+      "proposed_tool": "assistant_synthetic_data_seed_post_07bfc4",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -38331,11 +38331,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "a24e8d3484b5",
+      "id": "ebade6960567",
       "source": "src/samchat/assistant/router.py",
-      "line": 11248,
+      "line": 11277,
       "handler": "synthetic_data_cleanup",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/admin/synthetic-data/cleanup",
@@ -38382,7 +38382,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:synthetic_data_cleanup",
-      "proposed_tool": "assistant_synthetic_data_cleanup_post_a24e8d",
+      "proposed_tool": "assistant_synthetic_data_cleanup_post_ebade6",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -38404,11 +38404,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "2bad24437550",
+      "id": "97793c0ea3b4",
       "source": "src/samchat/assistant/router.py",
-      "line": 11270,
+      "line": 11299,
       "handler": "synthetic_data_reset_seed",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/admin/synthetic-data/reset-seed",
@@ -38455,7 +38455,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:synthetic_data_reset_seed",
-      "proposed_tool": "assistant_synthetic_data_reset_seed_post_2bad24",
+      "proposed_tool": "assistant_synthetic_data_reset_seed_post_97793c",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -38477,11 +38477,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "10f14a967abf",
+      "id": "6e6888a0ec95",
       "source": "src/samchat/assistant/router.py",
-      "line": 11305,
+      "line": 11334,
       "handler": "synthetic_data_job_status",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/admin/synthetic-data/jobs/{job_id}",
@@ -38528,7 +38528,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:synthetic_data_job_status",
-      "proposed_tool": "assistant_synthetic_data_job_status_get_10f14a",
+      "proposed_tool": "assistant_synthetic_data_job_status_get_6e6888",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "job_id",
@@ -38547,11 +38547,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "71bf006a7b3c",
+      "id": "9b42047a93a2",
       "source": "src/samchat/assistant/router.py",
-      "line": 11321,
+      "line": 11350,
       "handler": "synthetic_data_verify",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/admin/synthetic-data/verify",
@@ -38598,7 +38598,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:synthetic_data_verify",
-      "proposed_tool": "assistant_synthetic_data_verify_get_71bf00",
+      "proposed_tool": "assistant_synthetic_data_verify_get_9b4204",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -38616,11 +38616,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "64f00badfbb0",
+      "id": "d9004177a432",
       "source": "src/samchat/assistant/router.py",
-      "line": 11405,
+      "line": 11434,
       "handler": "unified_audit_log",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/admin/audit/unified",
@@ -38667,7 +38667,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:unified_audit_log",
-      "proposed_tool": "assistant_unified_audit_log_get_64f00b",
+      "proposed_tool": "assistant_unified_audit_log_get_d90041",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "days",
@@ -38689,11 +38689,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "5373ce2e45c1",
+      "id": "ff9351025418",
       "source": "src/samchat/assistant/router.py",
-      "line": 11577,
+      "line": 11606,
       "handler": "admin_tournaments_create",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/admin/tournaments",
@@ -38717,7 +38717,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -38742,7 +38742,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_tournaments_create",
-      "proposed_tool": "assistant_admin_tournaments_create_post_5373ce",
+      "proposed_tool": "assistant_admin_tournaments_create_post_ff9351",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -38764,11 +38764,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "2f5fe7ead2c0",
+      "id": "d66d4fa2516b",
       "source": "src/samchat/assistant/router.py",
-      "line": 11612,
+      "line": 11641,
       "handler": "admin_tournaments_update",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "PATCH",
       "paths": [
         "/api/assistant/admin/tournaments/{tournament_id}",
@@ -38792,7 +38792,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -38817,7 +38817,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_tournaments_update",
-      "proposed_tool": "assistant_admin_tournaments_update_patch_2f5fe7",
+      "proposed_tool": "assistant_admin_tournaments_update_patch_d66d4f",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -38840,11 +38840,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "87674da0e989",
+      "id": "d39c0b46e261",
       "source": "src/samchat/assistant/router.py",
-      "line": 11658,
+      "line": 11687,
       "handler": "admin_invitations_list",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/admin/invitations",
@@ -38868,7 +38868,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -38893,7 +38893,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_invitations_list",
-      "proposed_tool": "assistant_admin_invitations_list_get_87674d",
+      "proposed_tool": "assistant_admin_invitations_list_get_d39c0b",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -38911,11 +38911,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d7a41670ebd1",
+      "id": "c0e42058388d",
       "source": "src/samchat/assistant/router.py",
-      "line": 11686,
+      "line": 11715,
       "handler": "admin_invitations_create",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/admin/invitations",
@@ -38939,7 +38939,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -38964,7 +38964,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_invitations_create",
-      "proposed_tool": "assistant_admin_invitations_create_post_d7a416",
+      "proposed_tool": "assistant_admin_invitations_create_post_c0e420",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -38986,11 +38986,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "9dbf20417ccd",
+      "id": "c1ed667b2637",
       "source": "src/samchat/assistant/router.py",
-      "line": 11737,
+      "line": 11766,
       "handler": "admin_invitations_toggle",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/admin/invitations/{invitation_id}/toggle",
@@ -39014,7 +39014,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -39039,7 +39039,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_invitations_toggle",
-      "proposed_tool": "assistant_admin_invitations_toggle_post_9dbf20",
+      "proposed_tool": "assistant_admin_invitations_toggle_post_c1ed66",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "invitation_id",
@@ -39061,11 +39061,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d7f68f351022",
+      "id": "b4f9fb03cdbf",
       "source": "src/samchat/assistant/router.py",
-      "line": 11789,
+      "line": 11818,
       "handler": "admin_invitations_delete",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "DELETE",
       "paths": [
         "/api/assistant/admin/invitations/{invitation_id}",
@@ -39089,7 +39089,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -39114,7 +39114,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_invitations_delete",
-      "proposed_tool": "assistant_admin_invitations_delete_delete_d7f68f",
+      "proposed_tool": "assistant_admin_invitations_delete_delete_b4f9fb",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "invitation_id",
@@ -39136,11 +39136,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "6b7ce202839c",
+      "id": "758e463721f5",
       "source": "src/samchat/assistant/router.py",
-      "line": 11828,
+      "line": 11857,
       "handler": "admin_email_campaigns_list",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/admin/email/campaigns",
@@ -39164,7 +39164,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -39189,7 +39189,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_email_campaigns_list",
-      "proposed_tool": "assistant_admin_email_campaigns_list_get_6b7ce2",
+      "proposed_tool": "assistant_admin_email_campaigns_list_get_758e46",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -39208,11 +39208,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "06bbae88bf1d",
+      "id": "b1c42eb6b03b",
       "source": "src/samchat/assistant/router.py",
-      "line": 11862,
+      "line": 11891,
       "handler": "admin_email_campaigns_send",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/admin/email/campaigns/send",
@@ -39236,7 +39236,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -39261,7 +39261,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_email_campaigns_send",
-      "proposed_tool": "assistant_admin_email_campaigns_send_post_06bbae",
+      "proposed_tool": "assistant_admin_email_campaigns_send_post_b1c42e",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -39283,11 +39283,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e7f68c553c47",
+      "id": "762bc55697a5",
       "source": "src/samchat/assistant/router.py",
-      "line": 11905,
+      "line": 11934,
       "handler": "admin_email_campaigns_schedule",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/admin/email/campaigns/schedule",
@@ -39311,7 +39311,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -39336,7 +39336,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_email_campaigns_schedule",
-      "proposed_tool": "assistant_admin_email_campaigns_schedule_post_e7f68c",
+      "proposed_tool": "assistant_admin_email_campaigns_schedule_post_762bc5",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -39358,11 +39358,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "3a97f3172cb6",
+      "id": "cbac5c03eb26",
       "source": "src/samchat/assistant/router.py",
-      "line": 11970,
+      "line": 11999,
       "handler": "admin_email_campaigns_cancel",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/admin/email/campaigns/scheduled/{scheduled_email_id}/cancel",
@@ -39386,7 +39386,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -39411,7 +39411,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_email_campaigns_cancel",
-      "proposed_tool": "assistant_admin_email_campaigns_cancel_post_3a97f3",
+      "proposed_tool": "assistant_admin_email_campaigns_cancel_post_cbac5c",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "scheduled_email_id",
@@ -39434,11 +39434,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "df176a0c4c6a",
+      "id": "3a2749d6e31c",
       "source": "src/samchat/assistant/router.py",
-      "line": 12025,
+      "line": 12054,
       "handler": "admin_email_campaigns_delete",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "DELETE",
       "paths": [
         "/api/assistant/admin/email/campaigns/scheduled/{scheduled_email_id}",
@@ -39462,7 +39462,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -39487,7 +39487,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_email_campaigns_delete",
-      "proposed_tool": "assistant_admin_email_campaigns_delete_delete_df176a",
+      "proposed_tool": "assistant_admin_email_campaigns_delete_delete_3a2749",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "scheduled_email_id",
@@ -39510,11 +39510,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "c0a43658f6e9",
+      "id": "7dd83348741d",
       "source": "src/samchat/assistant/router.py",
-      "line": 12077,
+      "line": 12106,
       "handler": "list_messages",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/conversations/{conversation_id}/messages",
@@ -39561,7 +39561,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:list_messages",
-      "proposed_tool": "assistant_list_messages_get_c0a436",
+      "proposed_tool": "assistant_list_messages_get_7dd833",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "conversation_id",
@@ -39580,11 +39580,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "eb242a0f99a5",
+      "id": "fc7003e56ebc",
       "source": "src/samchat/assistant/router.py",
-      "line": 12111,
+      "line": 12140,
       "handler": "export_assistant_report",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/reports/export",
@@ -39634,7 +39634,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:export_assistant_report",
-      "proposed_tool": "assistant_export_assistant_report_post_eb242a",
+      "proposed_tool": "assistant_export_assistant_report_post_fc7003",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -39656,11 +39656,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "cbc8ab903f96",
+      "id": "bc477b31d163",
       "source": "src/samchat/assistant/router.py",
-      "line": 12201,
+      "line": 12230,
       "handler": "assistant_reports_executive",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/reports/executive",
@@ -39709,7 +39709,7 @@
         "_build_executive_dashboard"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:assistant_reports_executive",
-      "proposed_tool": "assistant_assistant_reports_executive_post_cbc8ab",
+      "proposed_tool": "assistant_assistant_reports_executive_post_bc477b",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -39731,11 +39731,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "cae9649167df",
+      "id": "18dd91e163d9",
       "source": "src/samchat/assistant/router.py",
-      "line": 12217,
+      "line": 12246,
       "handler": "assistant_reports_alerts",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/reports/alerts",
@@ -39784,7 +39784,7 @@
         "_build_automatic_alerts"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:assistant_reports_alerts",
-      "proposed_tool": "assistant_assistant_reports_alerts_post_cae964",
+      "proposed_tool": "assistant_assistant_reports_alerts_post_18dd91",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -39806,11 +39806,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "889078832bb2",
+      "id": "144f370c2536",
       "source": "src/samchat/assistant/router.py",
-      "line": 13475,
+      "line": 13504,
       "handler": "admin_tournament_expediente_snapshot",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/admin/tournaments/{tournament_id}/expediente-snapshot",
@@ -39834,8 +39834,8 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console",
-        "src/samchat/assistant/router.py:5386:_can_view_finance_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console",
+        "src/samchat/assistant/router.py:5391:_can_view_finance_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -39862,7 +39862,7 @@
         "_build_tournament_expediente_snapshot"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_tournament_expediente_snapshot",
-      "proposed_tool": "assistant_admin_tournament_expediente_snapshot_get_889078",
+      "proposed_tool": "assistant_admin_tournament_expediente_snapshot_get_144f37",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -39882,11 +39882,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "c6a875d997ed",
+      "id": "60c9d805ba3f",
       "source": "src/samchat/assistant/router.py",
-      "line": 13501,
+      "line": 13530,
       "handler": "admin_tournament_soul_snapshot",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/admin/tournaments/{tournament_id}/soul-snapshot",
@@ -39910,7 +39910,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -39937,7 +39937,7 @@
         "build_tournament_soul_snapshot"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_tournament_soul_snapshot",
-      "proposed_tool": "assistant_admin_tournament_soul_snapshot_get_c6a875",
+      "proposed_tool": "assistant_admin_tournament_soul_snapshot_get_60c9d8",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -39959,11 +39959,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "112c4d0050ed",
+      "id": "70625461dcc2",
       "source": "src/samchat/assistant/router.py",
-      "line": 13529,
+      "line": 13558,
       "handler": "admin_tournament_budget_snapshot",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/admin/tournaments/{tournament_id}/budget-snapshot",
@@ -39987,7 +39987,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5386:_can_view_finance_console"
+        "src/samchat/assistant/router.py:5391:_can_view_finance_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -40014,7 +40014,7 @@
         "build_budget_snapshot"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_tournament_budget_snapshot",
-      "proposed_tool": "budgets_admin_tournament_budget_snapshot_get_112c4d",
+      "proposed_tool": "budgets_admin_tournament_budget_snapshot_get_706254",
       "scope_proposal": "budgets:read; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -40034,11 +40034,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "c8705c40106c",
+      "id": "5ffaacd8730d",
       "source": "src/samchat/assistant/router.py",
-      "line": 13560,
+      "line": 13589,
       "handler": "admin_budget_versions",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/admin/budgets/versions",
@@ -40062,7 +40062,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5386:_can_view_finance_console"
+        "src/samchat/assistant/router.py:5391:_can_view_finance_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -40087,7 +40087,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_budget_versions",
-      "proposed_tool": "budgets_admin_budget_versions_get_c8705c",
+      "proposed_tool": "budgets_admin_budget_versions_get_5ffaac",
       "scope_proposal": "budgets:read; never grants business authority",
       "object_parameters": [
         "edition_year",
@@ -40106,11 +40106,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "159e9be64ecc",
+      "id": "1da1d5256b63",
       "source": "src/samchat/assistant/router.py",
-      "line": 13575,
+      "line": 13604,
       "handler": "admin_budget_version_update",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "PATCH",
       "paths": [
         "/api/assistant/admin/budgets/versions/{version_id}/metadata",
@@ -40134,7 +40134,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5386:_can_view_finance_console"
+        "src/samchat/assistant/router.py:5391:_can_view_finance_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -40159,7 +40159,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_budget_version_update",
-      "proposed_tool": "budgets_admin_budget_version_update_patch_159e9b",
+      "proposed_tool": "budgets_admin_budget_version_update_patch_1da1d5",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "version_id",
@@ -40182,11 +40182,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "7904ff38babc",
+      "id": "b79ca5c752b2",
       "source": "src/samchat/assistant/router.py",
-      "line": 13600,
+      "line": 13629,
       "handler": "admin_budget_version_transition",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "PATCH",
       "paths": [
         "/api/assistant/admin/budgets/versions/{version_id}",
@@ -40210,7 +40210,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5386:_can_view_finance_console"
+        "src/samchat/assistant/router.py:5391:_can_view_finance_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -40235,7 +40235,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_budget_version_transition",
-      "proposed_tool": "budgets_admin_budget_version_transition_patch_7904ff",
+      "proposed_tool": "budgets_admin_budget_version_transition_patch_b79ca5",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "version_id",
@@ -40258,11 +40258,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "7e7e757828b3",
+      "id": "2f497c529192",
       "source": "src/samchat/assistant/router.py",
-      "line": 13625,
+      "line": 13654,
       "handler": "admin_budget_version_lines",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/admin/budgets/versions/{version_id}/lines",
@@ -40286,7 +40286,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5386:_can_view_finance_console"
+        "src/samchat/assistant/router.py:5391:_can_view_finance_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -40311,7 +40311,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_budget_version_lines",
-      "proposed_tool": "budgets_admin_budget_version_lines_get_7e7e75",
+      "proposed_tool": "budgets_admin_budget_version_lines_get_2f497c",
       "scope_proposal": "budgets:read; never grants business authority",
       "object_parameters": [
         "version_id",
@@ -40332,11 +40332,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d91a0f83deb7",
+      "id": "7c8f0fcb2383",
       "source": "src/samchat/assistant/router.py",
-      "line": 13650,
+      "line": 13679,
       "handler": "admin_budget_line_update",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "PATCH",
       "paths": [
         "/api/assistant/admin/budgets/lines/{line_id}",
@@ -40360,7 +40360,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5386:_can_view_finance_console"
+        "src/samchat/assistant/router.py:5391:_can_view_finance_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -40385,7 +40385,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_budget_line_update",
-      "proposed_tool": "budgets_admin_budget_line_update_patch_d91a0f",
+      "proposed_tool": "budgets_admin_budget_line_update_patch_7c8f0f",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "line_id",
@@ -40408,11 +40408,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "da92d00a8d1e",
+      "id": "3d37214edfee",
       "source": "src/samchat/assistant/router.py",
-      "line": 13674,
+      "line": 13703,
       "handler": "admin_tournament_contract_drafts",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/admin/tournaments/{tournament_id}/contract-drafts",
@@ -40436,7 +40436,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -40461,7 +40461,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_tournament_contract_drafts",
-      "proposed_tool": "assistant_admin_tournament_contract_drafts_get_da92d0",
+      "proposed_tool": "assistant_admin_tournament_contract_drafts_get_3d3721",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -40480,11 +40480,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "7093a4c55bf7",
+      "id": "95a2fd36001a",
       "source": "src/samchat/assistant/router.py",
-      "line": 13698,
+      "line": 13727,
       "handler": "admin_tournament_contract_draft_create",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/admin/tournaments/{tournament_id}/contract-drafts",
@@ -40508,7 +40508,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -40533,7 +40533,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_tournament_contract_draft_create",
-      "proposed_tool": "assistant_admin_tournament_contract_draft_create_post_7093a4",
+      "proposed_tool": "assistant_admin_tournament_contract_draft_create_post_95a2fd",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -40556,11 +40556,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "52452018bef2",
+      "id": "2d8abe89deb4",
       "source": "src/samchat/assistant/router.py",
-      "line": 13823,
+      "line": 13852,
       "handler": "admin_tournament_contract_draft_update",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "PATCH",
       "paths": [
         "/api/assistant/admin/tournaments/{tournament_id}/contract-drafts/{draft_id}",
@@ -40584,7 +40584,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -40609,7 +40609,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_tournament_contract_draft_update",
-      "proposed_tool": "assistant_admin_tournament_contract_draft_update_patch_524520",
+      "proposed_tool": "assistant_admin_tournament_contract_draft_update_patch_2d8abe",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -40633,11 +40633,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "964de2ce8780",
+      "id": "b79440b088b6",
       "source": "src/samchat/assistant/router.py",
-      "line": 13872,
+      "line": 13901,
       "handler": "admin_tournament_contract_draft_apply",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/admin/tournaments/{tournament_id}/contract-drafts/{draft_id}/apply",
@@ -40661,7 +40661,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -40688,7 +40688,7 @@
         "_commitments_from_draft"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_tournament_contract_draft_apply",
-      "proposed_tool": "assistant_admin_tournament_contract_draft_apply_post_964de2",
+      "proposed_tool": "assistant_admin_tournament_contract_draft_apply_post_b79440",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -40711,11 +40711,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "8dcea0212464",
+      "id": "5d0ba333fe7e",
       "source": "src/samchat/assistant/router.py",
-      "line": 13934,
+      "line": 13963,
       "handler": "admin_tournament_operational_commitments",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/admin/tournaments/{tournament_id}/operational-commitments",
@@ -40739,7 +40739,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -40764,7 +40764,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_tournament_operational_commitments",
-      "proposed_tool": "assistant_admin_tournament_operational_commitments_get_8dcea0",
+      "proposed_tool": "assistant_admin_tournament_operational_commitments_get_5d0ba3",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -40783,11 +40783,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "4d86f4320c54",
+      "id": "1d66bc46d64f",
       "source": "src/samchat/assistant/router.py",
-      "line": 13960,
+      "line": 13989,
       "handler": "admin_tournament_operational_commitment_update",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "PATCH",
       "paths": [
         "/api/assistant/admin/tournaments/{tournament_id}/operational-commitments/{commitment_id}",
@@ -40811,7 +40811,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -40836,7 +40836,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_tournament_operational_commitment_update",
-      "proposed_tool": "assistant_admin_tournament_operational_commitment_update_4d86f4",
+      "proposed_tool": "assistant_admin_tournament_operational_commitment_update_1d66bc",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -40860,11 +40860,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "81da66975241",
+      "id": "4355d19bdbbf",
       "source": "src/samchat/assistant/router.py",
-      "line": 14000,
+      "line": 14029,
       "handler": "admin_operations_solicitud_catalogs",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/admin/operations/solicitud-catalogs",
@@ -40888,7 +40888,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -40913,7 +40913,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_operations_solicitud_catalogs",
-      "proposed_tool": "assistant_admin_operations_solicitud_catalogs_get_81da66",
+      "proposed_tool": "assistant_admin_operations_solicitud_catalogs_get_4355d1",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "q",
@@ -40932,11 +40932,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d6990c3b393e",
+      "id": "5a1c17b39131",
       "source": "src/samchat/assistant/router.py",
-      "line": 14064,
+      "line": 14093,
       "handler": "admin_tournament_operational_commitment_create_solicitud",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/admin/tournaments/{tournament_id}/operational-commitments/{commitment_id}/create-solicitud",
@@ -40960,7 +40960,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5360:_can_manage_operations_console"
+        "src/samchat/assistant/router.py:5365:_can_manage_operations_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -40987,7 +40987,7 @@
         "execute_canonical_action"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_tournament_operational_commitment_create_solicitud",
-      "proposed_tool": "assistant_admin_tournament_operational_commitment_create_d6990c",
+      "proposed_tool": "assistant_admin_tournament_operational_commitment_create_5a1c17",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -41011,11 +41011,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "1c02d61913a4",
+      "id": "dfc4e094d322",
       "source": "src/samchat/assistant/router.py",
-      "line": 14128,
+      "line": 14157,
       "handler": "admin_tournament_entity_finance",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/admin/tournaments/{tournament_id}/entity-finance",
@@ -41039,7 +41039,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5386:_can_view_finance_console"
+        "src/samchat/assistant/router.py:5391:_can_view_finance_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -41066,7 +41066,7 @@
         "_build_entity_finance_summaries"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_tournament_entity_finance",
-      "proposed_tool": "assistant_admin_tournament_entity_finance_get_1c02d6",
+      "proposed_tool": "assistant_admin_tournament_entity_finance_get_dfc4e0",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -41087,11 +41087,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "60d29fabbd35",
+      "id": "7e782523e002",
       "source": "src/samchat/assistant/router.py",
-      "line": 14159,
+      "line": 14188,
       "handler": "admin_tournament_national_finance",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/admin/tournaments/{tournament_id}/national-finance",
@@ -41115,7 +41115,7 @@
         }
       ],
       "guard_definitions": [
-        "src/samchat/assistant/router.py:5386:_can_view_finance_console"
+        "src/samchat/assistant/router.py:5391:_can_view_finance_console"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [
@@ -41142,7 +41142,7 @@
         "_build_national_finance_summary"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:admin_tournament_national_finance",
-      "proposed_tool": "assistant_admin_tournament_national_finance_get_60d29f",
+      "proposed_tool": "assistant_admin_tournament_national_finance_get_7e7825",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -41162,11 +41162,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "5b89bdd51c30",
+      "id": "f640460ecead",
       "source": "src/samchat/assistant/router.py",
-      "line": 14186,
+      "line": 14215,
       "handler": "create_message",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/conversations/{conversation_id}/messages",
@@ -41217,7 +41217,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:create_message",
-      "proposed_tool": "assistant_create_message_post_5b89bd",
+      "proposed_tool": "assistant_create_message_post_f64046",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -41240,11 +41240,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "2db97fddd2f4",
+      "id": "942fb8980b2f",
       "source": "src/samchat/assistant/router.py",
-      "line": 14283,
+      "line": 14312,
       "handler": "create_media_message",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/conversations/{conversation_id}/media",
@@ -41294,7 +41294,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:create_media_message",
-      "proposed_tool": "assistant_create_media_message_post_2db97f",
+      "proposed_tool": "assistant_create_media_message_post_942fb8",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "conversation_id",
@@ -41327,11 +41327,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "646de559f5a5",
+      "id": "5386c4d0dd2a",
       "source": "src/samchat/assistant/router.py",
-      "line": 14387,
+      "line": 14416,
       "handler": "confirm_write",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/conversations/{conversation_id}/confirm",
@@ -41380,7 +41380,7 @@
         "_reject_client_openai_api_key"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:confirm_write",
-      "proposed_tool": "assistant_confirm_write_post_646de5",
+      "proposed_tool": "assistant_confirm_write_post_5386c4",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -41403,11 +41403,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "81b07be5d6df",
+      "id": "446f0eafe612",
       "source": "src/samchat/assistant/router.py",
-      "line": 14443,
+      "line": 14472,
       "handler": "rag_status",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/rag/status",
@@ -41454,7 +41454,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:rag_status",
-      "proposed_tool": "assistant_rag_status_get_81b07b",
+      "proposed_tool": "assistant_rag_status_get_446f0e",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -41472,11 +41472,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "f7d54d145f25",
+      "id": "cf2841915ecd",
       "source": "src/samchat/assistant/router.py",
-      "line": 14450,
+      "line": 14479,
       "handler": "rag_search",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/rag/search",
@@ -41523,7 +41523,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:rag_search",
-      "proposed_tool": "assistant_rag_search_post_f7d54d",
+      "proposed_tool": "assistant_rag_search_post_cf2841",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -41545,11 +41545,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d638ff0dd143",
+      "id": "74a9033bf358",
       "source": "src/samchat/assistant/router.py",
-      "line": 14463,
+      "line": 14492,
       "handler": "rag_ingest",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/rag/ingest",
@@ -41596,7 +41596,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:rag_ingest",
-      "proposed_tool": "assistant_rag_ingest_post_d638ff",
+      "proposed_tool": "assistant_rag_ingest_post_74a903",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -41618,11 +41618,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "6416fd703178",
+      "id": "515206aafa58",
       "source": "src/samchat/assistant/router.py",
-      "line": 14482,
+      "line": 14511,
       "handler": "rag_codex_get",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/rag/codex",
@@ -41669,7 +41669,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:rag_codex_get",
-      "proposed_tool": "assistant_rag_codex_get_get_6416fd",
+      "proposed_tool": "assistant_rag_codex_get_get_515206",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -41687,11 +41687,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "59f7cee116b6",
+      "id": "9e4244e86f73",
       "source": "src/samchat/assistant/router.py",
-      "line": 14508,
+      "line": 14537,
       "handler": "rag_codex_update",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "PUT",
       "paths": [
         "/api/assistant/rag/codex",
@@ -41738,7 +41738,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:rag_codex_update",
-      "proposed_tool": "assistant_rag_codex_update_put_59f7ce",
+      "proposed_tool": "assistant_rag_codex_update_put_9e4244",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -41760,11 +41760,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "2b1879077f7d",
+      "id": "fa481136c4d9",
       "source": "src/samchat/assistant/router.py",
-      "line": 14544,
+      "line": 14573,
       "handler": "rag_metrics",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/rag/metrics",
@@ -41811,7 +41811,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:rag_metrics",
-      "proposed_tool": "assistant_rag_metrics_get_2b1879",
+      "proposed_tool": "assistant_rag_metrics_get_fa4811",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -41829,11 +41829,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "c845ad7ebe1e",
+      "id": "ad309a01e012",
       "source": "src/samchat/assistant/router.py",
-      "line": 14555,
+      "line": 14584,
       "handler": "rag_config",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/rag/config",
@@ -41880,7 +41880,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:rag_config",
-      "proposed_tool": "assistant_rag_config_get_c845ad",
+      "proposed_tool": "assistant_rag_config_get_ad309a",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -41898,11 +41898,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "06f293009dd3",
+      "id": "bc53f05b45a9",
       "source": "src/samchat/assistant/router.py",
-      "line": 14571,
+      "line": 14600,
       "handler": "rag_config_update",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "PUT",
       "paths": [
         "/api/assistant/rag/config",
@@ -41949,7 +41949,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:rag_config_update",
-      "proposed_tool": "assistant_rag_config_update_put_06f293",
+      "proposed_tool": "assistant_rag_config_update_put_bc53f0",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -41971,11 +41971,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "55ce4d45db1e",
+      "id": "7e43f177d9f0",
       "source": "src/samchat/assistant/router.py",
-      "line": 14607,
+      "line": 14636,
       "handler": "rag_config_preset",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/rag/config/preset",
@@ -42022,7 +42022,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:rag_config_preset",
-      "proposed_tool": "assistant_rag_config_preset_post_55ce4d",
+      "proposed_tool": "assistant_rag_config_preset_post_7e43f1",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -42044,11 +42044,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d9a235c7d75b",
+      "id": "60c2aec03e2d",
       "source": "src/samchat/assistant/router.py",
-      "line": 14639,
+      "line": 14668,
       "handler": "rag_config_reset",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/rag/config/reset",
@@ -42095,7 +42095,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:rag_config_reset",
-      "proposed_tool": "assistant_rag_config_reset_post_d9a235",
+      "proposed_tool": "assistant_rag_config_reset_post_60c2ae",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -42116,11 +42116,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "884be0c55936",
+      "id": "bd02dd5c311d",
       "source": "src/samchat/assistant/router.py",
-      "line": 14665,
+      "line": 14694,
       "handler": "rag_config_history",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/rag/config/history",
@@ -42167,7 +42167,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:rag_config_history",
-      "proposed_tool": "assistant_rag_config_history_get_884be0",
+      "proposed_tool": "assistant_rag_config_history_get_bd02dd",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "limit",
@@ -42186,11 +42186,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "fc0df98c2592",
+      "id": "d70a87655687",
       "source": "src/samchat/assistant/router.py",
-      "line": 14779,
+      "line": 14808,
       "handler": "rag_eval",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/rag/eval",
@@ -42237,7 +42237,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:rag_eval",
-      "proposed_tool": "assistant_rag_eval_post_fc0df9",
+      "proposed_tool": "assistant_rag_eval_post_d70a87",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -42259,11 +42259,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "46e1e65870aa",
+      "id": "9b76941d8096",
       "source": "src/samchat/assistant/router.py",
-      "line": 14797,
+      "line": 14826,
       "handler": "rag_config_auto_tune",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "POST",
       "paths": [
         "/api/assistant/rag/config/auto-tune",
@@ -42310,7 +42310,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:rag_config_auto_tune",
-      "proposed_tool": "assistant_rag_config_auto_tune_post_46e1e6",
+      "proposed_tool": "assistant_rag_config_auto_tune_post_9b7694",
       "scope_proposal": "assistant:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -42332,11 +42332,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "3ad90faa284e",
+      "id": "5221b5cb9b0f",
       "source": "src/samchat/assistant/router.py",
-      "line": 14864,
+      "line": 14893,
       "handler": "rag_eval_history",
-      "source_sha256": "7d31679ce21d8dd98c0f41ddac8a65fc29d640ccf1c76745db721ee44c02a3d6",
+      "source_sha256": "c59a1b5149c9888a88a862122c7a472488bdcd8b17111f72675fda86aad891c1",
       "method": "GET",
       "paths": [
         "/api/assistant/rag/eval/history",
@@ -42383,7 +42383,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/assistant/router.py:rag_eval_history",
-      "proposed_tool": "assistant_rag_eval_history_get_3ad90f",
+      "proposed_tool": "assistant_rag_eval_history_get_5221b5",
       "scope_proposal": "assistant:read; never grants business authority",
       "object_parameters": [
         "limit",
@@ -42493,7 +42493,7 @@
     {
       "action": "expenses.create_solicitud_personal",
       "adapter": "create_solicitud_personal_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:2089",
+      "adapter_source": "src/samchat/assistant/adapters.py:2093",
       "service_candidates": [
         "AdapterResult",
         "ValueError",
@@ -42560,7 +42560,7 @@
     {
       "action": "expenses.create_solicitud_terceros",
       "adapter": "create_solicitud_terceros_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:2033",
+      "adapter_source": "src/samchat/assistant/adapters.py:2037",
       "service_candidates": [
         "AdapterResult",
         "ValueError",
@@ -42637,7 +42637,7 @@
     {
       "action": "expenses.create_personal_receipt_workflow",
       "adapter": "create_personal_receipt_workflow_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:2150",
+      "adapter_source": "src/samchat/assistant/adapters.py:2154",
       "service_candidates": [
         "AdapterResult",
         "UUID",
@@ -42675,7 +42675,7 @@
           ]
         },
         {
-          "source": "src/samchat/assistant/adapters.py:2139",
+          "source": "src/samchat/assistant/adapters.py:2143",
           "name": "_verified_receipt_bytes",
           "calls": [
             "ValueError",
@@ -42710,7 +42710,7 @@
     {
       "action": "expenses.create_third_party_receipt_workflow",
       "adapter": "create_third_party_receipt_workflow_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:2183",
+      "adapter_source": "src/samchat/assistant/adapters.py:2187",
       "service_candidates": [
         "AdapterResult",
         "UUID",
@@ -42737,7 +42737,7 @@
           ]
         },
         {
-          "source": "src/samchat/assistant/adapters.py:2139",
+          "source": "src/samchat/assistant/adapters.py:2143",
           "name": "_verified_receipt_bytes",
           "calls": [
             "ValueError",
@@ -43174,7 +43174,7 @@
     {
       "action": "expense.full_workflow_snapshot",
       "adapter": "expense_full_workflow_snapshot_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:2290",
+      "adapter_source": "src/samchat/assistant/adapters.py:2294",
       "service_candidates": [
         "(await session.execute(invoice_stmt)).scalars",
         "(await session.execute(invoice_stmt)).scalars().first",
@@ -43344,6 +43344,7 @@
       "service_candidates": [
         "AdapterResult",
         "context.merge",
+        "int",
         "payload.get",
         "primary_tournament.get",
         "result.get",
@@ -43404,7 +43405,7 @@
     {
       "action": "operations.create_media_asset",
       "adapter": "operations_create_media_asset_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:2621",
+      "adapter_source": "src/samchat/assistant/adapters.py:2625",
       "service_candidates": [
         "(result.get('category') or {}).get",
         "(result.get('tournament') or {}).get",
@@ -43419,7 +43420,7 @@
       ],
       "transitive_local_helpers": [
         {
-          "source": "src/samchat/assistant/adapters.py:2526",
+          "source": "src/samchat/assistant/adapters.py:2530",
           "name": "_tournament_command_scope",
           "calls": [
             "payload.get",
@@ -43449,7 +43450,7 @@
     {
       "action": "operations.create_solicitud_from_commitment",
       "adapter": "operations_create_solicitud_from_commitment_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:1640",
+      "adapter_source": "src/samchat/assistant/adapters.py:1644",
       "service_candidates": [
         "'\\n'.join",
         "(supabase_tournament or {}).get",
@@ -43562,7 +43563,7 @@
     {
       "action": "operations.send_tournament_reminder",
       "adapter": "operations_send_tournament_reminder_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:2659",
+      "adapter_source": "src/samchat/assistant/adapters.py:2663",
       "service_candidates": [
         "AdapterResult",
         "ValueError",
@@ -43577,7 +43578,7 @@
       ],
       "transitive_local_helpers": [
         {
-          "source": "src/samchat/assistant/adapters.py:2796",
+          "source": "src/samchat/assistant/adapters.py:2800",
           "name": "send_tournament_whatsapp_adapter",
           "calls": [
             "AdapterResult",
@@ -43622,7 +43623,7 @@
     {
       "action": "operations.update_commitment",
       "adapter": "operations_update_commitment_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:1570",
+      "adapter_source": "src/samchat/assistant/adapters.py:1574",
       "service_candidates": [
         "AdapterResult",
         "ValueError",
@@ -43676,7 +43677,7 @@
     {
       "action": "operations.update_team_status",
       "adapter": "operations_update_team_status_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:2544",
+      "adapter_source": "src/samchat/assistant/adapters.py:2548",
       "service_candidates": [
         "(result.get('team') or {}).get",
         "(result.get('tournament') or {}).get",
@@ -43694,7 +43695,7 @@
       ],
       "transitive_local_helpers": [
         {
-          "source": "src/samchat/assistant/adapters.py:2526",
+          "source": "src/samchat/assistant/adapters.py:2530",
           "name": "_tournament_command_scope",
           "calls": [
             "payload.get",
@@ -43724,7 +43725,7 @@
     {
       "action": "operations.verify_player_document",
       "adapter": "operations_verify_player_document_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:2579",
+      "adapter_source": "src/samchat/assistant/adapters.py:2583",
       "service_candidates": [
         "(result.get('category') or {}).get",
         "(result.get('team') or {}).get",
@@ -43740,7 +43741,7 @@
       ],
       "transitive_local_helpers": [
         {
-          "source": "src/samchat/assistant/adapters.py:2526",
+          "source": "src/samchat/assistant/adapters.py:2530",
           "name": "_tournament_command_scope",
           "calls": [
             "payload.get",
@@ -43770,7 +43771,7 @@
     {
       "action": "operations.create_expense_from_context",
       "adapter": "create_expense_from_operations_context_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:1955",
+      "adapter_source": "src/samchat/assistant/adapters.py:1959",
       "service_candidates": [
         "', '.join",
         "AdapterResult",
@@ -43842,7 +43843,7 @@
     {
       "action": "communications.send_tournament_email",
       "adapter": "send_tournament_email_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:2697",
+      "adapter_source": "src/samchat/assistant/adapters.py:2701",
       "service_candidates": [
         "AdapterResult",
         "ValueError",
@@ -43912,7 +43913,7 @@
     {
       "action": "communications.send_tournament_whatsapp",
       "adapter": "send_tournament_whatsapp_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:2796",
+      "adapter_source": "src/samchat/assistant/adapters.py:2800",
       "service_candidates": [
         "AdapterResult",
         "ValueError",
@@ -43972,7 +43973,7 @@
     {
       "action": "receipts.link_expense_to_cfdi",
       "adapter": "link_expense_to_cfdi_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:1892",
+      "adapter_source": "src/samchat/assistant/adapters.py:1896",
       "service_candidates": [
         "AdapterResult",
         "ValueError",
@@ -44162,7 +44163,7 @@
     {
       "action": "accounting.assign_expense_accounting",
       "adapter": "assign_expense_accounting_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:1803",
+      "adapter_source": "src/samchat/assistant/adapters.py:1807",
       "service_candidates": [
         "AdapterResult",
         "ValueError",
@@ -44198,7 +44199,7 @@
     {
       "action": "accounting.post_expense_accounting",
       "adapter": "post_expense_accounting_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:1844",
+      "adapter_source": "src/samchat/assistant/adapters.py:1848",
       "service_candidates": [
         "AdapterResult",
         "ValueError",
@@ -44292,7 +44293,7 @@
     {
       "action": "receipts.pending_payment_overview",
       "adapter": "pending_document_payment_overview_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:2388",
+      "adapter_source": "src/samchat/assistant/adapters.py:2392",
       "service_candidates": [
         "AdapterResult",
         "ValueError",
@@ -44321,7 +44322,7 @@
     {
       "action": "receipts.register_document_payment",
       "adapter": "register_document_payment_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:2410",
+      "adapter_source": "src/samchat/assistant/adapters.py:2414",
       "service_candidates": [
         "AdapterResult",
         "ValueError",
@@ -44399,7 +44400,7 @@
     {
       "action": "receipts.register_document_reembolso",
       "adapter": "register_document_reembolso_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:2468",
+      "adapter_source": "src/samchat/assistant/adapters.py:2472",
       "service_candidates": [
         "AdapterResult",
         "ValueError",
@@ -44597,7 +44598,7 @@
     {
       "action": "accounting.link_bank_to_expense",
       "adapter": "link_bank_movement_to_expense_adapter",
-      "adapter_source": "src/samchat/assistant/adapters.py:2211",
+      "adapter_source": "src/samchat/assistant/adapters.py:2215",
       "service_candidates": [
         "AdapterResult",
         "ReconciliationAuditLog",
