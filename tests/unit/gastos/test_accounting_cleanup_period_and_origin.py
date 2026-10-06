@@ -2,6 +2,10 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+from starlette.requests import Request
+
+from devnous.gastos.routes import admin_routes
 from devnous.gastos.routes.admin_routes import (
     _cleanup_document_origin,
     _cleanup_fiscal_controls_are_blockers,
@@ -213,6 +217,71 @@ def test_cleanup_filter_values_and_issue_groups_fail_safe() -> None:
     assert cleanup_issues_match_filter(issues, "fiscal")
     assert not cleanup_issues_match_filter(issues, "counterpart")
     assert not cleanup_issues_match_filter(issues, "cfdi")
+
+
+@pytest.mark.asyncio
+async def test_cleanup_route_applies_and_preserves_server_filters(monkeypatch) -> None:
+    captured = {}
+
+    async def load_expenses(_session, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    async def unassigned_cfdis(_session):
+        return []
+
+    class ScalarRows:
+        def all(self):
+            return []
+
+    class Result:
+        def scalars(self):
+            return ScalarRows()
+
+    class Session:
+        async def execute(self, _statement):
+            return Result()
+
+    class Suggester:
+        def __init__(self, _session):
+            pass
+
+        async def get_suggestions_batch(self, **_kwargs):
+            return {}
+
+    monkeypatch.setattr(admin_routes, "load_cleanup_expenses", load_expenses)
+    monkeypatch.setattr(
+        admin_routes, "list_unassigned_cfdi_options", unassigned_cfdis
+    )
+    monkeypatch.setattr(admin_routes, "render_admin_navigation", lambda *_a, **_k: "")
+    monkeypatch.setattr(
+        "devnous.gastos.services.cuenta_contable_suggester.CuentaContableSuggester",
+        Suggester,
+    )
+
+    html = await admin_routes.gastos_sin_cuenta_contable(
+        Request({"type": "http", "query_string": b""}),
+        Session(),
+        period="2026-09",
+        bi_year="2026",
+        bi_scope=admin_routes.ACTIVE_TOURNAMENT_SCOPE,
+        q="  I-26000012  ",
+        document_type="informe",
+        issue="fiscal",
+        focus_expense_id="no-es-uuid",
+        current_empleado=SimpleNamespace(),
+    )
+
+    assert captured["search_q"] == "I-26000012"
+    assert captured["document_type"] == "informe"
+    assert captured["issue_type"] == "fiscal"
+    assert 'name="q"' in html and 'value="I-26000012"' in html
+    assert 'value="informe" selected' in html
+    assert 'value="fiscal" selected' in html
+    assert "No hay coincidencias con los filtros seleccionados" in html
+    assert "bi_year=2026" in html
+    assert f"bi_scope={admin_routes.ACTIVE_TOURNAMENT_SCOPE}" in html
+    assert "cleanup-row-focused" in html
 
 
 def test_cleanup_queue_render_contract_has_month_and_unwrapped_actions(
