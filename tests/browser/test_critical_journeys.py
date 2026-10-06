@@ -575,6 +575,44 @@ def test_accounting_cleanup_stays_actionable_on_mobile(
     _assert_no_body_overflow(page)
 
 
+def test_blocked_coi_policy_opens_the_correct_cleanup_expense(
+    page: Page, browser_server: str
+) -> None:
+    response = page.goto(f"{browser_server}/admin/contabilidad/coi")
+    assert response is not None
+    assert response.status == 200
+
+    action = page.get_by_role("link", name="Atender en Limpieza contable")
+    expect(action).to_be_visible()
+    action.click()
+
+    assert "/admin/gastos/sin-cuenta-contable?" in page.url
+    assert "period=2026-09" in page.url
+    assert "document_type=informe" in page.url
+    assert "q=I-UX-COI-001" in page.url
+    assert "focus_expense_id=80000000-0000-0000-0000-000000000001" in page.url
+    assert "document_id=81000000-0000-0000-0000-000000000001" in page.url
+    focused_row = page.locator(
+        "#row-80000000-0000-0000-0000-000000000001.cleanup-row-focused"
+    )
+    expect(focused_row).to_be_visible()
+    expect(page.get_by_text("Qué falta para COI", exact=True)).to_be_visible()
+
+
+def test_cleanup_ignores_an_invalid_focus_expense_id(
+    page: Page, browser_server: str
+) -> None:
+    response = page.goto(
+        f"{browser_server}/admin/gastos/sin-cuenta-contable"
+        "?focus_expense_id=no-es-un-uuid"
+    )
+    assert response is not None
+    assert response.status == 200
+
+    expect(page.locator(".cleanup-row-focused")).to_have_count(0)
+    expect(page.get_by_role("button", name="Revisar", exact=True).first).to_be_visible()
+
+
 def test_finance_cxc_keeps_candidate_separate_until_acceptance(
     page: Page, browser_server: str
 ) -> None:

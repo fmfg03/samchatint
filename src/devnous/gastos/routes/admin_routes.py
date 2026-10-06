@@ -140,6 +140,8 @@ from ..services.expense_accounting_cleanup_service import (
     safe_build_cleanup_preview,
     list_unassigned_cfdi_options,
     load_cleanup_expenses,
+    normalize_cleanup_document_type,
+    normalize_cleanup_issue_type,
     resolve_default_cleanup_contra_cuenta,
     save_expense_cleanup,
 )
@@ -25692,6 +25694,11 @@ async def gastos_sin_cuenta_contable(
     period: Optional[str] = Query(None),
     bi_year: Optional[str] = Query(None),
     bi_scope: Optional[str] = Query(None),
+    q: str = Query("", max_length=200),
+    document_type: str = Query("all"),
+    issue: str = Query("all"),
+    focus_expense_id: Optional[str] = Query(None),
+    document_id: Optional[str] = Query(None),
     current_empleado: Empleado = require_admin_finanzas(),
 ) -> str:
     """
@@ -25718,6 +25725,19 @@ async def gastos_sin_cuenta_contable(
         period,
         default_year=int(bi_year_safe) if bi_year_safe else None,
     )
+    selected_q = " ".join(str(q or "").strip().split())[:200]
+    selected_document_type = normalize_cleanup_document_type(document_type)
+    selected_issue = normalize_cleanup_issue_type(issue)
+    try:
+        focused_expense_id = (
+            UUIDType(str(focus_expense_id)) if focus_expense_id else None
+        )
+    except (TypeError, ValueError):
+        focused_expense_id = None
+    try:
+        selected_document_id = UUIDType(str(document_id)) if document_id else None
+    except (TypeError, ValueError):
+        selected_document_id = None
     bi_query_suffix = ""
     if bi_year_safe or bi_scope_safe:
         parts = []
@@ -25739,13 +25759,31 @@ async def gastos_sin_cuenta_contable(
         bi_year=bi_year_safe or None,
         bi_scope=bi_scope_safe or None,
     )
-    bi_conditions.extend(
-        [
-            ExpenseReport.fecha >= period_start,
-            ExpenseReport.fecha < period_end,
-        ]
+    if selected_document_id:
+        bi_conditions.append(
+            or_(
+                ExpenseReport.documento_id == selected_document_id,
+                ExpenseReport.informe_documento_id == selected_document_id,
+                ExpenseReport.solicitud_documento_id == selected_document_id,
+            )
+        )
+    else:
+        bi_conditions.extend(
+            [
+                ExpenseReport.fecha >= period_start,
+                ExpenseReport.fecha < period_end,
+            ]
+        )
+    gastos = await load_cleanup_expenses(
+        session,
+        extra_conditions=bi_conditions,
+        search_q=selected_q,
+        document_type=selected_document_type,
+        issue_type=selected_issue,
     )
-    gastos = await load_cleanup_expenses(session, extra_conditions=bi_conditions)
+    visible_expense_ids = {gasto.id for gasto in gastos}
+    if focused_expense_id not in visible_expense_ids:
+        focused_expense_id = None
     cfdi_options = await list_unassigned_cfdi_options(session)
 
     # Get active cuentas contables
@@ -26217,8 +26255,16 @@ async def gastos_sin_cuenta_contable(
             ]
         )
         detail_id = f"cleanup-detail-{gasto.id}"
+        is_focused = gasto.id == focused_expense_id
+        summary_class = (
+            "cleanup-summary-row cleanup-row-focused"
+            if is_focused
+            else "cleanup-summary-row"
+        )
+        detail_display = "table-row" if is_focused else "none"
+        review_label = "Ocultar" if is_focused else "Revisar"
         rows_html += f"""
-        <tr id="row-{gasto.id}" class="cleanup-summary-row">
+        <tr id="row-{gasto.id}" class="{summary_class}">
             <td>
                 <strong>{referencia_safe}</strong><br>
                 <span class="cleanup-origin">{document_origin_safe}</span><br>
@@ -26233,10 +26279,12 @@ async def gastos_sin_cuenta_contable(
             <td>{cfdi_origen_display}<br><span class="muted-mini">{escape(cfdi_status)}</span></td>
             <td><div class="cleanup-pill-stack">{row_state_chips}</div></td>
             <td>
-                <button class="cleanup-toggle" type="button" data-target="{detail_id}">Revisar</button>
+                <button class="cleanup-toggle" type="button"
+                        data-target="{detail_id}">{review_label}</button>
             </td>
         </tr>
-        <tr id="{detail_id}" class="cleanup-detail-row" style="display:none;">
+        <tr id="{detail_id}" class="cleanup-detail-row"
+            style="display:{detail_display};">
             <td colspan="10">
                 <div class="cleanup-detail-panel">
                     <div class="cleanup-detail-head">
@@ -26362,6 +26410,55 @@ async def gastos_sin_cuenta_contable(
         f'<input type="hidden" name="bi_scope" value="{escape(bi_scope_safe)}">'
         if bi_scope_safe
         else ""
+    )
+    document_scope_input = (
+        f'<input type="hidden" name="document_id" value="{selected_document_id}">'
+        if selected_document_id
+        else ""
+    )
+    document_type_options = "".join(
+        f'<option value="{value}" '
+        f'{"selected" if selected_document_type == value else ""}>'
+        f"{label}</option>"
+        for value, label in (
+            ("all", "Informes y solicitudes"),
+            ("informe", "Informes"),
+            ("solicitud", "Solicitudes"),
+        )
+    )
+    issue_options = "".join(
+        f'<option value="{value}" '
+        f'{"selected" if selected_issue == value else ""}>'
+        f"{label}</option>"
+        for value, label in (
+            ("all", "Todos los pendientes"),
+            ("main_account", "Cuenta de cargo"),
+            ("counterpart", "Contrapartida"),
+            ("cfdi", "CFDI"),
+            ("fiscal", "IVA o retenciones"),
+        )
+    )
+    clear_filter_params = {"period": selected_period}
+    if bi_year_safe:
+        clear_filter_params["bi_year"] = bi_year_safe
+    if bi_scope_safe:
+        clear_filter_params["bi_scope"] = bi_scope_safe
+    cleanup_clear_url = (
+        "/admin/gastos/sin-cuenta-contable?" + urlencode(clear_filter_params)
+    )
+    has_active_filters = bool(
+        selected_q
+        or selected_document_type != "all"
+        or selected_issue != "all"
+    )
+    empty_cleanup_message = (
+        "No hay coincidencias con los filtros seleccionados"
+        if has_active_filters
+        else "No hay gastos pendientes de preparación COI"
+    )
+    empty_cleanup_row = (
+        '<tr><td colspan="10" style="text-align: center; padding: 40px;">'
+        f"{empty_cleanup_message}</td></tr>"
     )
 
     html = f"""
@@ -26502,6 +26599,11 @@ async def gastos_sin_cuenta_contable(
             .cleanup-summary-row td {{
                 vertical-align:middle;
             }}
+            .cleanup-row-focused td {{
+                background:#ecfdf5;
+                border-top:2px solid #0f766e;
+                border-bottom:2px solid #0f766e;
+            }}
             .muted-mini {{
                 color:#64748b;
                 font-size:11px;
@@ -26588,6 +26690,15 @@ async def gastos_sin_cuenta_contable(
                 border:1px solid #cbd5e1;
                 border-radius:10px;
                 color:#0f172a;
+                font:inherit;
+            }}
+            .cleanup-period-form select {{
+                min-height:40px;
+                padding:8px 10px;
+                border:1px solid #cbd5e1;
+                border-radius:10px;
+                color:#0f172a;
+                background:#fff;
                 font:inherit;
             }}
             .button, .cleanup-toggle, .btn-asignar, .btn-accept-suggestion {{
@@ -26718,6 +26829,7 @@ async def gastos_sin_cuenta_contable(
                 }}
                 .cleanup-period-form label,
                 .cleanup-period-form input,
+                .cleanup-period-form select,
                 .cleanup-period-form .button,
                 .toolbar-actions .button,
                 .toolbar-actions .cleanup-toggle {{
@@ -26804,9 +26916,28 @@ async def gastos_sin_cuenta_contable(
                             <input type="month" name="period"
                                    value="{selected_period}">
                         </label>
+                        <label>Búsqueda
+                            <input type="search" name="q" maxlength="200"
+                                   value="{escape(selected_q, quote=True)}"
+                                   placeholder="Informe, solicitud, gasto,
+                                                responsable, CFDI">
+                        </label>
+                        <label>Origen
+                            <select name="document_type">
+                                {document_type_options}
+                            </select>
+                        </label>
+                        <label>Pendiente
+                            <select name="issue">{issue_options}</select>
+                        </label>
                         {bi_year_input}
                         {bi_scope_input}
-                        <button class="button" type="submit">Ver período</button>
+                        {document_scope_input}
+                        <button class="button" type="submit">Filtrar</button>
+                        <a class="button secondary"
+                           href="{escape(cleanup_clear_url, quote=True)}">
+                            Limpiar filtros
+                        </a>
                     </form>
                     <div class="review-toolbar">
                         <div>
@@ -26849,7 +26980,7 @@ async def gastos_sin_cuenta_contable(
                                 </tr>
                             </thead>
                             <tbody>
-                                {rows_html if rows_html else '<tr><td colspan="10" style="text-align: center; padding: 40px;">No hay gastos pendientes de preparación COI</td></tr>'}
+                                {rows_html if rows_html else empty_cleanup_row}
                             </tbody>
                         </table>
                     </div>

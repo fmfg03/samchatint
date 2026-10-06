@@ -700,8 +700,15 @@ def _journey_cleanup_expense():
     )
 
 
-async def _journey_cleanup_expenses(_session, *, extra_conditions=None):
-    del extra_conditions
+async def _journey_cleanup_expenses(
+    _session,
+    *,
+    extra_conditions=None,
+    search_q="",
+    document_type="all",
+    issue_type="all",
+):
+    del extra_conditions, search_q, document_type, issue_type
     return [_journey_cleanup_expense()]
 
 
@@ -1747,14 +1754,59 @@ async def journey_payment_run(request: Request):
     )
 
 
+@app.get("/admin/contabilidad/coi", response_class=HTMLResponse)
+async def journey_accounting_coi() -> HTMLResponse:
+    expense = _journey_cleanup_expense()
+    expense.fecha = datetime(2026, 9, 18)
+    expense.coi_estado = "pendiente"
+    expense.pagado_con_amex_empresa = False
+    document = SimpleNamespace(
+        id=UUID("81000000-0000-0000-0000-000000000001"),
+        numero_referencia="I-UX-COI-001",
+        estado="aprobado",
+        cuenta_gastos_id=None,
+    )
+    rows = user_routes._render_coi_exportable_lote_rows_html(
+        [
+            {
+                "tipo_lote": "INFORME",
+                "documento": document,
+                "expenses": [expense],
+                "period_label": "2026-09-20",
+                "can_export": False,
+                "block_reason": "G-UX-COI-001: Falta cuenta de cargo",
+                "cleanup_blockers": [
+                    {
+                        "expense_id": expense.id,
+                        "expense_reference": expense.numero_referencia,
+                        "issues": ["Falta cuenta de cargo"],
+                    }
+                ],
+            }
+        ],
+        accounting_period="2026-09",
+    )
+    return HTMLResponse(
+        "<!doctype html><html><body>"
+        "<h1>COI: preparar, exportar e historial</h1>"
+        f"<table><tbody>{rows}</tbody></table>"
+        "</body></html>"
+    )
+
+
 @app.get("/admin/gastos/sin-cuenta-contable", response_class=HTMLResponse)
 async def journey_accounting_cleanup(request: Request):
     html = await admin_routes.gastos_sin_cuenta_contable(
         request,
         _RowsSession([]),
-        period=None,
+        period=request.query_params.get("period"),
         bi_year=None,
         bi_scope=None,
+        q=request.query_params.get("q", ""),
+        document_type=request.query_params.get("document_type", "all"),
+        issue=request.query_params.get("issue", "all"),
+        focus_expense_id=request.query_params.get("focus_expense_id"),
+        document_id=request.query_params.get("document_id"),
         current_empleado=PROFILE_FIXTURES["accounting"]["employee"],
     )
     return HTMLResponse(html)
