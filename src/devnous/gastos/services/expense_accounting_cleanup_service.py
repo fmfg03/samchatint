@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import logging
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 from uuid import UUID
@@ -34,6 +35,14 @@ _NON_FISCAL_ACCOUNT_NAMES = {
     "gastos no deducibles de md",
     "gastos no deducibles ltb",
     "gastos no deducibles hwc",
+}
+_CLEANUP_DOCUMENT_TYPES = {"all", "informe", "solicitud"}
+_CLEANUP_ISSUE_TYPES = {
+    "all",
+    "main_account",
+    "counterpart",
+    "cfdi",
+    "fiscal",
 }
 from .budget_concept_account_service import (
     cleanup_expense_loader_options,
@@ -91,6 +100,124 @@ def _truthy(value: Any) -> bool:
 def _clean_text_part(value: Any) -> str:
     text = str(value or "").strip()
     return text if text and text not in {"-", "\u2014"} else ""
+
+
+def _normalize_cleanup_search(value: Any) -> str:
+    compact = " ".join(str(value or "").strip().split())[:200].casefold()
+    decomposed = unicodedata.normalize("NFKD", compact)
+    return "".join(char for char in decomposed if not unicodedata.combining(char))
+
+
+def normalize_cleanup_document_type(value: Any) -> str:
+    normalized = str(value or "all").strip().lower()
+    return normalized if normalized in _CLEANUP_DOCUMENT_TYPES else "all"
+
+
+def normalize_cleanup_issue_type(value: Any) -> str:
+    normalized = str(value or "all").strip().lower()
+    return normalized if normalized in _CLEANUP_ISSUE_TYPES else "all"
+
+
+def _cleanup_related_documents(expense: ExpenseReport) -> list[Any]:
+    documents: list[Any] = []
+    seen: set[str] = set()
+    for relationship in ("documento", "informe_documento", "solicitud_documento"):
+        document = getattr(expense, relationship, None)
+        if document is None:
+            continue
+        identity = str(getattr(document, "id", None) or id(document))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        documents.append(document)
+    return documents
+
+
+def _cleanup_expense_document_type(expense: ExpenseReport) -> str:
+    document_types = {
+        str(getattr(document, "tipo", "") or "").strip().lower()
+        for document in _cleanup_related_documents(expense)
+    }
+    document_types.discard("")
+    if len(document_types) != 1:
+        return ""
+    document_type = next(iter(document_types))
+    return document_type if document_type in {"informe", "solicitud"} else ""
+
+
+def cleanup_expense_matches_filters(
+    expense: ExpenseReport,
+    *,
+    search_q: str = "",
+    document_type: str = "all",
+) -> bool:
+    """Match one already-loaded cleanup row without inferring document identity."""
+
+    selected_document_type = normalize_cleanup_document_type(document_type)
+    if (
+        selected_document_type != "all"
+        and _cleanup_expense_document_type(expense) != selected_document_type
+    ):
+        return False
+
+    token = _normalize_cleanup_search(search_q)
+    if not token:
+        return True
+
+    employee = getattr(expense, "empleado", None)
+    cfdi = getattr(expense, "cfdi_report", None)
+    haystack: list[Any] = [
+        getattr(expense, "id", None),
+        getattr(expense, "numero_referencia", None),
+        getattr(expense, "concepto", None),
+        getattr(expense, "proyecto", None),
+        getattr(expense, "cfdi_uuid_manual", None),
+        getattr(expense, "numero_factura", None),
+        getattr(employee, "nombre", None),
+        getattr(cfdi, "cfdi_uuid", None),
+        getattr(cfdi, "emisor_nombre", None),
+        getattr(cfdi, "emisor_rfc", None),
+    ]
+    for document in _cleanup_related_documents(expense):
+        beneficiary_names = [
+            getattr(getattr(document, relationship, None), "nombre", None)
+            for relationship in (
+                "beneficiario_empleado",
+                "beneficiario_proveedor_cliente",
+                "proveedor_cliente",
+            )
+        ]
+        haystack.extend(
+            [
+                getattr(document, "id", None),
+                getattr(document, "numero_referencia", None),
+                getattr(document, "estado", None),
+                getattr(document, "concepto_pago", None),
+                getattr(document, "referencia_operaciones", None),
+                getattr(document, "proyecto_otro", None),
+                getattr(document, "numero_factura", None),
+                getattr(document, "cfdi_uuid_manual", None),
+                *beneficiary_names,
+            ]
+        )
+    return any(token in _normalize_cleanup_search(value) for value in haystack)
+
+
+def cleanup_issues_match_filter(issues: Iterable[Any], issue_type: str) -> bool:
+    normalized_issue_type = normalize_cleanup_issue_type(issue_type)
+    normalized_issues = [_normalize_cleanup_search(issue) for issue in issues]
+    if normalized_issue_type == "all":
+        return bool(normalized_issues)
+    if normalized_issue_type == "main_account":
+        return any("falta cuenta de cargo" in issue for issue in normalized_issues)
+    if normalized_issue_type == "counterpart":
+        return any("falta contrapartida" in issue for issue in normalized_issues)
+    if normalized_issue_type == "cfdi":
+        return any("falta cfdi" in issue for issue in normalized_issues)
+    return any(
+        "falta cuenta de iva" in issue or "falta cuenta de retencion" in issue
+        for issue in normalized_issues
+    )
 
 
 def _historical_precedent_query_for_expense(expense: ExpenseReport) -> str:
@@ -254,6 +381,9 @@ async def load_cleanup_expenses(
     session: AsyncSession,
     *,
     extra_conditions: Optional[Iterable[Any]] = None,
+    search_q: str = "",
+    document_type: str = "all",
+    issue_type: str = "all",
 ) -> List[ExpenseReport]:
     """Load active expenses that still need accounting cleanup."""
 
@@ -287,8 +417,14 @@ async def load_cleanup_expenses(
     # the export path so counters and rows move together.
     pending: List[ExpenseReport] = []
     for expense in candidates:
+        if not cleanup_expense_matches_filters(
+            expense,
+            search_q=search_q,
+            document_type=document_type,
+        ):
+            continue
         state = await build_cleanup_preview(session, expense)
-        if state.get("issues"):
+        if cleanup_issues_match_filter(state.get("issues") or [], issue_type):
             pending.append(expense)
     return pending
 
@@ -580,8 +716,12 @@ __all__ = [
     "build_cleanup_preview",
     "safe_build_cleanup_preview",
     "build_historical_precedent_evidence",
+    "cleanup_expense_matches_filters",
+    "cleanup_issues_match_filter",
     "list_unassigned_cfdi_options",
     "load_cleanup_expenses",
+    "normalize_cleanup_document_type",
+    "normalize_cleanup_issue_type",
     "resolve_default_cleanup_contra_cuenta",
     "save_expense_cleanup",
 ]
