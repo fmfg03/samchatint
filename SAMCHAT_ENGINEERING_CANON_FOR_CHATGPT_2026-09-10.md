@@ -428,3 +428,13 @@ supplies factual values. No DDL or financial state writes are introduced.
 
 Evidence level: isolated implementation and synthetic verification, pending draft
 PR review. Production reconciliation, deployment and business UAT are not implied.
+
+## 19. Copa Telmex registration PostgreSQL candidate amendment
+
+Date: 2026-10-05
+
+Reason: human-approved first delivery of registration read-source consolidation; preserve the distinction between local candidate, production activation, and canonical intake. The final diff and this amendment were explicitly approved in the conversation.
+
+El candidato de primera entrega de inscripción incorpora `copa_telmex_tournament_editions` mediante migración explícita, y una proyección compartida de solo lectura en `registration_read_model.py`. La resolución exige identidad exacta y edición inequívoca; fuente fallida, ámbito ausente, inactivo o ambiguo producen estados explícitos. Para ediciones configuradas, la lectura precede al enrutamiento heredado y no tiene fallback silencioso al roster Supabase. SOUL admite exclusión de inscripción antes de consultar equipos, jugadores, responsables y registros, manteniendo otros dominios. La proyección ejecutiva no expone datos personales individuales. La migración no se aplica en startup. El reconciliador del piloto es local y no concede aprobación, elegibilidad ni efectos de escritura en bases.
+
+Evidence: `docs/roadmap/ctt-postgres-registration-first-delivery.md` and its scoped test and review receipts. This is an isolated-worktree candidate; merge, deployment, data application, authenticated UAT, and business acceptance remain separate.

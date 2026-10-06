@@ -311,3 +311,13 @@ their own source evidence; the supplied workbook examples are not production dat
 Evidence: isolated worktree from PR452, synthetic unit/browser/export verification
 and draft review evidence in `docs/evidence/direction-report-redesign`. No production
 access, merge, deployment, or business acceptance is claimed.
+
+## 16. Copa Telmex registration PostgreSQL candidate amendment
+
+Date: 2026-10-05
+
+Reason: human-approved first delivery of registration read-source consolidation; preserve the distinction between local candidate, production activation, and canonical intake. The final diff and this amendment were explicitly approved in the conversation.
+
+La primera entrega de consolidación de inscripción de Copa Telmex añade un catálogo explícito de torneo y edición. Para ediciones configuradas en ese catálogo, el asistente y Dirección consumen una misma proyección del registro operativo PostgreSQL, distinguiendo equipos, jugadores activos y provisionales, revisiones pendientes y disponibilidad de fuente. La captura y el estado activo no acreditan elegibilidad externa. La revisión visual de los 11 expedientes se conserva como evidencia pendiente de admisión canónica; no constituye una importación ni autorización automática. Las ediciones sin configurar conservan su ruta anterior. La activación productiva y la aceptación autenticada deben documentarse por separado.
+
+Evidence: `docs/roadmap/ctt-postgres-registration-first-delivery.md` and its scoped test and review receipts. This is an isolated-worktree candidate; merge, deployment, data application, authenticated UAT, and business acceptance remain separate.

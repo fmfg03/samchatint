@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -78,6 +79,9 @@ async def test_dashboard_can_attach_tournament_scoped_operational_dossier(monkey
     monkeypatch.setattr(service, "_authorized_tournaments", authorized)
     monkeypatch.setattr(service, "build_budget_snapshot", budget)
     monkeypatch.setattr(service, "_build_operational_dossier", dossier)
+    monkeypatch.setattr(
+        service, "dispatch_registration_snapshot", AsyncMock(return_value=None)
+    )
 
     payload = await service.build_client_dashboard(
         object(),

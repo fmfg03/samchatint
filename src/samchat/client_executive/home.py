@@ -786,12 +786,31 @@ async def build_home(
         else {}
     )
 
+    # Resolve registration before any alternate roster read, using only the
+    # tournament identities already authorized by resolve_scope. Keep these
+    # calls serial on the request session; child financial reads use their own
+    # sessions and must not turn a configured source failure into a fallback.
+    registration_snapshots = {}
+    legacy_tournaments = []
+    for tournament in scope["selected"]:
+        registration = await service.dispatch_registration_snapshot(
+            session, tournament_id=tournament["id"], edition_year=year
+        )
+        if registration is None:
+            legacy_tournaments.append(tournament)
+        else:
+            registration_snapshots[tournament["id"]] = registration
+
     factory = _tournament_read_factory(session) if len(scope["selected"]) > 1 else None
     operational_summaries = None
     if factory is not None:
         try:
-            operational_summaries = await service._build_operational_summaries(
-                scope["selected"], edition_year=year
+            operational_summaries = (
+                await service._build_operational_summaries(
+                    legacy_tournaments, edition_year=year
+                )
+                if legacy_tournaments
+                else {}
             )
         except Exception:
             operational_summaries = {}
@@ -863,7 +882,18 @@ async def build_home(
             overdue=None,
             liquidity=None,
         )
-        if operational_summaries is not None:
+        registration = registration_snapshots.get(tournament["id"])
+        if registration is not None:
+            counts = registration.get("summary") or {}
+            operations = (
+                {
+                    "teams_count": counts.get("total_teams"),
+                    "players_count": counts.get("active_players"),
+                }
+                if registration.get("available") is True
+                else None
+            )
+        elif operational_summaries is not None:
             operations = operational_summaries.get(tournament["id"])
         else:
             try:
@@ -924,6 +954,25 @@ async def build_home(
                 "players": (operations or {}).get("players_count"),
                 "period": f"Edición {year}; sin filtro histórico por fecha",
                 "progress_percent": None,
+                **(
+                    {
+                        "registration_source": registration.get("source"),
+                        "registration_status": registration.get("status"),
+                        "provisional_players": (
+                            counts.get("provisional_players")
+                            if registration.get("available") is True
+                            else None
+                        ),
+                        "pending_reviews": (
+                            counts.get("pending_reviews")
+                            if registration.get("available") is True
+                            else None
+                        ),
+                        "next_action": registration.get("next_action"),
+                    }
+                    if registration is not None
+                    else {}
+                ),
             },
             "payment_evidence": payments.get("evidence", []),
             "monthly_execution": monthly_execution(

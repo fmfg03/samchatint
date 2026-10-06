@@ -212,6 +212,7 @@ from .tournament_application_case import (
 )
 from .tournament_draft_case import run_tournament_draft_workbench
 from .tournament_goal_case import build_tournament_goal_shadow
+from .registration_postgres_adapter import registration_postgres_response
 from .tools import (
     assistant_save_artifact,
     dev_file_read,
@@ -4482,6 +4483,8 @@ def _tool_defs() -> List[Dict[str, Any]]:
                     "additionalProperties": False,
                     "properties": {
                         "tournament_key": {"type": "string", "minLength": 1},
+                        "tournament_id": {"type": ["string", "null"]},
+                        "edition_year": {"type": ["integer", "null"]},
                         "question": {"type": ["string", "null"]},
                         "state": {"type": ["string", "null"]},
                         "municipality": {"type": ["string", "null"]},
@@ -4518,6 +4521,8 @@ def _tool_defs() -> List[Dict[str, Any]]:
                     "additionalProperties": False,
                     "properties": {
                         "tournament_key": {"type": "string", "minLength": 1},
+                        "tournament_id": {"type": ["string", "null"]},
+                        "edition_year": {"type": ["integer", "null"]},
                         "state": {"type": "string", "minLength": 1},
                         "date_from": {
                             "type": ["string", "null"],
@@ -9805,6 +9810,18 @@ async def _run_read_tool(
                 status_code=400,
                 detail="Para consultas de torneo especifica tournament_key=beisbol.",
             )
+        postgres = await registration_postgres_response(
+            gastos_session,
+            projection="breakdown",
+            **{
+                **args,
+                "tournament_key": str(
+                    args.get("tournament_key") or tournament_key_default or ""
+                ).strip(),
+            },
+        )
+        if postgres is not None:
+            return postgres
         session_maker = get_tournament_session_maker(tkey)
         async with session_maker() as t_session:
             return await tournament_registration_breakdown(t_session, **args)
@@ -9818,6 +9835,18 @@ async def _run_read_tool(
                 status_code=400,
                 detail="Para consultas de torneo especifica tournament_key=beisbol.",
             )
+        postgres = await registration_postgres_response(
+            gastos_session,
+            projection="operations",
+            **{
+                **args,
+                "tournament_key": str(
+                    args.get("tournament_key") or tournament_key_default or ""
+                ).strip(),
+            },
+        )
+        if postgres is not None:
+            return postgres
         session_maker = get_tournament_session_maker(tkey)
         async with session_maker() as t_session:
             return await tournament_ops_query(t_session, **args)

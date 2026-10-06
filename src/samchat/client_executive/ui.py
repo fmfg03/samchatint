@@ -460,9 +460,80 @@ def _marketing(dossier: dict[str, Any], index: int) -> str:
     """
 
 
+def _registration(snapshot: dict[str, Any], index: int) -> str:
+    """Show the same scoped counts used by the governed assistant."""
+    available = snapshot.get("available") is True
+    labels = {
+        "AVAILABLE": "available",
+        "EMPTY": "available",
+        "SCOPE_MISSING": "edition_unavailable",
+        "SCOPE_INACTIVE": "unavailable",
+        "SCOPE_AMBIGUOUS": "unavailable",
+        "SOURCE_FAILED": "unavailable",
+    }
+    status = labels.get(str(snapshot.get("status")), "unavailable")
+    if not available:
+        next_action = _text(
+            snapshot.get("next_action"),
+            "La fuente de inscripción no está disponible para esta edición.",
+        )
+        return f"""
+        <section id="inscripcion-{index}" class="panel compact-panel">
+          <div class="section-heading"><div>
+            <span class="eyebrow">Inscripción</span>
+            <h2>Equipos y avance de captura</h2></div>{_status(status)}</div>
+          <p class="empty-copy">{next_action}</p>
+        </section>
+        """
+    counts = dict(snapshot.get("summary") or {})
+    kpis = "".join(
+        f"<div><span>{escape(label)}</span>"
+        f"<strong>{_number(counts.get(key))}</strong></div>"
+        for key, label in (
+            ("total_teams", "Equipos capturados"),
+            ("active_players", "Jugadores activos"),
+            ("provisional_players", "Jugadores provisionales"),
+            ("pending_reviews", "Expedientes pendientes de la edición"),
+        )
+    )
+    groups = dict(snapshot.get("groups") or {})
+    rows = (
+        "".join(
+            f"<tr><td>{_text(row.get('state'), 'Estado pendiente')}</td>"
+            f"<td>{_number(row.get('teams'))}</td>"
+            f"<td>{_number(row.get('active_players'))}</td>"
+            f"<td>{_number(row.get('provisional_players'))}</td></tr>"
+            for row in groups.get("by_state") or []
+        )
+        or '<tr><td colspan="4">Sin equipos capturados en esta edición.</td></tr>'
+    )
+    return f"""
+    <section id="inscripcion-{index}" class="panel">
+      <div class="section-heading"><div>
+        <span class="eyebrow">Inscripción</span>
+        <h2>Equipos y avance de captura</h2></div>{_status(status)}</div>
+      <div class="mini-kpis marketing-kpis">{kpis}</div>
+      <div class="table-wrap secondary-table"><table><thead><tr>
+        <th>Estado</th><th>Equipos</th><th>Jugadores activos</th>
+        <th>Provisionales</th></tr></thead><tbody>{rows}</tbody></table></div>
+      <p class="source-note">Registro operativo de SamChat · edición
+        {_number(snapshot.get('edition_year'))}. La captura y el estado activo
+        no acreditan elegibilidad externa. Los expedientes pendientes
+        se cuentan por edición.</p>
+    </section>
+    """
+
+
 def _tournament(card: dict[str, Any], edition_year: int, index: int) -> str:
     dossier = dict(card.get("dossier") or {})
     source_status = dossier.get("source_status") or "unavailable"
+    registration = card.get("registration")
+    registration = registration if isinstance(registration, dict) else None
+    if registration is not None:
+        if registration.get("available") is True:
+            source_status = "available" if source_status == "available" else "partial"
+        elif source_status == "available":
+            source_status = "partial"
     budget_bridge = (
         card.get("budget_scope_bridge")
         if isinstance(card.get("budget_scope_bridge"), dict)
@@ -475,6 +546,11 @@ def _tournament(card: dict[str, Any], edition_year: int, index: int) -> str:
     if operational_bridge == "exact_name_edition_bridge":
         provenance.append("operación reconciliada")
     provenance_text = " · ".join(provenance)
+    operations_html = (
+        _registration(registration, index)
+        if registration is not None
+        else _operations(dossier, index)
+    )
     return f"""
     <article class="tournament" id="torneo-{index}">
       <header class="tournament-header">
@@ -488,7 +564,7 @@ def _tournament(card: dict[str, Any], edition_year: int, index: int) -> str:
       {_budget_kpis(card)}
       {_alerts(card)}
       {_budget_detail(card)}
-      {_operations(dossier, index)}
+      {operations_html}
       <div class="two-column">
         {_national_phase(dossier, index)}
         {_marketing(dossier, index)}
