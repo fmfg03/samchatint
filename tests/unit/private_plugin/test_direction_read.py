@@ -167,6 +167,8 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
             ClientExecutiveAccessError=AccessError,
             _build_direction_budget_snapshot=self.budget,
             _build_operational_dossier=AsyncMock(return_value={}),
+            # This synthetic fixture has no configured registration edition.
+            dispatch_registration_snapshot=AsyncMock(return_value=None),
         )
         routes = source_functions(
             "src/devnous/gastos/routes/client_executive_routes.py",

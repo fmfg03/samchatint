@@ -1,7 +1,7 @@
 # Copa Telmex: primera entrega de inscripción sobre PostgreSQL
 
 Fecha: 2026-10-05. Candidato aislado sobre `d548d148f7521988587d6498b5461901c21a2ee3`.
-La dirección arquitectónica y la especificación de esta primera entrega fueron aprobadas en la conversación. No se ha hecho commit, push, PR, despliegue ni aplicación de datos o migraciones.
+La dirección arquitectónica y la especificación de esta primera entrega fueron aprobadas en la conversación. Los commits y el PR se documentan en las secciones de integración y cierre posteriores. No se ha hecho despliegue ni aplicación productiva de datos o migraciones.
 
 ## Resultado
 
@@ -60,3 +60,9 @@ Archivos de las correcciones: `src/devnous/copa_telmex/registration_read_model.p
 La aceptación consolidada pasó **380 tests**, con 51 advertencias y ningún fallo o skip; incluye SQL real de PostgreSQL para límites de fechas, filtros y ámbito, además de permisos y conteos del inicio en ambas rutas. Comando: el runner local con el pytest original, `PYTHONPATH=src`, socket/puerto PostgreSQL efímeros, las suites de primera entrega y regresión de Dirección, `--cov=.` y salida JSON/JUnit. La cobertura de las instrucciones corregidas es **32/32 (100 %)**; evidencia local en `review-fix-acceptance.xml`, `review-fix-coverage.json` y `review-fix-changed-coverage.json`. La revisión independiente pasó otros **117 tests**, sin defectos pendientes. Los módulos nuevos/corregidos pasan Black, isort, flake8 y mypy específicos; persiste la deuda general heredada ya documentada.
 
 Canon unchanged respecto de la enmienda aprobada: estas correcciones restablecen la fuente compartida y los contratos previstos, sin cambiar arquitectura, autoridad, reglas de elegibilidad ni estado productivo descritos en esa enmienda. Se verificaron sus hashes. La admisión/importación, migración/catalogación productiva, despliegue y UAT siguen pendientes de sus propios recibos y autorizaciones.
+
+### Compatibilidad de la fixture privada con el nuevo inicio
+
+El CI de integración detectó `SOURCE_UNAVAILABLE` porque la fixture que carga por AST el cuerpo canónico de `build_home` no simulaba su nueva dependencia `dispatch_registration_snapshot`. Se añadió únicamente `AsyncMock(return_value=None)` en `tests/unit/private_plugin/test_direction_read.py`, representando explícitamente una edición sintética sin configuración. No se cambiaron permisos, producción ni assertions para ocultar el fallo.
+
+Pasaron sus **21 tests** específicos. El intento de ejecutar todo el runner privado con el entorno general encontró tres errores de importación por ausencia de `mcp` (infraestructura local). Se creó `/tmp/samchat-ctt-private-tests-20261006` con las dependencias de tests ya declaradas, sin modificar requisitos ni entornos de producción. Comandos `scripts/private_plugin/run_offline_tests.py` y `run_postgres_tests.py`: **135 tests unitarios y 20 tests de integración PostgreSQL aprobados**, respectivamente. El segundo se ejecutó como usuario `postgres`, con un cluster propio sin TCP que el runner eliminó al finalizar. La revisión independiente de la fixture no encontró defectos.
