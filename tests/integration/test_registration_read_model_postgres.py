@@ -113,6 +113,26 @@ async def test_ephemeral_postgres_migration_and_read_contract(monkeypatch):
                 team,
                 state,
             )
+        await admin.execute(
+            "UPDATE copa_telmex_teams SET created_at='2026-10-06 00:00:00' "
+            "WHERE id=$1",
+            team,
+        )
+        for slug, stamp in (
+            ("copa-2026", "2026-10-06 12:00:00"),
+            ("copa-2026", "2026-10-06 23:59:59.999999"),
+            ("copa-2026", "2026-10-07 00:00:00"),
+            ("copa-2025", "2026-10-06 12:00:00"),
+            ("copa-2026-extra", "2026-10-06 12:00:00"),
+        ):
+            await admin.execute(
+                "INSERT INTO copa_telmex_teams VALUES "
+                "($1,$2,'Team','Jalisco','Zapopan','Open','femenil',"
+                "$3::text::timestamp)",
+                uuid4(),
+                slug,
+                stamp,
+            )
         engine = create_async_engine(
             "postgresql+asyncpg://postgres@/postgres",
             connect_args={
@@ -131,21 +151,67 @@ async def test_ephemeral_postgres_migration_and_read_contract(monkeypatch):
             )
             assert snapshot["status"] == "AVAILABLE", failures
             assert snapshot["counts"] == {
-                "total_teams": 1,
+                "total_teams": 4,
                 "active_players": 2,
                 "provisional_players": 1,
                 "pending_reviews": 0,
             }
             assert snapshot["reports"]["summary"]["jugadores"] == 2
             assert pending_team in session.new
-            assert snapshot["counts"]["total_teams"] == 1
+            assert snapshot["counts"]["total_teams"] == 4
             filtered = await dispatch_registration_snapshot(
                 session,
                 tournament_id=str(a),
                 edition_year=2026,
                 filters={"date_from": "2026-01-01", "date_to": "2026-12-31"},
             )
-            assert filtered["counts"]["total_teams"] == 1
+            assert filtered["counts"]["total_teams"] == 4
+            from samchat.assistant.registration_postgres_adapter import (
+                registration_postgres_response,
+            )
+
+            cutoff = await registration_postgres_response(
+                session,
+                projection="operations",
+                tournament_key="Copa",
+                tournament_id=str(a),
+                edition_year=2026,
+                state="lisc",
+                municipality="zap",
+                category="OP",
+                gender="FEM",
+                team_name="eam",
+                date_from="06/10/2026",
+                date_to="06/10/2026",
+            )
+            assert cutoff["totals"] == {"equipos": 3, "jugadores": 2}
+            assert cutoff["breakdowns"]["por_municipio"] == [
+                {
+                    "municipio": "Zapopan",
+                    "equipos": 3,
+                    "jugadores": 2,
+                    "provisional_players": 1,
+                }
+            ]
+            assert all(row["equipo"] == "Team" for row in cutoff["teams"])
+            assert all(row["tournament_slug"] == "copa-2026" for row in cutoff["teams"])
+            instant = await registration_postgres_response(
+                session,
+                projection="operations",
+                tournament_key="Copa",
+                tournament_id=str(a),
+                edition_year=2026,
+                date_from="2026-10-06T12:00:00",
+                date_to="2026-10-06T12:00:00",
+            )
+            assert instant["total_equipos"] == 1
+            literal = await dispatch_registration_snapshot(
+                session,
+                tournament_id=str(a),
+                edition_year=2026,
+                filters={"team_name": "%"},
+            )
+            assert literal["counts"]["total_teams"] == 0
             assert (
                 await dispatch_registration_snapshot(
                     session, tournament_id=str(a), edition_year=2024
@@ -155,7 +221,7 @@ async def test_ephemeral_postgres_migration_and_read_contract(monkeypatch):
                 await dispatch_registration_snapshot(
                     session, tournament_id=str(a), edition_year=2025
                 )
-            )["status"] == "EMPTY"
+            )["counts"]["total_teams"] == 1
         with pytest.raises(asyncpg.ForeignKeyViolationError):
             await admin.execute("DELETE FROM tournaments WHERE id=$1", a)
         await admin.execute("DROP TABLE copa_telmex_players")

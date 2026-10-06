@@ -314,6 +314,9 @@ async def test_denied_sources_are_never_read(monkeypatch):
 @pytest.mark.asyncio
 async def test_home_reuses_canonical_sources_with_exact_scope_and_period(monkeypatch):
     monkeypatch.setattr(home, "resolve_scope", AsyncMock(return_value=scope()))
+    monkeypatch.setattr(
+        home.service, "dispatch_registration_snapshot", AsyncMock(return_value=None)
+    )
 
     async def read(_session, loader, **kwargs):
         if loader is home.build_executive_facts:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from devnous.copa_telmex.registration_read_model import (
@@ -13,6 +14,9 @@ from samchat.assistant.tournament_registration_reports import parse_date
 def _filter_date(value: str | None) -> str | None:
     if not value:
         return None
+    # Preserve an explicit timestamp; only normalize calendar-date inputs.
+    if "T" in value or " " in value:
+        return datetime.fromisoformat(value).isoformat()
     parsed = parse_date(value)
     if parsed is None:
         raise ValueError("Invalid registration date filter")
@@ -63,6 +67,18 @@ async def registration_postgres_response(
     result = dict(snapshot)
     summary = dict(snapshot.get("summary") or {})
     groups = dict(snapshot.get("groups") or {})
+
+    def rows(field: str, label: str) -> list[dict[str, Any]]:
+        return [
+            {
+                label: row.get(field) or f"(sin {label})",
+                "equipos": row.get("teams"),
+                "jugadores": row.get("active_players"),
+                "provisional_players": row.get("provisional_players"),
+            }
+            for row in groups.get(f"by_{field}") or []
+        ]
+
     teams = summary.get("total_teams")
     players = summary.get("active_players")
     result.update(
@@ -97,18 +113,34 @@ async def registration_postgres_response(
     elif projection == "breakdown":
         result.update(
             state_query=state,
-            desglose_por_municipio=groups.get("by_municipality") or [],
+            desglose_por_municipio=rows("municipality", "municipio"),
         )
     elif projection == "operations":
         result.update(
             question=question,
             totals={"equipos": teams, "jugadores": players},
             breakdowns={
-                "por_estado": groups.get("by_state") or [],
-                "por_municipio": groups.get("by_municipality") or [],
-                "por_categoria": groups.get("by_category") or [],
-                "por_rama": groups.get("by_gender") or [],
+                "por_estado": rows("state", "estado"),
+                "por_municipio": rows("municipality", "municipio"),
+                "por_categoria": rows("category", "categoria"),
+                "por_rama": rows("gender", "rama"),
             },
+            teams=[
+                {
+                    "team_id": row.get("id"),
+                    "equipo": row.get("name"),
+                    "estado": row.get("state"),
+                    "municipio": row.get("municipality"),
+                    "categoria": row.get("category"),
+                    "rama": row.get("gender"),
+                    "tournament_slug": snapshot.get("roster_slug"),
+                    "jugadores": row.get("active_players"),
+                    "provisional_players": row.get("provisional_players"),
+                    "created_at": row.get("created_at"),
+                }
+                for row in snapshot.get("teams") or []
+            ],
+            limit=limit,
             players=[],
             players_detail_status="aggregate_only",
         )

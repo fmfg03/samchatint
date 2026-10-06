@@ -359,3 +359,89 @@ async def test_router_exact_project_name_uses_actual_configured_source(
     assert result["tournament_id"] == a
     assert result["total_equipos"] == 1
     assert result["total_jugadores"] == 1
+
+
+@pytest.mark.asyncio
+async def test_substring_filters_preserve_exact_edition_and_literal_wildcards(source):
+    session, conn, project, _ = source
+    target = add_team(conn, name="Atlas_100%!")
+    add_team(conn, slug="copa-2025", name="Atlas_100%!")
+    add_team(conn, slug="copa-2026-extra", name="Atlas_100%!")
+    add_team(conn, name="AtlasX100anything")
+    snapshot = await dispatch_registration_snapshot(
+        session,
+        tournament_id=project,
+        edition_year=2026,
+        filters={
+            "state": " lisc ",
+            "municipality": "zap",
+            "category": "op",
+            "gender": "FEM",
+            "team_name": "_100%!",
+        },
+    )
+    assert snapshot["counts"]["total_teams"] == 1
+    assert snapshot["teams"][0]["id"] == target
+    assert (
+        await dispatch_registration_snapshot(
+            session,
+            tournament_id=project,
+            edition_year=2026,
+            filters={"state": "nonmatching"},
+        )
+    )["counts"]["total_teams"] == 0
+
+
+@pytest.mark.asyncio
+async def test_calendar_cutoff_and_timestamp_keep_boundary_and_spanish_contract(source):
+    from samchat.assistant.registration_postgres_adapter import (
+        registration_postgres_response,
+    )
+
+    session, conn, project, _ = source
+    ids = []
+    for timestamp in (
+        "2026-10-06 00:00:00",
+        "2026-10-06 12:00:00",
+        "2026-10-06 23:59:59.999999",
+        "2026-10-07 00:00:00",
+    ):
+        team = add_team(conn)
+        ids.append(team)
+        conn.execute(
+            text("UPDATE copa_telmex_teams SET created_at=:ts WHERE id=:id"),
+            {"ts": timestamp, "id": team},
+        )
+        add_player(conn, team, "ACTIVE")
+        add_player(conn, team, "PENDING_FINALITY")
+    result = await registration_postgres_response(
+        session,
+        projection="operations",
+        tournament_key="Copa",
+        tournament_id=project,
+        edition_year=2026,
+        date_from="06/10/2026",
+        date_to="06/10/2026",
+    )
+    assert result["totals"] == {"equipos": 3, "jugadores": 3}
+    assert {row["team_id"] for row in result["teams"]} == set(ids[:3])
+    assert result["breakdowns"]["por_municipio"] == [
+        {"municipio": "Zapopan", "equipos": 3, "jugadores": 3, "provisional_players": 3}
+    ]
+    assert result["breakdowns"]["por_categoria"][0]["categoria"] == "Open"
+    assert result["breakdowns"]["por_rama"][0]["rama"] == "femenil"
+    assert result["teams"][0]["equipo"] == "Equipo"
+    assert result["teams"][0]["jugadores"] == 1
+    assert result["teams"][0]["provisional_players"] == 1
+    assert result["teams"][0]["created_at"]
+    assert "PRIVATE-CURP" not in json.dumps(result)
+    breakdown = await registration_postgres_response(
+        session,
+        projection="breakdown",
+        tournament_key="Copa",
+        tournament_id=project,
+        edition_year=2026,
+        date_to="2026-10-06T12:00:00",
+    )
+    assert breakdown["total_equipos"] == 2
+    assert breakdown["desglose_por_municipio"][0]["jugadores"] == 2

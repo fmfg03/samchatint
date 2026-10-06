@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, cast
 from uuid import UUID
 
@@ -259,19 +259,28 @@ async def _build_scoped_snapshot(
         clauses = ["t.tournament_slug = :roster_slug"]
         params = {"roster_slug": scope["roster_slug"]}
         for name, column in FILTER_COLUMNS.items():
-            if filters.get(name) is not None:
-                clauses.append(f"t.{column} = :{name}")
-                params[name] = filters[name]
+            value = str(filters.get(name) or "").strip()
+            if value:
+                clauses.append(f"LOWER(t.{column}) LIKE :{name} ESCAPE '!'")
+                literal = value.lower().replace("!", "!!").replace("%", "!%")
+                params[name] = "%" + literal.replace("_", "!_") + "%"
         for name, operator in (("date_from", ">="), ("date_to", "<=")):
             if filters.get(name):
-                parsed = datetime.fromisoformat(str(filters[name]))
+                value = str(filters[name])
+                parsed = datetime.fromisoformat(value)
+                if name == "date_to" and len(value) == 10:
+                    # A calendar cutoff includes the full final day. Timestamp
+                    # cutoffs retain their exact inclusive instant.
+                    date.fromisoformat(value)
+                    parsed += timedelta(days=1)
+                    operator = "<"
                 clauses.append(f"t.created_at {operator} :{name}")
                 params[name] = parsed
         where = " AND ".join(clauses)
         teams = await _rows(
             session,
             "SELECT CAST(t.id AS VARCHAR) AS id, t.name, t.state, t.municipality, "
-            "t.category, t.gender FROM copa_telmex_teams t "
+            "t.category, t.gender, t.created_at FROM copa_telmex_teams t "
             f"WHERE {where} ORDER BY t.id",
             params,
         )
@@ -311,6 +320,8 @@ async def _build_scoped_snapshot(
             counts_by_team[player["team_id"]][key] += 1
         for team in teams:
             team.update(counts_by_team[team["id"]])
+            if isinstance(team["created_at"], datetime):
+                team["created_at"] = team["created_at"].isoformat()
         counts = {
             "total_teams": len(teams),
             "active_players": sum(t["active_players"] for t in teams),
