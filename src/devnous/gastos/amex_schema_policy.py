@@ -12,11 +12,21 @@ AMEX_OWNER_MIGRATION_TABLES = frozenset(
     }
 )
 
+CTT_OWNER_MIGRATION_TABLES = frozenset(
+    {
+        "copa_telmex_registration_batches",
+        "copa_telmex_registration_batch_documents",
+        "copa_telmex_team_staff",
+    }
+)
+
+OWNER_MIGRATION_TABLES = AMEX_OWNER_MIGRATION_TABLES | CTT_OWNER_MIGRATION_TABLES
+
 
 def runtime_managed_tables(metadata: MetaData) -> list[Table]:
     """Preserve existing startup management while excluding owner-run AMEX DDL."""
     return [
         table
         for table in metadata.sorted_tables
-        if table.name not in AMEX_OWNER_MIGRATION_TABLES
+        if table.name not in OWNER_MIGRATION_TABLES
     ]

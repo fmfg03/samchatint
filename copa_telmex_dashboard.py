@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import sys
 import secrets
 from html import escape
@@ -23,7 +24,7 @@ from datetime import datetime, date, timezone
 from typing import List, Optional, Dict, Any, Tuple, Iterable
 from urllib.parse import urlparse
 from urllib.parse import quote, unquote
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -50,6 +51,11 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import aliased, selectinload
+from devnous.copa_telmex.batch_admission import (
+    BatchAdmissionError,
+    admission_receipt as build_batch_admission_receipt,
+    validate_manifest as validate_batch_admission_manifest,
+)
 from devnous.copa_telmex.database import CopaTelmexDB
 from devnous.copa_telmex.draft_versioning import (
     append_draft_version,
@@ -74,6 +80,8 @@ from devnous.copa_telmex.models import (
     Base,
     Player,
     RegistrationHumanFieldEditProposal,
+    RegistrationBatch,
+    RegistrationBatchDocument,
     RegistrationOcrFieldDiff,
     RegistrationOcrReprocessDecision,
     RegistrationOcrRun,
@@ -363,6 +371,7 @@ TEAM_PLAYER_MUTATION_ALLOWED_SESSION_ROLES = REVIEW_ALLOWED_SESSION_ROLES
 LEGACY_COPA_DASHBOARD_ALLOWED_SESSION_ROLES = REVIEW_ALLOWED_SESSION_ROLES
 REVIEW_SESSION_MAX_FILES = 4
 MAX_REVIEW_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_BATCH_PDF_BYTES = 64 * 1024 * 1024
 MAX_REVIEW_IMAGE_PIXELS = 25_000_000
 MAX_REVIEW_IMAGE_DIMENSION = 8000
 REVIEW_UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
@@ -512,6 +521,32 @@ async def _read_upload_limited(upload: Any) -> bytes:
     return bytes(payload)
 
 
+async def _batch_pdf_digest(upload: Any) -> str:
+    """Hash one uploaded PDF with a separate bounded batch limit."""
+    digest = hashlib.sha256()
+    total = 0
+    await upload.seek(0)
+    while True:
+        chunk = await upload.read(REVIEW_UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_BATCH_PDF_BYTES:
+            raise _review_error("file_too_large", "Un PDF del lote excede 64 MB.")
+        digest.update(chunk)
+    await upload.seek(0)
+    return digest.hexdigest()
+
+
+async def _read_batch_pdf(upload: Any) -> bytes:
+    await upload.seek(0)
+    payload = await upload.read(MAX_BATCH_PDF_BYTES + 1)
+    await upload.seek(0)
+    if len(payload) > MAX_BATCH_PDF_BYTES:
+        raise _review_error("file_too_large", "Un PDF del lote excede 64 MB.")
+    return payload
+
+
 def _sniff_pdf_bytes(payload: bytes) -> bool:
     return payload[:5] == b"%PDF-"
 
@@ -645,6 +680,55 @@ def _render_pdf_review_assets(
             stored_assets.append(
                 {
                     "page_index": page_index,
+                    "image_path": str(output_path),
+                    "sha256": hashlib.sha256(page_bytes).hexdigest(),
+                    "width": width,
+                    "height": height,
+                }
+            )
+        return stored_assets
+
+
+def _render_pdf_review_asset_pages(
+    session_dir: Path, payload: bytes, *, pages: List[int]
+) -> List[Dict[str, Any]]:
+    """Render only the immutable one-based source pages admitted for a dossier."""
+    if fitz is None:
+        raise _review_error(
+            "invalid_file_type", "Los PDF no están habilitados en este entorno."
+        )
+    try:
+        document = fitz.open(stream=payload, filetype="pdf")
+    except Exception as exc:
+        raise _review_error(
+            "corrupt_image", "No pude leer uno de los PDF del lote."
+        ) from exc
+    session_dir.mkdir(parents=True, exist_ok=True)
+    with document:
+        if not pages or pages != sorted(set(pages)) or pages[-1] > document.page_count:
+            raise _review_error(
+                "source_page_mismatch", "Las páginas no coinciden con el PDF."
+            )
+        stored_assets = []
+        for page_index, source_page in enumerate(pages, 1):
+            page = document.load_page(source_page - 1)
+            pix = page.get_pixmap(alpha=False)
+            width, height = int(pix.width), int(pix.height)
+            if (
+                width > MAX_REVIEW_IMAGE_DIMENSION
+                or height > MAX_REVIEW_IMAGE_DIMENSION
+                or width * height > MAX_REVIEW_IMAGE_PIXELS
+            ):
+                raise _review_error(
+                    "image_too_large", "Una página del expediente excede el límite."
+                )
+            page_bytes = pix.tobytes("png")
+            output_path = session_dir / f"page-{page_index:02d}.png"
+            output_path.write_bytes(page_bytes)
+            stored_assets.append(
+                {
+                    "page_index": page_index,
+                    "source_pdf_page": source_page,
                     "image_path": str(output_path),
                     "sha256": hashlib.sha256(page_bytes).hexdigest(),
                     "width": width,
@@ -1038,6 +1122,9 @@ def _build_review_commit_validation(
             }
         )
 
+    if extraction.get("staff"):
+        blockers.append(_staff_governance_contract_blocker())
+
     for idx, player in enumerate(players):
         player_number = idx + 1
         field_prefix = f"players[{idx}]"
@@ -1149,6 +1236,57 @@ def _build_review_commit_validation(
     enriched["capture_warning_count"] = len(warnings)
     enriched["capture_warning_messages"] = [item["message"] for item in warnings]
     return enriched
+
+
+def _staff_governance_contract_blocker() -> Dict[str, str]:
+    return {
+        "code": "STAFF_GOVERNANCE_CONTRACT_REQUIRED",
+        "field": "staff",
+        "message": (
+            "El cuerpo técnico está conservado en el draft, pero el contrato "
+            "vigente de gobernanza solo autoriza jugadores."
+        ),
+    }
+
+
+def _attach_batch_staff_governance_blocker(
+    validation: Dict[str, Any],
+) -> Dict[str, Any]:
+    enriched = dict(validation or {})
+    blockers = list(enriched.get("blockers") or [])
+    blockers.append(_staff_governance_contract_blocker())
+    blockers = _dedupe_review_items(blockers)
+    enriched["blockers"] = blockers
+    enriched["blocking_issue_count"] = len(blockers)
+    enriched["ready_to_commit"] = False
+    return enriched
+
+
+def _batch_staff_evidence_preserved(
+    current_extraction: Dict[str, Any], proposed_extraction: Dict[str, Any]
+) -> bool:
+    current_staff = current_extraction.get("staff")
+    return (
+        isinstance(current_staff, list)
+        and len(current_staff) == 2
+        and proposed_extraction.get("staff") == current_staff
+    )
+
+
+def _ensure_batch_reprocess_staff_preserved(
+    *,
+    batch_binding_exists: bool,
+    current_extraction: Dict[str, Any],
+    proposed_extraction: Dict[str, Any],
+) -> None:
+    if batch_binding_exists and not _batch_staff_evidence_preserved(
+        current_extraction, proposed_extraction
+    ):
+        raise _review_error(
+            "batch_staff_evidence_immutable",
+            "El reproceso no puede eliminar ni cambiar el cuerpo técnico admitido.",
+            status_code=409,
+        )
 
 
 def _attach_unresolved_reprocess_blocker(
@@ -2125,6 +2263,8 @@ def _normalize_review_extraction(payload: Optional[Dict[str, Any]], note: Option
     if note:
         merged_note = " | ".join(part for part in [normalized.get("notes"), note] if part)
         normalized["notes"] = merged_note
+    if isinstance(payload.get("staff"), list):
+        normalized["staff"] = copy.deepcopy(payload["staff"])
     return normalized
 
 
@@ -3792,7 +3932,9 @@ def _prepare_review_draft_values(
     )
     draft = base_draft or review_session.draft
 
-    existing_audit = _review_audit_state(draft.validation if isinstance(draft.validation, dict) else None)
+    existing_audit = _review_audit_state(
+        draft.validation if draft and isinstance(draft.validation, dict) else None
+    )
     extraction_metadata = _build_review_extraction_metadata(
         raw_payload,
         extraction,
@@ -4625,6 +4767,311 @@ async def create_registration_review_session(request: Request):
     return RedirectResponse(url=f"/registration-review/{review_session.id}", status_code=303)
 
 
+@app.post("/api/registration-review/batches", response_class=JSONResponse)
+async def admit_registration_review_batch(request: Request):
+    """Admit exact reviewed dossiers as drafts; never commit teams or eligibility."""
+    _ensure_registration_review_access(request)
+    actor = _review_session_actor(request)
+    actor_id = str(actor.get("user_id") or "").strip()
+    if not actor_id:
+        raise HTTPException(status_code=401, detail="Sesión inválida para admitir el lote.")
+    form_data = await request.form()
+    manifest_upload = form_data.get("manifest")
+    if not getattr(manifest_upload, "filename", None):
+        raise _review_error("manifest_missing", "Adjunta el manifiesto privado del lote.")
+    try:
+        manifest_bytes = await _read_upload_limited(manifest_upload)
+        raw_manifest = json.loads(manifest_bytes.decode("utf-8"))
+        manifest = validate_batch_admission_manifest(raw_manifest)
+    except (BatchAdmissionError, UnicodeDecodeError, ValueError) as exc:
+        code = exc.code if isinstance(exc, BatchAdmissionError) else "MANIFEST_INVALID"
+        raise _review_error(code.lower(), "El manifiesto no es válido.") from exc
+
+    uploads = [
+        upload
+        for upload in form_data.getlist("files")
+        if getattr(upload, "filename", None)
+    ]
+    upload_files: Dict[str, Any] = {}
+    for upload in uploads:
+        filename = Path(str(upload.filename)).name
+        if filename != upload.filename or filename in upload_files:
+            raise _review_error(
+                "source_file_ambiguous", "Los nombres de PDF deben ser únicos y seguros."
+            )
+        upload_files[filename] = upload
+    expected_files = {item["pdf"] for item in manifest["documents"]}
+    if set(upload_files) != expected_files:
+        raise _review_error(
+            "source_file_set_mismatch", "Adjunta exactamente los PDF del manifiesto."
+        )
+    for document in manifest["documents"]:
+        if await _batch_pdf_digest(upload_files[document["pdf"]]) != document["pdf_sha256"]:
+            raise _review_error(
+                "source_pdf_hash_mismatch", "Un PDF no coincide con el manifiesto."
+            )
+
+    edition = manifest["edition"]
+    async with async_session_maker() as session:
+        edition_row = (
+            await session.execute(
+                text(
+                    """SELECT e.id::text AS id FROM copa_telmex_tournament_editions e
+                       JOIN tournaments t ON t.id = e.tournament_id
+                       WHERE e.tournament_id = CAST(:tournament_id AS uuid)
+                         AND e.edition_year = :edition_year
+                         AND e.roster_slug = :roster_slug
+                         AND e.active = TRUE AND t.active = TRUE"""
+                ),
+                edition,
+            )
+        ).mappings().one_or_none()
+        if edition_row is None:
+            raise _review_error(
+                "edition_scope_missing", "La edición activa del manifiesto no existe."
+            )
+        edition_id = UUID(edition_row["id"])
+        batch_id = uuid5(
+            NAMESPACE_URL,
+            f"ctt-registration-batch:{edition_id}:{manifest['manifest_sha256']}",
+        )
+        documents_by_id = {
+            item["document_id"]: item for item in manifest["documents"]
+        }
+        existing_bindings = (
+            (
+                await session.execute(
+                    select(RegistrationBatchDocument).where(
+                        RegistrationBatchDocument.tournament_edition_id == edition_id,
+                        RegistrationBatchDocument.document_id.in_(documents_by_id),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for existing in existing_bindings:
+            expected = documents_by_id[existing.document_id]
+            receipt = (
+                existing.admission_receipt
+                if isinstance(existing.admission_receipt, dict)
+                else {}
+            )
+            if (
+                existing.batch_id != batch_id
+                or existing.source_filename != expected["pdf"]
+                or existing.pdf_sha256 != expected["pdf_sha256"]
+                or existing.source_pages_sha256
+                != expected["source_pages_sha256"]
+                or existing.payload_sha256 != expected["payload_sha256"]
+                or receipt.get("manifest_sha256") != manifest["manifest_sha256"]
+            ):
+                raise _review_error(
+                    "document_identity_conflict",
+                    "Un expediente existente pertenece a otro lote o evidencia.",
+                )
+        await session.execute(
+            text(
+                """INSERT INTO copa_telmex_registration_batches
+                   (id, tournament_edition_id, manifest_sha256, document_count,
+                    admitted_by_user_id)
+                   VALUES (:id, :edition_id, :manifest_sha256, :document_count,
+                           :actor_id)
+                   ON CONFLICT (id) DO NOTHING"""
+            ),
+            {
+                "id": batch_id,
+                "edition_id": edition_id,
+                "manifest_sha256": manifest["manifest_sha256"],
+                "document_count": len(manifest["documents"]),
+                "actor_id": actor_id,
+            },
+        )
+        batch = (
+            await session.execute(
+                select(RegistrationBatch)
+                .where(RegistrationBatch.id == batch_id)
+                .with_for_update()
+            )
+        ).scalar_one()
+        if (
+            batch.manifest_sha256 != manifest["manifest_sha256"]
+            or batch.tournament_edition_id != edition_id
+            or batch.document_count != len(manifest["documents"])
+        ):
+            raise _review_error("batch_identity_conflict", "El lote existente no coincide.")
+        await session.commit()
+
+    results = []
+    for document in manifest["documents"]:
+        async with async_session_maker() as session:
+            await session.execute(
+                select(RegistrationBatch)
+                .where(RegistrationBatch.id == batch_id)
+                .with_for_update()
+            )
+            existing = (
+                await session.execute(
+                    select(RegistrationBatchDocument).where(
+                        RegistrationBatchDocument.tournament_edition_id == edition_id,
+                        RegistrationBatchDocument.document_id == document["document_id"],
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                if (
+                    existing.batch_id != batch_id
+                    or existing.source_filename != document["pdf"]
+                    or existing.pdf_sha256 != document["pdf_sha256"]
+                    or existing.source_pages_sha256
+                    != document["source_pages_sha256"]
+                    or existing.payload_sha256 != document["payload_sha256"]
+                    or not isinstance(existing.admission_receipt, dict)
+                    or existing.admission_receipt.get("manifest_sha256")
+                    != manifest["manifest_sha256"]
+                ):
+                    raise _review_error(
+                        "document_identity_conflict",
+                        "Un expediente existente tiene evidencia diferente.",
+                    )
+                results.append(
+                    {
+                        "document_id": document["document_id"],
+                        "status": "RECOVERED",
+                        "review_session_id": str(existing.review_session_id),
+                    }
+                )
+                continue
+
+            review_session_id = uuid5(
+                NAMESPACE_URL,
+                f"ctt-registration-document:{edition_id}:{document['document_id']}",
+            )
+            review_session = RegistrationReviewSession(
+                id=review_session_id,
+                status="uploaded",
+                source="batch_admission",
+                provider="reviewed_manifest",
+                tournament_slug=edition["roster_slug"],
+                created_by_user_id=actor_id,
+            )
+            session.add(review_session)
+            await session.flush()
+            session_assets_dir = review_uploads_dir / str(review_session_id)
+            shutil.rmtree(session_assets_dir, ignore_errors=True)
+            try:
+                stored_assets = _render_pdf_review_asset_pages(
+                    session_assets_dir,
+                    await _read_batch_pdf(upload_files[document["pdf"]]),
+                    pages=document["pages"],
+                )
+            except BaseException:
+                shutil.rmtree(session_assets_dir, ignore_errors=True)
+                raise
+            try:
+                assets = []
+                for asset_payload in stored_assets:
+                    asset = RegistrationReviewAsset(
+                        session_id=review_session_id,
+                        page_index=asset_payload["page_index"],
+                        image_path=asset_payload["image_path"],
+                        sha256=asset_payload["sha256"],
+                        width=asset_payload["width"],
+                        height=asset_payload["height"],
+                        source_ocr_run_ref=(
+                            f"batch:{manifest['manifest_sha256']}:"
+                            f"source-page:{asset_payload['source_pdf_page']}"
+                        ),
+                    )
+                    session.add(asset)
+                    assets.append(asset)
+            except BaseException:
+                shutil.rmtree(session_assets_dir, ignore_errors=True)
+                raise
+            try:
+                draft = await _upsert_review_draft(
+                    session,
+                    review_session,
+                    document["extraction"],
+                    {
+                        "provider": "reviewed_manifest",
+                        "batch_manifest_sha256": manifest["manifest_sha256"],
+                        "document_id": document["document_id"],
+                        "pdf_sha256": document["pdf_sha256"],
+                        "source_pages": document["pages"],
+                        "payload_sha256": document["payload_sha256"],
+                        "human_reviewed": False,
+                        "canonical_import_ready": False,
+                    },
+                    layout_regions={
+                        "source_pages": document["pages"],
+                        "staff_evidence": [
+                            {
+                                "staff_entry_id": item["staff_entry_id"],
+                                "slot": item["slot"],
+                            }
+                            for item in document["extraction"]["staff"]
+                        ],
+                    },
+                    mutation_type="batch_manifest_admitted",
+                    actor_id=actor_id,
+                )
+            except BaseException:
+                shutil.rmtree(session_assets_dir, ignore_errors=True)
+                raise
+            try:
+                for asset in assets:
+                    asset.admitted_draft_id = draft.id
+                    asset.source_base_draft_id = draft.id
+                    asset.source_base_content_hash = draft.content_hash
+                receipt = build_batch_admission_receipt(
+                    manifest_sha256=manifest["manifest_sha256"],
+                    document=document,
+                    actor_id=actor_id,
+                    review_session_id=str(review_session_id),
+                )
+                session.add(
+                    RegistrationBatchDocument(
+                        id=uuid5(
+                            NAMESPACE_URL,
+                            "ctt-registration-binding:"
+                            f"{edition_id}:{document['document_id']}",
+                        ),
+                        batch_id=batch_id,
+                        tournament_edition_id=edition_id,
+                        document_id=document["document_id"],
+                        source_filename=document["pdf"],
+                        pdf_sha256=document["pdf_sha256"],
+                        source_pages=document["pages"],
+                        source_pages_sha256=document["source_pages_sha256"],
+                        payload_sha256=document["payload_sha256"],
+                        review_session_id=review_session_id,
+                        admission_receipt=receipt,
+                    )
+                )
+                await session.commit()
+            except BaseException:
+                shutil.rmtree(session_assets_dir, ignore_errors=True)
+                raise
+            results.append(
+                {
+                    "document_id": document["document_id"],
+                    "status": "ADMITTED_FOR_REVIEW",
+                    "review_session_id": str(review_session_id),
+                }
+            )
+    return JSONResponse(
+        {
+            "batch_id": str(batch_id),
+            "manifest_sha256": manifest["manifest_sha256"],
+            "documents": results,
+            "committed_teams": 0,
+            "grants_eligibility": False,
+        },
+        status_code=200,
+    )
+
+
 @app.get("/api/registration-review/{session_id}", response_class=JSONResponse)
 async def get_registration_review_session_payload(session_id: str, request: Request):
     """Return raw draft payload for a review session."""
@@ -4794,6 +5241,7 @@ async def view_registration_review_session(request: Request, session_id: str):
                 "assets": assets,
                 "team": extraction.get("team") or {},
                 "manager": extraction.get("manager") or {},
+                "staff": extraction.get("staff") or [],
                 "players": players,
                 "notes": extraction.get("notes") or "",
                 "validation": validation,
@@ -5555,6 +6003,18 @@ async def reprocess_registration_review_session(session_id: str, request: Reques
                 status_code=303,
             )
         public_diffs = public_field_diffs(ocr_run.field_diffs)
+        batch_binding_result = await session.execute(
+            select(RegistrationBatchDocument.id)
+            .where(RegistrationBatchDocument.review_session_id == session_uuid)
+            .with_for_update()
+        )
+        _ensure_batch_reprocess_staff_preserved(
+            batch_binding_exists=(
+                batch_binding_result.scalar_one_or_none() is not None
+            ),
+            current_extraction=_get_review_extraction(current_draft),
+            proposed_extraction=ocr_run.proposed_extraction or {},
+        )
         previous_run_result = await session.execute(
             select(RegistrationOcrRun.id)
             .join(
@@ -6047,6 +6507,12 @@ async def commit_registration_review_session(session_id: str, request: Request):
             .where(RegistrationReviewDraft.id == review_session.draft.id)
             .with_for_update()
         )
+        batch_binding_result = await session.execute(
+            select(RegistrationBatchDocument.id)
+            .where(RegistrationBatchDocument.review_session_id == session_uuid)
+            .with_for_update()
+        )
+        batch_binding_exists = batch_binding_result.scalar_one_or_none() is not None
 
         form_data = await request.form()
         extraction = _apply_review_form_edits(form_data, _get_review_extraction(review_session.draft))
@@ -6083,6 +6549,8 @@ async def commit_registration_review_session(session_id: str, request: Request):
             ),
             review_session=review_session,
         )
+        if batch_binding_exists:
+            validation = _attach_batch_staff_governance_blocker(validation)
         if not draft_incident_policy:
             draft_incident_policy = copy.deepcopy(
                 validation.get("incident_policy") or {}

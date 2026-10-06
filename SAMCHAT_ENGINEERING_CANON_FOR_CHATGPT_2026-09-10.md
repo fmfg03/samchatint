@@ -468,3 +468,23 @@ Reason: human-approved first delivery of registration read-source consolidation;
 El candidato de primera entrega de inscripción incorpora `copa_telmex_tournament_editions` mediante migración explícita, y una proyección compartida de solo lectura en `registration_read_model.py`. La resolución exige identidad exacta y edición inequívoca; fuente fallida, ámbito ausente, inactivo o ambiguo producen estados explícitos. Para ediciones configuradas, la lectura precede al enrutamiento heredado y no tiene fallback silencioso al roster Supabase. SOUL admite exclusión de inscripción antes de consultar equipos, jugadores, responsables y registros, manteniendo otros dominios. La proyección ejecutiva no expone datos personales individuales. La migración no se aplica en startup. El reconciliador del piloto es local y no concede aprobación, elegibilidad ni efectos de escritura en bases.
 
 Evidence: `docs/roadmap/ctt-postgres-registration-first-delivery.md` and its scoped test and review receipts. This is an isolated-worktree candidate; merge, deployment, data application, authenticated UAT, and business acceptance remain separate.
+
+## 20. Copa Telmex governed batch-admission candidate amendment
+
+Date: 2026-10-06
+
+The candidate adds owner-migrated batch, document-binding, and team-staff tables.
+Runtime `create_all` excludes all three. Manifest validation recomputes immutable
+source, payload, page, and staff-evidence identities before persistence. Batch and
+session UUIDs are deterministic; atomic insert plus batch-row locking serializes
+concurrent retries. Rollback refuses destructive schema removal after admitted
+documents or staff records exist. The authenticated endpoint renders only declared
+PDF pages and writes registration-review drafts with `human_reviewed=false` and
+`canonical_import_ready=false`. The existing team commit path remains blocked for
+staff-bearing drafts because no current Zaubern receipt authorizes ordered staff
+slots.
+
+Evidence: `docs/roadmap/ctt-pilot-batch-admission.md`, focused unit and regression
+tests, and isolated PostgreSQL migration/constraint/rollback tests. This remains
+repository evidence under review, not deployment, data admission, UAT, or
+business acceptance.

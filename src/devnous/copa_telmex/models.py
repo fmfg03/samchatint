@@ -67,6 +67,9 @@ class Team(Base):
         "Player", back_populates="team", cascade="all, delete-orphan"
     )
     registrations = relationship("OCRRegistration", back_populates="team")
+    staff = relationship(
+        "TeamStaff", back_populates="team", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<Team(id={self.id}, name='{self.name}', category='{self.category}')>"
@@ -86,6 +89,42 @@ class Team(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class TeamStaff(Base):
+    """Governed technical-staff identity attached to a committed team."""
+
+    __tablename__ = "copa_telmex_team_staff"
+    __table_args__ = (
+        UniqueConstraint("team_id", "staff_slot", name="uq_ctt_team_staff_slot"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    team_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_teams.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    staff_slot = Column(Integer, nullable=False)
+    role = Column(String(40), nullable=False)
+    first_name = Column(String(100))
+    last_name = Column(String(200))
+    birth_date = Column(Date)
+    curp = Column(String(18))
+    photo_path = Column(String(500))
+    evidence = Column(JSON, nullable=False, default=dict)
+    governance_state = Column(String(30), nullable=False, default="PENDING_FINALITY")
+    governance_draft_id = Column(String(80), nullable=False)
+    governance_draft_version = Column(Integer, nullable=False)
+    governance_decision_id = Column(String(80), nullable=False)
+    roster_draft_binding = Column(String(80), nullable=False)
+    preauthorization_receipt_id = Column(String(120), nullable=False)
+    finality_receipt_id = Column(String(120))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    team = relationship("Team", back_populates="staff")
 
 
 class Player(Base):
@@ -295,6 +334,77 @@ class RegistrationReviewSession(Base):
 
     def __repr__(self):
         return f"<RegistrationReviewSession(id={self.id}, status={self.status}, provider={self.provider})>"
+
+
+class RegistrationBatch(Base):
+    """Immutable admission envelope for one tournament edition."""
+
+    __tablename__ = "copa_telmex_registration_batches"
+    __table_args__ = (
+        UniqueConstraint(
+            "tournament_edition_id",
+            "manifest_sha256",
+            name="uq_ctt_registration_batch_manifest",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tournament_edition_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    manifest_sha256 = Column(String(64), nullable=False)
+    document_count = Column(Integer, nullable=False)
+    admitted_by_user_id = Column(String(80), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    documents = relationship(
+        "RegistrationBatchDocument",
+        back_populates="batch",
+        cascade="all, delete-orphan",
+    )
+
+
+class RegistrationBatchDocument(Base):
+    """Idempotent source identity and review-session binding for one dossier."""
+
+    __tablename__ = "copa_telmex_registration_batch_documents"
+    __table_args__ = (
+        UniqueConstraint(
+            "tournament_edition_id",
+            "document_id",
+            name="uq_ctt_registration_document_identity",
+        ),
+        UniqueConstraint(
+            "tournament_edition_id",
+            "pdf_sha256",
+            "source_pages_sha256",
+            name="uq_ctt_registration_document_source",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    batch_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_batches.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    tournament_edition_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    document_id = Column(String(64), nullable=False)
+    source_filename = Column(String(255), nullable=False)
+    pdf_sha256 = Column(String(64), nullable=False)
+    source_pages = Column(JSON, nullable=False)
+    source_pages_sha256 = Column(String(64), nullable=False)
+    payload_sha256 = Column(String(64), nullable=False)
+    review_session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_review_sessions.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    admission_receipt = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    batch = relationship("RegistrationBatch", back_populates="documents")
+    review_session = relationship("RegistrationReviewSession")
 
 
 class RegistrationReviewAsset(Base):

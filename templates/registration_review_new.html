@@ -43,5 +43,20 @@
             <a href="/registration-review" class="btn" style="background: #6c757d;">Cancelar</a>
         </div>
     </form>
+
+    <form action="/api/registration-review/batches" method="post" enctype="multipart/form-data" style="background: #fff; border: 1px solid #bfdbfe; border-radius: 16px; padding: 24px; margin-top: 20px;">
+        <h3 style="margin-top: 0;">Admitir lote revisado</h3>
+        <p style="color: #475569;">Crea sesiones de revisión vinculadas a fuentes exactas. No captura equipos ni concede elegibilidad.</p>
+        <div style="margin-bottom: 16px;">
+            <label for="manifest" style="display: block; font-weight: 600; margin-bottom: 8px;">Manifiesto privado</label>
+            <input id="manifest" name="manifest" type="file" accept="application/json,.json" required style="width: 100%;">
+        </div>
+        <div style="margin-bottom: 16px;">
+            <label for="batch-files" style="display: block; font-weight: 600; margin-bottom: 8px;">PDF fuente</label>
+            <input id="batch-files" name="files" type="file" accept="application/pdf,.pdf" multiple required style="width: 100%;">
+            <small style="color: #64748b;">Los nombres y hashes deben coincidir exactamente con el manifiesto.</small>
+        </div>
+        <button type="submit" class="btn" style="border: none; cursor: pointer;">Admitir para revisión</button>
+    </form>
 </div>
 {% endblock %}

@@ -877,6 +877,20 @@
                 </div>
             </div>
 
+            {% if staff %}
+            <h3 style="margin: 20px 0 14px;">Cuerpo técnico</h3>
+            <p style="color: #92400e;">Estos cargos se conservan en el draft. Su captura permanece bloqueada hasta que gobernanza los autorice explícitamente.</p>
+            <div class="field-grid" style="margin-bottom: 16px;">
+                {% for member in staff %}
+                <div>
+                    <strong>{{ 'Director técnico' if member.role == 'director_tecnico' else 'Auxiliar' }}</strong>
+                    <div>{{ member.first_name or 'Nombre pendiente' }} {{ member.last_name or '' }}</div>
+                    <small style="color: #64748b;">Estado de fuente: {{ member.presence or 'pendiente' }}</small>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
             <div class="stack-field">
                 <label>Notas del draft</label>
                 <textarea name="notes" rows="3" style="width: 100%;">{{ notes }}</textarea>
