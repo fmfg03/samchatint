@@ -169,6 +169,7 @@ from ..services.budget_concept_account_service import (
     apply_budget_concept_cuenta_mapping,
 )
 from ..services.expense_accounting_service import build_expense_accounting_preview
+from ..services.expense_accounting_cleanup_service import cleanup_issues_match_filter
 from ..services.payment_run_exporter import _safe_cell_text as _safe_spreadsheet_cell_text
 from ..services.employee_debtor_accounting_service import (
     build_cuenta_debtor_auxiliary,
@@ -4624,6 +4625,18 @@ def _normalize_coi_preparation(value: Any) -> str:
     return normalized if normalized in {"all", "ready", "blocked"} else "all"
 
 
+def _coi_cleanup_actionable_issues(issues: Iterable[Any]) -> List[str]:
+    issue_types = ("main_account", "counterpart", "cfdi", "fiscal")
+    return [
+        str(issue)
+        for issue in issues
+        if any(
+            cleanup_issues_match_filter([issue], issue_type)
+            for issue_type in issue_types
+        )
+    ]
+
+
 def _filter_coi_exportable_lote_rows(
     rows: List[dict[str, Any]],
     *,
@@ -4703,16 +4716,16 @@ async def _build_coi_exportable_lote_rows(
             if not expenses:
                 continue
             if tipo_lote != "INFORME":
-                ready_expenses = []
-                for expense in expenses:
-                    ready, _ = await assess_expense_coi_cleanup_ready(session, expense)
-                    if ready:
-                        ready_expenses.append(expense)
                 if not _coi_exportable_matches_search(
-                    documento=documento, expenses=ready_expenses, search_q=search_q
+                    documento=documento, expenses=expenses, search_q=search_q
                 ):
                     continue
-                for expense in ready_expenses:
+                for expense in expenses:
+                    ready, issues = await assess_expense_coi_cleanup_ready(
+                        session, expense
+                    )
+                    cleanup_issues = _coi_cleanup_actionable_issues(issues or [])
+                    reference = expense.numero_referencia or str(expense.id)[:8]
                     rows.append(
                         {
                             "tipo_lote": tipo_lote,
@@ -4721,9 +4734,26 @@ async def _build_coi_exportable_lote_rows(
                             "period_label": _coi_lote_documento_period_label(
                                 documento, tipo_lote
                             ),
-                            "can_export": True,
-                            "block_reason": "",
-                            "cleanup_blockers": [],
+                            "can_export": ready,
+                            "block_reason": (
+                                ""
+                                if ready
+                                else (
+                                    f"{reference}: "
+                                    f"{'; '.join(issues) or 'preparación COI incompleta'}"
+                                )
+                            ),
+                            "cleanup_blockers": (
+                                [
+                                    {
+                                        "expense_id": expense.id,
+                                        "expense_reference": reference,
+                                        "issues": cleanup_issues,
+                                    }
+                                ]
+                                if cleanup_issues
+                                else []
+                            ),
                         }
                     )
                 continue
@@ -4748,15 +4778,20 @@ async def _build_coi_exportable_lote_rows(
                     ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
                     if not ready:
                         reference = expense.numero_referencia or str(expense.id)[:8]
-                        cleanup_blockers.append(
-                            {
-                                "expense_id": expense.id,
-                                "expense_reference": reference,
-                                "issues": list(issues or []),
-                            }
+                        issue_detail = (
+                            "; ".join(issues) or "preparación COI incompleta"
                         )
+                        cleanup_issues = _coi_cleanup_actionable_issues(issues or [])
+                        if cleanup_issues:
+                            cleanup_blockers.append(
+                                {
+                                    "expense_id": expense.id,
+                                    "expense_reference": reference,
+                                    "issues": cleanup_issues,
+                                }
+                            )
                         block_reasons.append(
-                            f"{reference}: {'; '.join(issues) or 'preparación COI incompleta'}"
+                            f"{reference}: {issue_detail}"
                         )
             if not _coi_exportable_matches_search(
                 documento=documento,
@@ -5016,6 +5051,7 @@ def _render_coi_exportable_lote_rows_html(
                     "document_type": "informe" if is_report else "solicitud",
                     "q": str(documento.numero_referencia or ""),
                     "focus_expense_id": focus_expense_id,
+                    "document_id": documento_id,
                 }
             )
             cleanup_action = (

@@ -591,6 +591,7 @@ def test_blocked_coi_policy_opens_the_correct_cleanup_expense(
     assert "document_type=informe" in page.url
     assert "q=I-UX-COI-001" in page.url
     assert "focus_expense_id=80000000-0000-0000-0000-000000000001" in page.url
+    assert "document_id=81000000-0000-0000-0000-000000000001" in page.url
     focused_row = page.locator(
         "#row-80000000-0000-0000-0000-000000000001.cleanup-row-focused"
     )

@@ -207,7 +207,8 @@ def test_coi_blocked_report_has_no_selectable_partial_policy():
     assert (
         "/admin/gastos/sin-cuenta-contable?period=2026-08"
         "&document_type=informe&q=I-123456"
-        f"&focus_expense_id={expense_id}#row-{expense_id}"
+        f"&focus_expense_id={expense_id}&document_id={documento_id}"
+        f"#row-{expense_id}"
     ) in readable
 
 
@@ -261,6 +262,24 @@ def test_coi_queue_filters_use_canonical_batch_type_and_readiness():
     assert user_routes._filter_coi_exportable_lote_rows(
         rows, document_type="invalid", preparation="invalid"
     ) == rows
+    assert [
+        row["key"]
+        for row in user_routes._filter_coi_exportable_lote_rows(
+            rows, preparation="ready"
+        )
+    ] == ["informe-ready", "solicitud-ready"]
+
+
+def test_coi_cleanup_action_excludes_beneficiary_account_blockers():
+    assert user_routes._coi_cleanup_actionable_issues(
+        [
+            "Falta cuenta de cargo",
+            "Falta subcuenta contable de detalle para el beneficiario del Informe",
+        ]
+    ) == ["Falta cuenta de cargo"]
+    assert not user_routes._coi_cleanup_actionable_issues(
+        ["Falta subcuenta contable de detalle para el beneficiario del Informe"]
+    )
 
 
 def test_coi_queue_search_matches_expense_responsible():
@@ -1306,7 +1325,7 @@ async def test_standalone_policies_remain_independently_selectable(
 
     async def ready(session, expense):
         ok = expense is expenses[0] or other_ready
-        return ok, [] if ok else ["Falta cuenta"]
+        return ok, [] if ok else ["Falta cuenta de cargo"]
 
     monkeypatch.setattr(user_routes, "_load_coi_lote_informe_documentos", informes)
     monkeypatch.setattr(user_routes, "_load_coi_lote_terceros_documentos", terceros)
@@ -1319,13 +1338,16 @@ async def test_standalone_policies_remain_independently_selectable(
         start_date=datetime(2026, 9, 1).date(),
         end_date=datetime(2026, 10, 1).date(),
     )
-    assert len(rows) == (2 if other_ready else 1)
+    assert len(rows) == 2
     assert rows[0]["expenses"] == [expenses[0]]
-    assert all(row["can_export"] for row in rows)
-    html = user_routes._render_coi_exportable_lote_rows_html(rows)
+    assert [row["can_export"] for row in rows] == [True, other_ready]
+    html = user_routes._render_coi_exportable_lote_rows_html(
+        rows, accounting_period="2026-09"
+    )
     assert f'name="selected_gasto_id" value="{expenses[0].id}"' in html
     assert f"/gastos/{expenses[0].id}/exportar-coi.xlsx" in html
     assert 'name="selected_documento_id"' not in html
+    assert ("Atender en Limpieza contable" in html) is (not other_ready)
     collected = []
     commits = []
 

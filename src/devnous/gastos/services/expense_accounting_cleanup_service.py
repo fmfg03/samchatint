@@ -389,11 +389,6 @@ async def load_cleanup_expenses(
 
     conditions = [
         ExpenseReport.estado_gasto == "activo",
-        or_(
-            ExpenseReport.cuenta_contable_id.is_(None),
-            ExpenseReport.contra_cuenta_contable_id.is_(None),
-            ExpenseReport.cfdi_report_id.is_(None),
-        ),
     ]
     if extra_conditions:
         conditions.extend(list(extra_conditions))

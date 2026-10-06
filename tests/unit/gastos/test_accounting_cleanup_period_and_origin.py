@@ -17,6 +17,9 @@ from devnous.gastos.services.expense_accounting_cleanup_service import (
     normalize_cleanup_document_type,
     normalize_cleanup_issue_type,
 )
+from devnous.gastos.services import (
+    expense_accounting_cleanup_service as cleanup_service,
+)
 
 
 def _expense(*, documento=None, informe=None, solicitud=None):
@@ -269,6 +272,7 @@ async def test_cleanup_route_applies_and_preserves_server_filters(monkeypatch) -
         document_type="informe",
         issue="fiscal",
         focus_expense_id="no-es-uuid",
+        document_id=None,
         current_empleado=SimpleNamespace(),
     )
 
@@ -282,6 +286,63 @@ async def test_cleanup_route_applies_and_preserves_server_filters(monkeypatch) -
     assert "bi_year=2026" in html
     assert f"bi_scope={admin_routes.ACTIVE_TOURNAMENT_SCOPE}" in html
     assert "cleanup-row-focused" in html
+
+    document_id = "81000000-0000-0000-0000-000000000001"
+    document_html = await admin_routes.gastos_sin_cuenta_contable(
+        Request({"type": "http", "query_string": b""}),
+        Session(),
+        period="2026-09",
+        bi_year=None,
+        bi_scope=None,
+        q="I-26000012",
+        document_type="informe",
+        issue="all",
+        focus_expense_id=None,
+        document_id=document_id,
+        current_empleado=SimpleNamespace(),
+    )
+    scope_sql = " ".join(str(item) for item in captured["extra_conditions"])
+    assert "expense_reports.documento_id" in scope_sql
+    assert "expense_reports.informe_documento_id" in scope_sql
+    assert "expense_reports.solicitud_documento_id" in scope_sql
+    assert "expense_reports.fecha" not in scope_sql
+    assert f'name="document_id" value="{document_id}"' in document_html
+
+
+@pytest.mark.asyncio
+async def test_cleanup_loader_keeps_fiscal_only_candidates(monkeypatch) -> None:
+    expense = _searchable_expense()
+    expense.cuenta_contable_id = "cargo"
+    expense.contra_cuenta_contable_id = "contrapartida"
+    expense.cfdi_report_id = "cfdi"
+    captured = {}
+
+    class ScalarRows:
+        def all(self):
+            return [expense]
+
+    class Result:
+        def scalars(self):
+            return ScalarRows()
+
+    class Session:
+        async def execute(self, statement):
+            captured["statement"] = statement
+            return Result()
+
+    async def preview(_session, _expense):
+        return {"issues": ["Falta cuenta de IVA"]}
+
+    monkeypatch.setattr(cleanup_service, "build_cleanup_preview", preview)
+    rows = await cleanup_service.load_cleanup_expenses(
+        Session(), issue_type="fiscal"
+    )
+
+    where_sql = str(captured["statement"].whereclause)
+    assert rows == [expense]
+    assert "cuenta_contable_id IS NULL" not in where_sql
+    assert "contra_cuenta_contable_id IS NULL" not in where_sql
+    assert "cfdi_report_id IS NULL" not in where_sql
 
 
 def test_cleanup_queue_render_contract_has_month_and_unwrapped_actions(

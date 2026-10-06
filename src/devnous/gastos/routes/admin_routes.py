@@ -25698,6 +25698,7 @@ async def gastos_sin_cuenta_contable(
     document_type: str = Query("all"),
     issue: str = Query("all"),
     focus_expense_id: Optional[str] = Query(None),
+    document_id: Optional[str] = Query(None),
     current_empleado: Empleado = require_admin_finanzas(),
 ) -> str:
     """
@@ -25733,6 +25734,10 @@ async def gastos_sin_cuenta_contable(
         )
     except (TypeError, ValueError):
         focused_expense_id = None
+    try:
+        selected_document_id = UUIDType(str(document_id)) if document_id else None
+    except (TypeError, ValueError):
+        selected_document_id = None
     bi_query_suffix = ""
     if bi_year_safe or bi_scope_safe:
         parts = []
@@ -25754,12 +25759,21 @@ async def gastos_sin_cuenta_contable(
         bi_year=bi_year_safe or None,
         bi_scope=bi_scope_safe or None,
     )
-    bi_conditions.extend(
-        [
-            ExpenseReport.fecha >= period_start,
-            ExpenseReport.fecha < period_end,
-        ]
-    )
+    if selected_document_id:
+        bi_conditions.append(
+            or_(
+                ExpenseReport.documento_id == selected_document_id,
+                ExpenseReport.informe_documento_id == selected_document_id,
+                ExpenseReport.solicitud_documento_id == selected_document_id,
+            )
+        )
+    else:
+        bi_conditions.extend(
+            [
+                ExpenseReport.fecha >= period_start,
+                ExpenseReport.fecha < period_end,
+            ]
+        )
     gastos = await load_cleanup_expenses(
         session,
         extra_conditions=bi_conditions,
@@ -26397,6 +26411,11 @@ async def gastos_sin_cuenta_contable(
         if bi_scope_safe
         else ""
     )
+    document_scope_input = (
+        f'<input type="hidden" name="document_id" value="{selected_document_id}">'
+        if selected_document_id
+        else ""
+    )
     document_type_options = "".join(
         f'<option value="{value}" '
         f'{"selected" if selected_document_type == value else ""}>'
@@ -26913,6 +26932,7 @@ async def gastos_sin_cuenta_contable(
                         </label>
                         {bi_year_input}
                         {bi_scope_input}
+                        {document_scope_input}
                         <button class="button" type="submit">Filtrar</button>
                         <a class="button secondary"
                            href="{escape(cleanup_clear_url, quote=True)}">

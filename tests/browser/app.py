@@ -1806,6 +1806,7 @@ async def journey_accounting_cleanup(request: Request):
         document_type=request.query_params.get("document_type", "all"),
         issue=request.query_params.get("issue", "all"),
         focus_expense_id=request.query_params.get("focus_expense_id"),
+        document_id=request.query_params.get("document_id"),
         current_empleado=PROFILE_FIXTURES["accounting"]["employee"],
     )
     return HTMLResponse(html)
