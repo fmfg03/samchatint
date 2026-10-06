@@ -321,3 +321,33 @@ Reason: human-approved first delivery of registration read-source consolidation;
 La primera entrega de consolidación de inscripción de Copa Telmex añade un catálogo explícito de torneo y edición. Para ediciones configuradas en ese catálogo, el asistente y Dirección consumen una misma proyección del registro operativo PostgreSQL, distinguiendo equipos, jugadores activos y provisionales, revisiones pendientes y disponibilidad de fuente. La captura y el estado activo no acreditan elegibilidad externa. La revisión visual de los 11 expedientes se conserva como evidencia pendiente de admisión canónica; no constituye una importación ni autorización automática. Las ediciones sin configurar conservan su ruta anterior. La activación productiva y la aceptación autenticada deben documentarse por separado.
 
 Evidence: `docs/roadmap/ctt-postgres-registration-first-delivery.md` and its scoped test and review receipts. This is an isolated-worktree candidate; merge, deployment, data application, authenticated UAT, and business acceptance remain separate.
+
+
+### Proposed 2026-10-06 amendment: partial paid-advance comprobaciones
+
+Requires explicit human PR review. Reason: Francisco requests applicant-confirmed
+motives, approver comments, an open original report until zero, and incremental
+accounting without duplicate recognition. This proposal does not establish
+production or business acceptance.
+
+For an open, unapproved, non-AMEX report with an actually paid advance and its
+existing debtor posting, the applicant may explicitly submit the newly captured
+expenses as a child `INFORME`. The original report remains an open case container;
+it must never be approved or exported again in partial mode. Each child owns
+only its explicitly assigned expenses and retains its confirmed applicant motive.
+The authorized approver must read that motive and record comments. Budget-control
+and accounting-readiness gates still apply. Each approved child has its own
+idempotent debtor recognition and one atomic COI policy in its approval month.
+Previously approved expenses cannot be reassigned or mutated; corrections require
+accounting reversal rather than overwriting recognized evidence.
+
+Actual, evidenced advance returns reduce the same collaborator debtor balance.
+Repeated submissions reuse the original result; additional returns require new
+submission identities. The original closes only when all children are approved,
+no active expenses remain unassigned, and the persisted debtor auxiliary is zero.
+Ordinary full reimbursement and company-AMEX immutable-cut rules remain intact.
+
+Evidence: `docs/roadmap/partial-advance-comprobaciones.md`, scoped implementation,
+SQLite-backed workflow/ledger tests and isolated PostgreSQL/WASM migration tests.
+No production migration, deployment, authenticated UAT, or historical mutation
+has been performed.

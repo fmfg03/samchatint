@@ -695,6 +695,10 @@ async def build_documento_telegram_context(
     ctx["proyecto"] = project
     ctx["etapa"] = phase
 
+    if getattr(documento, "informe_origen_id", None):
+        ctx["monto_line"] = _fmt_mxn(documento.monto_total)
+        return ctx
+
     if documento.tipo == "INFORME":
         expenses = await load_informe_active_expenses(session, documento)
         expense_totals = calculate_informe_expense_totals(expenses)
@@ -741,7 +745,19 @@ def format_documento_resumen_es(
     saldo_line = context.get("saldo_line")
     saldo_txt = escape_markdown_light(str(saldo_line)) if saldo_line else None
 
-    if documento.tipo == "SOLICITUD":
+    if getattr(documento, "informe_origen_id", None):
+        reason = escape_markdown_light(
+            (documento.motivo_comprobacion_parcial or "")[:1000]
+        )
+        lines = [
+            *_leading_identity_lines(documento),
+            f"*Comprobación parcial* `{ref}` · *Estado* {estado}",
+            f"*Solicitante* {sol}",
+            f"*Monto de este lote* {escape_markdown_light(str(context.get('monto_line') or '—'))}",
+            f"*Motivo del solicitante* {reason}",
+            "El informe original permanece abierto. Revisa el motivo completo y registra tus comentarios en la pantalla del documento.",
+        ]
+    elif documento.tipo == "SOLICITUD":
         ro = escape_markdown_light(str(context.get("referencia_operaciones") or "—"))
         monto_val = escape_markdown_light(str(context.get("monto_line") or "—"))
         lines = [
@@ -789,12 +805,29 @@ def format_documento_resumen_es(
     lines.append(f"*Aprobado* {_fmt_dt(documento.aprobado_en)}")
     if include_actions_hint:
         lines.append("")
-        lines.append("Usa los botones de abajo o el comando /pendientes.")
+        lines.append(
+            "Usa el enlace para revisar el motivo y registrar comentarios."
+            if getattr(documento, "informe_origen_id", None)
+            else "Usa los botones de abajo o el comando /pendientes."
+        )
     return "\n".join(lines)
 
 
-def approval_inline_keyboard(documento_id: UUID) -> Dict[str, Any]:
+def approval_inline_keyboard(
+    documento_id: UUID, *, partial: bool = False
+) -> Dict[str, Any]:
     sid = str(documento_id)
+    if partial:
+        return {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "Revisar motivo y registrar comentarios",
+                        "url": f"https://sam.chat/documentos/{sid}",
+                    }
+                ]
+            ]
+        }
     return {
         "inline_keyboard": [
             [
@@ -1118,7 +1151,14 @@ async def notify_assigned_approver_new_request(
             chat_id=chat_id,
             documento_id=documento.id,
             recipient_empleado_id=recipient.id,
-            reply_markup=approval_inline_keyboard(documento.id) if chat_id else None,
+            reply_markup=(
+                approval_inline_keyboard(
+                    documento.id,
+                    partial=bool(getattr(documento, "informe_origen_id", None)),
+                )
+                if chat_id
+                else None
+            ),
         )
 
 

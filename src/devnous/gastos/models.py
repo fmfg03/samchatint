@@ -2157,6 +2157,16 @@ class Documento(Base):
         index=True,
     )
 
+    # A partial comprobación is a separately approved/exported INFORME, while
+    # the original cuenta stays open. It never owns a second advance/payment.
+    informe_origen_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("documentos.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    motivo_comprobacion_parcial = Column(Text, nullable=True)
+
     # CFDI capture at solicitud time (canonical UUID; linked to CFDIReport when available)
     cfdi_uuid_manual = Column(Text, nullable=True, index=True)
     cfdi_compartido_confirmado = Column(Boolean, default=False, nullable=False)
@@ -2645,6 +2655,7 @@ class Reembolso(Base):
         nullable=True,
         index=True,
     )
+    client_submission_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     tipo = Column(String(20), nullable=False, default="reembolso")
     monto = Column(Numeric, nullable=False)
     moneda = Column(String(10), nullable=False)
@@ -2833,6 +2844,9 @@ class CuentaDeGastos(Base):
     nombre = Column(
         Text, nullable=True
     )  # Optional display name (Nombre de Cuenta de Gastos)
+    comprobacion_parcial = Column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     estado = Column(Text, nullable=False, default="abierta")  # 'abierta' or 'cerrada'
     created_at = Column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False

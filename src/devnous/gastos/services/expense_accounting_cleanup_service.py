@@ -433,6 +433,19 @@ async def save_expense_cleanup(
     if expense is None:
         raise ValueError("Gasto no encontrado")
 
+    if getattr(expense, "informe_documento_id", None):
+        from ..models import Documento
+
+        owner = await session.get(Documento, expense.informe_documento_id)
+        if (
+            owner is not None
+            and getattr(owner, "informe_origen_id", None)
+            and owner.estado == "aprobado"
+        ):
+            raise ValueError(
+                "La comprobación parcial ya está contabilizada; no puede reclasificarse sin reversión."
+            )
+
     if cuenta_contable_id:
         cuenta = await _load_active_account(
             session, cuenta_contable_id, "Cuenta contable"

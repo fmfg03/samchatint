@@ -3,11 +3,11 @@ Cuenta de Gastos settlement service (saldar cuenta).
 
 Handles direction-aware reimbursements and devoluciones anchored on a CuentaDeGastos:
 - Direction is derived from the live cuenta saldo (not user input).
-- Full settlements only: monto must equal abs(saldo_raw) at submit time.
+- Full settlements match abs(saldo_raw); opted-in paid advances permit partial returns.
 - A comprobante (PDF/JPG/PNG) attachment is required and linked via Adjunto.reembolso_id.
 - Concurrency: SELECT ... FOR UPDATE on the cuenta row serializes writers.
-- Duplicate active rows are prevented by the partial unique index on reembolsos
-  (migration v1.0.24).
+- Partial returns are keyed by submission identity; only one active reimbursement
+  is permitted per cuenta (migration 20261006).
 - The underlying INFORME documento.estado is deliberately NOT mutated here.
 """
 
@@ -228,9 +228,15 @@ async def validate_cuenta_surplus_is_returned(
     result = await session.execute(
         select(CuentaDeGastos).where(CuentaDeGastos.id == cuenta_uuid).with_for_update()
     )
-    if result.scalar_one_or_none() is None:
+    cuenta = result.scalar_one_or_none()
+    if cuenta is None:
         raise CuentaSettlementValidationError(
             "cuenta_not_found", "Informe de gastos no encontrado."
+        )
+    if getattr(cuenta, "comprobacion_parcial", False):
+        raise CuentaSettlementValidationError(
+            "partial_lot_required",
+            "Envía y aprueba cada lote de comprobación; el informe original conserva el saldo pendiente.",
         )
     gastos = await _sum_active_gastos(session, cuenta_uuid)
     entregado = await _sum_requested_solicitudes(session, cuenta_uuid)
@@ -331,9 +337,11 @@ async def register_cuenta_settlement(
     comprobante_filename: Optional[str] = None,
     comprobante_mime: Optional[str] = None,
     saldo_snapshot: Optional[float | str | Decimal] = None,
+    allow_partial: bool = False,
+    client_submission_id: UUID | str | None = None,
 ) -> CuentaSettlementResult:
     """
-    Register a full-settlement reimbursement / devolution on a CuentaDeGastos.
+    Register a settlement with evidence, or an idempotent partial advance return.
 
     Raises CuentaSettlementValidationError / CuentaSettlementPermissionError.
     """
@@ -363,6 +371,51 @@ async def register_cuenta_settlement(
             "La cuenta de gastos no tiene un documento informe vinculado.",
         )
 
+    partial = bool(getattr(cuenta, "comprobacion_parcial", False)) or allow_partial
+    submission_uuid = None
+    if partial:
+        from .partial_advance_service import PartialAdvanceError, validate_partial_case
+
+        try:
+            submission_uuid = _to_uuid(client_submission_id)
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise CuentaSettlementValidationError(
+                "submission_key_required",
+                "Recarga el formulario para registrar la devolución.",
+            ) from exc
+        _check_permission(actor, "devolucion", cuenta)
+        previous = (
+            await session.execute(
+                select(Reembolso).where(
+                    Reembolso.cuenta_gastos_id == cuenta_uuid,
+                    Reembolso.client_submission_id == submission_uuid,
+                )
+            )
+        ).scalar_one_or_none()
+        if previous is not None:
+            if previous.estado == "cancelado":
+                raise CuentaSettlementValidationError(
+                    "cancelled_submission",
+                    "La devolución de este formulario fue cancelada; usa un formulario nuevo.",
+                )
+            gastos = await _sum_active_gastos(session, cuenta_uuid)
+            entregado = await _sum_requested_solicitudes(session, cuenta_uuid)
+            total, _ = await _sum_active_settlements(session, cuenta_uuid)
+            balance = compute_informe_saldo(
+                employee_paid=float(gastos),
+                monto_entregado=float(entregado),
+                settled_amount=float(total),
+            )
+            return CuentaSettlementResult(
+                cuenta, previous, previous.tipo, balance.saldo_gross, balance.saldo
+            )
+        try:
+            await validate_partial_case(session, cuenta, informe_doc)
+        except PartialAdvanceError as exc:
+            raise CuentaSettlementValidationError(
+                "invalid_partial_case", str(exc)
+            ) from exc
+
     total_gastos = await _sum_active_gastos(session, cuenta_uuid)
     total_solicitado = await _sum_requested_solicitudes(session, cuenta_uuid)
     settled_total, active_count = await _sum_active_settlements(session, cuenta_uuid)
@@ -375,13 +428,18 @@ async def register_cuenta_settlement(
     saldo_gross = _quantize_money(saldo_breakdown.saldo_gross)
     saldo_raw = _quantize_money(saldo_breakdown.saldo)
 
-    if active_count > 0:
+    if active_count > 0 and not partial:
         raise CuentaSettlementValidationError(
             "active_settlement_exists",
             "Ya existe una liquidación activa para esta cuenta. Cancélala antes de registrar otra.",
         )
 
     tipo = _derive_tipo_from_saldo_gross(saldo_raw)
+    if partial and tipo != "devolucion":
+        raise CuentaSettlementValidationError(
+            "partial_return_only",
+            "La modalidad parcial solo permite devolver un anticipo pagado.",
+        )
     _check_permission(actor, tipo, cuenta)
     validate_settlement_eligibility(
         informe_estado=informe_doc.estado,
@@ -396,11 +454,11 @@ async def register_cuenta_settlement(
         raise CuentaSettlementValidationError(
             "invalid_monto", "El monto ingresado no es válido."
         ) from exc
-    if monto_decimal <= 0:
+    if not monto_decimal.is_finite() or monto_decimal <= 0:
         raise CuentaSettlementValidationError(
             "invalid_monto", "El monto debe ser mayor a cero."
         )
-    if monto_decimal != expected_abs:
+    if monto_decimal > expected_abs if partial else monto_decimal != expected_abs:
         raise CuentaSettlementValidationError(
             "saldo_changed",
             (
@@ -441,6 +499,7 @@ async def register_cuenta_settlement(
 
     reembolso = Reembolso(
         empleado_id=cuenta.empleado_id,
+        client_submission_id=submission_uuid,
         documento_id=informe_doc.id,
         cuenta_gastos_id=cuenta.id,
         pagador_empleado_id=actor.id,
@@ -464,11 +523,18 @@ async def register_cuenta_settlement(
             "Otra liquidación activa acaba de ser registrada. Refresca la pantalla.",
         ) from exc
 
-    await ensure_debtor_settlement_posting(
+    posting = await ensure_debtor_settlement_posting(
         session,
         reembolso=reembolso,
         cuenta=cuenta,
     )
+    if partial and posting.status != "created" and posting.status != "exists":
+        raise CuentaSettlementValidationError(
+            "accounting_posting_pending",
+            f"Completa la configuración contable antes de registrar la devolución ({posting.reason}).",
+        )
+    if partial:
+        cuenta.comprobacion_parcial = True
 
     comprobante_b64 = base64.b64encode(raw_bytes).decode("ascii")
     await create_adjunto_record(
@@ -486,7 +552,7 @@ async def register_cuenta_settlement(
     await session.refresh(reembolso)
     await session.refresh(cuenta)
 
-    saldo_after = Decimal("0.00")
+    saldo_after = saldo_raw - monto_decimal if partial else Decimal("0.00")
     return CuentaSettlementResult(
         cuenta=cuenta,
         reembolso=reembolso,

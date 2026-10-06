@@ -519,7 +519,43 @@ async def validate_informe_surplus_before_submission(
     session: AsyncSession, documento: Documento
 ) -> None:
     """Apply the same surplus invariant to closing, sending, and approval."""
-    if documento.tipo != "INFORME" or documento.cuenta_gastos_id is None:
+    if documento.tipo != "INFORME":
+        return
+    if getattr(documento, "informe_origen_id", None):
+        origin = await session.get(Documento, documento.informe_origen_id)
+        cuenta = (
+            await session.get(CuentaDeGastos, origin.cuenta_gastos_id)
+            if origin
+            else None
+        )
+        if (
+            cuenta is None
+            or not cuenta.comprobacion_parcial
+            or cuenta.estado != "abierta"
+        ):
+            raise DocumentoWorkflowValidationError(
+                "invalid_partial_case",
+                "El informe original no está abierto para comprobación parcial.",
+            )
+        from .cuenta_settlement_service import (
+            _sum_active_gastos,
+            _sum_requested_solicitudes,
+            sum_active_advance_returns,
+        )
+
+        if await _sum_active_gastos(
+            session, cuenta.id
+        ) + await sum_active_advance_returns(
+            session, cuenta.id
+        ) > await _sum_requested_solicitudes(
+            session, cuenta.id
+        ):
+            raise DocumentoWorkflowValidationError(
+                "partial_advance_exceeded",
+                "Los gastos y devoluciones superan el anticipo pagado.",
+            )
+        return
+    if documento.cuenta_gastos_id is None:
         return
     try:
         await validate_cuenta_surplus_is_returned(session, documento.cuenta_gastos_id)
@@ -551,7 +587,13 @@ async def _reopen_informe_de_gastos_on_reject(
     in the Aprobacion history. No-op for SOLICITUD or documents without a linked
     cuenta.
     """
-    if documento.tipo != "INFORME" or documento.cuenta_gastos_id is None:
+    if documento.tipo != "INFORME":
+        return
+    if getattr(documento, "informe_origen_id", None):
+        documento.estado = "borrador"
+        documento.enviado_en = None
+        return
+    if documento.cuenta_gastos_id is None:
         return
     cuenta = await session.get(CuentaDeGastos, documento.cuenta_gastos_id)
     if cuenta is not None and cuenta.estado == "cerrada":
@@ -594,6 +636,17 @@ async def transition_documento_workflow(
     now = utc_now()
     comentario_normalizado = (comentario or "").strip() or None
     auto_aprobacion: Optional[Aprobacion] = None
+    if getattr(documento, "informe_origen_id", None):
+        if not (documento.motivo_comprobacion_parcial or "").strip():
+            raise DocumentoWorkflowValidationError(
+                "partial_reason_required",
+                "Falta el motivo confirmado por el solicitante.",
+            )
+        if normalized_action == "approve" and not comentario_normalizado:
+            raise DocumentoWorkflowValidationError(
+                "partial_approval_comment_required",
+                "Registra tus comentarios sobre la comprobación parcial y el motivo del solicitante.",
+            )
 
     financial_reason = await documento_financial_terminal_reason(session, documento)
     if financial_reason is not None:

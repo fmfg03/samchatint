@@ -986,6 +986,10 @@ async def ensure_debtor_comprobacion_posting_for_informe(
     informe_documento: Documento,
 ) -> DebtorPostingResult:
     cuenta_gastos_id = getattr(informe_documento, "cuenta_gastos_id", None)
+    origin_id = getattr(informe_documento, "informe_origen_id", None)
+    if origin_id:
+        origin = await session.get(Documento, origin_id)
+        cuenta_gastos_id = getattr(origin, "cuenta_gastos_id", None)
     if cuenta_gastos_id is None or informe_documento.tipo != "INFORME":
         return DebtorPostingResult(status="skipped", reason="not_informe_cuenta")
     numero_poliza = _event_poliza_number("DEU-COMP", informe_documento.id)
@@ -993,7 +997,9 @@ async def ensure_debtor_comprobacion_posting_for_informe(
         session,
         origen="deudores_comprobacion",
         numero_poliza=numero_poliza,
-        legacy_numero_poliza=f"DEU-COMP-{str(cuenta_gastos_id)[:8]}",
+        legacy_numero_poliza=(
+            None if origin_id else f"DEU-COMP-{str(cuenta_gastos_id)[:8]}"
+        ),
     )
     if existing is not None:
         return DebtorPostingResult(status="exists", poliza=existing)
@@ -1014,7 +1020,11 @@ async def ensure_debtor_comprobacion_posting_for_informe(
             selectinload(ExpenseReport.cfdi_report),
         )
         .where(
-            ExpenseReport.cuenta_gastos_id == cuenta_gastos_id,
+            (
+                ExpenseReport.informe_documento_id == informe_documento.id
+                if origin_id
+                else ExpenseReport.cuenta_gastos_id == cuenta_gastos_id
+            ),
             ExpenseReport.estado_gasto != "cancelado",
             employee_paid_sql_condition(),
         )
@@ -1023,6 +1033,10 @@ async def ensure_debtor_comprobacion_posting_for_informe(
     expenses = list(result.scalars().all())
     if not expenses:
         return DebtorPostingResult(status="skipped", reason="no_employee_paid_expenses")
+    if origin_id:
+        informe_documento.monto_total = sum(
+            (_money(e.gasto_cantidad) for e in expenses), Decimal("0.00")
+        )
 
     lines: list[dict[str, Any]] = []
     total_credit = Decimal("0.00")
@@ -1240,7 +1254,11 @@ async def build_cuenta_debtor_auxiliary(
     if debtor is None:
         status = "sin_subcuenta"
     elif lines and abs(saldo) >= 0.01:
-        status = "diferencia_contable"
+        status = (
+            "pendiente_comprobar"
+            if getattr(cuenta, "comprobacion_parcial", False) and saldo > 0
+            else "diferencia_contable"
+        )
     return {
         "cuenta": cuenta,
         "empleado": empleado,
