@@ -169,6 +169,7 @@ from ..services.budget_concept_account_service import (
     apply_budget_concept_cuenta_mapping,
 )
 from ..services.expense_accounting_service import build_expense_accounting_preview
+from ..services.expense_accounting_cleanup_service import cleanup_issues_match_filter
 from ..services.payment_run_exporter import _safe_cell_text as _safe_spreadsheet_cell_text
 from ..services.employee_debtor_accounting_service import (
     build_cuenta_debtor_auxiliary,
@@ -4608,15 +4609,72 @@ def _coi_exportable_matches_search(
         effective_document_beneficiary_name(documento, fallback=""),
     ]
     for expense in expenses:
+        cfdi = getattr(expense, "cfdi_report", None)
+        employee = getattr(expense, "empleado", None)
         haystack.extend(
             [
                 expense.numero_referencia or "",
                 expense.concepto or "",
                 expense.proyecto or "",
                 str(expense.id),
+                getattr(expense, "cfdi_uuid_manual", None) or "",
+                getattr(expense, "numero_factura", None) or "",
+                getattr(employee, "nombre", None) or "",
+                getattr(cfdi, "cfdi_uuid", None) or "",
+                getattr(cfdi, "emisor_nombre", None) or "",
+                getattr(cfdi, "emisor_rfc", None) or "",
             ]
         )
     return any(token in _normalize_filter_value(value) for value in haystack)
+
+
+def _normalize_coi_document_type(value: Any) -> str:
+    normalized = str(value or "all").strip().lower()
+    return normalized if normalized in {"all", "informe", "solicitud"} else "all"
+
+
+def _normalize_coi_preparation(value: Any) -> str:
+    normalized = str(value or "all").strip().lower()
+    return normalized if normalized in {"all", "ready", "blocked"} else "all"
+
+
+def _coi_cleanup_actionable_issues(issues: Iterable[Any]) -> List[str]:
+    issue_types = ("main_account", "counterpart", "cfdi", "fiscal")
+    return [
+        str(issue)
+        for issue in issues
+        if any(
+            cleanup_issues_match_filter([issue], issue_type)
+            for issue_type in issue_types
+        )
+    ]
+
+
+def _filter_coi_exportable_lote_rows(
+    rows: List[dict[str, Any]],
+    *,
+    document_type: str = "all",
+    preparation: str = "all",
+) -> List[dict[str, Any]]:
+    selected_document_type = _normalize_coi_document_type(document_type)
+    selected_preparation = _normalize_coi_preparation(preparation)
+    filtered: List[dict[str, Any]] = []
+    for row in rows:
+        row_document_type = (
+            "informe" if row.get("tipo_lote") == "INFORME" else "solicitud"
+        )
+        if (
+            selected_document_type != "all"
+            and row_document_type != selected_document_type
+        ):
+            continue
+        can_export = bool(row.get("can_export"))
+        if selected_preparation == "ready" and not can_export:
+            continue
+        if selected_preparation == "blocked" and can_export:
+            continue
+        filtered.append(row)
+    return filtered
 
 
 async def _load_initial_amex_cut(
@@ -4639,6 +4697,8 @@ async def _build_coi_exportable_lote_rows(
     start_date: date,
     end_date: date,
     search_q: str = "",
+    document_type: str = "all",
+    preparation: str = "all",
 ) -> List[dict[str, Any]]:
     """Document policy rows for COI, with INFORME eligibility evaluated atomically."""
     documento_batches = (
@@ -4669,16 +4729,16 @@ async def _build_coi_exportable_lote_rows(
             if not expenses:
                 continue
             if tipo_lote != "INFORME":
-                ready_expenses = []
-                for expense in expenses:
-                    ready, _ = await assess_expense_coi_cleanup_ready(session, expense)
-                    if ready:
-                        ready_expenses.append(expense)
                 if not _coi_exportable_matches_search(
-                    documento=documento, expenses=ready_expenses, search_q=search_q
+                    documento=documento, expenses=expenses, search_q=search_q
                 ):
                     continue
-                for expense in ready_expenses:
+                for expense in expenses:
+                    ready, issues = await assess_expense_coi_cleanup_ready(
+                        session, expense
+                    )
+                    cleanup_issues = _coi_cleanup_actionable_issues(issues or [])
+                    reference = expense.numero_referencia or str(expense.id)[:8]
                     rows.append(
                         {
                             "tipo_lote": tipo_lote,
@@ -4687,12 +4747,31 @@ async def _build_coi_exportable_lote_rows(
                             "period_label": _coi_lote_documento_period_label(
                                 documento, tipo_lote
                             ),
-                            "can_export": True,
-                            "block_reason": "",
+                            "can_export": ready,
+                            "block_reason": (
+                                ""
+                                if ready
+                                else (
+                                    f"{reference}: "
+                                    f"{'; '.join(issues) or 'preparación COI incompleta'}"
+                                )
+                            ),
+                            "cleanup_blockers": (
+                                [
+                                    {
+                                        "expense_id": expense.id,
+                                        "expense_reference": reference,
+                                        "issues": cleanup_issues,
+                                    }
+                                ]
+                                if cleanup_issues
+                                else []
+                            ),
                         }
                     )
                 continue
             period_label = _coi_lote_documento_period_label(documento, tipo_lote)
+            cleanup_blockers: List[dict[str, Any]] = []
             if any(is_company_amex_expense(expense) for expense in expenses):
                 cut = await _load_initial_amex_cut(session, documento.id)
                 if cut is None:
@@ -4712,8 +4791,20 @@ async def _build_coi_exportable_lote_rows(
                     ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
                     if not ready:
                         reference = expense.numero_referencia or str(expense.id)[:8]
+                        issue_detail = (
+                            "; ".join(issues) or "preparación COI incompleta"
+                        )
+                        cleanup_issues = _coi_cleanup_actionable_issues(issues or [])
+                        if cleanup_issues:
+                            cleanup_blockers.append(
+                                {
+                                    "expense_id": expense.id,
+                                    "expense_reference": reference,
+                                    "issues": cleanup_issues,
+                                }
+                            )
                         block_reasons.append(
-                            f"{reference}: {'; '.join(issues) or 'preparación COI incompleta'}"
+                            f"{reference}: {issue_detail}"
                         )
             if not _coi_exportable_matches_search(
                 documento=documento,
@@ -4729,8 +4820,14 @@ async def _build_coi_exportable_lote_rows(
                     "period_label": period_label,
                     "can_export": not block_reasons,
                     "block_reason": "; ".join(block_reasons),
+                    "cleanup_blockers": cleanup_blockers,
                 }
             )
+    rows = _filter_coi_exportable_lote_rows(
+        rows,
+        document_type=document_type,
+        preparation=preparation,
+    )
     actor_ids = {
         actor_id
         for row in rows
@@ -4878,13 +4975,18 @@ def _render_coi_exportable_lote_rows_html(
     *,
     return_to: str = "/admin/contabilidad/coi",
     readable_workpaper_account_ids: Optional[set[str]] = None,
+    accounting_period: str = "",
+    empty_message: Optional[str] = None,
 ) -> str:
     if not rows:
-        return (
-            '<tr><td colspan="11" class="muted">'
-            "No hay gastos con preparación COI guardada (Listo COI) para este periodo."
-            "</td></tr>"
+        message = escape(
+            empty_message
+            or (
+                "No hay gastos con preparación COI guardada (Listo COI) "
+                "para este periodo."
+            )
         )
+        return f'<tr><td colspan="11" class="muted">{message}</td></tr>'
 
     rendered: List[str] = []
     for row in rows:
@@ -4948,11 +5050,36 @@ def _render_coi_exportable_lote_rows_html(
                 f' <a href="/admin/contabilidad/amex/informes/{documento_id}">'
                 "Revisar partidas y cortes AMEX</a>"
             )
+        cleanup_action = ""
+        cleanup_blockers = [
+            blocker
+            for blocker in (row.get("cleanup_blockers") or [])
+            if blocker.get("expense_id") and blocker.get("issues")
+        ]
+        if not is_amex_report and cleanup_blockers and accounting_period:
+            focus_expense_id = str(cleanup_blockers[0]["expense_id"])
+            cleanup_query = urlencode(
+                {
+                    "period": accounting_period,
+                    "document_type": "informe" if is_report else "solicitud",
+                    "q": str(documento.numero_referencia or ""),
+                    "focus_expense_id": focus_expense_id,
+                    "document_id": documento_id,
+                }
+            )
+            cleanup_action = (
+                ' <a class="button secondary" '
+                'style="padding:8px 12px;font-size:12px;" '
+                f'href="/admin/gastos/sin-cuenta-contable?'
+                f'{escape(cleanup_query, quote=True)}'
+                f'#row-{focus_expense_id}">Atender en Limpieza contable</a>'
+            )
         action = (
             coi_action
             if row.get("can_export")
             else (
                 f'<span class="muted">Bloqueada: {block_reason}</span>'
+                + cleanup_action
                 + (
                     f' <a href="/admin/contabilidad/amex/informes/{documento_id}">Revisar AMEX</a>'
                     if is_amex_report
@@ -5098,7 +5225,10 @@ async def exportar_coi_gastos_lote_xlsx(
     current_empleado: Empleado = require_admin_finanzas(),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
+    tipo: str = Form("all"),
     q: str = Form(""),
+    document_type: str = Form("all"),
+    preparation: str = Form("all"),
     selected_documento_id: Optional[List[UUIDType]] = Form(None),
     confirmed_selection_count: Optional[int] = Form(None),
     selected_gasto_id: Optional[List[UUIDType]] = Form(None),
@@ -5106,6 +5236,12 @@ async def exportar_coi_gastos_lote_xlsx(
     now = datetime.utcnow()
     selected_year = year or now.year
     selected_month = month or now.month
+    selected_tipo = (str(tipo or "all").strip() or "all")
+    if selected_tipo not in {"all", "Eg", "Ig", "Di"}:
+        selected_tipo = "all"
+    selected_q = " ".join(str(q or "").strip().split())[:200]
+    selected_document_type = _normalize_coi_document_type(document_type)
+    selected_preparation = _normalize_coi_preparation(preparation)
     start_dt, end_dt, start_date, end_date = _coi_lote_period_bounds(
         selected_year,
         selected_month,
@@ -5117,12 +5253,24 @@ async def exportar_coi_gastos_lote_xlsx(
         end_dt=end_dt,
         start_date=start_date,
         end_date=end_date,
-        search_q=(q or "").strip(),
+        search_q=selected_q,
+        document_type=selected_document_type,
+        preparation=selected_preparation,
     )
 
-    redirect_params = f"year={selected_year}&month={selected_month}"
-    if (q or "").strip():
-        redirect_params += "&q=" + quote((q or "").strip())
+    redirect_values: dict[str, Any] = {
+        "year": selected_year,
+        "month": selected_month,
+    }
+    if selected_tipo != "all":
+        redirect_values["tipo"] = selected_tipo
+    if selected_q:
+        redirect_values["q"] = selected_q
+    if selected_document_type != "all":
+        redirect_values["document_type"] = selected_document_type
+    if selected_preparation != "all":
+        redirect_values["preparation"] = selected_preparation
+    redirect_params = urlencode(redirect_values)
     selected_ids_list = [
         ("INFORME", str(item)) for item in (selected_documento_id or [])
     ]
@@ -5197,7 +5345,7 @@ async def exportar_coi_gastos_lote_xlsx(
     if exported_count == 0:
         return RedirectResponse(
             url=(
-                f"/admin/contabilidad/coi?year={selected_year}&month={selected_month}"
+                f"/admin/contabilidad/coi?{redirect_params}"
                 "&error_msg="
                 + quote(
                     "Se encontraron gastos en el periodo, pero ninguno pudo generarse a COI."
@@ -5257,7 +5405,9 @@ async def contabilidad_coi_view(
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
     tipo: str = Query("all"),
-    q: str = Query(""),
+    q: str = Query("", max_length=200),
+    document_type: str = Query("all"),
+    preparation: str = Query("all"),
 ) -> str:
     success_msg = request.query_params.get("success_msg", "")
     error_msg = request.query_params.get("error_msg", "")
@@ -5265,7 +5415,9 @@ async def contabilidad_coi_view(
     selected_year = year or now.year
     selected_month = month or now.month
     selected_tipo = (tipo or "all").strip()
-    selected_q = (q or "").strip()
+    selected_q = " ".join(str(q or "").strip().split())[:200]
+    selected_document_type = _normalize_coi_document_type(document_type)
+    selected_preparation = _normalize_coi_preparation(preparation)
 
     start_dt, end_dt, start_date, end_date = _coi_lote_period_bounds(
         selected_year,
@@ -5279,6 +5431,8 @@ async def contabilidad_coi_view(
         start_date=start_date,
         end_date=end_date,
         search_q=selected_q,
+        document_type=selected_document_type,
+        preparation=selected_preparation,
     )
     workpaper_account_ids = await _coi_readable_workpaper_account_ids(
         session, exportable_rows, current_empleado
@@ -5297,12 +5451,25 @@ async def contabilidad_coi_view(
             "month": selected_month,
             "tipo": selected_tipo,
             "q": selected_q,
+            "document_type": selected_document_type,
+            "preparation": selected_preparation,
         }
     )
     exportable_rows_html = _render_coi_exportable_lote_rows_html(
         exportable_rows,
         return_to=return_to,
         readable_workpaper_account_ids=workpaper_account_ids,
+        accounting_period=f"{selected_year}-{selected_month:02d}",
+        empty_message=(
+            "No hay informes o solicitudes que coincidan con los filtros de "
+            "preparación COI."
+            if (
+                selected_q
+                or selected_document_type != "all"
+                or selected_preparation != "all"
+            )
+            else None
+        ),
     )
 
     conditions = []
@@ -5364,6 +5531,24 @@ async def contabilidad_coi_view(
     tipo_options = "".join(
         f'<option value="{escape(value)}" {_selected_attr(selected_tipo, value)}>{escape(label)}</option>'
         for value, label in (("all", "Todos"), ("Eg", "Egresos"), ("Ig", "Ingresos"), ("Di", "Diario"))
+    )
+    document_type_options = "".join(
+        f'<option value="{value}" '
+        f'{_selected_attr(selected_document_type, value)}>{label}</option>'
+        for value, label in (
+            ("all", "Informes y solicitudes"),
+            ("informe", "Informes"),
+            ("solicitud", "Solicitudes"),
+        )
+    )
+    preparation_options = "".join(
+        f'<option value="{value}" '
+        f'{_selected_attr(selected_preparation, value)}>{label}</option>'
+        for value, label in (
+            ("all", "Listas y bloqueadas"),
+            ("ready", "Listas para exportar"),
+            ("blocked", "Bloqueadas"),
+        )
     )
     summary_rows = "".join(
         f"""
@@ -5456,6 +5641,14 @@ async def contabilidad_coi_view(
             <div><label>Mes</label><input type="number" min="1" max="12" name="month" value="{selected_month}"></div>
             <div><label>Tipo póliza</label><select name="tipo">{tipo_options}</select></div>
             <div><label>Búsqueda</label><input type="text" name="q" value="{_html_value(selected_q)}" placeholder="Número, beneficiario, UUID, concepto"></div>
+            <div>
+                <label>Origen de revisión/exportación</label>
+                <select name="document_type">{document_type_options}</select>
+            </div>
+            <div>
+                <label>Preparación</label>
+                <select name="preparation">{preparation_options}</select>
+            </div>
             <div style="display:flex;align-items:end;gap:8px;"><button type="submit" class="button">Filtrar</button><a href="/admin/contabilidad/coi" class="button secondary">Limpiar</a></div>
         </form>
         <div class="summary">
@@ -5471,7 +5664,12 @@ async def contabilidad_coi_view(
             <form id="coi-export-form" method="POST" action="/admin/contabilidad/coi/exportar-gastos-lote.xlsx" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <input type="hidden" name="year" value="{selected_year}">
                 <input type="hidden" name="month" value="{selected_month}">
+                <input type="hidden" name="tipo" value="{_html_value(selected_tipo)}">
                 <input type="hidden" name="q" value="{_html_value(selected_q)}">
+                <input type="hidden" name="document_type"
+                       value="{_html_value(selected_document_type)}">
+                <input type="hidden" name="preparation"
+                       value="{_html_value(selected_preparation)}">
                 <input type="hidden" id="coi-confirmed-selection-count" name="confirmed_selection_count" value="0">
                 <span id="coi-selected-count" class="muted" aria-live="polite">0 seleccionadas</span>
                 <button id="coi-export-selected" type="submit" class="button" disabled>Exportar seleccionadas</button>

@@ -152,8 +152,21 @@ def test_coi_exportable_rows_include_selection_and_status_controls():
     assert "Exportación: No registrado" in html
 
 
+def test_coi_exportable_rows_use_filtered_empty_state():
+    html = user_routes._render_coi_exportable_lote_rows_html(
+        [],
+        empty_message=(
+            "No hay informes o solicitudes que coincidan con los filtros de "
+            "preparación COI."
+        ),
+    )
+
+    assert "coincidan con los filtros" in html
+    assert "Listo COI" not in html
+
+
 def test_coi_blocked_report_has_no_selectable_partial_policy():
-    documento_id = uuid4()
+    documento_id, expense_id = uuid4(), uuid4()
     html = user_routes._render_coi_exportable_lote_rows_html(
         [
             {
@@ -163,16 +176,138 @@ def test_coi_blocked_report_has_no_selectable_partial_policy():
                     numero_referencia="I-123456",
                     estado="aprobado",
                 ),
-                "expenses": [],
+                "expenses": [
+                    SimpleNamespace(
+                        id=expense_id,
+                        numero_referencia="O-1",
+                        concepto="Hospedaje",
+                        gasto_cantidad=100,
+                        fecha=datetime(2026, 8, 20),
+                    )
+                ],
                 "period_label": "2026-08-20",
                 "can_export": False,
                 "block_reason": "O-1: falta cuenta contable",
+                "cleanup_blockers": [
+                    {
+                        "expense_id": expense_id,
+                        "expense_reference": "O-1",
+                        "issues": ["Falta cuenta de cargo"],
+                    }
+                ],
             }
-        ]
+        ],
+        accounting_period="2026-08",
     )
+    readable = unescape(html)
 
     assert 'name="selected_documento_id"' not in html
     assert "Bloqueada: O-1: falta cuenta contable" in html
+    assert "Atender en Limpieza contable" in html
+    assert (
+        "/admin/gastos/sin-cuenta-contable?period=2026-08"
+        "&document_type=informe&q=I-123456"
+        f"&focus_expense_id={expense_id}&document_id={documento_id}"
+        f"#row-{expense_id}"
+    ) in readable
+
+
+def test_coi_blocked_report_without_cleanup_issue_has_no_misleading_action():
+    html = user_routes._render_coi_exportable_lote_rows_html(
+        [
+            {
+                "tipo_lote": "INFORME",
+                "documento": SimpleNamespace(
+                    id=uuid4(),
+                    numero_referencia="I-SIN-FECHA",
+                    estado="aprobado",
+                ),
+                "expenses": [],
+                "period_label": "-",
+                "can_export": False,
+                "block_reason": "Falta fecha de aprobación",
+                "cleanup_blockers": [],
+            }
+        ],
+        accounting_period="2026-08",
+    )
+
+    assert "Bloqueada: Falta fecha de aprobación" in html
+    assert "Atender en Limpieza contable" not in html
+
+
+def test_coi_queue_filters_use_canonical_batch_type_and_readiness():
+    rows = [
+        {"tipo_lote": "INFORME", "can_export": True, "key": "informe-ready"},
+        {"tipo_lote": "INFORME", "can_export": False, "key": "informe-blocked"},
+        {
+            "tipo_lote": "SOLICITUD_TERCEROS",
+            "can_export": True,
+            "key": "solicitud-ready",
+        },
+    ]
+
+    assert [
+        row["key"]
+        for row in user_routes._filter_coi_exportable_lote_rows(
+            rows, document_type="informe", preparation="blocked"
+        )
+    ] == ["informe-blocked"]
+    assert [
+        row["key"]
+        for row in user_routes._filter_coi_exportable_lote_rows(
+            rows, document_type="solicitud", preparation="ready"
+        )
+    ] == ["solicitud-ready"]
+    assert user_routes._filter_coi_exportable_lote_rows(
+        rows, document_type="invalid", preparation="invalid"
+    ) == rows
+    assert [
+        row["key"]
+        for row in user_routes._filter_coi_exportable_lote_rows(
+            rows, preparation="ready"
+        )
+    ] == ["informe-ready", "solicitud-ready"]
+
+
+def test_coi_cleanup_action_excludes_beneficiary_account_blockers():
+    assert user_routes._coi_cleanup_actionable_issues(
+        [
+            "Falta cuenta de cargo",
+            "Falta subcuenta contable de detalle para el beneficiario del Informe",
+        ]
+    ) == ["Falta cuenta de cargo"]
+    assert not user_routes._coi_cleanup_actionable_issues(
+        ["Falta subcuenta contable de detalle para el beneficiario del Informe"]
+    )
+
+
+def test_coi_queue_search_matches_expense_responsible():
+    assert user_routes._coi_exportable_matches_search(
+        documento=SimpleNamespace(
+            id=uuid4(),
+            numero_referencia="I-26000012",
+            estado="aprobado",
+            beneficiario_empleado=None,
+            beneficiario_proveedor_cliente=None,
+            proveedor_cliente=None,
+            cuenta_gastos=None,
+            empleado=None,
+        ),
+        expenses=[
+            SimpleNamespace(
+                id=uuid4(),
+                numero_referencia="O-26000001",
+                concepto="Viáticos",
+                proyecto="Copa Telmex",
+                cfdi_uuid_manual=None,
+                numero_factura=None,
+                cfdi_report=None,
+                empleado=SimpleNamespace(nombre="Ana Pérez"),
+            )
+        ],
+        search_q="ana perez",
+    )
 
 
 @pytest.mark.asyncio
@@ -232,13 +367,16 @@ async def test_blocked_amex_report_links_only_readable_review_workpaper(
         ),
     )
     html = user_routes._render_coi_exportable_lote_rows_html(
-        rows, readable_workpaper_account_ids=allowed_ids
+        rows,
+        readable_workpaper_account_ids=allowed_ids,
+        accounting_period="2026-08",
     )
 
     assert "Bloqueada: Falta corte AMEX" in html
     assert (f'/informes-de-gastos/{cuenta_id}/papel-poliza.xlsx' in html) is can_download
     assert ("Descargar papel de revisión" in html) is can_download
     assert 'name="selected_documento_id"' not in html
+    assert "Atender en Limpieza contable" not in html
 
 
 def test_coi_status_form_keeps_month_filters_and_expense_anchor():
@@ -341,6 +479,9 @@ def test_coi_view_separates_preparation_export_and_history_tasks():
     )
     assert "2. Revisar y exportar gastos listos" in view_source
     assert "3. Historial e imports" in view_source
+    assert 'name="document_type"' in view_source
+    assert 'name="preparation"' in view_source
+    assert "cleanup_blockers" in source
 
 
 def test_coi_lote_preserves_standalone_expense_date_filters():
@@ -1184,7 +1325,7 @@ async def test_standalone_policies_remain_independently_selectable(
 
     async def ready(session, expense):
         ok = expense is expenses[0] or other_ready
-        return ok, [] if ok else ["Falta cuenta"]
+        return ok, [] if ok else ["Falta cuenta de cargo"]
 
     monkeypatch.setattr(user_routes, "_load_coi_lote_informe_documentos", informes)
     monkeypatch.setattr(user_routes, "_load_coi_lote_terceros_documentos", terceros)
@@ -1197,13 +1338,16 @@ async def test_standalone_policies_remain_independently_selectable(
         start_date=datetime(2026, 9, 1).date(),
         end_date=datetime(2026, 10, 1).date(),
     )
-    assert len(rows) == (2 if other_ready else 1)
+    assert len(rows) == 2
     assert rows[0]["expenses"] == [expenses[0]]
-    assert all(row["can_export"] for row in rows)
-    html = user_routes._render_coi_exportable_lote_rows_html(rows)
+    assert [row["can_export"] for row in rows] == [True, other_ready]
+    html = user_routes._render_coi_exportable_lote_rows_html(
+        rows, accounting_period="2026-09"
+    )
     assert f'name="selected_gasto_id" value="{expenses[0].id}"' in html
     assert f"/gastos/{expenses[0].id}/exportar-coi.xlsx" in html
     assert 'name="selected_documento_id"' not in html
+    assert ("Atender en Limpieza contable" in html) is (not other_ready)
     collected = []
     commits = []
 
