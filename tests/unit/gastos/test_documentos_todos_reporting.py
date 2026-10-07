@@ -1349,7 +1349,9 @@ def test_saldar_form_uses_devolucion_sobrantes_copy():
     assert 'name="monto"' in saldar_form
     assert 'name="saldo_snapshot"' in saldar_form
     assert "No se permiten pagos parciales" not in saldar_form
-    assert "no se permiten pagos parciales" in saldar_form
+    assert "Puedes devolver una parte" in saldar_form
+    assert 'name="allow_partial"' in saldar_form
+    assert "El reembolso liquida el saldo completo" in saldar_form
 
 
 def test_saldar_submit_reports_devolucion_sobrantes_success():

@@ -695,7 +695,7 @@ async def build_documento_telegram_context(
     ctx["proyecto"] = project
     ctx["etapa"] = phase
 
-    if getattr(documento, "informe_origen_id", None):
+    if isinstance(getattr(documento, "informe_origen_id", None), UUID):
         ctx["monto_line"] = _fmt_mxn(documento.monto_total)
         return ctx
 
@@ -745,7 +745,7 @@ def format_documento_resumen_es(
     saldo_line = context.get("saldo_line")
     saldo_txt = escape_markdown_light(str(saldo_line)) if saldo_line else None
 
-    if getattr(documento, "informe_origen_id", None):
+    if isinstance(getattr(documento, "informe_origen_id", None), UUID):
         reason = escape_markdown_light(
             (documento.motivo_comprobacion_parcial or "")[:1000]
         )
@@ -807,7 +807,7 @@ def format_documento_resumen_es(
         lines.append("")
         lines.append(
             "Usa el enlace para revisar el motivo y registrar comentarios."
-            if getattr(documento, "informe_origen_id", None)
+            if isinstance(getattr(documento, "informe_origen_id", None), UUID)
             else "Usa los botones de abajo o el comando /pendientes."
         )
     return "\n".join(lines)
@@ -1154,7 +1154,9 @@ async def notify_assigned_approver_new_request(
             reply_markup=(
                 approval_inline_keyboard(
                     documento.id,
-                    partial=bool(getattr(documento, "informe_origen_id", None)),
+                    partial=bool(
+                        isinstance(getattr(documento, "informe_origen_id", None), UUID)
+                    ),
                 )
                 if chat_id
                 else None
