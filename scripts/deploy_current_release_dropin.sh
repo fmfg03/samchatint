@@ -27,6 +27,7 @@ unit_dir="${SAMCHAT_SYSTEMD_DROPIN_DIR:-/etc/systemd/system/samchat-gastos.servi
 archive_root="${SAMCHAT_DROPIN_ARCHIVE_ROOT:-/srv/samchat/release-cleanup-audit}"
 canonical="$unit_dir/50-current-release.conf"
 batch_staging_root="${CTT_BATCH_STAGING_ROOT:-/srv/samchat/data/private/ctt_batch_uploads}"
+private_data_root="/srv/samchat/data/private"
 
 case "$release" in
   /srv/samchat/releases/gastos-prod-*) ;;
@@ -36,13 +37,20 @@ case "$release" in
     ;;
 esac
 
-case "$batch_staging_root" in
-  /srv/samchat/data/private/*) ;;
+private_data_root_real="$(realpath -m -- "$private_data_root")"
+batch_staging_root_real="$(realpath -m -- "$batch_staging_root")"
+case "$batch_staging_root_real" in
+  "$private_data_root_real"/*) ;;
   *)
     echo "Refusing unsafe batch staging path: $batch_staging_root" >&2
     exit 70
     ;;
 esac
+if [[ -L "$batch_staging_root" ]]; then
+  echo "Refusing symlink batch staging path: $batch_staging_root" >&2
+  exit 70
+fi
+batch_staging_root="$batch_staging_root_real"
 
 if [[ ! -f "$release/copa_telmex_dashboard.py" ]]; then
   echo "Release does not look like SamChat gastos runtime: $release" >&2
@@ -125,6 +133,10 @@ ensure_copa_telmex_bundle
 "$venv/bin/python" "$release/scripts/ci/check-accepted-regressions.py" --root "$release"
 
 mkdir -p "$unit_dir" "$archive_root" "$batch_staging_root"
+if [[ "$(realpath -- "$batch_staging_root")" != "$batch_staging_root" ]]; then
+  echo "Refusing non-canonical batch staging path: $batch_staging_root" >&2
+  exit 70
+fi
 chmod 700 "$batch_staging_root"
 archive="$archive_root/dropins-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$archive"

@@ -4355,6 +4355,12 @@ async def startup_event():
             logger.warning("⚠️ Schema health still has gaps: %s", health_report)
 
         ensure_batch_staging_root(_batch_staging_root())
+        purged_uploads = await _purge_expired_batch_uploads()
+        if purged_uploads:
+            logger.info(
+                "Purged %s expired registration batch upload(s) on startup",
+                purged_uploads,
+            )
 
         async with async_session_maker() as session:
             copa_db = CopaTelmexDB(session)
@@ -5212,6 +5218,26 @@ async def _batch_upload_for_actor(
             "La carga temporal no existe o pertenece a otra sesión.",
             status_code=404,
         )
+    if (
+        upload.expires_at <= datetime.utcnow()
+        and upload.status not in {"admitted", "cancelled"}
+    ):
+        try:
+            purge_staged_batch_upload(_batch_staging_root(), upload.id)
+        except (BatchUploadStorageError, OSError):
+            upload.status = "expired"
+            logger.warning(
+                "Could not purge accessed expired staged batch upload %s",
+                upload.id,
+            )
+        else:
+            await session.delete(upload)
+        await session.commit()
+        raise _review_error(
+            "batch_upload_expired",
+            "La carga temporal venció. Inicia una carga nueva.",
+            status_code=410,
+        )
     return upload
 
 
@@ -5270,17 +5296,37 @@ async def _purge_expired_batch_uploads() -> int:
             .scalars()
             .all()
         )
+        purged_count = 0
         for upload in rows:
             try:
                 purge_staged_batch_upload(_batch_staging_root(), upload.id)
             except (BatchUploadStorageError, OSError):
+                upload.status = "expired"
                 logger.warning(
                     "Could not purge expired staged batch upload %s", upload.id
                 )
+                continue
             await session.delete(upload)
+            purged_count += 1
         if rows:
             await session.commit()
-        return len(rows)
+        return purged_count
+
+
+def _expected_batch_upload_files(manifest: Dict[str, Any]) -> Dict[str, str]:
+    """Return one immutable digest per source filename."""
+    expected_files: Dict[str, str] = {}
+    for document in manifest["documents"]:
+        filename = document["pdf"]
+        digest = document["pdf_sha256"]
+        previous = expected_files.get(filename)
+        if previous is not None and previous != digest:
+            raise _review_error(
+                "source_file_hash_conflict",
+                "Un mismo PDF aparece con hashes distintos en el manifiesto.",
+            )
+        expected_files[filename] = digest
+    return expected_files
 
 
 @app.post("/api/registration-review/batch-uploads", response_class=JSONResponse)
@@ -5346,9 +5392,7 @@ async def create_registration_batch_upload(request: Request):
             )
             .scalar_one_or_none()
         )
-        expected_files = {
-            item["pdf"]: item["pdf_sha256"] for item in manifest["documents"]
-        }
+        expected_files = _expected_batch_upload_files(manifest)
         if upload is None:
             upload = RegistrationBatchUpload(
                 id=upload_id,
@@ -5494,7 +5538,7 @@ async def admit_next_registration_batch_document(upload_id: UUID, request: Reque
     async with async_session_maker() as lock_session:
         locked = bool(
             await lock_session.scalar(
-                text("SELECT pg_try_advisory_lock(:lock_key)"),
+                text("SELECT pg_try_advisory_xact_lock(:lock_key)"),
                 {"lock_key": advisory_key},
             )
         )
@@ -5507,7 +5551,7 @@ async def admit_next_registration_batch_document(upload_id: UUID, request: Reque
         readers: Dict[str, StagedUploadFile] = {}
         try:
             upload = await _batch_upload_for_actor(
-                lock_session, upload_id=upload_id, actor_id=actor_id
+                lock_session, upload_id=upload_id, actor_id=actor_id, lock=True
             )
             if any(item.status != "uploaded" for item in upload.files):
                 raise _review_error(
@@ -5524,14 +5568,46 @@ async def admit_next_registration_batch_document(upload_id: UUID, request: Reque
                         "batch_manifest_mismatch",
                         "El manifiesto temporal no coincide con la carga.",
                     )
-                for item in upload.files:
+                admitted_document_ids = set(
+                    (
+                        await lock_session.execute(
+                            select(RegistrationBatchDocument.document_id).where(
+                                RegistrationBatchDocument.tournament_edition_id
+                                == upload.tournament_edition_id,
+                                RegistrationBatchDocument.document_id.in_(
+                                    document["document_id"]
+                                    for document in manifest["documents"]
+                                ),
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                next_document = next(
+                    (
+                        document
+                        for document in manifest["documents"]
+                        if document["document_id"] not in admitted_document_ids
+                    ),
+                    None,
+                )
+                required_filenames = (
+                    {next_document["pdf"]} if next_document is not None else set()
+                )
+                required_files = [
+                    item
+                    for item in upload.files
+                    if item.source_filename in required_filenames
+                ]
+                for item in required_files:
                     path = staged_pdf_path(
                         _batch_staging_root(), upload_id, item.expected_sha256
                     )
                     readers[item.source_filename] = StagedUploadFile(
                         path, item.source_filename
                     )
-                for item in upload.files:
+                for item in required_files:
                     if (
                         await _batch_pdf_digest(readers[item.source_filename])
                         != item.expected_sha256
@@ -5592,10 +5668,6 @@ async def admit_next_registration_batch_document(upload_id: UUID, request: Reque
         finally:
             for reader in readers.values():
                 await reader.close()
-            await lock_session.execute(
-                text("SELECT pg_advisory_unlock(:lock_key)"),
-                {"lock_key": advisory_key},
-            )
 
 
 @app.delete(

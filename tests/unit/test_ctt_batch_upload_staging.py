@@ -94,6 +94,7 @@ class _Session:
         self.deleted = []
         self.commits = 0
         self.execute_calls = 0
+        self.executed = []
 
     async def __aenter__(self):
         return self
@@ -101,11 +102,13 @@ class _Session:
     async def __aexit__(self, *_args):
         return None
 
-    async def execute(self, *_args, **_kwargs):
+    async def execute(self, *args, **kwargs):
         self.execute_calls += 1
+        self.executed.append((args, kwargs))
         return self.results.pop(0) if self.results else _Result()
 
-    async def scalar(self, *_args, **_kwargs):
+    async def scalar(self, *args, **kwargs):
+        self.executed.append((args, kwargs))
         return self.scalar_values.pop(0)
 
     def add(self, value):
@@ -316,6 +319,8 @@ def test_batch_ui_handles_api_errors_inside_form_and_exposes_progress():
     assert 'event.preventDefault()' in template
     assert "payload?.detail?.message" in template
     assert "admit-next" in template
+    assert "if (!activeUploadId || cancelling) return;" in template
+    assert "if (!activeUploadId || busy) return;" not in template
     assert "JSON.stringify" not in template
     assert 'action="/api/registration-review/batches"' not in template
 
@@ -334,6 +339,30 @@ def test_staged_upload_migration_and_rollback_are_guarded():
     assert "GRANT SELECT, INSERT, UPDATE, DELETE" in migration
     assert "Staged batch upload data exists" in rollback
     assert rollback.index("RAISE EXCEPTION") < rollback.index("DROP TABLE")
+
+
+def test_deploy_script_canonicalizes_private_staging_path():
+    script = (
+        Path(__file__).parents[2] / "scripts/deploy_current_release_dropin.sh"
+    ).read_text(encoding="utf-8")
+    assert 'realpath -m -- "$batch_staging_root"' in script
+    assert 'if [[ -L "$batch_staging_root" ]]' in script
+    assert '"$private_data_root_real"/*' in script
+
+
+def test_repeated_source_filename_requires_one_digest():
+    manifest = {
+        "documents": [
+            {"pdf": "source.pdf", "pdf_sha256": "a" * 64},
+            {"pdf": "source.pdf", "pdf_sha256": "b" * 64},
+        ]
+    }
+
+    with pytest.raises(dashboard.HTTPException) as exc_info:
+        dashboard._expected_batch_upload_files(manifest)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail["error"] == "source_file_hash_conflict"
 
 
 def _allow_operator(monkeypatch):
@@ -465,6 +494,51 @@ async def test_batch_upload_actor_lookup_and_expiry_cleanup(monkeypatch, tmp_pat
     assert cleanup_session.commits == 1
 
 
+@pytest.mark.asyncio
+async def test_expired_upload_is_rejected_and_removed_on_access(monkeypatch, tmp_path):
+    upload = _upload_envelope("b" * 64)
+    upload.expires_at = datetime.utcnow() - timedelta(seconds=1)
+    session = _Session(results=[_Result(scalar=upload)])
+    purged = []
+    monkeypatch.setattr(dashboard, "_batch_staging_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        dashboard,
+        "purge_staged_batch_upload",
+        lambda _root, upload_id: purged.append(upload_id),
+    )
+
+    with pytest.raises(dashboard.HTTPException) as exc_info:
+        await dashboard._batch_upload_for_actor(
+            session, upload_id=upload.id, actor_id="operator-1"
+        )
+
+    assert exc_info.value.status_code == 410
+    assert purged == [upload.id]
+    assert session.deleted == [upload]
+    assert session.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_expiry_cleanup_keeps_retry_metadata_when_purge_fails(
+    monkeypatch, tmp_path
+):
+    upload = _upload_envelope("b" * 64)
+    upload.expires_at = datetime.utcnow() - timedelta(seconds=1)
+    session = _Session(results=[_Result(rows=[upload])])
+    monkeypatch.setattr(dashboard, "async_session_maker", _SessionFactory(session))
+    monkeypatch.setattr(dashboard, "_batch_staging_root", lambda: tmp_path)
+
+    def fail_purge(*_args):
+        raise OSError("temporary filesystem failure")
+
+    monkeypatch.setattr(dashboard, "purge_staged_batch_upload", fail_purge)
+
+    assert await dashboard._purge_expired_batch_uploads() == 0
+    assert upload.status == "expired"
+    assert session.deleted == []
+    assert session.commits == 1
+
+
 class _Reader:
     def __init__(self, _path, filename, payload):
         self.filename = filename
@@ -542,6 +616,70 @@ async def test_admit_next_completes_and_purges_staging(monkeypatch, tmp_path):
     assert readers[0].closed is True
     assert lock_session.commits == 1
     assert cleanup_session.commits == 1
+    executed_sql = [str(args[0]) for args, _kwargs in lock_session.executed if args]
+    assert any("pg_try_advisory_xact_lock" in sql for sql in executed_sql)
+    assert not any("pg_advisory_unlock" in sql for sql in executed_sql)
+
+
+@pytest.mark.asyncio
+async def test_admit_next_hashes_only_the_next_document_source(monkeypatch, tmp_path):
+    first_payload = b"%PDF-1.7\nfirst"
+    second_payload = b"%PDF-1.7\nsecond"
+    first_digest = hashlib.sha256(first_payload).hexdigest()
+    second_digest = hashlib.sha256(second_payload).hexdigest()
+    manifest = _manifest(first_digest)
+    second_document = dict(manifest["documents"][0])
+    second_document["document_id"] = "b" * 64
+    second_document["pdf"] = "second.pdf"
+    second_document["pdf_sha256"] = second_digest
+    manifest["documents"].append(second_document)
+    upload = _upload_envelope(first_digest, status="uploaded")
+    upload.document_count = 2
+    upload.file_count = 2
+    upload.manifest_sha256 = manifest["manifest_sha256"]
+    upload.files.append(
+        dashboard.RegistrationBatchUploadFile(
+            id=uuid4(),
+            source_filename="second.pdf",
+            expected_sha256=second_digest,
+            status="uploaded",
+        )
+    )
+    lock_session = _Session(
+        results=[_Result(rows=[manifest["documents"][0]["document_id"]])],
+        scalar_values=[True, 1],
+    )
+    readers = []
+    _allow_operator(monkeypatch)
+    monkeypatch.setattr(
+        dashboard, "async_session_maker", _SessionFactory(lock_session)
+    )
+    monkeypatch.setattr(dashboard, "_batch_upload_for_actor", _async_value(upload))
+    monkeypatch.setattr(dashboard, "_batch_staging_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        dashboard, "load_staged_batch_manifest", lambda *_args: manifest
+    )
+
+    def reader_factory(path, filename):
+        payload = second_payload if filename == "second.pdf" else first_payload
+        reader = _Reader(path, filename, payload)
+        readers.append(reader)
+        return reader
+
+    monkeypatch.setattr(dashboard, "StagedUploadFile", reader_factory)
+    monkeypatch.setattr(
+        dashboard,
+        "_admit_validated_registration_review_batch",
+        _async_value({"batch_id": str(uuid4())}),
+    )
+
+    response = await dashboard.admit_next_registration_batch_document(
+        upload.id, _Request()
+    )
+
+    assert json.loads(response.body)["status"] == "ready"
+    assert [reader.filename for reader in readers] == ["second.pdf"]
+    assert readers[0].closed is True
 
 
 @pytest.mark.asyncio

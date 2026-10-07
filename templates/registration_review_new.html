@@ -83,6 +83,8 @@
     const progressText = document.getElementById("batch-progress-text");
     let activeUploadId = null;
     let busy = false;
+    let cancelling = false;
+    let cancelRequested = false;
 
     function showError(message) {
         errorBox.textContent = message || "No fue posible completar la operación.";
@@ -106,7 +108,7 @@
         submitButton.disabled = value;
         manifestInput.disabled = value;
         filesInput.disabled = value;
-        cancelButton.disabled = value;
+        cancelButton.disabled = !activeUploadId || cancelling;
     }
 
     async function responseMessage(response) {
@@ -209,6 +211,7 @@
             showError("Selecciona los PDF indicados por el manifiesto.");
             return;
         }
+        cancelRequested = false;
         setBusy(true);
         try {
             const expectedNames = await expectedPdfNames(manifestFile);
@@ -223,6 +226,7 @@
             let state = await checkedJson(initResponse, "No pude iniciar la carga del lote.");
             activeUploadId = state.upload_id;
             cancelButton.hidden = false;
+            cancelButton.disabled = false;
             const uploadedNames = new Set(
                 (state.files || [])
                     .filter(item => item.status === "uploaded" || item.status === "purged")
@@ -235,7 +239,9 @@
             const totalBytes = selectedFiles.reduce((total, file) => total + file.size, 0);
             let completedBytes = completedInitialBytes;
             for (const file of pendingFiles) {
+                if (cancelRequested) return;
                 state = await uploadOneFile(activeUploadId, file, completedBytes, totalBytes);
+                if (cancelRequested) return;
                 completedBytes += file.size;
                 showProgress(
                     `Archivos ${state.uploaded_files}/${state.expected_files}`,
@@ -246,6 +252,7 @@
             let admitted = Number(state.admitted_documents || 0);
             const expectedDocuments = Number(state.expected_documents || 0);
             while (admitted < expectedDocuments) {
+                if (cancelRequested) return;
                 showProgress(
                     `Admitiendo expediente ${admitted + 1} de ${expectedDocuments}`,
                     expectedDocuments ? (admitted / expectedDocuments) * 100 : 0,
@@ -256,6 +263,7 @@
                     { method: "POST" }
                 );
                 state = await checkedJson(response, "No pude avanzar la admisión del lote.");
+                if (cancelRequested) return;
                 admitted = Number(state.admitted_documents || 0);
             }
             showProgress(
@@ -273,9 +281,11 @@
     });
 
     cancelButton.addEventListener("click", async () => {
-        if (!activeUploadId || busy) return;
+        if (!activeUploadId || cancelling) return;
         clearError();
-        setBusy(true);
+        cancelRequested = true;
+        cancelling = true;
+        cancelButton.disabled = true;
         try {
             const response = await fetch(
                 `/api/registration-review/batch-uploads/${activeUploadId}`,
@@ -286,9 +296,11 @@
             cancelButton.hidden = true;
             showProgress("Carga cancelada", 0, "Los archivos temporales fueron eliminados.");
         } catch (error) {
+            cancelRequested = false;
             showError(error?.message || "No fue posible cancelar la carga.");
         } finally {
-            setBusy(false);
+            cancelling = false;
+            setBusy(busy);
         }
     });
 })();
