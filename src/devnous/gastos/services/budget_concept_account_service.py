@@ -11,7 +11,13 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models import BudgetConcept, CuentaContable, Documento, ExpenseReport
+from ..models import (
+    BudgetConcept,
+    CuentaContable,
+    CuentaDeGastos,
+    Documento,
+    ExpenseReport,
+)
 from samchat.budgets.service import validate_active_cuenta_contable_id
 
 logger = logging.getLogger(__name__)
@@ -212,7 +218,47 @@ def cleanup_expense_loader_options() -> list:
             BudgetConcept.cuenta_contable
         )
     )
-    return [doc_budget, informe_budget, solicitud_budget, expense_budget]
+    options = [doc_budget, informe_budget, solicitud_budget, expense_budget]
+    for relation in (
+        ExpenseReport.documento,
+        ExpenseReport.informe_documento,
+        ExpenseReport.solicitud_documento,
+    ):
+        options.extend(
+            [
+                selectinload(relation).selectinload(
+                    Documento.beneficiario_empleado
+                ),
+                selectinload(relation).selectinload(
+                    Documento.beneficiario_proveedor_cliente
+                ),
+                selectinload(relation).selectinload(Documento.proveedor_cliente),
+                selectinload(relation).selectinload(Documento.empleado),
+                selectinload(relation)
+                .selectinload(Documento.cuenta_gastos)
+                .selectinload(CuentaDeGastos.beneficiario_empleado),
+                selectinload(relation)
+                .selectinload(Documento.cuenta_gastos)
+                .selectinload(CuentaDeGastos.beneficiario_proveedor_cliente),
+                selectinload(relation)
+                .selectinload(Documento.cuenta_gastos)
+                .selectinload(CuentaDeGastos.empleado),
+            ]
+        )
+    options.extend(
+        [
+            selectinload(ExpenseReport.cuenta_gastos).selectinload(
+                CuentaDeGastos.beneficiario_empleado
+            ),
+            selectinload(ExpenseReport.cuenta_gastos).selectinload(
+                CuentaDeGastos.beneficiario_proveedor_cliente
+            ),
+            selectinload(ExpenseReport.cuenta_gastos).selectinload(
+                CuentaDeGastos.empleado
+            ),
+        ]
+    )
+    return options
 
 
 __all__ = [

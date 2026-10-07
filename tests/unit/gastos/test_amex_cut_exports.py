@@ -19,6 +19,9 @@ from devnous.gastos.services.coi_poliza_exporter import (
     generate_coi_poliza_xlsx,
     generate_coi_poliza_zip,
 )
+from devnous.gastos.services.expense_coi_export_service import (
+    group_expense_cfdis_for_document,
+)
 
 
 def frozen_cut(adjustment=False):
@@ -85,8 +88,48 @@ def frozen_cut(adjustment=False):
             partidas=items,
             lines=copy.deepcopy([r for item in items for r in item["journal_lines"]]),
             informe_reference="I-1",
+            coi_metadata={
+                "document_id": "informe-frozen",
+                "operation_reference": "OP-FROZEN",
+                "party_name": "Beneficiaria congelada",
+                "context_description": "Torneo congelado",
+            },
         ),
     )
+
+
+def test_document_metadata_does_not_replace_frozen_amex_identity():
+    cut = frozen_cut(adjustment=True)
+    items = cut_expense_cfdis(cut)
+    original_identity = (
+        items[0].poliza_group_key,
+        items[0].poliza_reference,
+        items[0].poliza_description,
+    )
+    live_document = SimpleNamespace(
+        id=cut.informe_id,
+        tipo="INFORME",
+        numero_referencia="I-LIVE",
+        referencia_operaciones="OP-LIVE",
+        proveedor_cliente=None,
+        beneficiario_empleado=SimpleNamespace(nombre="Beneficiaria viva"),
+        beneficiario_proveedor_cliente=None,
+        empleado=None,
+        torneo=SimpleNamespace(name="Torneo vivo"),
+        proyecto_otro=None,
+        cuenta_gastos=None,
+    )
+
+    group_expense_cfdis_for_document(items, live_document)
+
+    assert (
+        items[0].poliza_group_key,
+        items[0].poliza_reference,
+        items[0].poliza_description,
+    ) == original_identity
+    assert items[0].poliza_operation_reference == "OP-FROZEN"
+    assert items[0].poliza_party_name == "Beneficiaria congelada"
+    assert items[0].poliza_context_description == "Torneo congelado"
 
 
 def assert_rows(rows, cut):
