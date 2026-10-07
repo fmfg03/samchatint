@@ -83,7 +83,9 @@ def _staff(value: Any) -> list[dict[str, Any]]:
         item = value[slot - 1]
         if not isinstance(item, Mapping):
             raise BatchAdmissionError("TECHNICAL_STAFF_INVALID")
-        if int(item.get("slot") or 0) != slot or item.get("role") != role:
+        if type(item.get("slot")) is not int or item["slot"] != slot:
+            raise BatchAdmissionError("TECHNICAL_STAFF_SCOPE_MISMATCH")
+        if item.get("role") != role:
             raise BatchAdmissionError("TECHNICAL_STAFF_SCOPE_MISMATCH")
         stable_id = str(item.get("staff_entry_id") or "")
         if not _SHA256.fullmatch(stable_id):

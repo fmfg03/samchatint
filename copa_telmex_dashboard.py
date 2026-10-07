@@ -738,6 +738,36 @@ def _render_pdf_review_asset_pages(
         return stored_assets
 
 
+def _batch_player_page_map(document: Dict[str, Any]) -> Dict[str, int]:
+    """Translate physical manifest pages to sequential stored-asset indices."""
+    source_pages = document.get("pages") or []
+    asset_index_by_source_page = {
+        source_page: asset_index
+        for asset_index, source_page in enumerate(source_pages, 1)
+    }
+    player_page_map: Dict[str, int] = {}
+    players = (document.get("extraction") or {}).get("players") or []
+    for player_slot, player in enumerate(players, 1):
+        slot_ref = (
+            str(player.get("slot_ref") or "") if isinstance(player, dict) else ""
+        )
+        parts = slot_ref.split(":", 2)
+        try:
+            source_page = int(parts[1])
+        except (IndexError, ValueError) as exc:
+            raise _review_error(
+                "player_source_page_missing",
+                "Un jugador no declara una página fuente válida.",
+            ) from exc
+        if parts[0] != "page" or source_page not in asset_index_by_source_page:
+            raise _review_error(
+                "player_source_page_mismatch",
+                "La página fuente de un jugador no pertenece al expediente.",
+            )
+        player_page_map[str(player_slot)] = asset_index_by_source_page[source_page]
+    return player_page_map
+
+
 def _dedupe_review_items(items: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     seen = set()
     deduped: List[Dict[str, Any]] = []
@@ -1285,6 +1315,15 @@ def _ensure_batch_reprocess_staff_preserved(
         raise _review_error(
             "batch_staff_evidence_immutable",
             "El reproceso no puede eliminar ni cambiar el cuerpo técnico admitido.",
+            status_code=409,
+        )
+
+
+def _ensure_batch_reprocess_supported(*, batch_binding_exists: bool) -> None:
+    if batch_binding_exists:
+        raise _review_error(
+            "batch_reprocess_not_supported",
+            "El reproceso OCR no está habilitado para expedientes admitidos por lote.",
             status_code=409,
         )
 
@@ -5005,6 +5044,7 @@ async def admit_registration_review_batch(request: Request):
                     },
                     layout_regions={
                         "source_pages": document["pages"],
+                        "player_page_map": _batch_player_page_map(document),
                         "staff_evidence": [
                             {
                                 "staff_entry_id": item["staff_entry_id"],
@@ -5856,6 +5896,16 @@ async def reprocess_registration_review_session(session_id: str, request: Reques
                     status_code=303,
                 )
             existing_run_id = existing_run.id
+        batch_binding_result = await session.execute(
+            select(RegistrationBatchDocument.id).where(
+                RegistrationBatchDocument.review_session_id == session_uuid
+            )
+        )
+        _ensure_batch_reprocess_supported(
+            batch_binding_exists=(
+                batch_binding_result.scalar_one_or_none() is not None
+            )
+        )
         asset_payloads = [
             {
                 "page_index": asset.page_index,

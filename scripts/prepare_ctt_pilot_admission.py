@@ -62,7 +62,7 @@ def prepare(reconciliation: dict, pdf_root: Path) -> dict:
             raise ValueError("Source PDF hash mismatch")
         reference = item["visual_reference"]
         people = list(reference.get("people") or [])
-        if len(people) < 2:
+        if len(people) != 2:
             raise ValueError("Technical staff evidence missing")
         extraction = dict(reference.get("source_reviewed_extraction_candidate") or {})
         extraction["staff"] = [_staff(people[0], 1), _staff(people[1], 2)]

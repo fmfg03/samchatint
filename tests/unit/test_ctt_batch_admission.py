@@ -1,5 +1,6 @@
 import copy
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -263,6 +264,14 @@ def test_manifest_fails_closed(mutate, code):
         )
 
 
+@pytest.mark.parametrize("invalid_slot", ["1", 1.5, True])
+def test_manifest_rejects_non_integer_staff_slots(invalid_slot):
+    value = manifest()
+    value["documents"][0]["extraction"]["staff"][0]["slot"] = invalid_slot
+    with pytest.raises(BatchAdmissionError, match="TECHNICAL_STAFF_SCOPE_MISMATCH"):
+        validate_manifest(value)
+
+
 def test_declared_payload_hash_cannot_hide_changed_personal_evidence():
     value = manifest()
     value["documents"][0]["payload_sha256"] = sha256_value(
@@ -312,6 +321,38 @@ def test_script_does_not_offer_database_or_apply_flags():
     ).read_text()
     assert "--apply" not in source
     assert "DATABASE_URL" not in source
+
+
+def test_manifest_preparer_rejects_extra_technical_staff(tmp_path):
+    script = Path(__file__).parents[2] / "scripts/prepare_ctt_pilot_admission.py"
+    spec = importlib.util.spec_from_file_location("prepare_ctt_pilot", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    pdf = tmp_path / "source.pdf"
+    pdf.write_bytes(b"reviewed source")
+    people = [
+        {"role": "director_tecnico"},
+        {"role": "auxiliar"},
+        {"role": "auxiliar"},
+    ]
+    reconciliation = {
+        "documents": [
+            {
+                "document_id": "a" * 64,
+                "source": {
+                    "pdf": pdf.name,
+                    "pdf_sha256": hashlib.sha256(pdf.read_bytes()).hexdigest(),
+                    "pages": [1],
+                },
+                "visual_reference": {
+                    "people": people,
+                    "source_reviewed_extraction_candidate": {},
+                },
+            }
+        ]
+    }
+    with pytest.raises(ValueError, match="Technical staff evidence missing"):
+        module.prepare(reconciliation, tmp_path)
 
 
 def test_batch_tables_require_owner_migration_instead_of_runtime_create_all():
@@ -370,6 +411,35 @@ def test_batch_bound_reprocess_rejects_staff_removal():
         )
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail["error"] == "batch_staff_evidence_immutable"
+
+
+def test_batch_bound_reprocess_is_rejected_before_ocr_processing():
+    with pytest.raises(HTTPException) as exc_info:
+        dashboard._ensure_batch_reprocess_supported(batch_binding_exists=True)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["error"] == "batch_reprocess_not_supported"
+
+    route = Path(dashboard.__file__).read_text().split(
+        "async def reprocess_registration_review_session", 1
+    )[1]
+    assert route.index("_ensure_batch_reprocess_supported") < route.index(
+        "_process_review_assets"
+    )
+
+
+def test_batch_player_page_map_translates_physical_pages_to_asset_indices():
+    document = manifest()["documents"][0]
+    document["pages"] = [3, 7]
+    document["extraction"]["players"] = [
+        {"slot_ref": "page:3:jugador_1"},
+        {"slot_ref": "page:7:jugador_2"},
+    ]
+    assert dashboard._batch_player_page_map(document) == {"1": 1, "2": 2}
+
+    document["extraction"]["players"][1]["slot_ref"] = "page:8:jugador_2"
+    with pytest.raises(HTTPException) as exc_info:
+        dashboard._batch_player_page_map(document)
+    assert exc_info.value.detail["error"] == "player_source_page_mismatch"
 
 
 def test_new_review_session_can_prepare_its_first_batch_draft():
@@ -452,8 +522,9 @@ async def test_batch_endpoint_admits_draft_then_recovers_exact_retry(
             )
         )
 
-    async def upsert(_session, _review_session, extraction, *_args, **_kwargs):
+    async def upsert(_session, _review_session, extraction, *_args, **kwargs):
         assert extraction["staff"][1]["role"] == "auxiliar"
+        assert kwargs["layout_regions"]["player_page_map"] == {}
         return SimpleNamespace(id=uuid4(), content_hash="sha256:" + "9" * 64)
 
     monkeypatch.setattr(
