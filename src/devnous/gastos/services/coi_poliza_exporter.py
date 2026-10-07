@@ -602,9 +602,7 @@ def generate_coi_poliza_xlsx(
     ws.title = "Poliza COI"
     groups = group_coi_policies(expenses)
     policy_header_rows = [row for row in rows if row[0] == "Eg"]
-    if len(policy_header_rows) != len(groups):
-        raise RuntimeError("Las cabeceras COI no coinciden con las pólizas agrupadas.")
-    for row, group in zip(policy_header_rows, groups):
+    for row, group in zip(policy_header_rows, groups, strict=True):
         row[2] = _safe_cell_text(_coi_policy_xlsx_description(group))
     for row in rows:
         ws.append(row[:COI_COLUMNS])

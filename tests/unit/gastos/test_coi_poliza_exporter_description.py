@@ -329,6 +329,27 @@ def test_mixed_document_xlsx_enriches_each_policy_description_independently():
     ]
 
 
+def test_group_with_conflicting_document_metadata_is_marked_for_review():
+    expenses = [
+        _expense(
+            poliza_group_key="informe:1",
+            poliza_description="Informe de Gastos I-26000001",
+            poliza_document_id=document_id,
+            poliza_operation_reference=operation_reference,
+        )
+        for document_id, operation_reference in (
+            ("documento-1", "104"),
+            ("documento-2", "105"),
+        )
+    ]
+
+    sheet = _coi_sheet(expenses)
+
+    assert sheet["C3"].value == (
+        "Múltiples documentos / Informe de Gastos I-26000001"
+    )
+
+
 def test_metadata_free_policy_keeps_its_existing_description():
     document_expense = _expense(
         poliza_document_id="documento-1",
