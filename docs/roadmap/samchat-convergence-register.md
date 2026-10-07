@@ -22,9 +22,9 @@ canon edits silently.
 
 | Protected source path | SHA-256 at Line 0 baseline |
 | --- | --- |
-| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `c4f10d03273c3a808c236a33c4102cd4aebcbeab82c56db18a5ec1ad0afd0e7e` |
+| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `0e40aecfc98be3196aa8a96dc1f1f2bbc8a5bb4239602b2600655a6b15d40a56` |
 | `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `2c55cc807c464d5462bca3e9d092fcefe6f5f2f66f4498231d72a7b57d795985` |
-| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `9e3cba3aeca7776d1be6e6a8705d90044c05be5642a7e862e5e79457de033d57` |
+| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `d17b7151c54f59e7aa4f091f7aa26734255466952212d72fdeb73605803ab2b2` |
 
 | Canon amendment date | Affected sources | Reason and evidence | Evidence state |
 | --- | --- | --- | --- |
@@ -74,3 +74,15 @@ exception and independent documentary source coverage. Other profiles, explicit
 denials and all write authority remain unchanged. Evidence and limitations:
 `docs/evidence/direction-report-redesign/README.md`. Updated hashes above describe
 the proposed draft, not deployment or accepted UAT. Sweep canon unchanged.
+
+## Proposed 2026-10-06 amendment — requires human PR review
+
+Francisco requested ordered partial paid-advance approvals with a confirmed
+applicant motive, approver comments, an open report until zero, and idempotent
+incremental accounting. Product and engineering canons propose explicit child
+`INFORME` ownership while preserving atomic export per child and the AMEX cut.
+Evidence and release limitations: `docs/roadmap/partial-advance-comprobaciones.md`.
+The refreshed hashes describe a proposed draft; human canon review, production
+migration, deployment and authenticated Finance UAT remain pending.
+Canon unchanged for the sweep: it is the historical installation inventory;
+this work makes no new production-observation claim.

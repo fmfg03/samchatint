@@ -44,6 +44,7 @@ def informe_expense_link_condition(
         and_(
             Documento.cuenta_gastos_id.isnot(None),
             expense_model.cuenta_gastos_id == Documento.cuenta_gastos_id,
+            expense_model.informe_documento_id.is_(None),
         ),
     )
 

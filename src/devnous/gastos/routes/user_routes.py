@@ -268,6 +268,11 @@ from ..services.documento_semantics import (
     is_employee_reimbursement,
     reimbursement_concept_from_cuenta,
 )
+from ..services.partial_advance_service import (
+    PartialAdvanceError,
+    finalize_partial_advance,
+    submit_partial_advance_lot,
+)
 from ..services.cuenta_settlement_service import (
     PREAPPROVAL_INFORME_STATES,
     CuentaSettlementPermissionError,
@@ -1449,7 +1454,12 @@ async def _derive_informe_monto_total(
         ExpenseReport.informe_documento_id == documento.id,
     ]
     if documento.cuenta_gastos_id:
-        expense_conditions.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
+        expense_conditions.append(
+            and_(
+                ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id,
+                ExpenseReport.informe_documento_id.is_(None),
+            )
+        )
 
     expenses_result = await session.execute(
         select(ExpenseReport).where(
@@ -4527,7 +4537,10 @@ async def _load_documento_active_coi_expenses(
         ]
         if documento.cuenta_gastos_id:
             expense_conditions.append(
-                ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id
+                and_(
+                    ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id,
+                    ExpenseReport.informe_documento_id.is_(None),
+                )
             )
         expenses_result = await session.execute(
             select(ExpenseReport)
@@ -10791,6 +10804,17 @@ def _can_mutate_cuenta_de_gastos(cuenta: CuentaDeGastos, empleado: Empleado) -> 
 async def _ensure_can_mutate_informe_expense(
     session: AsyncSession, expense: ExpenseReport, empleado: Empleado
 ) -> None:
+    if getattr(expense, "informe_documento_id", None):
+        owner = await session.get(Documento, expense.informe_documento_id)
+        if (
+            owner is not None
+            and getattr(owner, "informe_origen_id", None)
+            and owner.estado == "aprobado"
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="El gasto pertenece a una comprobación parcial aprobada; requiere una reversión contable, no edición.",
+            )
     if not expense.cuenta_gastos_id or not _has_read_only_cross_account_informe_access(empleado):
         return
     cuenta = await session.get(CuentaDeGastos, expense.cuenta_gastos_id)
@@ -11952,12 +11976,14 @@ def _render_debtor_auxiliary_section(
         "pendiente": "Pendiente",
         "sin_subcuenta": "Sin subcuenta de empleado",
         "diferencia_contable": "Diferencia contable",
+        "pendiente_comprobar": "Pendiente de comprobar",
     }
     status_colors = {
         "saldado": ("#dcfce7", "#166534"),
         "pendiente": ("#fef3c7", "#92400e"),
         "sin_subcuenta": ("#fee2e2", "#991b1b"),
         "diferencia_contable": ("#fee2e2", "#991b1b"),
+        "pendiente_comprobar": ("#fef3c7", "#92400e"),
     }
     bg, fg = status_colors.get(status, ("#f1f5f9", "#334155"))
     lines = list(aux.get("lines") or [])
@@ -28821,6 +28847,8 @@ async def editar_gasto(
     if not is_owner and not is_finance_admin:
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
+    await _ensure_can_mutate_informe_expense(session, expense, current_empleado)
+
     # Check if cancelled - always blocked
     if expense.estado_gasto == 'cancelado':
         return RedirectResponse(
@@ -29573,6 +29601,7 @@ async def eliminar_comprobante_no_deducible(
     )
     if not is_owner and not is_finance_admin:
         raise HTTPException(status_code=403, detail="Acceso denegado")
+    await _ensure_can_mutate_informe_expense(session, expense, current_empleado)
     documento = await session.get(Documento, expense.documento_id) if expense.documento_id else None
     is_locked = bool(
         (documento and documento.estado != "borrador")
@@ -34865,7 +34894,12 @@ async def _build_documento_coi_bundle(
             ExpenseReport.informe_documento_id == documento_id,
         ]
         if documento.cuenta_gastos_id:
-            expense_conditions.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
+            expense_conditions.append(
+                and_(
+                    ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id,
+                    ExpenseReport.informe_documento_id.is_(None),
+                )
+            )
         expenses_result = await session.execute(
             select(ExpenseReport)
             .options(selectinload(ExpenseReport.cuenta_contable))
@@ -35873,7 +35907,12 @@ async def exportar_informe_gastos(
             ExpenseReport.informe_documento_id == documento_id,
         ]
         if documento.cuenta_gastos_id:
-            expense_conditions.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
+            expense_conditions.append(
+                and_(
+                    ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id,
+                    ExpenseReport.informe_documento_id.is_(None),
+                )
+            )
         expenses_result = await session.execute(
             select(ExpenseReport)
             .where(
@@ -39590,7 +39629,8 @@ async def ver_documento(
                 {f'<div class="meta-card"><span>Aprobado</span><strong>{format_value(documento.aprobado_en)}</strong><small>Momento de aprobación.</small></div>' if documento.aprobado_en else ''}
                 {f'<div class="meta-card"><span>Pagado</span><strong>{format_value(documento.pagado_en)}</strong><small>Momento de pago.</small></div>' if documento.pagado_en else ''}
             </div>
-            {f'<div class="notice info" style="margin-top:16px;"><strong>Notas:</strong> {documento.notas}</div>' if documento.notas else ''}
+            {f'<div class="notice info" style="margin-top:16px;"><strong>Motivo del solicitante para comprobar parcialmente:</strong> {escape(documento.motivo_comprobacion_parcial)}</div>' if documento.informe_origen_id else ''}
+            {f'<div class="notice info" style="margin-top:16px;"><strong>Notas:</strong> {escape(documento.notas)}</div>' if documento.notas else ''}
         </section>
     """
 
@@ -40170,9 +40210,10 @@ async def ver_documento(
                         <summary class="button primary">Aprobar</summary>
                         <form method="POST" action="/documentos/{documento_id}/aprobar" class="form-section" style="margin-top: 10px;">
                             {f'<input type="hidden" name="next" value="{return_url}">' if return_url else ''}
+                            {f'<div class="notice info"><strong>Motivo del solicitante:</strong> {escape(documento.motivo_comprobacion_parcial)}</div>' if documento.informe_origen_id else ''}
                             <div class="form-group">
-                                <label for="comentario_aprobar">Comentario (opcional)</label>
-                                <textarea name="comentario" id="comentario_aprobar"></textarea>
+                                <label for="comentario_aprobar">{'Comentarios sobre el motivo y la comprobación (obligatorios)' if documento.informe_origen_id else 'Comentario (opcional)'}</label>
+                                <textarea name="comentario" id="comentario_aprobar" {'required' if documento.informe_origen_id else ''}></textarea>
                             </div>
                             <button type="submit" class="button primary">Confirmar aprobación</button>
                         </form>
@@ -40903,6 +40944,8 @@ def _can_edit_cuenta_before_budget_assignment(
     informe_doc: Optional[Documento],
 ) -> bool:
     """Allow edits after close only while linked INFORME waits for Control Presupuestal."""
+    if getattr(cuenta, "comprobacion_parcial", False):
+        return False
     if (getattr(cuenta, "estado", None) or "").strip().lower() == "abierta":
         return True
     if informe_doc is None:
@@ -42239,6 +42282,17 @@ def _derive_informe_operational_status(
 
 
 def _render_informe_operational_status_badge(**kwargs: Any) -> str:
+    partial_mode = kwargs.pop("partial_mode", False)
+    if partial_mode:
+        label = (
+            "Abierto · comprobación parcial"
+            if kwargs.get("cuenta_estado") == "abierta"
+            else "Comprobado y cerrado"
+        )
+        return _informe_status_badge(
+            label,
+            color="#d97706" if kwargs.get("cuenta_estado") == "abierta" else "#0f766e",
+        )
     label, color = _derive_informe_operational_status(**kwargs)
     return _informe_status_badge(label, color=color)
 
@@ -42634,6 +42688,7 @@ async def cuentas_de_gastos_list(
             and str(getattr(informe_doc, "estado", "") or "").strip().lower() == "cancelado"
         )
         estado_badge = _render_informe_operational_status_badge(
+            partial_mode=bool(getattr(cuenta, "comprobacion_parcial", False)),
             cuenta_estado=cuenta.estado,
             informe_estado=getattr(informe_doc, "estado", None),
             solicitudes=data.get("solicitudes", []),
@@ -43932,6 +43987,11 @@ async def actualizar_gastos_amex_en_informe(
     cuenta = cuenta_result.scalar_one_or_none()
     if cuenta is None:
         raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
+    if getattr(cuenta, "comprobacion_parcial", False):
+        raise HTTPException(
+            status_code=409,
+            detail="La comprobación parcial de anticipo no admite cambios a AMEX empresa.",
+        )
     if not _cuenta_allows_company_amex(cuenta):
         return RedirectResponse(
             url=_append_error_params(
@@ -43987,6 +44047,82 @@ async def actualizar_gastos_amex_en_informe(
         ),
         status_code=303,
     )
+
+
+async def _build_partial_comprobacion_controls(
+    session: AsyncSession,
+    *,
+    cuenta: CuentaDeGastos,
+    informe_doc: Optional[Documento],
+    active_expenses: list[ExpenseReport],
+    monto_entregado: float,
+    total_amex: float,
+    is_owner: bool,
+    can_manage: bool,
+    cerrar_informe_form_html: str,
+) -> tuple[str, str, str]:
+    """Render the confirmed new lot, prior approvals and zero-balance closure."""
+    partial_actions_html = ""
+    partial_history_html = ""
+    if informe_doc and monto_entregado > 0 and total_amex == 0:
+        lots = list(
+            (
+                await session.execute(
+                    select(Documento)
+                    .where(Documento.informe_origen_id == informe_doc.id)
+                    .order_by(Documento.creado_en.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        partial_history_html = '<div class="surface"><h3>Comprobaciones parciales</h3>'
+        for lot in lots:
+            partial_history_html += (
+                f'<p><a href="/documentos/{lot.id}">{escape(lot.numero_referencia)}</a> '
+                f"{_documento_human_status_badge(lot.estado)} "
+                f"{format_currency(lot.monto_total, currency_for(cuenta))}</p>"
+            )
+        partial_history_html += "<p>Cada lote aprobado genera su propia póliza. Capturar gastos no reduce el saldo contable hasta su aprobación.</p></div>"
+        fresh = [
+            e
+            for e in active_expenses
+            if e.informe_documento_id in (None, informe_doc.id)
+        ]
+        fresh_total = sum(
+            (Decimal(str(e.gasto_cantidad or 0)) for e in fresh), Decimal(0)
+        ).quantize(Decimal("0.01"))
+        if (
+            is_owner
+            and can_manage
+            and cuenta.estado == "abierta"
+            and informe_doc.estado == "borrador"
+            and fresh
+        ):
+            partial_actions_html = (
+                f'<form method="POST" action="/informes-de-gastos/{cuenta.id}/comprobacion-parcial">'
+                f'<input type="hidden" name="submission_id" value="{uuid4()}">'
+                f'<input type="hidden" name="expense_ids" value="{",".join(str(e.id) for e in fresh)}">'
+                f'<input type="hidden" name="expected_total" value="{fresh_total}">'
+                f"<p>{len(fresh)} gastos nuevos: {format_currency(fresh_total, currency_for(cuenta))}</p>"
+                "<label>Motivo para enviar una comprobación con saldo pendiente</label>"
+                '<textarea name="motivo" required maxlength="2000" placeholder="Explica por qué queda saldo pendiente y qué falta por comprobar."></textarea>'
+                '<button type="submit" class="button primary" '
+                "onclick=\"return confirm('¿Confirmas el motivo y el envío de estos gastos nuevos a aprobación y mantener abierto el informe?')\">"
+                "Enviar comprobación parcial</button></form>"
+            )
+        if cuenta.comprobacion_parcial:
+            cerrar_informe_form_html = (
+                (
+                    f'<form method="POST" action="/informes-de-gastos/{cuenta.id}/cerrar">'
+                    '<button type="submit" class="button warning" '
+                    "onclick=\"return confirm('¿Cerrar el informe? Requiere todos los lotes aprobados y saldo contable en cero.')\">"
+                    "Cerrar informe saldado</button></form>"
+                )
+                if can_manage and cuenta.estado == "abierta"
+                else ""
+            )
+    return partial_actions_html, partial_history_html, cerrar_informe_form_html
 
 
 @router.get("/informes-de-gastos/{cuenta_id}", response_class=HTMLResponse)
@@ -44119,11 +44255,14 @@ async def cuenta_de_gastos_detail(
         settled_amount=settled_amount_cuenta,
     )
     saldo = saldo_breakdown.saldo
-    advance_return_stale = advance_return_is_stale(
+    advance_return_stale = not cuenta.comprobacion_parcial and advance_return_is_stale(
         saldo_gross=saldo_breakdown.saldo_gross,
         returned_amount=sum(
-            (Decimal(str(r.monto or 0)) for r in active_cuenta_reembolsos
-             if r.tipo == "devolucion"),
+            (
+                Decimal(str(r.monto or 0))
+                for r in active_cuenta_reembolsos
+                if r.tipo == "devolucion"
+            ),
             Decimal("0.00"),
         ),
     )
@@ -44291,9 +44430,9 @@ async def cuenta_de_gastos_detail(
     movimientos_entries.sort(key=lambda item: item[0])
     movimientos_rows = "".join(row for _, row in movimientos_entries)
 
-
     # Estado operativo: derived from workflow, payment, settlement and proof signals.
     estado_badge = _render_informe_operational_status_badge(
+        partial_mode=cuenta.comprobacion_parcial,
         cuenta_estado=cuenta.estado,
         informe_estado=getattr(informe_doc, "estado", None),
         solicitudes=solicitudes_list,
@@ -44409,7 +44548,8 @@ async def cuenta_de_gastos_detail(
             informe_estado=informe_doc_estado,
             saldo=saldo,
             monto_entregado=monto_entregado,
-            has_active_settlement=has_active_settlement,
+            has_active_settlement=has_active_settlement
+            and not cuenta.comprobacion_parcial,
             can_submit=_can_submit_settlement(cuenta, current_empleado, "devolucion"),
         )
     elif saldo < 0 and informe_doc_approved:
@@ -44591,10 +44731,24 @@ async def cuenta_de_gastos_detail(
             )
             diot_actions_html = (
                 '<span class="section-note">'
-                'La DIOT se habilita cuando el INFORME esté aprobado.'
-                '</span>'
+                "La DIOT se habilita cuando el INFORME esté aprobado."
+                "</span>"
             )
     devolver_sobrante_actions_html = saldar_cta_html if saldo > 0 else ""
+    partial_actions_html, partial_history_html, cerrar_informe_form_html = (
+        await _build_partial_comprobacion_controls(
+            session,
+            cuenta=cuenta,
+            informe_doc=informe_doc,
+            active_expenses=active_expenses,
+            monto_entregado=monto_entregado,
+            total_amex=total_amex,
+            is_owner=_is_cuenta_owner,
+            can_manage=_can_manage_cuenta,
+            cerrar_informe_form_html=cerrar_informe_form_html,
+        )
+    )
+
     detail_actions_html = f"""
         <a href="/informes-de-gastos" class="button secondary">Volver a mis informes</a>
         {informe_support_actions_html}
@@ -44605,13 +44759,15 @@ async def cuenta_de_gastos_detail(
         {devolver_sobrante_actions_html}
         {cerrar_informe_form_html}
         {cancelar_borrador_form_html}
+        {partial_actions_html}
+        {partial_history_html}
     """
     detail_side_html = f"""
         <div class="eyebrow">Estado del informe</div>
         <div style="margin-bottom:12px;">{estado_badge}</div>
         <div class="meta-grid">
             <div class="meta-card">
-                <span>Saldo</span>
+                <span>{'Saldo de captura' if cuenta.comprobacion_parcial else 'Saldo'}</span>
                 <strong style="color:{saldo_color};">{format_currency(abs(saldo), currency_for(cuenta))}</strong>
                 <small>{saldo_label}</small>
                 {saldar_cta_html if saldo <= 0 else ""}
@@ -44792,6 +44948,12 @@ async def cuenta_de_gastos_detail(
         """
 
     debtor_aux = await build_cuenta_debtor_auxiliary(session, cuenta_id=cuenta.id)
+    if cuenta.comprobacion_parcial:
+        detail_side_html += (
+            '<div class="meta-card"><span>Saldo contable pendiente</span>'
+            f'<strong>{format_currency(debtor_aux["saldo"], currency_for(cuenta))}</strong>'
+            "<small>Se reduce con comprobaciones aprobadas y devoluciones registradas.</small></div>"
+        )
     debtor_aux_html = _render_debtor_auxiliary_section(
         debtor_aux,
         currency_for(cuenta),
@@ -45884,6 +46046,58 @@ async def nueva_solicitud_desde_cuenta_submit(
     )
 
 
+@router.post("/informes-de-gastos/{cuenta_id}/comprobacion-parcial")
+async def enviar_comprobacion_parcial(
+    cuenta_id: UUIDType,
+    request: Request,
+    submission_id: str = Form(...),
+    expense_ids: str = Form(...),
+    expected_total: str = Form(...),
+    motivo: str = Form(...),
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    cuenta = await session.get(CuentaDeGastos, cuenta_id)
+    if cuenta is None:
+        raise HTTPException(status_code=404, detail="Informe no encontrado")
+    if not _can_mutate_cuenta_de_gastos(cuenta, current_empleado):
+        raise HTTPException(status_code=403, detail="Acceso de solo lectura al informe")
+    try:
+        amount = Decimal(expected_total)
+        if not amount.is_finite() or amount <= 0:
+            raise ValueError("Monto inválido")
+        lot = await submit_partial_advance_lot(
+            session,
+            cuenta_id=cuenta_id,
+            actor=current_empleado,
+            submission_id=UUIDType(submission_id),
+            expected_expense_ids={UUIDType(value) for value in expense_ids.split(",")},
+            expected_total=amount,
+            motivo=motivo,
+        )
+    except (
+        PartialAdvanceError,
+        ValueError,
+        ArithmeticError,
+        DocumentoWorkflowValidationError,
+    ) as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/informes-de-gastos/{cuenta_id}", error_msg=str(exc)
+            ),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=_append_success_params(
+            f"/informes-de-gastos/{cuenta_id}",
+            success="comprobacion_enviada",
+            msg=f"{lot.numero_referencia} enviado a revisión. El informe permanece abierto.",
+        ),
+        status_code=303,
+    )
+
+
 @router.post("/informes-de-gastos/{cuenta_id}/cerrar")
 async def cerrar_cuenta_de_gastos(
     cuenta_id: UUIDType,
@@ -45940,6 +46154,35 @@ async def cerrar_cuenta_de_gastos(
                         f"actual es {cuenta.estado}."
                     ),
                 },
+            ),
+            status_code=303,
+        )
+
+    if cuenta.comprobacion_parcial:
+        try:
+            await finalize_partial_advance(session, cuenta=cuenta, informe=informe_doc)
+            session.add(
+                Aprobacion(
+                    tipo_entidad="documento",
+                    entidad_id=informe_doc.id,
+                    aprobador_id=current_empleado.id,
+                    accion="cerrar_comprobacion_parcial",
+                    comentario="Informe cerrado con todos sus lotes aprobados y saldo contable en cero.",
+                    fecha=datetime.now(timezone.utc),
+                )
+            )
+            await session.commit()
+        except PartialAdvanceError as exc:
+            await session.rollback()
+            return RedirectResponse(
+                url=_append_error_params(redirect_url, error_msg=str(exc)),
+                status_code=303,
+            )
+        return RedirectResponse(
+            url=_append_success_params(
+                redirect_url,
+                success="cerrada",
+                msg="Informe cerrado; las pólizas de sus lotes se conservan.",
             ),
             status_code=303,
         )
@@ -46210,9 +46453,15 @@ async def _compute_cuenta_saldo_context(
         monto_entregado=monto_entregado,
         settled_amount=settled_amount,
     )
-    advance_return_stale = bool(active_count) and advance_return_is_stale(
-        saldo_gross=saldo_breakdown.saldo_gross,
-        returned_amount=await sum_active_advance_returns(session, cuenta_id),
+    cuenta = await session.get(CuentaDeGastos, cuenta_id)
+    partial_mode = bool(getattr(cuenta, "comprobacion_parcial", False))
+    advance_return_stale = (
+        not partial_mode
+        and bool(active_count)
+        and advance_return_is_stale(
+            saldo_gross=saldo_breakdown.saldo_gross,
+            returned_amount=await sum_active_advance_returns(session, cuenta_id),
+        )
     )
     return {
         "total_gastos": total_pagado_empleado,
@@ -46221,6 +46470,7 @@ async def _compute_cuenta_saldo_context(
         "monto_entregado": monto_entregado,
         "settled_amount": settled_amount,
         "active_settlement_count": active_count,
+        "partial_mode": partial_mode,
         "advance_return_stale": advance_return_stale,
         "saldo_gross": saldo_breakdown.saldo_gross,
         "saldo_raw": saldo_breakdown.saldo,
@@ -46357,7 +46607,7 @@ async def saldar_cuenta_form(
             '<div class="notice warn"><strong>Sin documento INFORME.</strong> '
             'No se puede liquidar una cuenta sin documento vinculado.</div>'
         )
-    elif saldo_ctx["active_settlement_count"] > 0:
+    elif saldo_ctx["active_settlement_count"] > 0 and not saldo_ctx.get("partial_mode"):
         blocked = True
         notice_html = (
             '<div class="notice warn"><strong>Ya existe una liquidación activa.</strong> '
@@ -46426,6 +46676,28 @@ async def saldar_cuenta_form(
             if tipo == "devolucion"
             else "Registrar liquidación"
         )
+        partial_controls = ""
+        if (
+            tipo == "devolucion"
+            and informe_doc.estado == "borrador"
+            and cuenta.estado == "abierta"
+        ):
+            partial_controls = (
+                "<label>Monto que efectivamente devuelve</label>"
+                f'<input type="number" name="monto" min="0.01" max="{saldo_abs:.2f}" step="0.01" value="{saldo_abs:.2f}" required>'
+                + (
+                    '<input type="hidden" name="allow_partial" value="1">'
+                    if cuenta.comprobacion_parcial
+                    else '<label><input type="checkbox" name="allow_partial" value="1"> Mantener abierto para comprobaciones parciales de anticipo (sin AMEX)</label>'
+                )
+                + f'<input type="hidden" name="client_submission_id" value="{uuid4()}">'
+                '<div class="section-note">Puedes devolver una parte. El informe queda abierto y el resto permanece a cargo del colaborador.</div>'
+            )
+        else:
+            partial_controls = (
+                f'<input type="hidden" name="monto" value="{saldo_abs:.2f}">'
+                '<div class="section-note">El reembolso liquida el saldo completo.</div>'
+            )
         form_html = f"""
         <form method="POST" action="/informes-de-gastos/{cuenta_id}/saldar"
               enctype="multipart/form-data" class="surface" style="padding:20px;">
@@ -46437,9 +46709,8 @@ async def saldar_cuenta_form(
             <div class="form-group">
                 <label>Monto a liquidar</label>
                 <div style="font-size:1.3rem;"><strong>{saldo_display}</strong> MXN</div>
-                <input type="hidden" name="monto" value="{saldo_abs:.2f}">
+                {partial_controls}
                 <input type="hidden" name="saldo_snapshot" value="{saldo_abs:.2f}">
-                <div class="section-note">Se liquida el saldo completo; no se permiten pagos parciales.</div>
             </div>
             <div class="form-group">
                 <label for="metodo_pago_sld">Método de pago</label>
@@ -46567,6 +46838,8 @@ async def saldar_cuenta_submit(
     referencia_pago: Optional[str] = Form(None),
     notas: Optional[str] = Form(None),
     comprobante: Optional[UploadFile] = File(None),
+    allow_partial: Optional[str] = Form(None),
+    client_submission_id: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """Register a full-settlement reembolso/devolucion for the cuenta."""
     cuenta_row = await session.execute(
@@ -46612,8 +46885,13 @@ async def saldar_cuenta_submit(
             comprobante_filename=comprobante_filename,
             comprobante_mime=comprobante_mime,
             saldo_snapshot=saldo_snapshot,
+            allow_partial=allow_partial == "1",
+            client_submission_id=(
+                client_submission_id if isinstance(client_submission_id, str) else None
+            ),
         )
     except CuentaSettlementPermissionError as exc:
+        await session.rollback()
         return RedirectResponse(
             url=_append_error_params(
                 f"/informes-de-gastos/{cuenta_id}/saldar",
@@ -46623,6 +46901,7 @@ async def saldar_cuenta_submit(
             status_code=303,
         )
     except CuentaSettlementValidationError as exc:
+        await session.rollback()
         if exc.code == "cuenta_not_found":
             raise HTTPException(status_code=404, detail=exc.message)
         return RedirectResponse(
@@ -46666,7 +46945,11 @@ async def saldar_cuenta_submit(
         if result.tipo == "reembolso"
         else "Devolución de Sobrantes"
     )
-    success_msg = f"{label} registrado exitosamente. Cuenta saldada."
+    success_msg = f"{label} registrado exitosamente."
+    if getattr(cuenta, "comprobacion_parcial", False):
+        success_msg += " El informe permanece abierto; revisa el saldo contable en el auxiliar de deudores."
+    else:
+        success_msg += " Cuenta saldada."
     return RedirectResponse(
         url=_append_success_params(
             f"/informes-de-gastos/{cuenta_id}",
