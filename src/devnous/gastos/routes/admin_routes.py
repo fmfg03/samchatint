@@ -9416,6 +9416,64 @@ def _payment_proof_conflict_response(
     return HTMLResponse(content=html, status_code=422)
 
 
+_PAYMENT_PROOF_MAX_FILES = 25
+_PAYMENT_PROOF_MAX_BATCH_BYTES = 25 * 1024 * 1024
+_PAYMENT_PROOF_MAX_FILE_BYTES = 15 * 1024 * 1024
+
+
+def _payment_run_bulk_wants_json(request: Request) -> bool:
+    """Return whether the bulk uploader requested an in-panel JSON result."""
+    headers = getattr(request, "headers", {}) or {}
+    return "application/json" in str(headers.get("accept", "")).lower()
+
+
+def _payment_run_bulk_error_response(
+    request: Request,
+    *,
+    code: str,
+    message: str,
+    status_code: int,
+) -> Response:
+    if _payment_run_bulk_wants_json(request):
+        return JSONResponse(
+            status_code=status_code,
+            content={"ok": False, "code": code, "message": message},
+        )
+    return _payment_run_redirect(
+        error_msg=message,
+        anchor="comprobantes-pendientes",
+        vista="comprobantes",
+    )
+
+
+def _payment_run_bulk_conflict_response(
+    request: Request,
+    *,
+    documento: Documento,
+    review: Any,
+    effective_payment_date: date,
+    reasons: tuple[str, ...],
+) -> Response:
+    if _payment_run_bulk_wants_json(request):
+        message = " ".join(str(reason).strip() for reason in reasons if str(reason).strip())
+        return JSONResponse(
+            status_code=422,
+            content={
+                "ok": False,
+                "code": "payment_proof_conflict",
+                "message": message or "El comprobante requiere revisión antes de confirmar el pago.",
+                "reasons": list(reasons),
+            },
+        )
+    return _payment_proof_conflict_response(
+        documento=documento,
+        review=review,
+        effective_payment_date=effective_payment_date,
+        reasons=reasons,
+        bulk=True,
+    )
+
+
 def _build_payment_proof_upload_plan(
     *,
     selected_document_ids: list[UUIDType],
@@ -9440,6 +9498,11 @@ def _build_payment_proof_upload_plan(
         raise SolicitudValidationError(
             "payment_proof_files_required",
             "Selecciona los testigos de pago.",
+        )
+    if len(uploads) > _PAYMENT_PROOF_MAX_FILES:
+        raise SolicitudValidationError(
+            "payment_proof_file_limit",
+            "Puedes cargar como máximo 25 comprobantes por lote.",
         )
     if apply_one_to_all:
         if len(uploads) != 1:
@@ -10190,6 +10253,7 @@ async def admin_finance_payment_run(
                     <label style="display:flex;gap:8px;align-items:center;font-size:13px;color:#334155;"><input id="payment-proof-apply-one" type="checkbox" name="apply_one_to_all" value="true"> Aplicar un solo testigo a todas las solicitudes seleccionadas</label>
                     <div id="payment-proof-selected-inputs"></div>
                     <div id="payment-proof-form-error" role="alert" aria-live="polite" style="display:none;color:#b91c1c;font-size:13px;font-weight:700;"></div>
+                    <div id="payment-proof-form-status" role="status" aria-live="polite" style="display:none;color:#166534;font-size:13px;font-weight:700;"></div>
                     <div id="payment-proof-mapping" style="display:grid;gap:8px;"></div>
                     <button class="button secondary" type="submit" onclick="return confirm('Se cargarán los testigos con la asignación mostrada y las solicitudes pasarán a Pagada. ¿Continuar?');">Cargar testigos seleccionados y pagar</button>
                 </form>
@@ -10201,10 +10265,31 @@ async def admin_finance_payment_run(
                     var form = document.getElementById('payment-run-bulk-proof-form');
                     var selectedInputs = document.getElementById('payment-proof-selected-inputs');
                     var formError = document.getElementById('payment-proof-form-error');
+                    var formStatus = document.getElementById('payment-proof-form-status');
+                    var submitButton = form.querySelector('button[type="submit"]');
+                    var acceptedDocumentIds = Object.create(null);
+                    var uncertainDocumentIds = Object.create(null);
                     var uuidPattern = /^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$/i;
-                    function selected() {{ return Array.prototype.slice.call(document.querySelectorAll('[data-payment-proof-selection]:checked')); }}
-                    function showError(message) {{ formError.textContent = message; formError.style.display = 'block'; }}
-                    function clearError() {{ formError.textContent = ''; formError.style.display = 'none'; }}
+                    var maxFiles = 25;
+                    var maxBatchBytes = 25 * 1024 * 1024;
+                    var maxFileBytes = 15 * 1024 * 1024;
+                    function selected() {{
+                        return Array.prototype.slice.call(document.querySelectorAll('[data-payment-proof-selection]:checked')).filter(function (input) {{
+                            return !acceptedDocumentIds[input.value] && !uncertainDocumentIds[input.value];
+                        }});
+                    }}
+                    function showErrors(messages) {{
+                        formError.innerHTML = '';
+                        if (!messages.length) {{ formError.style.display = 'none'; return; }}
+                        var list = document.createElement('ul'); list.style.margin = '0'; list.style.paddingLeft = '20px';
+                        messages.forEach(function (message) {{ var item = document.createElement('li'); item.textContent = message; list.appendChild(item); }});
+                        formError.appendChild(list); formError.style.display = 'block';
+                    }}
+                    function showStatus(message) {{ formStatus.textContent = message || ''; formStatus.style.display = message ? 'block' : 'none'; }}
+                    function setBusy(busy, selectedRows) {{
+                        files.disabled = busy; applyOne.disabled = busy; submitButton.disabled = busy;
+                        selectedRows.forEach(function (checkbox) {{ checkbox.disabled = busy || Boolean(acceptedDocumentIds[checkbox.value]) || Boolean(uncertainDocumentIds[checkbox.value]); }});
+                    }}
                     function reviewProof(documentId, file, dateInput, target) {{
                         target.dataset.reviewStatus = 'checking';
                         target.textContent = 'Validando comprobante...';
@@ -10253,6 +10338,7 @@ async def admin_finance_payment_run(
                             mapping.textContent = uploads[0].name + ' se aplicará a ' + selectedOptions.length + ' solicitud(es) seleccionada(s).';
                             selectedOptions.forEach(function (option) {{
                                 var row = document.createElement('label'); row.style.cssText = 'display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr);gap:10px;align-items:center;font-size:13px;color:#334155;';
+                                row.setAttribute('data-payment-proof-document-id', option.value);
                                 var name = document.createElement('span'); name.textContent = 'Fecha efectiva: ' + option.label;
                                 var input = document.createElement('input'); input.type = 'date'; input.name = 'effective_payment_dates'; input.required = true;
                                 var reason = document.createElement('input'); reason.name = 'payment_proof_resolution_reasons'; reason.dataset.paymentProofResolutionReason = 'true'; reason.placeholder = 'Motivo si se resuelve un conflicto';
@@ -10265,6 +10351,7 @@ async def admin_finance_payment_run(
                         uploads.forEach(function (file) {{
                             var row = document.createElement('label');
                             row.style.cssText = 'display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,1fr) minmax(160px,1fr);gap:10px;align-items:center;font-size:13px;color:#334155;';
+                            row.setAttribute('data-payment-proof-file', file.name);
                             var name = document.createElement('span'); name.textContent = file.name;
                             var select = document.createElement('select'); select.name = 'proof_document_ids';
                             var dateInput = document.createElement('input'); dateInput.type = 'date'; dateInput.name = 'effective_payment_dates'; dateInput.required = true;
@@ -10290,24 +10377,88 @@ async def admin_finance_payment_run(
                         var singleForm = event.target && event.target.closest('[data-payment-proof-form]');
                         if (singleForm) validateSingleProofSubmit(singleForm, event);
                     }});
-                    form.addEventListener('submit', function (event) {{
+                    form.addEventListener('submit', async function (event) {{
+                        event.preventDefault();
                         var selectedRows = selected();
                         var uploads = Array.prototype.slice.call(files.files || []);
                         var mapped = Array.prototype.slice.call(mapping.querySelectorAll('select[name="proof_document_ids"]'));
-                        var effectiveDates = Array.prototype.slice.call(mapping.querySelectorAll('input[name="effective_payment_dates"]'));
-                        clearError(); selectedInputs.innerHTML = '';
-                        if (!selectedRows.length) {{ event.preventDefault(); showError('Selecciona al menos una solicitud antes de cargar el lote.'); return; }}
-                        if (!uploads.length) {{ event.preventDefault(); showError('Selecciona los comprobantes de pago.'); return; }}
-                        if (!applyOne.checked && mapped.length !== uploads.length) {{ event.preventDefault(); showError('Asigna una solicitud a cada comprobante.'); return; }}
-                        if (!applyOne.checked && mapped.some(function (select) {{ return !uuidPattern.test(select.value); }})) {{ event.preventDefault(); showError('Una asignación de comprobante no es válida. Actualiza la página e inténtalo de nuevo.'); return; }}
-                        if (effectiveDates.length !== (applyOne.checked ? selectedRows.length : uploads.length)) {{ event.preventDefault(); showError('Captura una fecha efectiva para cada solicitud.'); return; }}
-                        if (Array.prototype.slice.call(mapping.querySelectorAll('[data-payment-proof-review]')).some(function(review) {{ return review.dataset.reviewStatus === 'checking'; }})) {{ event.preventDefault(); showError('Espera a que termine la validación de cada comprobante.'); return; }}
-                        var unresolvedConflict = Array.prototype.slice.call(mapping.querySelectorAll('[data-payment-proof-review]')).some(function(review) {{ var reason = review.parentElement.querySelector('[data-payment-proof-resolution-reason]'); return review.dataset.reviewStatus === 'conflict' && !(reason && reason.value.trim()); }});
-                        if (unresolvedConflict) {{ event.preventDefault(); showError('Captura el motivo de resolución para cada conflicto detectado.'); return; }}
-                        if (selectedRows.some(function (checkbox) {{ return !uuidPattern.test(checkbox.value); }})) {{ event.preventDefault(); showError('Una solicitud seleccionada no es válida. Actualiza la página e inténtalo de nuevo.'); return; }}
-                        selectedRows.forEach(function (checkbox) {{
-                            var hidden = document.createElement('input'); hidden.type = 'hidden'; hidden.name = 'selected_document_ids'; hidden.value = checkbox.value; selectedInputs.appendChild(hidden); checkbox.disabled = true;
-                        }});
+                        var activeMappingRows = applyOne.checked
+                            ? selectedRows.map(function (checkbox) {{ return mapping.querySelector('[data-payment-proof-document-id="' + checkbox.value + '"]'); }}).filter(Boolean)
+                            : Array.prototype.slice.call(mapping.querySelectorAll('label'));
+                        var effectiveDates = activeMappingRows.map(function (row) {{ return row.querySelector('input[name="effective_payment_dates"]'); }}).filter(Boolean);
+                        var reviews = activeMappingRows.map(function (row) {{ return row.querySelector('[data-payment-proof-review]'); }}).filter(Boolean);
+                        var errors = [];
+                        showErrors([]); showStatus(''); selectedInputs.innerHTML = '';
+                        if (!selectedRows.length) {{ showErrors(['Selecciona al menos una solicitud antes de cargar el lote.']); return; }}
+                        if (!uploads.length) {{ showErrors(['Selecciona los comprobantes de pago.']); return; }}
+                        if (uploads.length > maxFiles) {{ showErrors(['Puedes cargar como máximo 25 comprobantes por lote.']); return; }}
+                        if (uploads.some(function (file) {{ return file.size > maxFileBytes; }})) {{ showErrors(['Cada comprobante debe medir como máximo 15 MiB.']); return; }}
+                        var totalBytes = uploads.reduce(function (total, file) {{ return total + file.size; }}, 0);
+                        if (totalBytes > maxBatchBytes) {{ showErrors(['El lote de comprobantes debe medir como máximo 25 MiB.']); return; }}
+                        if (applyOne.checked && uploads.length !== 1) {{ showErrors(['Para aplicar un comprobante a varias solicitudes selecciona un solo archivo.']); return; }}
+                        if (!applyOne.checked && mapped.length !== uploads.length) {{ showErrors(['Asigna una solicitud a cada comprobante.']); return; }}
+                        if (!applyOne.checked && mapped.some(function (select) {{ return !uuidPattern.test(select.value); }})) {{ showErrors(['Una asignación de comprobante no es válida. Actualiza la página e inténtalo de nuevo.']); return; }}
+                        if (activeMappingRows.length !== (applyOne.checked ? selectedRows.length : uploads.length) || effectiveDates.length !== activeMappingRows.length || effectiveDates.some(function (input) {{ return !input.value; }})) {{ showErrors(['Captura una fecha efectiva para cada solicitud.']); return; }}
+                        if (reviews.some(function (review) {{ return review.dataset.reviewStatus === 'checking'; }})) {{ showErrors(['Espera a que termine la validación de cada comprobante.']); return; }}
+                        var unresolvedConflict = reviews.some(function (review) {{ var reason = review.parentElement.querySelector('[data-payment-proof-resolution-reason]'); return review.dataset.reviewStatus === 'conflict' && !(reason && reason.value.trim()); }});
+                        if (unresolvedConflict) {{ showErrors(['Captura el motivo de resolución para cada conflicto detectado.']); return; }}
+                        if (selectedRows.some(function (checkbox) {{ return !uuidPattern.test(checkbox.value); }})) {{ showErrors(['Una solicitud seleccionada no es válida. Actualiza la página e inténtalo de nuevo.']); return; }}
+                        var selectedById = Object.create(null);
+                        selectedRows.forEach(function (checkbox) {{ selectedById[checkbox.value] = checkbox.getAttribute('data-reference') || checkbox.value; }});
+                        var queue = applyOne.checked
+                            ? selectedRows.map(function (checkbox) {{
+                                var row = mapping.querySelector('[data-payment-proof-document-id="' + checkbox.value + '"]');
+                                return {{ documentId: checkbox.value, reference: selectedById[checkbox.value], file: uploads[0], effectiveDate: row.querySelector('input[name="effective_payment_dates"]').value, resolutionReason: row.querySelector('[data-payment-proof-resolution-reason]').value }};
+                            }})
+                            : uploads.map(function (file, index) {{
+                                var row = mapped[index].closest('label');
+                                return {{ documentId: mapped[index].value, reference: selectedById[mapped[index].value] || mapped[index].value, file: file, effectiveDate: row.querySelector('input[name="effective_payment_dates"]').value, resolutionReason: row.querySelector('[data-payment-proof-resolution-reason]').value }};
+                            }});
+                        var seen = Object.create(null);
+                        if (queue.some(function (entry) {{ if (seen[entry.documentId]) return true; seen[entry.documentId] = true; return false; }})) {{ showErrors(['No puedes asignar dos comprobantes a la misma solicitud en este lote.']); return; }}
+                        queue = queue.filter(function (entry) {{ return !acceptedDocumentIds[entry.documentId]; }});
+                        if (!queue.length) {{ showStatus('Todos los comprobantes de esta selección ya fueron aceptados.'); return; }}
+                        setBusy(true, selectedRows);
+                        for (var index = 0; index < queue.length; index += 1) {{
+                            var entry = queue[index];
+                            showStatus('Subiendo ' + (index + 1) + ' de ' + queue.length + ': ' + entry.reference + '.');
+                            var body = new FormData();
+                            body.append('selected_document_ids', entry.documentId);
+                            body.append('proof_document_ids', entry.documentId);
+                            body.append('comprobantes_pago', entry.file, entry.file.name);
+                            body.append('effective_payment_dates', entry.effectiveDate);
+                            body.append('payment_proof_resolution_reasons', entry.resolutionReason || '');
+                            var response;
+                            try {{
+                                response = await fetch(form.action, {{ method: 'POST', body: body, credentials: 'same-origin', headers: {{ Accept: 'application/json' }} }});
+                            }} catch (networkError) {{
+                                uncertainDocumentIds[entry.documentId] = true;
+                                errors.push(entry.reference + ': la conexión se interrumpió y el resultado es incierto. Recarga la página antes de reintentar.');
+                                break;
+                            }}
+                            var contentType = (response.headers.get('content-type') || '').toLowerCase();
+                            if (contentType.indexOf('application/json') === -1) {{
+                                uncertainDocumentIds[entry.documentId] = true;
+                                errors.push(entry.reference + ': el servidor devolvió una respuesta inesperada. Recarga la página antes de reintentar.');
+                                break;
+                            }}
+                            var payload;
+                            try {{ payload = await response.json(); }} catch (parseError) {{
+                                uncertainDocumentIds[entry.documentId] = true;
+                                errors.push(entry.reference + ': no se pudo interpretar la respuesta. Recarga la página antes de reintentar.');
+                                break;
+                            }}
+                            if (response.ok && payload.ok) {{
+                                acceptedDocumentIds[entry.documentId] = true;
+                            }} else {{
+                                errors.push(entry.reference + ': ' + (payload.message || 'No se pudo cargar el comprobante.'));
+                                if (response.status === 401 || response.status === 403) break;
+                            }}
+                        }}
+                        setBusy(false, selectedRows);
+                        showErrors(errors);
+                        var acceptedTotal = Object.keys(acceptedDocumentIds).length;
+                        showStatus(acceptedTotal + ' comprobante(s) aceptado(s). ' + (errors.length ? 'Corrige los errores y vuelve a enviar; los aceptados no se repetirán.' : 'La carga terminó correctamente.'));
                     }});
                 }})();
                 </script>
@@ -11018,12 +11169,24 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
 
         prepared: list[tuple[UUIDType, SolicitudTercerosAttachment]] = []
         upload_bytes: dict[int, bytes] = {}
+        batch_bytes = 0
         for documento_id, upload in plan:
             upload_key = id(upload)
             raw = upload_bytes.get(upload_key)
             if raw is None:
                 raw = await upload.read()
                 upload_bytes[upload_key] = raw
+                if len(raw) > _PAYMENT_PROOF_MAX_FILE_BYTES:
+                    raise SolicitudValidationError(
+                        "attachment_too_large",
+                        "El comprobante excede el máximo de 15 MiB.",
+                    )
+                batch_bytes += len(raw)
+                if batch_bytes > _PAYMENT_PROOF_MAX_BATCH_BYTES:
+                    raise SolicitudValidationError(
+                        "payment_proof_batch_too_large",
+                        "El lote de comprobantes excede el máximo de 25 MiB.",
+                    )
             content_type = (upload.content_type or "").split(";", 1)[0].strip().lower()
             attachment = SolicitudTercerosAttachment(
                 raw_bytes=raw,
@@ -11066,32 +11229,32 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
             )
             if _payment_proof_review_blocks_confirmation(review):
                 await session.rollback()
-                return _payment_proof_conflict_response(
+                return _payment_run_bulk_conflict_response(
+                    request,
                     documento=documento,
                     review=review,
                     effective_payment_date=effective_payment_date,
                     reasons=review.reasons,
-                    bulk=True,
                 )
             if review.status == "conflict" and not resolution_reason:
                 await session.rollback()
-                return _payment_proof_conflict_response(
+                return _payment_run_bulk_conflict_response(
+                    request,
                     documento=documento,
                     review=review,
                     effective_payment_date=effective_payment_date,
                     reasons=review.reasons,
-                    bulk=True,
                 )
             if review.detected_date and review.detected_date != effective_payment_date:
                 await session.rollback()
-                return _payment_proof_conflict_response(
+                return _payment_run_bulk_conflict_response(
+                    request,
                     documento=documento,
                     review=review,
                     effective_payment_date=effective_payment_date,
                     reasons=(
                         "La fecha detectada en el comprobante no coincide con la fecha efectiva capturada.",
                     ),
-                    bulk=True,
                 )
             await add_solicitud_documento_adjuntos(
                 session,
@@ -11121,8 +11284,23 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
                 documento_id=documento_id,
                 actor_id=current_empleado.id,
             )
+        success_message = (
+            f"{len(paid_references)} solicitud(es) marcada(s) como pagadas "
+            "con su comprobante."
+        )
+        if _payment_run_bulk_wants_json(request):
+            return JSONResponse(
+                content={
+                    "ok": True,
+                    "accepted": [
+                        {"document_id": str(documento_id), "reference": reference}
+                        for documento_id, reference in paid_references
+                    ],
+                    "message": success_message,
+                }
+            )
         return _payment_run_redirect(
-            success_msg=f"{len(paid_references)} solicitud(es) marcada(s) como pagadas con su comprobante.",
+            success_msg=success_message,
             anchor="comprobantes-pendientes",
             vista="comprobantes",
         )
@@ -11138,16 +11316,40 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
                 "upload_count": len(comprobantes_pago or []),
             },
         )
-        return _payment_run_redirect(
-            error_msg=str(exc), anchor="comprobantes-pendientes", vista="comprobantes"
+        status_code = (
+            409
+            if exc.code in {"documento_not_found", "invalid_payment_proof_state"}
+            else 400
+        )
+        return _payment_run_bulk_error_response(
+            request,
+            code=exc.code,
+            message=str(exc),
+            status_code=status_code,
+        )
+    except PaymentRunPermissionError as exc:
+        await session.rollback()
+        return _payment_run_bulk_error_response(
+            request,
+            code="payment_run_forbidden",
+            message=exc.message,
+            status_code=403,
         )
     except DocumentoPaymentPermissionError as exc:
         await session.rollback()
-        raise HTTPException(status_code=403, detail=exc.message)
+        return _payment_run_bulk_error_response(
+            request,
+            code=exc.code,
+            message=exc.message,
+            status_code=403,
+        )
     except DocumentoPaymentValidationError as exc:
         await session.rollback()
-        return _payment_run_redirect(
-            error_msg=exc.message, anchor="comprobantes-pendientes", vista="comprobantes"
+        return _payment_run_bulk_error_response(
+            request,
+            code=exc.code,
+            message=exc.message,
+            status_code=409,
         )
     except Exception:
         await session.rollback()
@@ -11155,10 +11357,11 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
             "Unexpected error uploading bulk payment proofs from payment run",
             extra={"actor_id": str(current_empleado.id)},
         )
-        return _payment_run_redirect(
-            error_msg="No se pudo cargar el lote de comprobantes ni marcar los pagos.",
-            anchor="comprobantes-pendientes",
-            vista="comprobantes",
+        return _payment_run_bulk_error_response(
+            request,
+            code="unexpected_payment_proof_upload",
+            message="No se pudo cargar el comprobante ni marcar el pago.",
+            status_code=500,
         )
 
 

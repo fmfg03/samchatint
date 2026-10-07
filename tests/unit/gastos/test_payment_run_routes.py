@@ -1,3 +1,4 @@
+import json
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -102,6 +103,10 @@ async def test_payment_proof_review_rejects_invalid_attachment_before_extraction
         )
 
     assert exc.value.status_code == 400
+
+
+def _json_request():
+    return SimpleNamespace(headers={"accept": "application/json"})
 
 
 def test_payment_run_bulk_proof_plan_requires_explicit_mapping() -> None:
@@ -240,6 +245,21 @@ def test_payment_run_bulk_proof_plan_rejects_duplicate_selection() -> None:
     assert exc.value.code == "duplicate_payment_proof_selection"
 
 
+def test_payment_run_bulk_proof_plan_rejects_more_than_25_files() -> None:
+    document_ids = [uuid4() for _ in range(26)]
+    uploads = [SimpleNamespace(filename=f"proof-{index}.pdf") for index in range(26)]
+
+    with pytest.raises(admin_routes.SolicitudValidationError) as exc:
+        admin_routes._build_payment_proof_upload_plan(
+            selected_document_ids=document_ids,
+            proof_document_ids=document_ids,
+            uploads=uploads,
+            apply_one_to_all=False,
+        )
+
+    assert exc.value.code == "payment_proof_file_limit"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("documento", [None, SimpleNamespace(id=uuid4(), estado="aprobado")])
 async def test_payment_run_bulk_proof_upload_rolls_back_invalid_document(
@@ -282,6 +302,156 @@ async def test_payment_run_bulk_proof_upload_redirects_invalid_form_values(monke
 
     assert response.status_code == 303
     assert "asignaci%C3%B3n" in response.headers["location"]
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_payment_run_bulk_proof_upload_returns_json_validation_error(
+    monkeypatch,
+) -> None:
+    session = AsyncMock()
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(
+        admin_routes, "require_payment_run_payment_confirmation", lambda _: None
+    )
+
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proofs_bulk(
+        request=_json_request(),
+        session=session,
+        current_empleado=SimpleNamespace(id=uuid4()),
+        selected_document_ids=[str(uuid4())],
+        proof_document_ids=["Dar formato al texto"],
+        comprobantes_pago=[_PaymentProofUpload("proof.pdf", b"%PDF-1.4")],
+        effective_payment_dates=["2026-09-22"],
+        apply_one_to_all=False,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 400
+    assert payload["ok"] is False
+    assert payload["code"] == "payment_proof_form_invalid"
+    assert "asignación" in payload["message"]
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_payment_run_bulk_proof_upload_returns_json_forbidden(monkeypatch) -> None:
+    session = AsyncMock()
+
+    def deny_access(_):
+        raise payment_run_service.PaymentRunPermissionError()
+
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", deny_access)
+
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proofs_bulk(
+        request=_json_request(),
+        session=session,
+        current_empleado=SimpleNamespace(id=uuid4()),
+        selected_document_ids=None,
+        proof_document_ids=None,
+        comprobantes_pago=None,
+        apply_one_to_all=False,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 403
+    assert payload == {
+        "ok": False,
+        "code": "payment_run_forbidden",
+        "message": payment_run_service.PaymentRunPermissionError.message,
+    }
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_payment_run_bulk_proof_upload_returns_json_not_found(monkeypatch) -> None:
+    document_id = uuid4()
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=None)
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(
+        admin_routes, "require_payment_run_payment_confirmation", lambda _: None
+    )
+
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proofs_bulk(
+        request=_json_request(),
+        session=session,
+        current_empleado=SimpleNamespace(id=uuid4()),
+        selected_document_ids=[document_id],
+        proof_document_ids=[document_id],
+        comprobantes_pago=[_PaymentProofUpload("proof.pdf", b"%PDF-1.4")],
+        effective_payment_dates=["2026-09-22"],
+        apply_one_to_all=False,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 409
+    assert payload["code"] == "documento_not_found"
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_payment_run_bulk_proof_upload_rejects_json_batch_over_25_mib(
+    monkeypatch,
+) -> None:
+    first_id = uuid4()
+    second_id = uuid4()
+    session = AsyncMock()
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(
+        admin_routes, "require_payment_run_payment_confirmation", lambda _: None
+    )
+    monkeypatch.setattr(
+        admin_routes, "validate_solicitud_terceros_attachment", lambda _: None
+    )
+    content = b"%PDF-1.4\n" + (b"0" * (13 * 1024 * 1024))
+
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proofs_bulk(
+        request=_json_request(),
+        session=session,
+        current_empleado=SimpleNamespace(id=uuid4()),
+        selected_document_ids=[first_id, second_id],
+        proof_document_ids=[first_id, second_id],
+        comprobantes_pago=[
+            _PaymentProofUpload("first.pdf", content),
+            _PaymentProofUpload("second.pdf", content),
+        ],
+        effective_payment_dates=["2026-09-22", "2026-09-23"],
+        apply_one_to_all=False,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 400
+    assert payload["code"] == "payment_proof_batch_too_large"
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_payment_run_bulk_proof_upload_rejects_json_file_over_15_mib(
+    monkeypatch,
+) -> None:
+    document_id = uuid4()
+    session = AsyncMock()
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(
+        admin_routes, "require_payment_run_payment_confirmation", lambda _: None
+    )
+    content = b"%PDF-1.4\n" + (b"0" * (15 * 1024 * 1024))
+
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proofs_bulk(
+        request=_json_request(),
+        session=session,
+        current_empleado=SimpleNamespace(id=uuid4()),
+        selected_document_ids=[document_id],
+        proof_document_ids=[document_id],
+        comprobantes_pago=[_PaymentProofUpload("too-large.pdf", content)],
+        effective_payment_dates=["2026-09-22"],
+        apply_one_to_all=False,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 400
+    assert payload["code"] == "attachment_too_large"
     session.rollback.assert_awaited_once()
 
 
@@ -532,6 +702,52 @@ async def test_payment_run_bulk_proof_conflict_shows_detected_and_programmed_val
 
 
 @pytest.mark.asyncio
+async def test_payment_run_bulk_proof_conflict_returns_json_for_panel(
+    monkeypatch,
+) -> None:
+    document_id = uuid4()
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=_payment_proof_conflict_document(document_id))
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(
+        admin_routes, "require_payment_run_payment_confirmation", lambda _: None
+    )
+    monkeypatch.setattr(admin_routes, "validate_solicitud_terceros_attachment", lambda _: None)
+    monkeypatch.setattr(
+        "devnous.gastos.services.payment_proof_review_service.review_payment_proof",
+        lambda **_: PaymentProofReview(
+            "conflict",
+            None,
+            Decimal("100.00"),
+            "MXN",
+            "Beneficiario Detectado",
+            "REF-1",
+            ("El beneficiario detectado no coincide con el beneficiario programado.",),
+        ),
+    )
+
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proofs_bulk(
+        request=_json_request(),
+        session=session,
+        current_empleado=SimpleNamespace(id=uuid4()),
+        selected_document_ids=[str(document_id)],
+        proof_document_ids=[str(document_id)],
+        comprobantes_pago=[_PaymentProofUpload("proof.pdf", b"%PDF-1.4")],
+        effective_payment_dates=["2026-09-22"],
+        payment_proof_resolution_reasons=None,
+        apply_one_to_all=False,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 422
+    assert payload["ok"] is False
+    assert payload["code"] == "payment_proof_conflict"
+    assert "beneficiario" in payload["message"]
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_payment_run_single_proof_does_not_resolve_non_conflict_reason(
     monkeypatch,
 ) -> None:
@@ -689,6 +905,63 @@ async def test_payment_run_bulk_proof_upload_commits_one_explicitly_mapped_batch
         "2026-09-23",
     ]
     assert [item["documento_id"] for item in notifications] == [second_id, first_id]
+
+
+@pytest.mark.asyncio
+async def test_payment_run_bulk_proof_upload_returns_json_receipt(monkeypatch) -> None:
+    actor_id = uuid4()
+    document_id = uuid4()
+    session = AsyncMock()
+    session.get = AsyncMock(
+        return_value=SimpleNamespace(id=document_id, estado="en_proceso_pago")
+    )
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(
+        admin_routes, "require_payment_run_payment_confirmation", lambda _: None
+    )
+    monkeypatch.setattr(
+        admin_routes, "validate_solicitud_terceros_attachment", lambda _: None
+    )
+    monkeypatch.setattr(
+        admin_routes, "add_solicitud_documento_adjuntos", AsyncMock()
+    )
+    monkeypatch.setattr(
+        documento_payment_service,
+        "register_document_payment",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                documento=SimpleNamespace(
+                    id=document_id, numero_referencia="S-26000999"
+                )
+            )
+        ),
+    )
+    notifications = []
+    monkeypatch.setattr(
+        documento_payment_service,
+        "_schedule_solicitud_paid_telegram_notifications",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proofs_bulk(
+        request=_json_request(),
+        session=session,
+        current_empleado=SimpleNamespace(id=actor_id),
+        selected_document_ids=[document_id],
+        proof_document_ids=[document_id],
+        comprobantes_pago=[_PaymentProofUpload("proof.pdf", b"%PDF-1.4")],
+        effective_payment_dates=["2026-09-22"],
+        apply_one_to_all=False,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["accepted"] == [
+        {"document_id": str(document_id), "reference": "S-26000999"}
+    ]
+    session.commit.assert_awaited_once()
+    assert notifications == [{"documento_id": document_id, "actor_id": actor_id}]
 
 
 def test_payment_run_amount_issue_is_visible_and_not_selectable() -> None:
@@ -1281,8 +1554,16 @@ async def test_payment_run_page_renders_payment_proof_for_accounting(
     assert "/admin/finanzas/payment-run/comprobantes-pago/lote" in html
     assert 'id="payment-proof-selected-inputs"' in html
     assert 'id="payment-proof-form-error"' in html
+    assert 'id="payment-proof-form-status"' in html
+    assert 'role="alert"' in html
     assert "form.addEventListener('submit'" in html
-    assert "checkbox.disabled = true" in html
+    assert "event.preventDefault();" in html
+    assert "await fetch(form.action" in html
+    assert "acceptedDocumentIds" in html
+    assert "uncertainDocumentIds" in html
+    assert "queue = queue.filter" in html
+    assert "los aceptados no se repetirán" in html
+    assert "checkbox.disabled = busy" in html
     assert "uuidPattern.test(select.value)" in html
     assert 'aria-current="page">Comprobantes pendientes</a>' in html
     assert '<input type="hidden" name="vista" value="comprobantes">' in html
