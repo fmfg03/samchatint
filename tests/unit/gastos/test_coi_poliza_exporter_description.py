@@ -131,6 +131,10 @@ def test_grouped_report_produces_one_workbook_in_zip():
             poliza_group_key="informe:1",
             poliza_reference="I-26000001",
             poliza_description="Informe de Gastos I-26000001",
+            poliza_document_id="informe-1",
+            poliza_operation_reference="104",
+            poliza_party_name="Ana Pérez",
+            poliza_context_description="Copa Telmex 2026",
         )
         for reference in ("G-1", "G-2")
     ]
@@ -139,6 +143,12 @@ def test_grouped_report_produces_one_workbook_in_zip():
 
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         assert archive.namelist() == ["Poliza_COI_I-26000001.xlsx"]
+        workbook = load_workbook(io.BytesIO(archive.read(archive.namelist()[0])))
+    sheet = workbook["Poliza COI"]
+    assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [None] * 3
+    assert sheet["C3"].value == (
+        "104 / Ana Pérez / Copa Telmex 2026 / Informe de Gastos I-26000001"
+    )
 
 
 def test_grouped_report_preserves_each_cfdi_block_inside_single_policy():
@@ -213,7 +223,7 @@ def test_effective_document_project_name_handles_none_and_manual_project():
     )
 
 
-def test_solicitud_xlsx_writes_operation_provider_and_tournament_in_c2_to_e2():
+def test_solicitud_xlsx_prefixes_c3_with_operation_provider_and_tournament():
     expense = _expense(export_reference="O-26000001")
     document = SimpleNamespace(
         id="solicitud-1",
@@ -231,10 +241,12 @@ def test_solicitud_xlsx_writes_operation_provider_and_tournament_in_c2_to_e2():
     sheet = _coi_sheet(group_expense_cfdis_for_document([expense], document))
 
     assert sheet["A2"].value == "|||"
-    assert sheet["C2"].value == "104"
-    assert sheet["D2"].value == "Servicios Deportivos SA de CV"
-    assert sheet["E2"].value == "Copa Telmex 2026"
+    assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [None] * 3
     assert sheet["A3"].value == "Eg"
+    assert sheet["C3"].value == (
+        "104 / Servicios Deportivos SA de CV / Copa Telmex 2026 / "
+        "O-26000001 / Hospedaje Fase Nacional LTTB"
+    )
 
 
 def test_solicitud_xlsx_uses_beneficiary_when_project_is_missing():
@@ -254,8 +266,10 @@ def test_solicitud_xlsx_uses_beneficiary_when_project_is_missing():
 
     sheet = _coi_sheet(group_expense_cfdis_for_document([expense], document))
 
-    assert sheet["D2"].value == "Proveedor Dos"
-    assert sheet["E2"].value == "Beneficiaria Dos"
+    assert sheet["C3"].value == (
+        "107 / Proveedor Dos / Beneficiaria Dos / "
+        "O-26000002 / Hospedaje Fase Nacional LTTB"
+    )
 
 
 def test_informe_xlsx_uses_beneficiary_and_expense_reason_fallback():
@@ -282,13 +296,15 @@ def test_informe_xlsx_uses_beneficiary_and_expense_reason_fallback():
 
     sheet = _coi_sheet(group_expense_cfdis_for_document(expenses, document))
 
-    assert sheet["C2"].value == "105"
-    assert sheet["D2"].value == "Ana Pérez"
-    assert sheet["E2"].value == "Viáticos para eliminatoria nacional"
+    assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [None] * 3
+    assert sheet["C3"].value == (
+        "105 / Ana Pérez / Viáticos para eliminatoria nacional / "
+        "Informe de Gastos I-26000001"
+    )
     assert len([row for row in sheet.iter_rows() if row[0].value == "Eg"]) == 1
 
 
-def test_mixed_document_xlsx_marks_metadata_as_multiple_documents():
+def test_mixed_document_xlsx_enriches_each_policy_description_independently():
     first = _expense(
         poliza_document_id="documento-1",
         poliza_operation_reference="104",
@@ -304,14 +320,16 @@ def test_mixed_document_xlsx_marks_metadata_as_multiple_documents():
 
     sheet = _coi_sheet([first, second])
 
-    assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [
-        "Múltiples documentos",
-        "Múltiples documentos",
-        "Múltiples documentos",
+    assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [None] * 3
+    assert [
+        row[2].value for row in sheet.iter_rows() if row[0].value == "Eg"
+    ] == [
+        "104 / Proveedor Uno / Torneo Uno / Hospedaje Fase Nacional LTTB",
+        "105 / Beneficiario Dos / Torneo Dos / Hospedaje Fase Nacional LTTB",
     ]
 
 
-def test_document_and_metadata_free_policy_are_marked_as_multiple_documents():
+def test_metadata_free_policy_keeps_its_existing_description():
     document_expense = _expense(
         poliza_document_id="documento-1",
         poliza_operation_reference="104",
@@ -322,10 +340,11 @@ def test_document_and_metadata_free_policy_are_marked_as_multiple_documents():
 
     sheet = _coi_sheet([document_expense, standalone_expense])
 
-    assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [
-        "Múltiples documentos",
-        "Múltiples documentos",
-        "Múltiples documentos",
+    assert [
+        row[2].value for row in sheet.iter_rows() if row[0].value == "Eg"
+    ] == [
+        "104 / Proveedor Uno / Torneo Uno / Hospedaje Fase Nacional LTTB",
+        "G-SIN-DOCUMENTO / Hospedaje Fase Nacional LTTB",
     ]
 
 
@@ -349,11 +368,10 @@ def test_coi_metadata_and_manifest_neutralize_spreadsheet_formulas():
     )
 
     sheet = workbook["Poliza COI"]
-    assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [
-        "'=1+1",
-        "'+Proveedor",
-        "'@Proyecto",
-    ]
+    assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [None] * 3
+    assert sheet["C3"].value == (
+        "'=1+1 / +Proveedor / @Proyecto / Hospedaje Fase Nacional LTTB"
+    )
     assert [cell.value for cell in workbook["Manifest"][2]] == [
         "'=1+1",
         "'+Proveedor",

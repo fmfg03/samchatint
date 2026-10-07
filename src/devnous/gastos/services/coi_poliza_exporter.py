@@ -324,11 +324,11 @@ def group_coi_policies(expenses: List[ExpenseCFDI]) -> List[CoiPolicyGroup]:
     return groups
 
 
-def _coi_workbook_metadata(expenses: List[ExpenseCFDI]) -> tuple[str, str, str]:
-    """Return the C2:E2 document metadata without mislabeling mixed batches."""
+def _coi_policy_xlsx_description(group: CoiPolicyGroup) -> str:
+    """Prefix one COI policy description with its document metadata."""
     metadata_by_document: Dict[str, tuple[str, str, str]] = {}
     has_metadata_free_policy = False
-    for index, expense in enumerate(expenses, start=1):
+    for index, expense in enumerate(group.expenses, start=1):
         values = (
             " ".join((expense.poliza_operation_reference or "").split()),
             " ".join((expense.poliza_party_name or "").split()),
@@ -342,14 +342,17 @@ def _coi_workbook_metadata(expenses: List[ExpenseCFDI]) -> tuple[str, str, str]:
         metadata_by_document.setdefault(key, values)
 
     if not metadata_by_document:
-        return "", "", ""
+        return group.description
     if has_metadata_free_policy or len(metadata_by_document) > 1:
-        return (
-            "Múltiples documentos",
-            "Múltiples documentos",
-            "Múltiples documentos",
-        )
-    return next(iter(metadata_by_document.values()))
+        metadata_parts = ["Múltiples documentos"]
+    else:
+        metadata_parts = list(next(iter(metadata_by_document.values())))
+    parts = [
+        " ".join(value.split())
+        for value in [*metadata_parts, group.description]
+        if value and value.strip()
+    ]
+    return " / ".join(parts)
 
 
 def _safe_cell_text(value: Any) -> Any:
@@ -597,14 +600,14 @@ def generate_coi_poliza_xlsx(
     wb = Workbook()
     ws = wb.active
     ws.title = "Poliza COI"
+    groups = group_coi_policies(expenses)
+    policy_header_rows = [row for row in rows if row[0] == "Eg"]
+    if len(policy_header_rows) != len(groups):
+        raise RuntimeError("Las cabeceras COI no coinciden con las pólizas agrupadas.")
+    for row, group in zip(policy_header_rows, groups):
+        row[2] = _safe_cell_text(_coi_policy_xlsx_description(group))
     for row in rows:
         ws.append(row[:COI_COLUMNS])
-    operation_reference, party_name, context_description = _coi_workbook_metadata(
-        expenses
-    )
-    ws["C2"] = _safe_cell_text(operation_reference)
-    ws["D2"] = _safe_cell_text(party_name)
-    ws["E2"] = _safe_cell_text(context_description)
     _style_coi_import_sheet(ws)
 
     summary = wb.create_sheet("Resumen")

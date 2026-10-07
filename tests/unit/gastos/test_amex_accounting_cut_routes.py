@@ -262,10 +262,9 @@ async def test_cut_download_actual_format_and_read_only(format):
     if format == "xlsx":
         workbook = load_workbook(io.BytesIO(response.body))
         sheet = workbook["Poliza COI"]
-        assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [
-            "OP-FROZEN",
-            "Beneficiaria congelada",
-            "Torneo congelado",
-        ]
+        assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [None] * 3
+        assert sheet["C3"].value.startswith(
+            "OP-FROZEN / Beneficiaria congelada / Torneo congelado / "
+        )
     session.commit.assert_not_awaited()
     session.rollback.assert_not_awaited()
