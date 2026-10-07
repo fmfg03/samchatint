@@ -1,12 +1,22 @@
 import io
 import zipfile
 from datetime import datetime
+from types import SimpleNamespace
+
+from openpyxl import load_workbook
 
 from devnous.gastos.services.coi_poliza_exporter import (
     ExpenseCFDI,
     _expense_description,
     build_coi_poliza_rows,
+    generate_coi_poliza_xlsx,
     generate_coi_poliza_zip,
+)
+from devnous.gastos.services.documento_semantics import (
+    effective_document_project_name,
+)
+from devnous.gastos.services.expense_coi_export_service import (
+    group_expense_cfdis_for_document,
 )
 
 
@@ -185,3 +195,166 @@ def test_standalone_zip_preserves_references_and_duplicate_filename_suffix():
     )
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         assert archive.namelist() == ["Poliza_COI_G-1.xlsx", "Poliza_COI_002_G-1.xlsx"]
+
+
+def _coi_sheet(expenses):
+    workbook = load_workbook(io.BytesIO(generate_coi_poliza_xlsx(expenses)))
+    return workbook["Poliza COI"]
+
+
+def test_effective_document_project_name_handles_none_and_manual_project():
+    assert (
+        effective_document_project_name(None, fallback="Sin proyecto")
+        == "Sin proyecto"
+    )
+    assert (
+        effective_document_project_name(SimpleNamespace(proyecto_otro="  Gira Norte  "))
+        == "Gira Norte"
+    )
+
+
+def test_solicitud_xlsx_writes_operation_provider_and_tournament_in_c2_to_e2():
+    expense = _expense(export_reference="O-26000001")
+    document = SimpleNamespace(
+        id="solicitud-1",
+        tipo="SOLICITUD",
+        referencia_operaciones="104",
+        proveedor_cliente=SimpleNamespace(nombre="Servicios Deportivos SA de CV"),
+        beneficiario_empleado=None,
+        beneficiario_proveedor_cliente=None,
+        empleado=None,
+        torneo=SimpleNamespace(name="Copa Telmex 2026"),
+        proyecto_otro=None,
+        cuenta_gastos=None,
+    )
+
+    sheet = _coi_sheet(group_expense_cfdis_for_document([expense], document))
+
+    assert sheet["A2"].value == "|||"
+    assert sheet["C2"].value == "104"
+    assert sheet["D2"].value == "Servicios Deportivos SA de CV"
+    assert sheet["E2"].value == "Copa Telmex 2026"
+    assert sheet["A3"].value == "Eg"
+
+
+def test_solicitud_xlsx_uses_beneficiary_when_project_is_missing():
+    expense = _expense(export_reference="O-26000002")
+    document = SimpleNamespace(
+        id="solicitud-2",
+        tipo="SOLICITUD",
+        referencia_operaciones="107",
+        proveedor_cliente=SimpleNamespace(nombre="Proveedor Dos"),
+        beneficiario_empleado=SimpleNamespace(nombre="Beneficiaria Dos"),
+        beneficiario_proveedor_cliente=None,
+        empleado=None,
+        torneo=None,
+        proyecto_otro=None,
+        cuenta_gastos=None,
+    )
+
+    sheet = _coi_sheet(group_expense_cfdis_for_document([expense], document))
+
+    assert sheet["D2"].value == "Proveedor Dos"
+    assert sheet["E2"].value == "Beneficiaria Dos"
+
+
+def test_informe_xlsx_uses_beneficiary_and_expense_reason_fallback():
+    expenses = [_expense(export_reference="G-1"), _expense(export_reference="G-2")]
+    document = SimpleNamespace(
+        id="informe-1",
+        tipo="INFORME",
+        numero_referencia="I-26000001",
+        referencia_operaciones="105",
+        proveedor_cliente=None,
+        beneficiario_empleado=SimpleNamespace(nombre="Ana Pérez"),
+        beneficiario_proveedor_cliente=None,
+        empleado=SimpleNamespace(nombre="Solicitante"),
+        torneo=None,
+        proyecto_otro=None,
+        cuenta_gastos=SimpleNamespace(
+            nombre="Viáticos para eliminatoria nacional",
+            torneo=None,
+            beneficiario_empleado=None,
+            beneficiario_proveedor_cliente=None,
+            empleado=None,
+        ),
+    )
+
+    sheet = _coi_sheet(group_expense_cfdis_for_document(expenses, document))
+
+    assert sheet["C2"].value == "105"
+    assert sheet["D2"].value == "Ana Pérez"
+    assert sheet["E2"].value == "Viáticos para eliminatoria nacional"
+    assert len([row for row in sheet.iter_rows() if row[0].value == "Eg"]) == 1
+
+
+def test_mixed_document_xlsx_marks_metadata_as_multiple_documents():
+    first = _expense(
+        poliza_document_id="documento-1",
+        poliza_operation_reference="104",
+        poliza_party_name="Proveedor Uno",
+        poliza_context_description="Torneo Uno",
+    )
+    second = _expense(
+        poliza_document_id="documento-2",
+        poliza_operation_reference="105",
+        poliza_party_name="Beneficiario Dos",
+        poliza_context_description="Torneo Dos",
+    )
+
+    sheet = _coi_sheet([first, second])
+
+    assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [
+        "Múltiples documentos",
+        "Múltiples documentos",
+        "Múltiples documentos",
+    ]
+
+
+def test_document_and_metadata_free_policy_are_marked_as_multiple_documents():
+    document_expense = _expense(
+        poliza_document_id="documento-1",
+        poliza_operation_reference="104",
+        poliza_party_name="Proveedor Uno",
+        poliza_context_description="Torneo Uno",
+    )
+    standalone_expense = _expense(export_reference="G-SIN-DOCUMENTO")
+
+    sheet = _coi_sheet([document_expense, standalone_expense])
+
+    assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [
+        "Múltiples documentos",
+        "Múltiples documentos",
+        "Múltiples documentos",
+    ]
+
+
+def test_coi_metadata_and_manifest_neutralize_spreadsheet_formulas():
+    expense = _expense(
+        poliza_document_id="documento-1",
+        poliza_operation_reference="=1+1",
+        poliza_party_name="+Proveedor",
+        poliza_context_description="@Proyecto",
+    )
+    workbook = load_workbook(
+        io.BytesIO(
+            generate_coi_poliza_xlsx(
+                [expense],
+                lote_manifest_rows=[
+                    ["referencia_operaciones", "beneficiario_razon_social"],
+                    ["=1+1", "+Proveedor"],
+                ],
+            )
+        )
+    )
+
+    sheet = workbook["Poliza COI"]
+    assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [
+        "'=1+1",
+        "'+Proveedor",
+        "'@Proyecto",
+    ]
+    assert [cell.value for cell in workbook["Manifest"][2]] == [
+        "'=1+1",
+        "'+Proveedor",
+    ]

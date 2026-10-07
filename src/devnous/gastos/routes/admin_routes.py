@@ -83,8 +83,13 @@ from ..services.coi_poliza_exporter import (
 from ..services.expense_coi_export_service import (
     assess_expense_coi_cleanup_ready,
     build_expense_cfdi_for_export,
+    coi_document_loader_options,
     group_expense_cfdis_for_document,
     expense_coi_batch_period_condition,
+)
+from ..services.documento_semantics import (
+    effective_account_beneficiary,
+    effective_document_beneficiary_name,
 )
 from ..services.import_coi_service import import_coi_workbook
 from ..services.import_proveedores_service import (
@@ -3400,6 +3405,39 @@ def _cleanup_document_origin(expense: ExpenseReport) -> Tuple[str, str]:
     if document_types == {"SOLICITUD"}:
         return "Solicitud de transferencia", reference
     return "Documento vinculado sin tipo", reference
+
+
+def _cleanup_beneficiary_name(expense: ExpenseReport) -> str:
+    """Show the canonical beneficiary while failing closed on conflicting links."""
+    documents = [
+        document
+        for document in (
+            getattr(expense, "informe_documento", None),
+            getattr(expense, "solicitud_documento", None),
+            getattr(expense, "documento", None),
+        )
+        if document is not None
+    ]
+    unique_documents = {
+        str(getattr(document, "id", None) or id(document)): document
+        for document in documents
+    }
+    document_types = {
+        str(getattr(document, "tipo", "") or "").strip().upper()
+        for document in documents
+    }
+    if len(unique_documents) > 1 or len(document_types) > 1:
+        return "Beneficiario por revisar"
+    if unique_documents:
+        return effective_document_beneficiary_name(
+            next(iter(unique_documents.values())),
+            fallback="Sin beneficiario identificado",
+        )
+    beneficiary = effective_account_beneficiary(
+        getattr(expense, "cuenta_gastos", None)
+    )
+    beneficiary_name = str(getattr(beneficiary, "nombre", None) or "").strip()
+    return beneficiary_name or "Sin beneficiario identificado"
 
 
 @router.get("/admin/gastos", response_class=HTMLResponse)
@@ -8999,6 +9037,27 @@ async def _build_finance_coi_batch_expenses(
     )
     period_expenses = list(result.scalars().all())
 
+    document_ids = {
+        document_id
+        for expense in period_expenses
+        for document_id in (
+            getattr(expense, "documento_id", None),
+            getattr(expense, "informe_documento_id", None),
+            getattr(expense, "solicitud_documento_id", None),
+        )
+        if document_id is not None
+    }
+    documents_by_id: dict[Any, Documento] = {}
+    if document_ids:
+        document_rows = await session.execute(
+            select(Documento)
+            .options(*coi_document_loader_options())
+            .where(Documento.id.in_(document_ids))
+        )
+        documents_by_id = {
+            document.id: document for document in document_rows.scalars().all()
+        }
+
     cuenta_ids = {
         expense.cuenta_gastos_id
         for expense in period_expenses
@@ -9008,6 +9067,7 @@ async def _build_finance_coi_batch_expenses(
     if cuenta_ids:
         informe_rows = await session.execute(
             select(Documento)
+            .options(*coi_document_loader_options())
             .where(
                 Documento.tipo == "INFORME",
                 Documento.cuenta_gastos_id.in_(cuenta_ids),
@@ -9018,10 +9078,14 @@ async def _build_finance_coi_batch_expenses(
             informe_by_cuenta.setdefault(informe.cuenta_gastos_id, informe)
 
     def informe_for_expense(expense: ExpenseReport) -> Optional[Documento]:
-        direct = getattr(expense, "informe_documento", None)
+        direct = documents_by_id.get(getattr(expense, "informe_documento_id", None))
+        if direct is None:
+            direct = getattr(expense, "informe_documento", None)
         if direct is not None and direct.tipo == "INFORME":
             return direct
-        documento = getattr(expense, "documento", None)
+        documento = documents_by_id.get(getattr(expense, "documento_id", None))
+        if documento is None:
+            documento = getattr(expense, "documento", None)
         if documento is not None and documento.tipo == "INFORME":
             return documento
         return informe_by_cuenta.get(expense.cuenta_gastos_id)
@@ -9089,7 +9153,9 @@ async def _build_finance_coi_batch_expenses(
                     f"El Informe {informe.numero_referencia or informe.id} requiere "
                     "la revisión AMEX y su corte contable antes de exportar."
                 )
-            output.extend(cut_expense_cfdis(cut))
+            output.extend(
+                group_expense_cfdis_for_document(cut_expense_cfdis(cut), informe)
+            )
             grouped_expense_ids.update(expense.id for expense in expenses)
             continue
         if not getattr(informe, "aprobado_en", None):
@@ -9119,7 +9185,13 @@ async def _build_finance_coi_batch_expenses(
         if expense.id in grouped_expense_ids:
             continue
         try:
-            output.append(await build_expense_cfdi_for_export(session, expense))
+            expense_cfdi = await build_expense_cfdi_for_export(session, expense)
+            source_document = documents_by_id.get(
+                getattr(expense, "solicitud_documento_id", None)
+            ) or documents_by_id.get(getattr(expense, "documento_id", None))
+            if source_document is not None:
+                group_expense_cfdis_for_document([expense_cfdi], source_document)
+            output.append(expense_cfdi)
         except ValueError:
             continue
     return period_year, period_month, output
@@ -26117,6 +26189,7 @@ async def gastos_sin_cuenta_contable(
         empleado_nombre = gasto.empleado.nombre if gasto.empleado else "N/A"
         fecha_str = gasto.fecha.strftime("%Y-%m-%d") if gasto.fecha else "N/A"
         document_origin_label, documento_ref = _cleanup_document_origin(gasto)
+        beneficiary_safe = escape(_cleanup_beneficiary_name(gasto))
 
         # Escape user data (proyecto: show name when UUID, else as-is)
         referencia_safe = escape(gasto.numero_referencia or "N/A")
@@ -26475,6 +26548,7 @@ async def gastos_sin_cuenta_contable(
             </td>
             <td>{fecha_str}</td>
             <td>{empleado_safe}</td>
+            <td>{beneficiary_safe}</td>
             <td style="max-width:260px;">{concepto_safe}</td>
             <td style="max-width:240px;">{proyecto_safe}<br><span class="muted-mini">{partida_presupuestal_safe}</span></td>
             <td>${gasto.gasto_cantidad:,.2f}<br><span class="muted-mini">{metodo_pago_safe}</span></td>
@@ -26488,7 +26562,7 @@ async def gastos_sin_cuenta_contable(
         </tr>
         <tr id="{detail_id}" class="cleanup-detail-row"
             style="display:{detail_display};">
-            <td colspan="10">
+            <td colspan="11">
                 <div class="cleanup-detail-panel">
                     <div class="cleanup-detail-head">
                         <div>
@@ -26582,7 +26656,14 @@ async def gastos_sin_cuenta_contable(
         """
 
     bi_context_label = f"año={bi_year_safe or 'n/a'} · ámbito={bi_scope_safe or 'all'}"
+    return_to_document_html = (
+        f'<a href="/documentos/{selected_document_id}" '
+        'class="button cleanup-return-link">Volver al reporte</a>'
+        if selected_document_id
+        else ""
+    )
     hero_actions_html = f"""
+        {return_to_document_html}
         <a href="/admin/gastos{bi_query_suffix}" class="button secondary">Volver a finanzas</a>
         <a href="/admin/gastos/expenses{bi_query_suffix}" class="button secondary">Ver gastos</a>
         <a href="/admin/gastos/sat" class="button secondary">SAT / CFDI</a>
@@ -26660,7 +26741,7 @@ async def gastos_sin_cuenta_contable(
         else "No hay gastos pendientes de preparación COI"
     )
     empty_cleanup_row = (
-        '<tr><td colspan="10" style="text-align: center; padding: 40px;">'
+        '<tr><td colspan="11" style="text-align: center; padding: 40px;">'
         f"{empty_cleanup_message}</td></tr>"
     )
 
@@ -26801,6 +26882,20 @@ async def gastos_sin_cuenta_contable(
             }}
             .cleanup-summary-row td {{
                 vertical-align:middle;
+            }}
+            .cleanup-return-link {{
+                transition:background-color .18s ease, color .18s ease,
+                           box-shadow .18s ease, transform .18s ease;
+            }}
+            .cleanup-return-link:hover {{
+                background:#115e59;
+                color:#fff;
+                box-shadow:0 8px 18px rgba(15,118,110,.24);
+                transform:translateY(-1px);
+            }}
+            .cleanup-return-link:focus-visible {{
+                outline:3px solid rgba(20,184,166,.35);
+                outline-offset:3px;
             }}
             .cleanup-row-focused td {{
                 background:#ecfdf5;
@@ -27123,7 +27218,7 @@ async def gastos_sin_cuenta_contable(
                             <input type="search" name="q" maxlength="200"
                                    value="{escape(selected_q, quote=True)}"
                                    placeholder="Informe, solicitud, gasto,
-                                                responsable, CFDI">
+                                                responsable, beneficiario, CFDI">
                         </label>
                         <label>Origen
                             <select name="document_type">
@@ -27173,6 +27268,7 @@ async def gastos_sin_cuenta_contable(
                                     <th>Referencia</th>
                                     <th>Fecha</th>
                                     <th>Responsable</th>
+                                    <th>Beneficiario</th>
                                     <th>Descripción</th>
                                     <th>Proyecto / Concepto</th>
                                     <th>Monto / Metodo</th>
