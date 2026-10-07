@@ -198,7 +198,7 @@ def group_expense_cfdis_for_document(
 
 
 def coi_document_metadata(documento: Any) -> Dict[str, str]:
-    """Resolve the approved C2:E2 values from canonical document relationships."""
+    """Resolve metadata for the COI XLSX policy-description text."""
     document_type = str(getattr(documento, "tipo", None) or "").strip().upper()
     project_name = effective_document_project_name(documento)
     beneficiary_name = effective_document_beneficiary_name(documento, fallback="")
