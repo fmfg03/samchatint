@@ -10478,52 +10478,63 @@ async def admin_finance_payment_run(
                         var selectedById = Object.create(null);
                         selectedRows.forEach(function (checkbox) {{ selectedById[checkbox.value] = checkbox.getAttribute('data-reference') || checkbox.value; }});
                         var queue = applyOne.checked
-                            ? selectedRows.map(function (checkbox) {{
-                                var row = mapping.querySelector('[data-payment-proof-document-id="' + checkbox.value + '"]');
-                                return {{ documentId: checkbox.value, reference: selectedById[checkbox.value], file: uploads[0], effectiveDate: row.querySelector('input[name="effective_payment_dates"]').value, resolutionReason: row.querySelector('[data-payment-proof-resolution-reason]').value }};
-                            }})
+                            ? [{{
+                                documentIds: selectedRows.map(function (checkbox) {{ return checkbox.value; }}),
+                                references: selectedRows.map(function (checkbox) {{ return selectedById[checkbox.value]; }}),
+                                file: uploads[0],
+                                effectiveDates: selectedRows.map(function (checkbox) {{ return mapping.querySelector('[data-payment-proof-document-id="' + checkbox.value + '"] input[name="effective_payment_dates"]').value; }}),
+                                resolutionReasons: selectedRows.map(function (checkbox) {{ return mapping.querySelector('[data-payment-proof-document-id="' + checkbox.value + '"] [data-payment-proof-resolution-reason]').value; }}),
+                                applyOne: true
+                            }}]
                             : uploads.map(function (file, index) {{
                                 var row = mapped[index].closest('label');
-                                return {{ documentId: mapped[index].value, reference: selectedById[mapped[index].value] || mapped[index].value, file: file, effectiveDate: row.querySelector('input[name="effective_payment_dates"]').value, resolutionReason: row.querySelector('[data-payment-proof-resolution-reason]').value }};
+                                return {{ documentIds: [mapped[index].value], references: [selectedById[mapped[index].value] || mapped[index].value], file: file, effectiveDates: [row.querySelector('input[name="effective_payment_dates"]').value], resolutionReasons: [row.querySelector('[data-payment-proof-resolution-reason]').value], applyOne: false }};
                             }});
                         var seen = Object.create(null);
-                        if (queue.some(function (entry) {{ if (seen[entry.documentId]) return true; seen[entry.documentId] = true; return false; }})) {{ showErrors(['No puedes asignar dos comprobantes a la misma solicitud en este lote.']); return; }}
-                        queue = queue.filter(function (entry) {{ return !acceptedDocumentIds[entry.documentId]; }});
+                        if (queue.some(function (entry) {{ return entry.documentIds.some(function (documentId) {{ if (seen[documentId]) return true; seen[documentId] = true; return false; }}); }})) {{ showErrors(['No puedes asignar dos comprobantes a la misma solicitud en este lote.']); return; }}
+                        queue = queue.filter(function (entry) {{ return entry.documentIds.every(function (documentId) {{ return !acceptedDocumentIds[documentId] && !uncertainDocumentIds[documentId]; }}); }});
                         if (!queue.length) {{ showStatus('Todos los comprobantes de esta selección ya fueron aceptados.'); return; }}
                         setBusy(true, selectedRows);
                         for (var index = 0; index < queue.length; index += 1) {{
                             var entry = queue[index];
-                            showStatus('Subiendo ' + (index + 1) + ' de ' + queue.length + ': ' + entry.reference + '.');
+                            var entryLabel = entry.references.join(', ');
+                            showStatus('Subiendo ' + (index + 1) + ' de ' + queue.length + ': ' + entryLabel + '.');
                             var body = new FormData();
-                            body.append('selected_document_ids', entry.documentId);
-                            body.append('proof_document_ids', entry.documentId);
+                            entry.documentIds.forEach(function (documentId) {{ body.append('selected_document_ids', documentId); if (!entry.applyOne) body.append('proof_document_ids', documentId); }});
                             body.append('comprobantes_pago', entry.file, entry.file.name);
-                            body.append('effective_payment_dates', entry.effectiveDate);
-                            body.append('payment_proof_resolution_reasons', entry.resolutionReason || '');
+                            entry.effectiveDates.forEach(function (effectiveDate) {{ body.append('effective_payment_dates', effectiveDate); }});
+                            entry.resolutionReasons.forEach(function (resolutionReason) {{ body.append('payment_proof_resolution_reasons', resolutionReason || ''); }});
+                            if (entry.applyOne) body.append('apply_one_to_all', 'true');
                             var response;
                             try {{
                                 response = await fetch(form.action, {{ method: 'POST', body: body, credentials: 'same-origin', headers: {{ Accept: 'application/json' }} }});
                             }} catch (networkError) {{
-                                uncertainDocumentIds[entry.documentId] = true;
-                                errors.push(entry.reference + ': la conexión se interrumpió y el resultado es incierto. Recarga la página antes de reintentar.');
+                                entry.documentIds.forEach(function (documentId) {{ uncertainDocumentIds[documentId] = true; }});
+                                errors.push(entryLabel + ': la conexión se interrumpió y el resultado es incierto. Recarga la página antes de reintentar.');
                                 break;
                             }}
                             var contentType = (response.headers.get('content-type') || '').toLowerCase();
                             if (contentType.indexOf('application/json') === -1) {{
-                                uncertainDocumentIds[entry.documentId] = true;
-                                errors.push(entry.reference + ': el servidor devolvió una respuesta inesperada. Recarga la página antes de reintentar.');
+                                entry.documentIds.forEach(function (documentId) {{ uncertainDocumentIds[documentId] = true; }});
+                                errors.push(entryLabel + ': el servidor devolvió una respuesta inesperada. Recarga la página antes de reintentar.');
                                 break;
                             }}
                             var payload;
                             try {{ payload = await response.json(); }} catch (parseError) {{
-                                uncertainDocumentIds[entry.documentId] = true;
-                                errors.push(entry.reference + ': no se pudo interpretar la respuesta. Recarga la página antes de reintentar.');
+                                entry.documentIds.forEach(function (documentId) {{ uncertainDocumentIds[documentId] = true; }});
+                                errors.push(entryLabel + ': no se pudo interpretar la respuesta. Recarga la página antes de reintentar.');
                                 break;
                             }}
                             if (response.ok && payload.ok) {{
-                                acceptedDocumentIds[entry.documentId] = true;
+                                var acceptedIds = Array.isArray(payload.accepted) ? payload.accepted.map(function (item) {{ return item.document_id; }}) : entry.documentIds;
+                                acceptedIds.forEach(function (documentId) {{
+                                    acceptedDocumentIds[documentId] = true;
+                                    var checkbox = document.querySelector('[data-payment-proof-selection][value="' + documentId + '"]');
+                                    var paidRow = checkbox && checkbox.closest('tr');
+                                    if (paidRow) paidRow.remove();
+                                }});
                             }} else {{
-                                errors.push(entry.reference + ': ' + (payload.message || 'No se pudo cargar el comprobante.'));
+                                errors.push(entryLabel + ': ' + (payload.message || 'No se pudo cargar el comprobante.'));
                                 if (response.status === 401 || response.status === 403) break;
                             }}
                         }}

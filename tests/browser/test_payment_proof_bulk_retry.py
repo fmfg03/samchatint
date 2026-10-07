@@ -66,7 +66,7 @@ def _render_payment_proof_page(monkeypatch, document_ids: list[str]) -> str:
     return response.body.decode("utf-8")
 
 
-def test_bulk_payment_proof_retry_skips_accepted_apply_one_rows(
+def test_bulk_payment_proof_retry_skips_accepted_rows_and_removes_paid_rows(
     page: Page,
     monkeypatch,
 ) -> None:
@@ -115,7 +115,14 @@ def test_bulk_payment_proof_retry_skips_accepted_apply_one_rows(
             route.fulfill(
                 status=200,
                 content_type="application/json",
-                body=json.dumps({"ok": True, "accepted_document_ids": [document_id]}),
+                body=json.dumps(
+                    {
+                        "ok": True,
+                        "accepted": [
+                            {"document_id": document_id, "reference": document_id}
+                        ],
+                    }
+                ),
             )
             return
         route.abort()
@@ -124,14 +131,24 @@ def test_bulk_payment_proof_retry_skips_accepted_apply_one_rows(
     page.goto("http://samchat.test/payment-run")
     for checkbox in page.locator("[data-payment-proof-selection]").all():
         checkbox.check()
-    page.locator("#payment-proof-apply-one").check()
     page.locator("#payment-proof-files").set_input_files(
-        {
-            "name": "comprobante.pdf",
-            "mimeType": "application/pdf",
-            "buffer": b"%PDF-1.4 browser retry",
-        }
+        [
+            {
+                "name": "comprobante-1.pdf",
+                "mimeType": "application/pdf",
+                "buffer": b"%PDF-1.4 browser retry 1",
+            },
+            {
+                "name": "comprobante-2.pdf",
+                "mimeType": "application/pdf",
+                "buffer": b"%PDF-1.4 browser retry 2",
+            },
+        ]
     )
+    for index, document_id in enumerate(document_ids):
+        page.locator('select[name="proof_document_ids"]').nth(index).select_option(
+            document_id
+        )
     for effective_date in page.locator(
         'input[name="effective_payment_dates"]'
     ).all():
@@ -147,10 +164,191 @@ def test_bulk_payment_proof_retry_skips_accepted_apply_one_rows(
         "El comprobante requiere corrección."
     )
     expect(page.get_by_role("status")).to_contain_text("1 comprobante(s) aceptado(s).")
+    expect(page.locator("[data-payment-proof-selection]")).to_have_count(1)
 
     page.locator("#payment-run-bulk-proof-form").evaluate(
         "form => form.requestSubmit()"
     )
     expect(page.get_by_role("status")).to_contain_text("2 comprobante(s) aceptado(s).")
+    expect(page.locator("[data-payment-proof-selection]")).to_have_count(0)
 
     assert attempts == [document_ids[0], document_ids[1], document_ids[1]]
+
+
+def test_bulk_payment_proof_apply_one_uploads_shared_file_once(
+    page: Page,
+    monkeypatch,
+) -> None:
+    document_ids = [str(uuid4()), str(uuid4())]
+    html = _render_payment_proof_page(monkeypatch, document_ids)
+    batch_payloads: list[str] = []
+
+    def handle(route: Route) -> None:
+        url = route.request.url
+        if url == "http://samchat.test/payment-run":
+            route.fulfill(status=200, content_type="text/html", body=html)
+            return
+        if url.endswith("/comprobante-pago/revision"):
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "status": "match",
+                        "template_id": "browser-test",
+                        "evidence_source": "local_pdf_text",
+                        "reasons": [],
+                    }
+                ),
+            )
+            return
+        if url.endswith("/comprobantes-pago/lote"):
+            payload = (route.request.post_data_buffer or b"").decode(
+                "latin-1", errors="ignore"
+            )
+            batch_payloads.append(payload)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "ok": True,
+                        "accepted": [
+                            {"document_id": document_id, "reference": document_id}
+                            for document_id in document_ids
+                        ],
+                    }
+                ),
+            )
+            return
+        route.abort()
+
+    page.route("**/*", handle)
+    page.goto("http://samchat.test/payment-run")
+    for checkbox in page.locator("[data-payment-proof-selection]").all():
+        checkbox.check()
+    page.locator("#payment-proof-apply-one").check()
+    page.locator("#payment-proof-files").set_input_files(
+        {
+            "name": "comprobante-compartido.pdf",
+            "mimeType": "application/pdf",
+            "buffer": b"%PDF-1.4 shared browser proof",
+        }
+    )
+    for effective_date in page.locator(
+        'input[name="effective_payment_dates"]'
+    ).all():
+        effective_date.fill("2026-10-07")
+    expect(
+        page.locator('[data-payment-proof-review][data-review-status="match"]')
+    ).to_have_count(2)
+
+    page.locator("#payment-run-bulk-proof-form").evaluate(
+        "form => form.requestSubmit()"
+    )
+    expect(page.get_by_role("status")).to_contain_text("2 comprobante(s) aceptado(s).")
+    expect(page.locator("[data-payment-proof-selection]")).to_have_count(0)
+
+    assert len(batch_payloads) == 1
+    assert all(document_id in batch_payloads[0] for document_id in document_ids)
+    assert batch_payloads[0].count('name="comprobantes_pago"') == 1
+    assert 'name="apply_one_to_all"' in batch_payloads[0]
+
+
+def test_bulk_payment_proof_retry_never_resends_uncertain_document(
+    page: Page,
+    monkeypatch,
+) -> None:
+    document_ids = [str(uuid4()), str(uuid4())]
+    html = _render_payment_proof_page(monkeypatch, document_ids)
+    attempts: list[str] = []
+
+    def handle(route: Route) -> None:
+        url = route.request.url
+        if url == "http://samchat.test/payment-run":
+            route.fulfill(status=200, content_type="text/html", body=html)
+            return
+        if url.endswith("/comprobante-pago/revision"):
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "status": "match",
+                        "template_id": "browser-test",
+                        "evidence_source": "local_pdf_text",
+                        "reasons": [],
+                    }
+                ),
+            )
+            return
+        if url.endswith("/comprobantes-pago/lote"):
+            payload = (route.request.post_data_buffer or b"").decode(
+                "latin-1", errors="ignore"
+            )
+            document_id = next(item for item in document_ids if item in payload)
+            attempts.append(document_id)
+            if len(attempts) == 1:
+                route.abort("failed")
+                return
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "ok": True,
+                        "accepted": [
+                            {"document_id": document_id, "reference": document_id}
+                        ],
+                    }
+                ),
+            )
+            return
+        route.abort()
+
+    page.route("**/*", handle)
+    page.goto("http://samchat.test/payment-run")
+    for checkbox in page.locator("[data-payment-proof-selection]").all():
+        checkbox.check()
+    page.locator("#payment-proof-files").set_input_files(
+        [
+            {
+                "name": "incierto.pdf",
+                "mimeType": "application/pdf",
+                "buffer": b"%PDF-1.4 uncertain browser proof",
+            },
+            {
+                "name": "pendiente.pdf",
+                "mimeType": "application/pdf",
+                "buffer": b"%PDF-1.4 pending browser proof",
+            },
+        ]
+    )
+    for index, document_id in enumerate(document_ids):
+        page.locator('select[name="proof_document_ids"]').nth(index).select_option(
+            document_id
+        )
+    for effective_date in page.locator(
+        'input[name="effective_payment_dates"]'
+    ).all():
+        effective_date.fill("2026-10-07")
+    expect(
+        page.locator('[data-payment-proof-review][data-review-status="match"]')
+    ).to_have_count(2)
+
+    page.locator("#payment-run-bulk-proof-form").evaluate(
+        "form => form.requestSubmit()"
+    )
+    expect(page.get_by_role("alert")).to_contain_text("resultado es incierto")
+    expect(
+        page.locator(
+            f'[data-payment-proof-selection][value="{document_ids[0]}"]'
+        )
+    ).to_be_disabled()
+
+    page.locator("#payment-run-bulk-proof-form").evaluate(
+        "form => form.requestSubmit()"
+    )
+    expect(page.get_by_role("status")).to_contain_text("1 comprobante(s) aceptado(s).")
+
+    assert attempts == document_ids
