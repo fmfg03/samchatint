@@ -264,7 +264,8 @@ async def test_cut_download_actual_format_and_read_only(format):
         sheet = workbook["Poliza COI"]
         assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [None] * 3
         assert sheet["C3"].value.startswith(
-            "OP-FROZEN / Beneficiaria congelada / Torneo congelado / "
+            "Operaciones: OP-FROZEN / Beneficiario: Beneficiaria congelada / "
+            "Contexto: Torneo congelado / "
         )
     session.commit.assert_not_awaited()
     session.rollback.assert_not_awaited()

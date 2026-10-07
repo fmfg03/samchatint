@@ -18,6 +18,10 @@ from devnous.gastos.services.documento_semantics import (
 from devnous.gastos.services.expense_coi_export_service import (
     group_expense_cfdis_for_document,
 )
+from devnous.gastos.services.import_coi_service import (
+    _extract_beneficiario_y_concepto,
+    parse_coi_workbook,
+)
 
 
 def _expense(**overrides) -> ExpenseCFDI:
@@ -147,7 +151,8 @@ def test_grouped_report_produces_one_workbook_in_zip():
     sheet = workbook["Poliza COI"]
     assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [None] * 3
     assert sheet["C3"].value == (
-        "104 / Ana Pérez / Copa Telmex 2026 / Informe de Gastos I-26000001"
+        "Operaciones: 104 / Beneficiario: Ana Pérez / "
+        "Contexto: Copa Telmex 2026 / Informe de Gastos I-26000001"
     )
 
 
@@ -244,7 +249,8 @@ def test_solicitud_xlsx_prefixes_c3_with_operation_provider_and_tournament():
     assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [None] * 3
     assert sheet["A3"].value == "Eg"
     assert sheet["C3"].value == (
-        "104 / Servicios Deportivos SA de CV / Copa Telmex 2026 / "
+        "Operaciones: 104 / Beneficiario: Servicios Deportivos SA de CV / "
+        "Contexto: Copa Telmex 2026 / "
         "O-26000001 / Hospedaje Fase Nacional LTTB"
     )
 
@@ -267,7 +273,8 @@ def test_solicitud_xlsx_uses_beneficiary_when_project_is_missing():
     sheet = _coi_sheet(group_expense_cfdis_for_document([expense], document))
 
     assert sheet["C3"].value == (
-        "107 / Proveedor Dos / Beneficiaria Dos / "
+        "Operaciones: 107 / Beneficiario: Proveedor Dos / "
+        "Contexto: Beneficiaria Dos / "
         "O-26000002 / Hospedaje Fase Nacional LTTB"
     )
 
@@ -298,7 +305,8 @@ def test_informe_xlsx_uses_beneficiary_and_expense_reason_fallback():
 
     assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [None] * 3
     assert sheet["C3"].value == (
-        "105 / Ana Pérez / Viáticos para eliminatoria nacional / "
+        "Operaciones: 105 / Beneficiario: Ana Pérez / "
+        "Contexto: Viáticos para eliminatoria nacional / "
         "Informe de Gastos I-26000001"
     )
     assert len([row for row in sheet.iter_rows() if row[0].value == "Eg"]) == 1
@@ -324,8 +332,10 @@ def test_mixed_document_xlsx_enriches_each_policy_description_independently():
     assert [
         row[2].value for row in sheet.iter_rows() if row[0].value == "Eg"
     ] == [
-        "104 / Proveedor Uno / Torneo Uno / Hospedaje Fase Nacional LTTB",
-        "105 / Beneficiario Dos / Torneo Dos / Hospedaje Fase Nacional LTTB",
+        "Operaciones: 104 / Beneficiario: Proveedor Uno / "
+        "Contexto: Torneo Uno / Hospedaje Fase Nacional LTTB",
+        "Operaciones: 105 / Beneficiario: Beneficiario Dos / "
+        "Contexto: Torneo Dos / Hospedaje Fase Nacional LTTB",
     ]
 
 
@@ -364,7 +374,8 @@ def test_metadata_free_policy_keeps_its_existing_description():
     assert [
         row[2].value for row in sheet.iter_rows() if row[0].value == "Eg"
     ] == [
-        "104 / Proveedor Uno / Torneo Uno / Hospedaje Fase Nacional LTTB",
+        "Operaciones: 104 / Beneficiario: Proveedor Uno / "
+        "Contexto: Torneo Uno / Hospedaje Fase Nacional LTTB",
         "G-SIN-DOCUMENTO / Hospedaje Fase Nacional LTTB",
     ]
 
@@ -391,9 +402,43 @@ def test_coi_metadata_and_manifest_neutralize_spreadsheet_formulas():
     sheet = workbook["Poliza COI"]
     assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [None] * 3
     assert sheet["C3"].value == (
-        "'=1+1 / +Proveedor / @Proyecto / Hospedaje Fase Nacional LTTB"
+        "Operaciones: =1+1 / Beneficiario: +Proveedor / "
+        "Contexto: @Proyecto / Hospedaje Fase Nacional LTTB"
     )
     assert [cell.value for cell in workbook["Manifest"][2]] == [
         "'=1+1",
         "'+Proveedor",
     ]
+
+
+def test_generated_xlsx_round_trips_labeled_beneficiary_and_original_description():
+    expense = _expense(
+        poliza_group_key="informe:1",
+        poliza_reference="I-26000001",
+        poliza_description="Informe de Gastos I-26000001",
+        poliza_document_id="informe-1",
+        poliza_operation_reference="104",
+        poliza_party_name="Ana Pérez",
+        poliza_context_description="Copa Telmex 2026",
+    )
+
+    parsed = parse_coi_workbook(
+        "poliza.xlsx",
+        generate_coi_poliza_xlsx([expense]),
+    )
+
+    assert len(parsed) == 1
+    assert parsed[0].beneficiario_nombre == "Ana Pérez"
+    assert parsed[0].concepto_resumen == "Informe de Gastos I-26000001"
+
+
+def test_coi_import_keeps_legacy_unlabeled_description_semantics():
+    assert _extract_beneficiario_y_concepto(
+        "Referencia / Origen / Beneficiario heredado / Concepto heredado"
+    ) == ("Beneficiario heredado", "Concepto heredado")
+
+
+def test_coi_import_does_not_invent_beneficiary_for_conflicting_metadata():
+    assert _extract_beneficiario_y_concepto(
+        "Múltiples documentos / Informe de Gastos I-26000001"
+    ) == (None, "Informe de Gastos I-26000001")

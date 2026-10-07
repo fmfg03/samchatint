@@ -346,7 +346,14 @@ def _coi_policy_xlsx_description(group: CoiPolicyGroup) -> str:
     if has_metadata_free_policy or len(metadata_by_document) > 1:
         metadata_parts = ["Múltiples documentos"]
     else:
-        metadata_parts = list(next(iter(metadata_by_document.values())))
+        operation_reference, party_name, context_description = next(
+            iter(metadata_by_document.values())
+        )
+        metadata_parts = [
+            f"Operaciones: {operation_reference}" if operation_reference else "",
+            f"Beneficiario: {party_name}" if party_name else "",
+            f"Contexto: {context_description}" if context_description else "",
+        ]
     parts = [
         " ".join(value.split())
         for value in [*metadata_parts, group.description]
