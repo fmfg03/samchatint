@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
@@ -543,6 +544,21 @@ async def validate_informe_surplus_before_submission(
             sum_active_advance_returns,
         )
 
+        from .amex_expense_service import company_amex_sql_condition
+
+        if (
+            await session.execute(
+                select(func.count(ExpenseReport.id)).where(
+                    ExpenseReport.cuenta_gastos_id == cuenta.id,
+                    ExpenseReport.estado_gasto != "cancelado",
+                    company_amex_sql_condition(),
+                )
+            )
+        ).scalar_one():
+            raise DocumentoWorkflowValidationError(
+                "partial_amex_not_allowed",
+                "Un anticipo parcial no puede incluir gastos AMEX empresa.",
+            )
         if await _sum_active_gastos(
             session, cuenta.id
         ) + await sum_active_advance_returns(
@@ -817,6 +833,20 @@ async def transition_documento_workflow(
             raise DocumentoWorkflowValidationError(
                 "authorization_strategy_required",
                 str(authorization_route_block.get("message") or "Ruta de autorización inválida."),
+            )
+        if getattr(documento, "informe_origen_id", None):
+            final_lot_total = (
+                await session.execute(
+                    select(
+                        func.coalesce(func.sum(ExpenseReport.gasto_cantidad), 0)
+                    ).where(
+                        ExpenseReport.informe_documento_id == documento.id,
+                        ExpenseReport.estado_gasto != "cancelado",
+                    )
+                )
+            ).scalar_one()
+            documento.monto_total = Decimal(str(final_lot_total or 0)).quantize(
+                Decimal("0.01")
             )
         documento.estado = "aprobado"
         documento.aprobado_en = now

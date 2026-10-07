@@ -72,6 +72,10 @@ BEGIN
   IF NEW.cuenta_gastos_id IS NOT NULL THEN
     SELECT comprobacion_parcial, estado INTO partial_case, case_state
       FROM cuentas_de_gastos WHERE id=NEW.cuenta_gastos_id FOR UPDATE;
+    IF partial_case AND (
+      (to_jsonb(NEW)->>'pagado_con_amex_empresa')::boolean IS TRUE OR
+      ((to_jsonb(NEW)->>'pagado_con_amex_empresa') IS NULL AND to_jsonb(NEW)->>'origen'='amex_batch')
+    ) THEN RAISE EXCEPTION 'Partial advances cannot contain company AMEX'; END IF;
     IF partial_case AND case_state<>'abierta' AND
        (TG_OP='INSERT' OR NEW.gasto_cantidad IS DISTINCT FROM OLD.gasto_cantidad OR NEW.estado_gasto IS DISTINCT FROM OLD.estado_gasto) THEN
       RAISE EXCEPTION 'Partial advance case is closed';
@@ -136,4 +140,43 @@ END $$;
 DROP TRIGGER IF EXISTS protect_partial_advance_document ON documentos;
 CREATE TRIGGER protect_partial_advance_document BEFORE UPDATE OR DELETE ON documentos
   FOR EACH ROW EXECUTE FUNCTION protect_partial_advance_document();
+CREATE OR REPLACE FUNCTION protect_partial_return() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.client_submission_id IS NOT NULL AND EXISTS (
+    SELECT 1 FROM cuentas_de_gastos WHERE id=OLD.cuenta_gastos_id AND comprobacion_parcial
+  ) THEN
+    IF TG_OP='DELETE' OR to_jsonb(NEW) IS DISTINCT FROM to_jsonb(OLD) THEN
+      RAISE EXCEPTION 'Posted partial return requires accounting reversal';
+    END IF;
+  END IF;
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS protect_partial_return ON reembolsos;
+CREATE TRIGGER protect_partial_return BEFORE UPDATE OR DELETE ON reembolsos
+  FOR EACH ROW EXECUTE FUNCTION protect_partial_return();
+
+CREATE OR REPLACE FUNCTION protect_partial_proof() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE expense_id uuid; expense_ids uuid[]; doc documentos%ROWTYPE;
+BEGIN
+  IF TG_OP='INSERT' THEN expense_ids=ARRAY[NEW.gasto_id];
+  ELSIF TG_OP='DELETE' THEN expense_ids=ARRAY[OLD.gasto_id];
+  ELSE expense_ids=ARRAY[OLD.gasto_id,NEW.gasto_id]; END IF;
+  FOREACH expense_id IN ARRAY expense_ids LOOP
+    SELECT d.* INTO doc FROM expense_reports e JOIN documentos d ON d.id=e.informe_documento_id
+      WHERE e.id=expense_id FOR UPDATE OF d;
+    IF doc.informe_origen_id IS NOT NULL AND doc.estado='aprobado' THEN
+      RAISE EXCEPTION 'Approved partial expense proof requires accounting reversal';
+    END IF;
+  END LOOP;
+  IF TG_OP<>'INSERT' AND EXISTS (
+    SELECT 1 FROM reembolsos r JOIN cuentas_de_gastos c ON c.id=r.cuenta_gastos_id
+    WHERE r.id=OLD.reembolso_id AND r.client_submission_id IS NOT NULL AND c.comprobacion_parcial
+  ) THEN RAISE EXCEPTION 'Posted partial return proof requires accounting reversal'; END IF;
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS protect_partial_proof ON adjuntos;
+CREATE TRIGGER protect_partial_proof BEFORE INSERT OR UPDATE OR DELETE ON adjuntos
+  FOR EACH ROW EXECUTE FUNCTION protect_partial_proof();
 COMMIT;

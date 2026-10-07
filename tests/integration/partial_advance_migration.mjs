@@ -19,12 +19,14 @@ CREATE TABLE documentos (
 CREATE TABLE expense_reports (
  id uuid PRIMARY KEY, documento_id uuid, informe_documento_id uuid,
  cuenta_gastos_id uuid, gasto_cantidad numeric, estado_gasto text,
+ pagado_con_amex_empresa boolean, origen text,
  coi_estado text, coi_exported_at timestamptz, coi_exported_by_id uuid,
  coi_status_updated_at timestamptz, coi_status_updated_by_id uuid, updated_at timestamptz
 );
 CREATE TABLE reembolsos (
  id uuid PRIMARY KEY, cuenta_gastos_id uuid, estado text, tipo text
 );
+CREATE TABLE adjuntos(id uuid PRIMARY KEY, gasto_id uuid, reembolso_id uuid, activo boolean, ruta_archivo text);
 CREATE UNIQUE INDEX legacy_active_settlement ON reembolsos(cuenta_gastos_id) WHERE estado <> 'cancelado';
 `);
 const migration = readFileSync('database/migrations/20261006_partial_advance_comprobaciones.sql', 'utf8');
@@ -42,11 +44,17 @@ await db.query(`INSERT INTO documentos(id,tipo,estado,informe_origen_id,empleado
 await db.query(`INSERT INTO expense_reports(id,documento_id,informe_documento_id,cuenta_gastos_id,gasto_cantidad,estado_gasto)
  VALUES ($1,$2,$2,$3,13912.50,'activo')`, [expense, lot, account]);
 await db.query(`UPDATE cuentas_de_gastos SET comprobacion_parcial=true WHERE id=$1`, [account]);
+await assert.rejects(db.query(`UPDATE expense_reports SET pagado_con_amex_empresa=true WHERE id=$1`,[expense]),/cannot contain company AMEX/);
+const proof='70000000-0000-0000-0000-000000000001';
+await db.query(`INSERT INTO adjuntos VALUES ($1,$2,NULL,true,'original.pdf')`,[proof,expense]);
 await assert.rejects(db.query(`UPDATE documentos SET empleado_id=NULL WHERE id=$1`, [original]), /identity cannot change/);
 await assert.rejects(db.query(`UPDATE documentos SET estado='aprobado' WHERE id=$1`, [original]), /case container/);
 await assert.rejects(db.query(`DELETE FROM documentos WHERE id=$1`, [original]), /cannot be deleted/);
 await assert.rejects(db.query(`UPDATE documentos SET motivo_comprobacion_parcial='Motivo cambiado' WHERE id=$1`, [lot]), /identity is immutable/);
 await db.query(`UPDATE documentos SET estado='aprobado' WHERE id=$1`, [lot]);
+await assert.rejects(db.query(`UPDATE adjuntos SET activo=false WHERE id=$1`,[proof]),/requires accounting reversal/);
+await assert.rejects(db.query(`DELETE FROM adjuntos WHERE id=$1`,[proof]),/requires accounting reversal/);
+await assert.rejects(db.query(`INSERT INTO adjuntos VALUES ('70000000-0000-0000-0000-000000000002',$1,NULL,true,'replacement.pdf')`,[expense]),/requires accounting reversal/);
 for (const mutation of [
  `UPDATE expense_reports SET gasto_cantidad=14000 WHERE id=$1`,
  `UPDATE expense_reports SET estado_gasto='cancelado' WHERE id=$1`,
@@ -66,6 +74,9 @@ await assert.rejects(db.query(`INSERT INTO expense_reports(id,documento_id,infor
 await db.query(`INSERT INTO reembolsos VALUES
  ('50000000-0000-0000-0000-000000000001',$1,'pagado','devolucion','60000000-0000-0000-0000-000000000001'),
  ('50000000-0000-0000-0000-000000000002',$1,'pagado','devolucion','60000000-0000-0000-0000-000000000002')`, [account]);
+await assert.rejects(db.query(`UPDATE reembolsos SET estado='cancelado' WHERE id='50000000-0000-0000-0000-000000000001'`),/requires accounting reversal/);
+await db.query(`INSERT INTO adjuntos VALUES ('70000000-0000-0000-0000-000000000003',NULL,'50000000-0000-0000-0000-000000000001',true,'return.pdf')`);
+await assert.rejects(db.query(`UPDATE adjuntos SET activo=false WHERE id='70000000-0000-0000-0000-000000000003'`),/requires accounting reversal/);
 await assert.rejects(db.query(`INSERT INTO reembolsos VALUES
  ('50000000-0000-0000-0000-000000000003',$1,'pagado','devolucion','60000000-0000-0000-0000-000000000002')`, [account]), /unique/);
 await db.query(`INSERT INTO reembolsos(id,cuenta_gastos_id,estado,tipo) VALUES ('50000000-0000-0000-0000-000000000004',$1,'pagado','reembolso')`, [account]);

@@ -623,6 +623,15 @@ async def cancel_cuenta_settlement(
             "already_cancelled", "Esta liquidación ya está cancelada."
         )
 
+    if (
+        getattr(cuenta, "comprobacion_parcial", False)
+        and reembolso.client_submission_id
+    ):
+        raise CuentaSettlementValidationError(
+            "partial_return_reversal_required",
+            "La devolución parcial ya tiene póliza; requiere reversión contable y no puede cancelarse desde este flujo.",
+        )
+
     reembolso.estado = "cancelado"
     reembolso.cancelado_en = datetime.utcnow()
     reembolso.cancelado_por_id = actor.id

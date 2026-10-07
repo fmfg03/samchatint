@@ -28847,6 +28847,8 @@ async def editar_gasto(
     if not is_owner and not is_finance_admin:
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
+    await _ensure_can_mutate_informe_expense(session, expense, current_empleado)
+
     # Check if cancelled - always blocked
     if expense.estado_gasto == 'cancelado':
         return RedirectResponse(
@@ -29599,6 +29601,7 @@ async def eliminar_comprobante_no_deducible(
     )
     if not is_owner and not is_finance_admin:
         raise HTTPException(status_code=403, detail="Acceso denegado")
+    await _ensure_can_mutate_informe_expense(session, expense, current_empleado)
     documento = await session.get(Documento, expense.documento_id) if expense.documento_id else None
     is_locked = bool(
         (documento and documento.estado != "borrador")
@@ -43984,6 +43987,11 @@ async def actualizar_gastos_amex_en_informe(
     cuenta = cuenta_result.scalar_one_or_none()
     if cuenta is None:
         raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
+    if getattr(cuenta, "comprobacion_parcial", False):
+        raise HTTPException(
+            status_code=409,
+            detail="La comprobación parcial de anticipo no admite cambios a AMEX empresa.",
+        )
     if not _cuenta_allows_company_amex(cuenta):
         return RedirectResponse(
             url=_append_error_params(

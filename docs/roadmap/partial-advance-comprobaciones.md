@@ -16,6 +16,11 @@ and one atomic COI policy, using its own approval month and debtor posting ident
 Neither repeat submission nor repeat accounting recognizes the same expenses twice.
 Approved lot evidence and original case identity are protected by database triggers.
 Later corrections require accounting reversal, which this feature does not create.
+Posted partial returns cannot be cancelled or have their receipt retired without
+that reversal. Closure checks both active capture/return evidence and the persisted
+auxiliary, so a historical cancelled return with an unreversed posting cannot close
+the case. Partial cases reject later company-AMEX mutations; corrected lot totals
+are synchronized before approval. Database triggers also freeze approved attachments.
 
 Actual returns require a transfer receipt and an idempotent submission key. A
 promised return has no accounting effect. Available capture balance limits further

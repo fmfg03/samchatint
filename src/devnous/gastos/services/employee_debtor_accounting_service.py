@@ -1033,7 +1033,7 @@ async def ensure_debtor_comprobacion_posting_for_informe(
     expenses = list(result.scalars().all())
     if not expenses:
         return DebtorPostingResult(status="skipped", reason="no_employee_paid_expenses")
-    if origin_id:
+    if origin_id and informe_documento.estado != "aprobado":
         informe_documento.monto_total = sum(
             (_money(e.gasto_cantidad) for e in expenses), Decimal("0.00")
         )

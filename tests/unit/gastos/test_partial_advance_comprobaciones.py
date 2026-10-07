@@ -31,6 +31,7 @@ from devnous.gastos.services import documento_workflow_service as workflow
 from devnous.gastos.services import employee_debtor_accounting_service as accounting
 from devnous.gastos.services.cuenta_settlement_service import (
     CuentaSettlementValidationError,
+    cancel_cuenta_settlement,
     register_cuenta_settlement,
 )
 from devnous.gastos.services.partial_advance_service import (
@@ -193,6 +194,106 @@ async def test_telegram_context_reports_lot_amount_instead_of_full_advance(case)
     assert "13,912.50" in context["monto_line"]
     assert context["saldo_line"] is None
     assert context["solicitante"] == "Carlos Lozano"
+
+
+@pytest.mark.asyncio
+async def test_posted_partial_return_cannot_be_cancelled_without_reversal(case):
+    returned = await return_amount(case, "9200")
+    with pytest.raises(CuentaSettlementValidationError) as error:
+        await cancel_cuenta_settlement(
+            case.session,
+            cuenta_id=case.cuenta.id,
+            reembolso_id=returned.reembolso.id,
+            actor_id=case.approver.id,
+            motivo="Cambiar devolución",
+        )
+    assert error.value.code == "partial_return_reversal_required"
+    assert returned.reembolso.estado == "pagado"
+    assert await debtor_balance(case) == Decimal("23170")
+
+
+@pytest.mark.asyncio
+async def test_legacy_cancelled_return_with_unreversed_posting_cannot_close(case):
+    expense = await add_expense(case, "13912.50")
+    lot = await submit(case, [expense])
+    await approve(case, lot)
+    returned = await return_amount(case, "18457.50")
+    returned.reembolso.estado = "cancelado"  # Simulate historical inconsistent data.
+    await case.session.flush()
+    assert await debtor_balance(case) == 0
+    with pytest.raises(PartialAdvanceError):
+        await finalize_partial_advance(
+            case.session, cuenta=case.cuenta, informe=case.original
+        )
+
+
+@pytest.mark.asyncio
+async def test_partial_approval_rechecks_amex_and_bulk_mutation_is_blocked(case):
+    expense = await add_expense(case, "100")
+    lot = await submit(case, [expense])
+    with pytest.raises(HTTPException) as error:
+        await user_routes.actualizar_gastos_amex_en_informe(
+            case.cuenta.id,
+            session=case.session,
+            current_empleado=case.approver,
+            expense_ids=[str(expense.id)],
+            amex_action="mark",
+        )
+    assert error.value.status_code == 409
+    expense.pagado_con_amex_empresa = True
+    with pytest.raises(workflow.DocumentoWorkflowValidationError) as error:
+        await approve(case, lot)
+    assert error.value.code == "partial_amex_not_allowed"
+
+
+@pytest.mark.asyncio
+async def test_corrected_rejected_lot_updates_total_before_approval(case):
+    first = await add_expense(case, "100")
+    second = await add_expense(case, "50")
+    lot = await submit(case, [first, second])
+    await workflow.transition_documento_workflow(
+        case.session,
+        documento_id=lot.id,
+        actor_id=case.approver.id,
+        action="reject",
+        comentario="Corregir monto",
+    )
+    first.gasto_cantidad = 120
+    second.estado_gasto = "cancelado"
+    await case.session.commit()
+    await workflow.transition_documento_workflow(
+        case.session, documento_id=lot.id, actor_id=case.requester.id, action="send"
+    )
+    await approve(case, lot)
+    assert lot.monto_total == 120
+    assert await debtor_balance(case) == Decimal("32250")
+
+
+@pytest.mark.asyncio
+async def test_finance_cannot_retire_proof_of_an_approved_lot(case, monkeypatch):
+    expense = await add_expense(case, "100")
+    lot = await submit(case, [expense])
+    await approve(case, lot)
+    with pytest.raises(HTTPException) as error:
+        await user_routes.eliminar_comprobante_no_deducible(
+            expense.id,
+            session=case.session,
+            current_empleado=case.approver,
+            motivo_eliminacion="Sustituir",
+            return_to=None,
+        )
+    assert error.value.status_code == 409
+    monkeypatch.setattr(user_routes, "_ensure_expense_tip_schema", AsyncMock())
+    with pytest.raises(HTTPException) as error:
+        await user_routes.editar_gasto(
+            expense.id,
+            Request({"type": "http"}),
+            session=case.session,
+            current_empleado=case.approver,
+            concepto="Cambiar comprobante",
+            return_to=None,
+        )
+    assert error.value.status_code == 409
 
 
 @compiles(JSONB, "sqlite")

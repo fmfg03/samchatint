@@ -269,9 +269,15 @@ async def finalize_partial_advance(
         )
     ).scalar_one()
     auxiliary = await build_cuenta_debtor_auxiliary(session, cuenta_id=cuenta.id)
+    captured_balance = (
+        await _sum_requested_solicitudes(session, cuenta.id)
+        - await _sum_active_gastos(session, cuenta.id)
+        - await sum_active_advance_returns(session, cuenta.id)
+    )
     if (
         pending
         or unbatched
+        or captured_balance != 0
         or not auxiliary["lines"]
         or Decimal(str(auxiliary["saldo"])) != 0
     ):
