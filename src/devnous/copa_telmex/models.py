@@ -12,10 +12,12 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     String,
     Float,
     JSON,
     BigInteger,
+    CheckConstraint,
     Text,
     Integer,
     UniqueConstraint,
@@ -405,6 +407,96 @@ class RegistrationBatchDocument(Base):
 
     batch = relationship("RegistrationBatch", back_populates="documents")
     review_session = relationship("RegistrationReviewSession")
+
+
+class RegistrationBatchUpload(Base):  # type: ignore[misc, valid-type]
+    """Private resumable upload envelope for one reviewed batch manifest."""
+
+    __tablename__ = "copa_telmex_registration_batch_uploads"
+    __table_args__ = (
+        UniqueConstraint(
+            "tournament_edition_id",
+            "manifest_sha256",
+            "created_by_user_id",
+            name="uq_ctt_batch_upload_actor_manifest",
+        ),
+        CheckConstraint(
+            "status IN ('staging','ready','admitting','admitted',"
+            "'cancelled','expired','failed')",
+            name="ck_ctt_batch_upload_status",
+        ),
+        CheckConstraint(
+            "document_count > 0 AND file_count > 0",
+            name="ck_ctt_batch_upload_counts",
+        ),
+        Index("ix_ctt_batch_uploads_edition", "tournament_edition_id"),
+        Index("ix_ctt_batch_uploads_actor", "created_by_user_id"),
+        Index("ix_ctt_batch_uploads_status", "status"),
+        Index("ix_ctt_batch_uploads_expires", "expires_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tournament_edition_id = Column(UUID(as_uuid=True), nullable=False)
+    manifest_sha256 = Column(String(64), nullable=False)
+    document_count = Column(Integer, nullable=False)
+    file_count = Column(Integer, nullable=False)
+    status = Column(String(20), nullable=False, default="staging")
+    created_by_user_id = Column(String(80), nullable=False)
+    batch_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_batches.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    files = relationship(
+        "RegistrationBatchUploadFile",
+        back_populates="upload",
+        cascade="all, delete-orphan",
+        order_by="RegistrationBatchUploadFile.source_filename",
+    )
+
+
+class RegistrationBatchUploadFile(Base):  # type: ignore[misc, valid-type]
+    """Expected source PDF and its private staged-file state."""
+
+    __tablename__ = "copa_telmex_registration_batch_upload_files"
+    __table_args__ = (
+        UniqueConstraint(
+            "upload_id",
+            "source_filename",
+            name="uq_ctt_batch_upload_file_name",
+        ),
+        CheckConstraint(
+            "status IN ('pending','uploaded','purged')",
+            name="ck_ctt_batch_upload_file_status",
+        ),
+        CheckConstraint(
+            "byte_count IS NULL OR (byte_count > 0 AND byte_count <= 67108864)",
+            name="ck_ctt_batch_upload_file_size",
+        ),
+        Index("ix_ctt_batch_upload_files_upload", "upload_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    upload_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_batch_uploads.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_filename = Column(String(255), nullable=False)
+    expected_sha256 = Column(String(64), nullable=False)
+    stored_sha256 = Column(String(64))
+    byte_count = Column(BigInteger)
+    storage_key = Column(String(160))
+    status = Column(String(20), nullable=False, default="pending")
+    uploaded_at = Column(DateTime)
+
+    upload = relationship("RegistrationBatchUpload", back_populates="files")
 
 
 class RegistrationReviewAsset(Base):

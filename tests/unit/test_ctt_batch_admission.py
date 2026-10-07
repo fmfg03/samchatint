@@ -571,6 +571,61 @@ async def test_batch_endpoint_admits_draft_then_recovers_exact_retry(
 
 
 @pytest.mark.asyncio
+async def test_staged_admission_advances_at_most_one_new_document(
+    monkeypatch, tmp_path
+):
+    first_payload = b"%PDF-1.7\nfirst reviewed source"
+    second_payload = b"%PDF-1.7\nsecond reviewed source"
+    value = manifest()
+    value["documents"][0]["pdf_sha256"] = hashlib.sha256(
+        first_payload
+    ).hexdigest()
+    second = copy.deepcopy(value["documents"][0])
+    second["document_id"] = "c" * 64
+    second["pdf"] = "Puebla.pdf"
+    second["pdf_sha256"] = hashlib.sha256(second_payload).hexdigest()
+    value["documents"].append(second)
+    normalized = validate_manifest(value)
+    state = _AdmissionState()
+
+    async def upsert(*_args, **_kwargs):
+        return SimpleNamespace(id=uuid4(), content_hash="sha256:" + "9" * 64)
+
+    monkeypatch.setattr(dashboard, "async_session_maker", state.session)
+    monkeypatch.setattr(dashboard, "_upsert_review_draft", upsert)
+    monkeypatch.setattr(dashboard, "review_uploads_dir", tmp_path)
+    monkeypatch.setattr(
+        dashboard,
+        "_render_pdf_review_asset_pages",
+        lambda *_args, **_kwargs: [
+            {
+                "page_index": 1,
+                "source_pdf_page": 1,
+                "image_path": str(tmp_path / "page-01.png"),
+                "sha256": "8" * 64,
+                "width": 100,
+                "height": 100,
+            }
+        ],
+    )
+
+    result = await dashboard._admit_validated_registration_review_batch(
+        manifest=normalized,
+        upload_files={
+            "Oaxaca.pdf": _Upload("Oaxaca.pdf", first_payload),
+            "Puebla.pdf": _Upload("Puebla.pdf", second_payload),
+        },
+        actor_id="operator-1",
+        max_new_documents=1,
+    )
+
+    assert len(result["documents"]) == 1
+    assert result["documents"][0]["status"] == "ADMITTED_FOR_REVIEW"
+    assert state.added_types.count("RegistrationBatchDocument") == 1
+    assert state.session_count == 2
+
+
+@pytest.mark.asyncio
 async def test_batch_endpoint_removes_private_assets_when_draft_write_fails(
     monkeypatch, tmp_path
 ):

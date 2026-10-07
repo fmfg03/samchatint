@@ -34,3 +34,12 @@ def test_deploy_current_release_keeps_health_and_ready_smoke() -> None:
     assert "http://127.0.0.1:8000/readyz" in script
     assert "ln -sfnT \"$release\" /srv/samchat/current" in script
     assert "replaces the current symlink itself" in script
+
+
+def test_deploy_current_release_configures_private_batch_staging() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert "/srv/samchat/data/private/ctt_batch_uploads" in script
+    assert "Refusing unsafe batch staging path" in script
+    assert 'chmod 700 "$batch_staging_root"' in script
+    assert "Environment=CTT_BATCH_STAGING_ROOT=$batch_staging_root" in script

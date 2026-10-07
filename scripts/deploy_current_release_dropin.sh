@@ -26,12 +26,21 @@ venv="${SAMCHAT_RUNTIME_VENV:-/srv/samchat/venvs/baseline-db08f745e8da7a82}"
 unit_dir="${SAMCHAT_SYSTEMD_DROPIN_DIR:-/etc/systemd/system/samchat-gastos.service.d}"
 archive_root="${SAMCHAT_DROPIN_ARCHIVE_ROOT:-/srv/samchat/release-cleanup-audit}"
 canonical="$unit_dir/50-current-release.conf"
+batch_staging_root="${CTT_BATCH_STAGING_ROOT:-/srv/samchat/data/private/ctt_batch_uploads}"
 
 case "$release" in
   /srv/samchat/releases/gastos-prod-*) ;;
   *)
     echo "Refusing unsafe release path: $release" >&2
     exit 65
+    ;;
+esac
+
+case "$batch_staging_root" in
+  /srv/samchat/data/private/*) ;;
+  *)
+    echo "Refusing unsafe batch staging path: $batch_staging_root" >&2
+    exit 70
     ;;
 esac
 
@@ -115,7 +124,8 @@ ensure_copa_telmex_bundle
 "$venv/bin/python" "$release/scripts/ci/check-registration-operational-surface.py" --root "$release"
 "$venv/bin/python" "$release/scripts/ci/check-accepted-regressions.py" --root "$release"
 
-mkdir -p "$unit_dir" "$archive_root"
+mkdir -p "$unit_dir" "$archive_root" "$batch_staging_root"
+chmod 700 "$batch_staging_root"
 archive="$archive_root/dropins-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$archive"
 
@@ -133,6 +143,7 @@ Environment=
 Environment=PATH=$venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=PYTHONPATH=$release/src:$release
 Environment=SAMCHAT_ENV_FILE=/etc/samchat/samchat.env
+Environment=CTT_BATCH_STAGING_ROOT=$batch_staging_root
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=CTT_CANONICAL_PROMOTION=off
 Environment=ASSISTANT_AGENT_RUNTIME_ENABLED=true
