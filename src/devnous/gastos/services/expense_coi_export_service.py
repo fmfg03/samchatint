@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +13,10 @@ from sqlalchemy.sql.elements import ColumnElement
 from ..models import AmexAccountingCut, CuentaDeGastos, Documento, ExpenseReport
 from .amex_expense_service import company_amex_sql_condition, is_company_amex_expense
 from .coi_poliza_exporter import ExpenseCFDI
+from .documento_semantics import (
+    effective_document_beneficiary_name,
+    effective_document_project_name,
+)
 from .employee_debtor_accounting_service import (
     debtor_account_block_label_for_employee,
     resolve_cuenta_debtor_account,
@@ -168,9 +172,9 @@ def group_expense_cfdis_for_document(
     expense_cfdis: List[ExpenseCFDI],
     documento: Any,
 ) -> List[ExpenseCFDI]:
-    """Bind all INFORME expenses to one COI policy without changing SOLICITUD."""
-    if getattr(documento, "tipo", None) != "INFORME":
-        return expense_cfdis
+    """Attach document metadata and bind every INFORME to one COI policy."""
+    metadata = coi_document_metadata(documento)
+    document_type = str(getattr(documento, "tipo", None) or "").strip().upper()
     reference = str(
         getattr(documento, "numero_referencia", None)
         or getattr(documento, "id", "INFORME")
@@ -178,10 +182,94 @@ def group_expense_cfdis_for_document(
     group_key = f"informe:{getattr(documento, 'id', reference)}"
     description = f"Informe de Gastos {reference}"
     for expense_cfdi in expense_cfdis:
-        expense_cfdi.poliza_group_key = group_key
-        expense_cfdi.poliza_reference = reference
-        expense_cfdi.poliza_description = description
+        expense_cfdi.poliza_document_id = metadata["document_id"]
+        expense_cfdi.poliza_operation_reference = metadata["operation_reference"]
+        expense_cfdi.poliza_party_name = metadata["party_name"]
+        expense_cfdi.poliza_context_description = metadata["context_description"]
+        if document_type == "INFORME":
+            expense_cfdi.poliza_group_key = group_key
+            expense_cfdi.poliza_reference = reference
+            expense_cfdi.poliza_description = description
     return expense_cfdis
+
+
+def coi_document_metadata(documento: Any) -> Dict[str, str]:
+    """Resolve the approved C2:E2 values from canonical document relationships."""
+    document_type = str(getattr(documento, "tipo", None) or "").strip().upper()
+    project_name = effective_document_project_name(documento)
+    beneficiary_name = effective_document_beneficiary_name(documento, fallback="")
+    if document_type == "SOLICITUD":
+        provider = getattr(documento, "proveedor_cliente", None)
+        party_name = str(getattr(provider, "nombre", None) or "").strip()
+        context_description = project_name or beneficiary_name
+    else:
+        party_name = beneficiary_name
+        account = getattr(documento, "cuenta_gastos", None)
+        expense_reason = str(getattr(account, "nombre", None) or "").strip()
+        context_description = project_name or expense_reason
+    return {
+        "document_id": str(getattr(documento, "id", "") or ""),
+        "operation_reference": str(
+            getattr(documento, "referencia_operaciones", None) or ""
+        ).strip(),
+        "party_name": party_name,
+        "context_description": context_description,
+    }
+
+
+def coi_document_loader_options() -> List[Any]:
+    """Eager-load every relationship used by COI workbook document metadata."""
+    return [
+        selectinload(Documento.beneficiario_empleado),
+        selectinload(Documento.beneficiario_proveedor_cliente),
+        selectinload(Documento.proveedor_cliente),
+        selectinload(Documento.empleado),
+        selectinload(Documento.torneo),
+        selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.torneo_id),
+        selectinload(Documento.cuenta_gastos).selectinload(
+            CuentaDeGastos.beneficiario_empleado
+        ),
+        selectinload(Documento.cuenta_gastos).selectinload(
+            CuentaDeGastos.beneficiario_proveedor_cliente
+        ),
+        selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.empleado),
+        selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
+    ]
+
+
+def _expense_document_metadata_loader_options() -> List[Any]:
+    options: List[Any] = []
+    for relation in (
+        ExpenseReport.documento,
+        ExpenseReport.informe_documento,
+        ExpenseReport.solicitud_documento,
+    ):
+        options.extend(
+            [
+                selectinload(relation).selectinload(Documento.proveedor_cliente),
+                selectinload(relation).selectinload(
+                    Documento.beneficiario_empleado
+                ),
+                selectinload(relation).selectinload(
+                    Documento.beneficiario_proveedor_cliente
+                ),
+                selectinload(relation).selectinload(Documento.empleado),
+                selectinload(relation).selectinload(Documento.torneo),
+                selectinload(relation)
+                .selectinload(Documento.cuenta_gastos)
+                .selectinload(CuentaDeGastos.torneo),
+                selectinload(relation)
+                .selectinload(Documento.cuenta_gastos)
+                .selectinload(CuentaDeGastos.beneficiario_empleado),
+                selectinload(relation)
+                .selectinload(Documento.cuenta_gastos)
+                .selectinload(CuentaDeGastos.beneficiario_proveedor_cliente),
+                selectinload(relation)
+                .selectinload(Documento.cuenta_gastos)
+                .selectinload(CuentaDeGastos.empleado),
+            ]
+        )
+    return options
 
 
 async def assess_expense_coi_cleanup_ready(
@@ -326,6 +414,7 @@ async def load_expense_for_coi_export(
         .options(selectinload(ExpenseReport.contra_cuenta_contable))
         .options(selectinload(ExpenseReport.cfdi_report))
         .options(selectinload(ExpenseReport.cuenta_iva))
+        .options(*_expense_document_metadata_loader_options())
         .where(ExpenseReport.id == expense_id)
     )
     return result.scalar_one_or_none()
@@ -338,6 +427,8 @@ __all__ = [
     "allows_coi_without_cfdi",
     "assess_expense_coi_cleanup_ready",
     "build_expense_cfdi_for_export",
+    "coi_document_metadata",
+    "coi_document_loader_options",
     "group_expense_cfdis_for_document",
     "load_expense_for_coi_export",
 ]

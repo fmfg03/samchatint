@@ -1,5 +1,6 @@
 """Acceptance tests for finance review, confirmation and immutable cut downloads."""
 
+import io
 import json
 from datetime import date, datetime
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
+from openpyxl import load_workbook
 from starlette.requests import Request
 
 from devnous.gastos.routes import admin_amex_accounting_routes as routes
@@ -201,8 +203,9 @@ async def test_confirm_checkbox_required(monkeypatch):
 @pytest.mark.parametrize("failure", ["format", "missing", "bad_snapshot"])
 async def test_cut_export_fails_closed(failure):
     session = AsyncMock()
-    session.get.return_value = (
-        None if failure == "missing" else SimpleNamespace(snapshot_json={})
+    cut = SimpleNamespace(snapshot_json={}, informe_id=uuid4())
+    session.get.side_effect = (
+        [None] if failure == "missing" else [cut, SimpleNamespace()]
     )
     with pytest.raises(HTTPException) as exc:
         await routes.amex_accounting_cut_export(
@@ -245,7 +248,20 @@ async def test_cut_download_actual_format_and_read_only(format):
 
     session = AsyncMock()
     cut = frozen_cut()
-    session.get.return_value = cut
+    informe = SimpleNamespace(
+        id=cut.informe_id,
+        tipo="INFORME",
+        numero_referencia="I-26000001",
+        referencia_operaciones="109",
+        proveedor_cliente=None,
+        beneficiario_empleado=SimpleNamespace(nombre="Beneficiaria AMEX"),
+        beneficiario_proveedor_cliente=None,
+        empleado=None,
+        torneo=SimpleNamespace(name="Copa Telmex"),
+        proyecto_otro=None,
+        cuenta_gastos=None,
+    )
+    session.get.side_effect = [cut, informe]
     response = await routes.amex_accounting_cut_export(
         cut.id, format, session, SimpleNamespace()
     )
@@ -256,5 +272,13 @@ async def test_cut_download_actual_format_and_read_only(format):
         if format != "csv"
         else b"FIN_PARTIDAS" in response.body
     )
+    if format == "xlsx":
+        workbook = load_workbook(io.BytesIO(response.body))
+        sheet = workbook["Poliza COI"]
+        assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [
+            "109",
+            "Beneficiaria AMEX",
+            "Copa Telmex",
+        ]
     session.commit.assert_not_awaited()
     session.rollback.assert_not_awaited()

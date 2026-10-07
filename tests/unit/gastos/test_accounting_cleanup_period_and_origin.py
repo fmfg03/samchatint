@@ -7,6 +7,7 @@ from starlette.requests import Request
 
 from devnous.gastos.routes import admin_routes
 from devnous.gastos.routes.admin_routes import (
+    _cleanup_beneficiary_name,
     _cleanup_document_origin,
     _cleanup_fiscal_controls_are_blockers,
     _cleanup_period_bounds,
@@ -160,6 +161,38 @@ def test_cleanup_document_origin_marks_missing_link_explicitly() -> None:
     )
 
 
+def test_cleanup_beneficiary_uses_canonical_document_party() -> None:
+    expense = _expense(
+        informe=_documento(
+            "INFORME",
+            "I-26000012",
+            beneficiario_empleado=SimpleNamespace(nombre="Ana Beneficiaria"),
+        )
+    )
+
+    assert _cleanup_beneficiary_name(expense) == "Ana Beneficiaria"
+
+
+def test_cleanup_beneficiary_fails_closed_when_document_links_conflict() -> None:
+    expense = _expense(
+        informe=_documento("INFORME", "I-26000012"),
+        solicitud=_documento("SOLICITUD", "S-26000012"),
+    )
+
+    assert _cleanup_beneficiary_name(expense) == "Beneficiario por revisar"
+
+
+def test_cleanup_beneficiary_falls_back_to_expense_account() -> None:
+    expense = _expense()
+    expense.cuenta_gastos = SimpleNamespace(
+        beneficiario_empleado=None,
+        beneficiario_proveedor_cliente=SimpleNamespace(nombre="Operador Regional"),
+        empleado=SimpleNamespace(nombre="Solicitante"),
+    )
+
+    assert _cleanup_beneficiary_name(expense) == "Operador Regional"
+
+
 def test_cleanup_search_is_accent_insensitive_and_uses_loaded_context() -> None:
     expense = _searchable_expense()
 
@@ -307,6 +340,8 @@ async def test_cleanup_route_applies_and_preserves_server_filters(monkeypatch) -
     assert "expense_reports.solicitud_documento_id" in scope_sql
     assert "expense_reports.fecha" not in scope_sql
     assert f'name="document_id" value="{document_id}"' in document_html
+    assert f'href="/documentos/{document_id}"' in document_html
+    assert "Volver al reporte" in document_html
 
 
 @pytest.mark.asyncio
@@ -363,5 +398,8 @@ def test_cleanup_queue_render_contract_has_month_and_unwrapped_actions(
     assert 'name="issue"' in cleanup
     assert "focus_expense_id" in cleanup
     assert "cleanup-row-focused" in cleanup
+    assert "_cleanup_beneficiary_name(gasto)" in cleanup
+    assert "<th>Beneficiario</th>" in cleanup
+    assert "cleanup-return-link" in cleanup
     assert ".button, .cleanup-toggle, .btn-asignar" in cleanup
     assert "white-space:nowrap;" in cleanup

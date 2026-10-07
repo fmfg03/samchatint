@@ -60,6 +60,10 @@ class ExpenseCFDI:
     poliza_group_key: Optional[str] = None
     poliza_reference: Optional[str] = None
     poliza_description: Optional[str] = None
+    poliza_document_id: Optional[str] = None
+    poliza_operation_reference: Optional[str] = None
+    poliza_party_name: Optional[str] = None
+    poliza_context_description: Optional[str] = None
     posting_movements: Optional[List[Dict[str, Any]]] = None
 
 
@@ -320,6 +324,32 @@ def group_coi_policies(expenses: List[ExpenseCFDI]) -> List[CoiPolicyGroup]:
     return groups
 
 
+def _coi_workbook_metadata(expenses: List[ExpenseCFDI]) -> tuple[str, str, str]:
+    """Return the C2:E2 document metadata without mislabeling mixed batches."""
+    metadata_by_document: Dict[str, tuple[str, str, str]] = {}
+    for index, expense in enumerate(expenses, start=1):
+        values = (
+            " ".join((expense.poliza_operation_reference or "").split()),
+            " ".join((expense.poliza_party_name or "").split()),
+            " ".join((expense.poliza_context_description or "").split()),
+        )
+        document_id = " ".join((expense.poliza_document_id or "").split())
+        if not document_id and not any(values):
+            continue
+        key = document_id or f"metadata:{index}:{values!r}"
+        metadata_by_document.setdefault(key, values)
+
+    if not metadata_by_document:
+        return "", "", ""
+    if len(metadata_by_document) > 1:
+        return (
+            "Múltiples documentos",
+            "Múltiples documentos",
+            "Múltiples documentos",
+        )
+    return next(iter(metadata_by_document.values()))
+
+
 def _movement_row(movement: Dict[str, Any]) -> CoiRow:
     return [
         "",
@@ -560,6 +590,12 @@ def generate_coi_poliza_xlsx(
     ws.title = "Poliza COI"
     for row in rows:
         ws.append(row[:COI_COLUMNS])
+    operation_reference, party_name, context_description = _coi_workbook_metadata(
+        expenses
+    )
+    ws["C2"] = operation_reference
+    ws["D2"] = party_name
+    ws["E2"] = context_description
     _style_coi_import_sheet(ws)
 
     summary = wb.create_sheet("Resumen")

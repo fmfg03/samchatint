@@ -1,12 +1,19 @@
 import io
 import zipfile
 from datetime import datetime
+from types import SimpleNamespace
+
+from openpyxl import load_workbook
 
 from devnous.gastos.services.coi_poliza_exporter import (
     ExpenseCFDI,
     _expense_description,
     build_coi_poliza_rows,
+    generate_coi_poliza_xlsx,
     generate_coi_poliza_zip,
+)
+from devnous.gastos.services.expense_coi_export_service import (
+    group_expense_cfdis_for_document,
 )
 
 
@@ -185,3 +192,106 @@ def test_standalone_zip_preserves_references_and_duplicate_filename_suffix():
     )
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         assert archive.namelist() == ["Poliza_COI_G-1.xlsx", "Poliza_COI_002_G-1.xlsx"]
+
+
+def _coi_sheet(expenses):
+    workbook = load_workbook(io.BytesIO(generate_coi_poliza_xlsx(expenses)))
+    return workbook["Poliza COI"]
+
+
+def test_solicitud_xlsx_writes_operation_provider_and_tournament_in_c2_to_e2():
+    expense = _expense(export_reference="O-26000001")
+    document = SimpleNamespace(
+        id="solicitud-1",
+        tipo="SOLICITUD",
+        referencia_operaciones="104",
+        proveedor_cliente=SimpleNamespace(nombre="Servicios Deportivos SA de CV"),
+        beneficiario_empleado=None,
+        beneficiario_proveedor_cliente=None,
+        empleado=None,
+        torneo=SimpleNamespace(name="Copa Telmex 2026"),
+        proyecto_otro=None,
+        cuenta_gastos=None,
+    )
+
+    sheet = _coi_sheet(group_expense_cfdis_for_document([expense], document))
+
+    assert sheet["A2"].value == "|||"
+    assert sheet["C2"].value == "104"
+    assert sheet["D2"].value == "Servicios Deportivos SA de CV"
+    assert sheet["E2"].value == "Copa Telmex 2026"
+    assert sheet["A3"].value == "Eg"
+
+
+def test_solicitud_xlsx_uses_beneficiary_when_project_is_missing():
+    expense = _expense(export_reference="O-26000002")
+    document = SimpleNamespace(
+        id="solicitud-2",
+        tipo="SOLICITUD",
+        referencia_operaciones="107",
+        proveedor_cliente=SimpleNamespace(nombre="Proveedor Dos"),
+        beneficiario_empleado=SimpleNamespace(nombre="Beneficiaria Dos"),
+        beneficiario_proveedor_cliente=None,
+        empleado=None,
+        torneo=None,
+        proyecto_otro=None,
+        cuenta_gastos=None,
+    )
+
+    sheet = _coi_sheet(group_expense_cfdis_for_document([expense], document))
+
+    assert sheet["D2"].value == "Proveedor Dos"
+    assert sheet["E2"].value == "Beneficiaria Dos"
+
+
+def test_informe_xlsx_uses_beneficiary_and_expense_reason_fallback():
+    expenses = [_expense(export_reference="G-1"), _expense(export_reference="G-2")]
+    document = SimpleNamespace(
+        id="informe-1",
+        tipo="INFORME",
+        numero_referencia="I-26000001",
+        referencia_operaciones="105",
+        proveedor_cliente=None,
+        beneficiario_empleado=SimpleNamespace(nombre="Ana Pérez"),
+        beneficiario_proveedor_cliente=None,
+        empleado=SimpleNamespace(nombre="Solicitante"),
+        torneo=None,
+        proyecto_otro=None,
+        cuenta_gastos=SimpleNamespace(
+            nombre="Viáticos para eliminatoria nacional",
+            torneo=None,
+            beneficiario_empleado=None,
+            beneficiario_proveedor_cliente=None,
+            empleado=None,
+        ),
+    )
+
+    sheet = _coi_sheet(group_expense_cfdis_for_document(expenses, document))
+
+    assert sheet["C2"].value == "105"
+    assert sheet["D2"].value == "Ana Pérez"
+    assert sheet["E2"].value == "Viáticos para eliminatoria nacional"
+    assert len([row for row in sheet.iter_rows() if row[0].value == "Eg"]) == 1
+
+
+def test_mixed_document_xlsx_marks_metadata_as_multiple_documents():
+    first = _expense(
+        poliza_document_id="documento-1",
+        poliza_operation_reference="104",
+        poliza_party_name="Proveedor Uno",
+        poliza_context_description="Torneo Uno",
+    )
+    second = _expense(
+        poliza_document_id="documento-2",
+        poliza_operation_reference="105",
+        poliza_party_name="Beneficiario Dos",
+        poliza_context_description="Torneo Dos",
+    )
+
+    sheet = _coi_sheet([first, second])
+
+    assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [
+        "Múltiples documentos",
+        "Múltiples documentos",
+        "Múltiples documentos",
+    ]
