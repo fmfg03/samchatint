@@ -181,6 +181,8 @@ from ..services.employee_debtor_accounting_service import (
 from ..services.expense_coi_export_service import (
     assess_expense_coi_cleanup_ready,
     build_expense_cfdi_for_export,
+    coi_document_loader_options,
+    coi_document_metadata,
     group_expense_cfdis_for_document,
     informe_coi_period_condition,
     load_expense_for_coi_export,
@@ -4428,6 +4430,7 @@ async def _load_coi_lote_informe_documentos(
                 selectinload(Documento.beneficiario_proveedor_cliente),
                 selectinload(Documento.proveedor_cliente),
                 selectinload(Documento.empleado),
+                selectinload(Documento.torneo),
                 selectinload(Documento.cuenta_gastos).selectinload(
                     CuentaDeGastos.beneficiario_empleado
                 ),
@@ -4436,6 +4439,9 @@ async def _load_coi_lote_informe_documentos(
                 ),
                 selectinload(Documento.cuenta_gastos).selectinload(
                     CuentaDeGastos.empleado
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.torneo
                 ),
             )
             .where(
@@ -4491,6 +4497,7 @@ async def _load_coi_lote_terceros_documentos(
                 selectinload(Documento.beneficiario_proveedor_cliente),
                 selectinload(Documento.proveedor_cliente),
                 selectinload(Documento.empleado),
+                selectinload(Documento.torneo),
                 selectinload(Documento.cuenta_gastos).selectinload(
                     CuentaDeGastos.beneficiario_empleado
                 ),
@@ -4499,6 +4506,9 @@ async def _load_coi_lote_terceros_documentos(
                 ),
                 selectinload(Documento.cuenta_gastos).selectinload(
                     CuentaDeGastos.empleado
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.torneo
                 ),
             )
             .where(
@@ -5068,7 +5078,7 @@ def _render_coi_exportable_lote_rows_html(
                 }
             )
             cleanup_action = (
-                ' <a class="button secondary" '
+                ' <a class="button secondary cleanup-action-link" '
                 'style="padding:8px 12px;font-size:12px;" '
                 f'href="/admin/gastos/sin-cuenta-contable?'
                 f'{escape(cleanup_query, quote=True)}'
@@ -5134,6 +5144,9 @@ async def _collect_coi_lote_expense_cfdis(
             "tipo_lote",
             "gasto_referencia",
             "documento_referencia",
+            "referencia_operaciones",
+            "beneficiario_razon_social",
+            "descripcion_contexto",
             "partida",
             "status",
             "mensaje",
@@ -5144,18 +5157,24 @@ async def _collect_coi_lote_expense_cfdis(
     for row in exportable_rows:
         documento = row["documento"]
         tipo_lote = row["tipo_lote"]
+        metadata = coi_document_metadata(documento)
         if tipo_lote == "INFORME" and any(
             is_company_amex_expense(expense) for expense in row.get("expenses") or []
         ):
             cut = await _load_initial_amex_cut(session, documento.id)
             if cut is None:
                 raise ValueError("El informe AMEX necesita su corte contable antes de exportar.")
-            expense_cfdis.extend(cut_expense_cfdis(cut))
+            cut_cfdis = group_expense_cfdis_for_document(
+                cut_expense_cfdis(cut), documento
+            )
+            expense_cfdis.extend(cut_cfdis)
             for index, item in enumerate(cut.snapshot_json["partidas"], start=1):
                 exported_ids.add(UUIDType(item["expense_id"]))
                 manifest_rows.append([
                     item["expense_id"], str(documento.id), tipo_lote,
                     item.get("reference") or "", documento.numero_referencia or "",
+                    metadata["operation_reference"], metadata["party_name"],
+                    metadata["context_description"],
                     str(index), "exportado", f"corte:{cut.id}",
                 ])
             continue
@@ -5189,6 +5208,9 @@ async def _collect_coi_lote_expense_cfdis(
                     tipo_lote,
                     expense.numero_referencia or "",
                     documento.numero_referencia or "",
+                    metadata["operation_reference"],
+                    metadata["party_name"],
+                    metadata["context_description"],
                     str(expense_index),
                     "exportado",
                     "",
@@ -5609,6 +5631,9 @@ async def contabilidad_coi_view(
     th {{ background:#f3f4f6; }}
     .button {{ display:inline-block; padding:10px 14px; border-radius:8px; text-decoration:none; background:#111827; color:#fff; border:none; cursor:pointer; }}
     .button.secondary {{ background:#e5e7eb; color:#111827; }}
+    .cleanup-action-link {{ transition:background-color .18s ease, color .18s ease, box-shadow .18s ease, transform .18s ease; }}
+    .cleanup-action-link:hover {{ background:#0f766e; color:#fff; box-shadow:0 8px 18px rgba(15,118,110,.24); transform:translateY(-1px); }}
+    .cleanup-action-link:focus-visible {{ outline:3px solid rgba(20,184,166,.35); outline-offset:3px; }}
     .muted {{ color:#6b7280; font-size:13px; }}
     .task-journey {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:0 0 16px; }}
     .task-link {{ display:block; border:1px solid #dbe3ee; border-radius:10px; padding:12px; color:#111827; text-decoration:none; background:#f8fafc; }}
@@ -34868,7 +34893,9 @@ async def _build_documento_coi_bundle(
 ) -> tuple[Documento, list[ExpenseReport], list[ExpenseCFDI]]:
     # Load documento
     doc_result = await session.execute(
-        select(Documento).where(Documento.id == documento_id)
+        select(Documento)
+        .options(*coi_document_loader_options())
+        .where(Documento.id == documento_id)
     )
     documento = doc_result.scalar_one_or_none()
 
@@ -34945,7 +34972,13 @@ async def _build_documento_coi_bundle(
                     detail="Completa la revisión de partidas y el corte contable AMEX antes de exportar.",
                 )
             try:
-                return documento, expenses, cut_expense_cfdis(cut)
+                return (
+                    documento,
+                    expenses,
+                    group_expense_cfdis_for_document(
+                        cut_expense_cfdis(cut), documento
+                    ),
+                )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not getattr(documento, "aprobado_en", None):
@@ -35420,7 +35453,16 @@ async def exportar_coi_poliza_gasto_excel(
 
     try:
         expense_cfdi = await build_expense_cfdi_for_export(session, expense)
-        xlsx_bytes = generate_coi_poliza_xlsx([expense_cfdi])
+        source_document = (
+            getattr(expense, "solicitud_documento", None)
+            or getattr(expense, "documento", None)
+        )
+        expense_cfdis = [expense_cfdi]
+        if source_document is not None:
+            expense_cfdis = group_expense_cfdis_for_document(
+                expense_cfdis, source_document
+            )
+        xlsx_bytes = generate_coi_poliza_xlsx(expense_cfdis)
     except ValueError as exc:
         return RedirectResponse(
             url=_append_error_params(

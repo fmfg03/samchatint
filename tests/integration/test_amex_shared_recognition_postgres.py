@@ -122,6 +122,8 @@ async def _seed(pg, *, count=1, code="2120-002-062", invoice=True):
         cuenta_gastos_id=account_id,
         empleado_id=pg.actor,
         numero_referencia="I-TEST",
+        referencia_operaciones="OP-TEST",
+        proyecto_otro="Proyecto AMEX congelado",
         aprobado_en=datetime(2026, 10, 3, tzinfo=timezone.utc),
     )
     imports, reports, invoices = [], [], []
@@ -270,6 +272,12 @@ async def test_multiple_partidas_mixed_treatments_create_one_whole_report_cut(pg
     versions = await _review(pg, data, ["expense", "partner_receivable", "expense"])
     result = await _cut(pg, data, versions)
     assert result.status == "created", result.reason
+    assert result.cut.snapshot_json["coi_metadata"] == {
+        "document_id": str(data.informe.id),
+        "operation_reference": "OP-TEST",
+        "party_name": "Acceptance",
+        "context_description": "Proyecto AMEX congelado",
+    }
     assert await _journal_count(pg) == 1
     rows = await _lines(pg, result.poliza.id)
     assert sum(Decimal(str(row.debe or 0)) for row in rows) == Decimal("348")
