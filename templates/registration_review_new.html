@@ -44,9 +44,15 @@
         </div>
     </form>
 
-    <form action="/api/registration-review/batches" method="post" enctype="multipart/form-data" style="background: #fff; border: 1px solid #bfdbfe; border-radius: 16px; padding: 24px; margin-top: 20px;">
+    <form id="batch-admission-form" novalidate style="background: #fff; border: 1px solid #bfdbfe; border-radius: 16px; padding: 24px; margin-top: 20px;">
         <h3 style="margin-top: 0;">Admitir lote revisado</h3>
         <p style="color: #475569;">Crea sesiones de revisión vinculadas a fuentes exactas. No captura equipos ni concede elegibilidad.</p>
+        <div id="batch-error" role="alert" aria-live="assertive" hidden style="margin-bottom: 16px; padding: 12px 14px; border: 1px solid #fecaca; border-radius: 10px; background: #fef2f2; color: #991b1b;"></div>
+        <div id="batch-status" aria-live="polite" hidden style="margin-bottom: 16px; padding: 12px 14px; border: 1px solid #bfdbfe; border-radius: 10px; background: #eff6ff; color: #1e3a8a;">
+            <div id="batch-status-text" style="font-weight: 600; margin-bottom: 8px;"></div>
+            <progress id="batch-progress" max="100" value="0" style="width: 100%; height: 14px;"></progress>
+            <div id="batch-progress-text" style="margin-top: 6px; font-size: 0.9rem;"></div>
+        </div>
         <div style="margin-bottom: 16px;">
             <label for="manifest" style="display: block; font-weight: 600; margin-bottom: 8px;">Manifiesto privado</label>
             <input id="manifest" name="manifest" type="file" accept="application/json,.json" required style="width: 100%;">
@@ -56,7 +62,247 @@
             <input id="batch-files" name="files" type="file" accept="application/pdf,.pdf" multiple required style="width: 100%;">
             <small style="color: #64748b;">Los nombres y hashes deben coincidir exactamente con el manifiesto.</small>
         </div>
-        <button type="submit" class="btn" style="border: none; cursor: pointer;">Admitir para revisión</button>
+        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <button id="batch-submit" type="submit" class="btn" style="border: none; cursor: pointer;">Admitir para revisión</button>
+            <button id="batch-cancel" type="button" class="btn" hidden style="border: none; cursor: pointer; background: #6c757d;">Cancelar carga</button>
+        </div>
     </form>
 </div>
+
+<script>
+(() => {
+    const form = document.getElementById("batch-admission-form");
+    const manifestInput = document.getElementById("manifest");
+    const filesInput = document.getElementById("batch-files");
+    const submitButton = document.getElementById("batch-submit");
+    const cancelButton = document.getElementById("batch-cancel");
+    const errorBox = document.getElementById("batch-error");
+    const statusBox = document.getElementById("batch-status");
+    const statusText = document.getElementById("batch-status-text");
+    const progress = document.getElementById("batch-progress");
+    const progressText = document.getElementById("batch-progress-text");
+    let activeUploadId = null;
+    let busy = false;
+    let cancelling = false;
+    let cancelRequested = false;
+
+    function showError(message) {
+        errorBox.textContent = message || "No fue posible completar la operación.";
+        errorBox.hidden = false;
+    }
+
+    function clearError() {
+        errorBox.textContent = "";
+        errorBox.hidden = true;
+    }
+
+    function showProgress(title, value, detail) {
+        statusBox.hidden = false;
+        statusText.textContent = title;
+        progress.value = Math.max(0, Math.min(100, value));
+        progressText.textContent = detail || "";
+    }
+
+    function setBusy(value) {
+        busy = value;
+        submitButton.disabled = value;
+        manifestInput.disabled = value;
+        filesInput.disabled = value;
+        cancelButton.disabled = !activeUploadId || cancelling;
+    }
+
+    async function responseMessage(response) {
+        try {
+            const payload = await response.json();
+            return payload?.detail?.message || payload?.message || null;
+        } catch (_error) {
+            return null;
+        }
+    }
+
+    async function checkedJson(response, fallback) {
+        if (!response.ok) {
+            const message = await responseMessage(response);
+            if (response.status === 401) {
+                throw new Error(message || "Tu sesión venció. Inicia sesión y vuelve a intentarlo.");
+            }
+            if (response.status === 413) {
+                throw new Error("El archivo excede el tamaño permitido para una carga individual.");
+            }
+            throw new Error(message || fallback);
+        }
+        return response.json();
+    }
+
+    async function expectedPdfNames(manifestFile) {
+        let manifest;
+        try {
+            manifest = JSON.parse(await manifestFile.text());
+        } catch (_error) {
+            throw new Error("El manifiesto no contiene JSON válido.");
+        }
+        const documents = Array.isArray(manifest?.documents) ? manifest.documents : [];
+        const names = [...new Set(documents.map(item => item?.pdf).filter(Boolean))];
+        if (!names.length) {
+            throw new Error("El manifiesto no declara archivos PDF.");
+        }
+        return names.sort();
+    }
+
+    function validateSelectedFiles(expectedNames, selectedFiles) {
+        const selectedNames = selectedFiles.map(file => file.name).sort();
+        if (
+            selectedNames.length !== expectedNames.length ||
+            selectedNames.some((name, index) => name !== expectedNames[index])
+        ) {
+            throw new Error("Selecciona exactamente los PDF indicados por el manifiesto.");
+        }
+    }
+
+    function uploadOneFile(uploadId, file, completedBytes, totalBytes) {
+        return new Promise((resolve, reject) => {
+            const request = new XMLHttpRequest();
+            request.open("POST", `/api/registration-review/batch-uploads/${uploadId}/files`);
+            request.responseType = "json";
+            request.upload.addEventListener("progress", event => {
+                if (!event.lengthComputable) return;
+                const current = completedBytes + event.loaded;
+                const percent = totalBytes ? (current / totalBytes) * 100 : 0;
+                showProgress(
+                    `Subiendo ${file.name}`,
+                    percent,
+                    `${Math.min(current, totalBytes).toLocaleString()} de ${totalBytes.toLocaleString()} bytes`
+                );
+            });
+            request.addEventListener("load", () => {
+                const payload = request.response;
+                if (request.status >= 200 && request.status < 300) {
+                    resolve(payload);
+                    return;
+                }
+                const message = payload?.detail?.message || payload?.message;
+                if (request.status === 401) {
+                    reject(new Error(message || "Tu sesión venció. Inicia sesión y vuelve a intentarlo."));
+                } else if (request.status === 413) {
+                    reject(new Error("El PDF excede el tamaño permitido para una carga individual."));
+                } else {
+                    reject(new Error(message || `No pude cargar ${file.name}.`));
+                }
+            });
+            request.addEventListener("error", () => reject(new Error(`La red interrumpió la carga de ${file.name}.`)));
+            request.addEventListener("abort", () => reject(new Error("La carga fue cancelada.")));
+            const body = new FormData();
+            body.append("file", file, file.name);
+            request.send(body);
+        });
+    }
+
+    form.addEventListener("submit", async event => {
+        event.preventDefault();
+        if (busy) return;
+        clearError();
+        const manifestFile = manifestInput.files?.[0];
+        const selectedFiles = [...(filesInput.files || [])];
+        if (!manifestFile) {
+            showError("Selecciona el manifiesto privado del lote.");
+            return;
+        }
+        if (!selectedFiles.length) {
+            showError("Selecciona los PDF indicados por el manifiesto.");
+            return;
+        }
+        cancelRequested = false;
+        setBusy(true);
+        try {
+            const expectedNames = await expectedPdfNames(manifestFile);
+            validateSelectedFiles(expectedNames, selectedFiles);
+            showProgress("Validando manifiesto", 0, "Preparando carga privada…");
+            const initBody = new FormData();
+            initBody.append("manifest", manifestFile, manifestFile.name);
+            const initResponse = await fetch("/api/registration-review/batch-uploads", {
+                method: "POST",
+                body: initBody,
+            });
+            let state = await checkedJson(initResponse, "No pude iniciar la carga del lote.");
+            activeUploadId = state.upload_id;
+            cancelButton.hidden = false;
+            cancelButton.disabled = false;
+            const uploadedNames = new Set(
+                (state.files || [])
+                    .filter(item => item.status === "uploaded" || item.status === "purged")
+                    .map(item => item.name)
+            );
+            const pendingFiles = selectedFiles.filter(file => !uploadedNames.has(file.name));
+            const completedInitialBytes = selectedFiles
+                .filter(file => uploadedNames.has(file.name))
+                .reduce((total, file) => total + file.size, 0);
+            const totalBytes = selectedFiles.reduce((total, file) => total + file.size, 0);
+            let completedBytes = completedInitialBytes;
+            for (const file of pendingFiles) {
+                if (cancelRequested) return;
+                state = await uploadOneFile(activeUploadId, file, completedBytes, totalBytes);
+                if (cancelRequested) return;
+                completedBytes += file.size;
+                showProgress(
+                    `Archivos ${state.uploaded_files}/${state.expected_files}`,
+                    totalBytes ? (completedBytes / totalBytes) * 100 : 100,
+                    "PDF validado y almacenado de forma privada."
+                );
+            }
+            let admitted = Number(state.admitted_documents || 0);
+            const expectedDocuments = Number(state.expected_documents || 0);
+            while (admitted < expectedDocuments) {
+                if (cancelRequested) return;
+                showProgress(
+                    `Admitiendo expediente ${admitted + 1} de ${expectedDocuments}`,
+                    expectedDocuments ? (admitted / expectedDocuments) * 100 : 0,
+                    "Creando un draft revisable; no se crean equipos ni elegibilidad."
+                );
+                const response = await fetch(
+                    `/api/registration-review/batch-uploads/${activeUploadId}/admit-next`,
+                    { method: "POST" }
+                );
+                state = await checkedJson(response, "No pude avanzar la admisión del lote.");
+                if (cancelRequested) return;
+                admitted = Number(state.admitted_documents || 0);
+            }
+            showProgress(
+                "Lote admitido para revisión",
+                100,
+                `${admitted}/${expectedDocuments} expedientes; 0 equipos creados y 0 concesiones de elegibilidad.`
+            );
+            activeUploadId = null;
+            cancelButton.hidden = true;
+        } catch (error) {
+            showError(error?.message || "No fue posible completar la carga.");
+        } finally {
+            setBusy(false);
+        }
+    });
+
+    cancelButton.addEventListener("click", async () => {
+        if (!activeUploadId || cancelling) return;
+        clearError();
+        cancelRequested = true;
+        cancelling = true;
+        cancelButton.disabled = true;
+        try {
+            const response = await fetch(
+                `/api/registration-review/batch-uploads/${activeUploadId}`,
+                { method: "DELETE" }
+            );
+            await checkedJson(response, "No pude cancelar la carga.");
+            activeUploadId = null;
+            cancelButton.hidden = true;
+            showProgress("Carga cancelada", 0, "Los archivos temporales fueron eliminados.");
+        } catch (error) {
+            cancelRequested = false;
+            showError(error?.message || "No fue posible cancelar la carga.");
+        } finally {
+            cancelling = false;
+            setBusy(busy);
+        }
+    });
+})();
+</script>
 {% endblock %}
