@@ -309,3 +309,52 @@ def test_mixed_document_xlsx_marks_metadata_as_multiple_documents():
         "Múltiples documentos",
         "Múltiples documentos",
     ]
+
+
+def test_document_and_metadata_free_policy_are_marked_as_multiple_documents():
+    document_expense = _expense(
+        poliza_document_id="documento-1",
+        poliza_operation_reference="104",
+        poliza_party_name="Proveedor Uno",
+        poliza_context_description="Torneo Uno",
+    )
+    standalone_expense = _expense(export_reference="G-SIN-DOCUMENTO")
+
+    sheet = _coi_sheet([document_expense, standalone_expense])
+
+    assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [
+        "Múltiples documentos",
+        "Múltiples documentos",
+        "Múltiples documentos",
+    ]
+
+
+def test_coi_metadata_and_manifest_neutralize_spreadsheet_formulas():
+    expense = _expense(
+        poliza_document_id="documento-1",
+        poliza_operation_reference="=1+1",
+        poliza_party_name="+Proveedor",
+        poliza_context_description="@Proyecto",
+    )
+    workbook = load_workbook(
+        io.BytesIO(
+            generate_coi_poliza_xlsx(
+                [expense],
+                lote_manifest_rows=[
+                    ["referencia_operaciones", "beneficiario_razon_social"],
+                    ["=1+1", "+Proveedor"],
+                ],
+            )
+        )
+    )
+
+    sheet = workbook["Poliza COI"]
+    assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [
+        "'=1+1",
+        "'+Proveedor",
+        "'@Proyecto",
+    ]
+    assert [cell.value for cell in workbook["Manifest"][2]] == [
+        "'=1+1",
+        "'+Proveedor",
+    ]

@@ -19,6 +19,7 @@ def cut_expense_cfdis(cut: AmexAccountingCut) -> list[ExpenseCFDI]:
 def _cut_expense_cfdis(cut: AmexAccountingCut) -> list[ExpenseCFDI]:
     """Use frozen movements; never recompute from mutable expense classification."""
     snapshot = cut.snapshot_json
+    metadata = snapshot.get("coi_metadata") or {}
     items = snapshot.get("partidas") or []
     actual = snapshot.get("lines") or []
     flattened = [row for item in items for row in item.get("journal_lines", [])]
@@ -83,6 +84,10 @@ def _cut_expense_cfdis(cut: AmexAccountingCut) -> list[ExpenseCFDI]:
                 poliza_group_key=f"amex-cut:{cut.id}",
                 poliza_reference=str(cut.id),
                 poliza_description=f"Corte AMEX {cut.kind} · {snapshot.get('informe_reference', cut.informe_id)}",
+                poliza_document_id=metadata.get("document_id"),
+                poliza_operation_reference=metadata.get("operation_reference"),
+                poliza_party_name=metadata.get("party_name"),
+                poliza_context_description=metadata.get("context_description"),
                 posting_movements=movements,
             )
         )

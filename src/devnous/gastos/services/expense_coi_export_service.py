@@ -182,11 +182,15 @@ def group_expense_cfdis_for_document(
     group_key = f"informe:{getattr(documento, 'id', reference)}"
     description = f"Informe de Gastos {reference}"
     for expense_cfdi in expense_cfdis:
-        expense_cfdi.poliza_document_id = metadata["document_id"]
-        expense_cfdi.poliza_operation_reference = metadata["operation_reference"]
-        expense_cfdi.poliza_party_name = metadata["party_name"]
-        expense_cfdi.poliza_context_description = metadata["context_description"]
-        if document_type == "INFORME":
+        is_frozen_amex_cut = str(expense_cfdi.poliza_group_key or "").startswith(
+            "amex-cut:"
+        )
+        if not is_frozen_amex_cut:
+            expense_cfdi.poliza_document_id = metadata["document_id"]
+            expense_cfdi.poliza_operation_reference = metadata["operation_reference"]
+            expense_cfdi.poliza_party_name = metadata["party_name"]
+            expense_cfdi.poliza_context_description = metadata["context_description"]
+        if document_type == "INFORME" and not expense_cfdi.poliza_group_key:
             expense_cfdi.poliza_group_key = group_key
             expense_cfdi.poliza_reference = reference
             expense_cfdi.poliza_description = description

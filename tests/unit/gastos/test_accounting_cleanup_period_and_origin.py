@@ -193,6 +193,21 @@ def test_cleanup_beneficiary_falls_back_to_expense_account() -> None:
     assert _cleanup_beneficiary_name(expense) == "Operador Regional"
 
 
+def test_cleanup_search_includes_visible_account_beneficiary() -> None:
+    expense = _searchable_expense(
+        informe_documento=None,
+        cuenta_gastos=SimpleNamespace(
+            beneficiario_empleado=None,
+            beneficiario_proveedor_cliente=SimpleNamespace(
+                nombre="Operador Regional"
+            ),
+            empleado=SimpleNamespace(nombre="Solicitante"),
+        ),
+    )
+
+    assert cleanup_expense_matches_filters(expense, search_q="operador regional")
+
+
 def test_cleanup_search_is_accent_insensitive_and_uses_loaded_context() -> None:
     expense = _searchable_expense()
 

@@ -327,6 +327,7 @@ def group_coi_policies(expenses: List[ExpenseCFDI]) -> List[CoiPolicyGroup]:
 def _coi_workbook_metadata(expenses: List[ExpenseCFDI]) -> tuple[str, str, str]:
     """Return the C2:E2 document metadata without mislabeling mixed batches."""
     metadata_by_document: Dict[str, tuple[str, str, str]] = {}
+    has_metadata_free_policy = False
     for index, expense in enumerate(expenses, start=1):
         values = (
             " ".join((expense.poliza_operation_reference or "").split()),
@@ -335,19 +336,27 @@ def _coi_workbook_metadata(expenses: List[ExpenseCFDI]) -> tuple[str, str, str]:
         )
         document_id = " ".join((expense.poliza_document_id or "").split())
         if not document_id and not any(values):
+            has_metadata_free_policy = True
             continue
         key = document_id or f"metadata:{index}:{values!r}"
         metadata_by_document.setdefault(key, values)
 
     if not metadata_by_document:
         return "", "", ""
-    if len(metadata_by_document) > 1:
+    if has_metadata_free_policy or len(metadata_by_document) > 1:
         return (
             "Múltiples documentos",
             "Múltiples documentos",
             "Múltiples documentos",
         )
     return next(iter(metadata_by_document.values()))
+
+
+def _safe_cell_text(value: Any) -> Any:
+    """Prevent spreadsheet programs from evaluating untrusted text as formulas."""
+    if not isinstance(value, str):
+        return value
+    return f"'{value}" if value.startswith(("=", "+", "-", "@")) else value
 
 
 def _movement_row(movement: Dict[str, Any]) -> CoiRow:
@@ -593,9 +602,9 @@ def generate_coi_poliza_xlsx(
     operation_reference, party_name, context_description = _coi_workbook_metadata(
         expenses
     )
-    ws["C2"] = operation_reference
-    ws["D2"] = party_name
-    ws["E2"] = context_description
+    ws["C2"] = _safe_cell_text(operation_reference)
+    ws["D2"] = _safe_cell_text(party_name)
+    ws["E2"] = _safe_cell_text(context_description)
     _style_coi_import_sheet(ws)
 
     summary = wb.create_sheet("Resumen")
@@ -635,7 +644,7 @@ def generate_coi_poliza_xlsx(
     if lote_manifest_rows:
         manifest = wb.create_sheet("Manifest")
         for row in lote_manifest_rows:
-            manifest.append(row)
+            manifest.append([_safe_cell_text(value) for value in row])
         _style_review_sheet(manifest)
 
     buffer = io.BytesIO()

@@ -215,21 +215,6 @@ async def test_cut_export_fails_closed(failure):
 
 
 @pytest.mark.asyncio
-async def test_cut_export_fails_closed_when_informe_is_missing():
-    session = AsyncMock()
-    cut = SimpleNamespace(snapshot_json={}, informe_id=uuid4())
-    session.get.side_effect = [cut, None]
-
-    with pytest.raises(HTTPException) as exc:
-        await routes.amex_accounting_cut_export(
-            uuid4(), "xlsx", session, SimpleNamespace()
-        )
-
-    assert exc.value.status_code == 409
-    assert exc.value.detail == "El corte no tiene un informe vinculado."
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("role,status", [("finanzas", 200), ("empleado", 403)])
 async def test_real_permission_dependency_and_uuid_validation(role, status):
     app = FastAPI()
@@ -263,20 +248,7 @@ async def test_cut_download_actual_format_and_read_only(format):
 
     session = AsyncMock()
     cut = frozen_cut()
-    informe = SimpleNamespace(
-        id=cut.informe_id,
-        tipo="INFORME",
-        numero_referencia="I-26000001",
-        referencia_operaciones="109",
-        proveedor_cliente=None,
-        beneficiario_empleado=SimpleNamespace(nombre="Beneficiaria AMEX"),
-        beneficiario_proveedor_cliente=None,
-        empleado=None,
-        torneo=SimpleNamespace(name="Copa Telmex"),
-        proyecto_otro=None,
-        cuenta_gastos=None,
-    )
-    session.get.side_effect = [cut, informe]
+    session.get.return_value = cut
     response = await routes.amex_accounting_cut_export(
         cut.id, format, session, SimpleNamespace()
     )
@@ -291,9 +263,9 @@ async def test_cut_download_actual_format_and_read_only(format):
         workbook = load_workbook(io.BytesIO(response.body))
         sheet = workbook["Poliza COI"]
         assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [
-            "109",
-            "Beneficiaria AMEX",
-            "Copa Telmex",
+            "OP-FROZEN",
+            "Beneficiaria congelada",
+            "Torneo congelado",
         ]
     session.commit.assert_not_awaited()
     session.rollback.assert_not_awaited()

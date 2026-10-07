@@ -30,10 +30,6 @@ from ..services.coi_poliza_exporter import (
     generate_coi_poliza_xlsx,
     generate_coi_poliza_zip,
 )
-from ..services.expense_coi_export_service import (
-    coi_document_loader_options,
-    group_expense_cfdis_for_document,
-)
 from .dependencies import get_db_session, require_admin_finanzas
 
 router = APIRouter()
@@ -302,15 +298,8 @@ async def amex_accounting_cut_export(
     cut = await session.get(AmexAccountingCut, cut_id)
     if cut is None:
         raise HTTPException(404, "Corte no encontrado.")
-    informe = await session.get(
-        Documento,
-        cut.informe_id,
-        options=coi_document_loader_options(),
-    )
-    if informe is None:
-        raise HTTPException(409, "El corte no tiene un informe vinculado.")
     try:
-        items = group_expense_cfdis_for_document(cut_expense_cfdis(cut), informe)
+        items = cut_expense_cfdis(cut)
         generators = {
             "xlsx": generate_coi_poliza_xlsx,
             "csv": generate_coi_poliza_csv,
