@@ -12,6 +12,9 @@ from devnous.gastos.services.coi_poliza_exporter import (
     generate_coi_poliza_xlsx,
     generate_coi_poliza_zip,
 )
+from devnous.gastos.services.documento_semantics import (
+    effective_document_project_name,
+)
 from devnous.gastos.services.expense_coi_export_service import (
     group_expense_cfdis_for_document,
 )
@@ -197,6 +200,17 @@ def test_standalone_zip_preserves_references_and_duplicate_filename_suffix():
 def _coi_sheet(expenses):
     workbook = load_workbook(io.BytesIO(generate_coi_poliza_xlsx(expenses)))
     return workbook["Poliza COI"]
+
+
+def test_effective_document_project_name_handles_none_and_manual_project():
+    assert (
+        effective_document_project_name(None, fallback="Sin proyecto")
+        == "Sin proyecto"
+    )
+    assert (
+        effective_document_project_name(SimpleNamespace(proyecto_otro="  Gira Norte  "))
+        == "Gira Norte"
+    )
 
 
 def test_solicitud_xlsx_writes_operation_provider_and_tournament_in_c2_to_e2():

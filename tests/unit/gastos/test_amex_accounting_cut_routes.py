@@ -215,6 +215,21 @@ async def test_cut_export_fails_closed(failure):
 
 
 @pytest.mark.asyncio
+async def test_cut_export_fails_closed_when_informe_is_missing():
+    session = AsyncMock()
+    cut = SimpleNamespace(snapshot_json={}, informe_id=uuid4())
+    session.get.side_effect = [cut, None]
+
+    with pytest.raises(HTTPException) as exc:
+        await routes.amex_accounting_cut_export(
+            uuid4(), "xlsx", session, SimpleNamespace()
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "El corte no tiene un informe vinculado."
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("role,status", [("finanzas", 200), ("empleado", 403)])
 async def test_real_permission_dependency_and_uuid_validation(role, status):
     app = FastAPI()
