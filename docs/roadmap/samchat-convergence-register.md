@@ -22,9 +22,9 @@ canon edits silently.
 
 | Protected source path | SHA-256 at Line 0 baseline |
 | --- | --- |
-| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `0e40aecfc98be3196aa8a96dc1f1f2bbc8a5bb4239602b2600655a6b15d40a56` |
+| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `dc4d23a352895be063e8df8906a7a35bae6db874e5e719719b769239dc17d3c5` |
 | `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `2c55cc807c464d5462bca3e9d092fcefe6f5f2f66f4498231d72a7b57d795985` |
-| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `d17b7151c54f59e7aa4f091f7aa26734255466952212d72fdeb73605803ab2b2` |
+| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `d1b46b73216f8a41d2b9b6c070ee0442d2611683ea475483597e6d3c74b79a4b` |
 
 | Canon amendment date | Affected sources | Reason and evidence | Evidence state |
 | --- | --- | --- | --- |
@@ -35,6 +35,7 @@ canon edits silently.
 | 2026-10-05 | Product and Engineering canons | Explicit human approval to permit normal reports with expense dates in different months, using one approval-month policy period for monthly discovery and Finance batches. Missing approval dates remain blockers. AMEX requires its immutable initial cut and that cut's accounting month, retaining cut-creation controls. Evidence: PR #458 shared period predicates, SQL-backed discovery tests, complete CSV/XLSX/ZIP exports and frozen-cut regressions. | Source changes under PR review; deployment, authenticated UAT and business acceptance remain pending. |
 
 | 2026-10-05 | Product, Engineering and Sweep canons | Human-approved final diff and canon amendment for the first Copa Telmex registration PostgreSQL delivery. Explicit tournament/edition catalog, shared assistant/Direction read projection, and early exclusion of alternate SOUL registration reads. Evidence: `docs/roadmap/ctt-postgres-registration-first-delivery.md`; 209 tests passed, 99.45% changed-statement coverage, independent review with no pending defects. General lint/type validation remains partial due to inherited debt. | Approved isolated-worktree candidate; not committed, merged, deployed, imported, UAT-validated, or business accepted. |
+| 2026-10-06 | Product and Engineering canons | Human-approved review-only admission contract for the 11 reconciled Copa Telmex 2026 dossiers. Exact edition, PDF, page, extraction and technical-staff evidence is bound to idempotent review drafts; team, staff and eligibility writes remain blocked pending a separately approved Zaubern staff contract. Evidence: `docs/roadmap/ctt-pilot-batch-admission.md`, 56 focused tests, isolated PostgreSQL migration verification, and independent validation with no critical or important findings. | Approved isolated-worktree candidate; not committed, merged, deployed, migration-applied, data-admitted, UAT-validated, or business accepted. |
 ## Work lanes and gates
 
 | ID | Lane | Owner | Start gate | Exit evidence |

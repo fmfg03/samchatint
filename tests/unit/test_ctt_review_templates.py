@@ -136,6 +136,7 @@ def test_detail_renders_read_only_canonical_comparison() -> None:
         assets=[],
         team={},
         manager={},
+        staff=[],
         players=[],
         notes="",
         validation={
@@ -162,6 +163,41 @@ def test_detail_renders_read_only_canonical_comparison() -> None:
     assert "/api/registration-review/session/reject" in html
     assert 'name="canonical_fields"' not in html
     assert 'name="canonical_value"' not in html
+
+
+def test_detail_shows_both_staff_slots_as_governance_blocked():
+    template = _environment().get_template("registration_review_detail.html")
+    html = template.render(
+        request=_request("/registration-review/session"),
+        review_session=SimpleNamespace(
+            id="session",
+            status="ready",
+            provider="reviewed_manifest",
+            tournament_slug="copa-telmex-2026",
+        ),
+        assets=[],
+        team={},
+        manager={},
+        staff=[
+            {
+                "role": "director_tecnico",
+                "first_name": "Directora",
+                "presence": "present",
+            },
+            {"role": "auxiliar", "first_name": "Auxiliar", "presence": "present"},
+        ],
+        players=[],
+        notes="",
+        validation={"blockers": [], "issues": [], "ready_to_commit": False},
+        layout_regions={},
+        overall_confidence="0%",
+        canonical_review={},
+        canonical_promotion_enabled=False,
+        tournament_options=[],
+    )
+    assert "Director técnico" in html
+    assert "Auxiliar" in html
+    assert "gobernanza" in html
 
 
 def test_detail_routes_governed_conflicts_through_regs05_controls() -> None:

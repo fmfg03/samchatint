@@ -322,7 +322,6 @@ La primera entrega de consolidación de inscripción de Copa Telmex añade un ca
 
 Evidence: `docs/roadmap/ctt-postgres-registration-first-delivery.md` and its scoped test and review receipts. This is an isolated-worktree candidate; merge, deployment, data application, authenticated UAT, and business acceptance remain separate.
 
-
 ### Proposed 2026-10-06 amendment: partial paid-advance comprobaciones
 
 Requires explicit human PR review. Reason: Francisco requests applicant-confirmed
@@ -351,3 +350,29 @@ Evidence: `docs/roadmap/partial-advance-comprobaciones.md`, scoped implementatio
 SQLite-backed workflow/ledger tests and isolated PostgreSQL/WASM migration tests.
 No production migration, deployment, authenticated UAT, or historical mutation
 has been performed.
+
+## 17. Copa Telmex reviewed-dossier admission candidate amendment
+
+Date: 2026-10-06
+
+Reason: add a review-only, source-bound admission path for the 11 manually
+reconciled Copa Telmex 2026 dossiers while preserving the distinction between
+draft admission, governed team commit, eligibility, production data application,
+and business acceptance.
+
+The candidate accepts an authenticated private batch manifest bound to the exact
+tournament edition, PDF hashes, ordered source pages, extraction payloads, and
+two technical-staff slots. It creates idempotent registration-review drafts and
+receipts; it does not create teams, players, staff, or eligibility. Director
+tecnico and auxiliar evidence remains visible in review. Because the current
+REG-S05/Zaubern decision contract authorizes player slots only, any draft with
+technical staff fails closed with `STAFF_GOVERNANCE_CONTRACT_REQUIRED`. Staff
+commit requires a separately approved external contract expansion and a later
+SamChat commit integration. The 11 dossiers remain pending production admission
+until the owner migration, deployment, authenticated submission, and resulting
+zero-team/zero-eligibility receipt are verified.
+
+Evidence: `docs/roadmap/ctt-pilot-batch-admission.md`, scoped tests, isolated
+PostgreSQL migration verification, and independent implementation validation.
+This remains an isolated-worktree candidate; merge, deployment, migration/data
+application, authenticated UAT, and business acceptance are separate.
