@@ -9,7 +9,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, undefer
 
 from ..models import (
     Aprobacion,
@@ -132,6 +132,8 @@ def documento_requires_budget_control(documento: Documento) -> bool:
     expense report (advance/reimbursement/AMEX settlement) inherit budget from
     the report lines, so they must not pass through Control Presupuestal again.
     """
+    if getattr(documento, "is_supplier_advance", False):
+        return False
     if getattr(documento, "budget_concept_id", None):
         return False
     if documento.tipo == "INFORME":
@@ -170,6 +172,7 @@ async def _load_documento(
         .options(
             selectinload(Documento.empleado),
             selectinload(Documento.beneficiario_empleado),
+            undefer(Documento.fase),
         )
         .where(Documento.id == documento_id)
         .with_for_update()
@@ -883,6 +886,13 @@ async def transition_documento_workflow(
                     "No se puede aprobar la solicitud hasta completar su configuraci\u00f3n "
                     f"contable ({posting.reason or 'incompleta'}).",
                 )
+        if (
+            getattr(documento, "supplier_advance_id", None)
+            and documento.estado == "cerrado"
+        ):
+            comentario_normalizado = (
+                comentario_normalizado or ""
+            ) + " Factura cubierta por anticipo; cierre sin transferencia bancaria."
         aprobacion_accion = "aprobar"
 
     elif normalized_action == "reject":

@@ -11582,6 +11582,7 @@ def _can_edit_solicitud_terceros(
 ) -> bool:
     return (
         _is_solicitud_terceros(documento)
+        and not getattr(documento, "supplier_advance_id", None)
         and _is_pre_budget_edit_window(documento)
         and documento.empleado_id == empleado.id
         and not solicitud_cancelada
@@ -11622,6 +11623,11 @@ def _can_remove_solicitud_adjunto(
     solicitud_cancelada: bool = False,
 ) -> bool:
     categoria_norm = (categoria or "supporting").strip().lower()
+    if getattr(documento, "supplier_advance_id", None) and categoria_norm in {
+        "cfdi_xml",
+        "cfdi_pdf",
+    }:
+        return False
     if categoria_norm == "comprobante_pago":
         return _can_finance_add_comprobante_pago(
             documento,
@@ -17952,6 +17958,26 @@ async def gastos_terceros(
     totals_by_currency: Dict[str, Decimal] = {}
     status_counts = Counter()
 
+    supplier_ids = [
+        d.id for d in documentos if getattr(d, "is_supplier_advance", False)
+    ]
+    supplier_applied = {}
+    if supplier_ids:
+        allocations = await session.execute(
+            select(
+                Documento.supplier_advance_id,
+                func.sum(Documento.supplier_advance_applied),
+            )
+            .where(
+                Documento.supplier_advance_id.in_(supplier_ids),
+                Documento.estado.in_(
+                    ["aprobado", "en_proceso_pago", "pagado", "cerrado"]
+                ),
+            )
+            .group_by(Documento.supplier_advance_id)
+        )
+        supplier_applied = dict(allocations.all())
+
     # Build rows HTML
     rows_html = ""
     for doc in documentos:
@@ -17968,7 +17994,11 @@ async def gastos_terceros(
         aprobador_nombre = escape(aprobador_by_doc.get(doc.id, "—"))
         monto_value = float(doc.monto_solicitado or 0)
         doc_currency = currency_for(doc)
-        monto_display = format_currency(monto_value, doc_currency) if doc.monto_solicitado else "—"
+        monto_display = (
+            format_currency(monto_value, doc_currency)
+            if doc.monto_solicitado is not None
+            else "—"
+        )
         fecha_pago_display = format_value(doc.fecha_pago) if doc.fecha_pago else "—"
         fecha_aprobacion_display = (format_value(doc.aprobado_en) if getattr(doc, "aprobado_en", None) else "-")
         concepto_raw = (doc.concepto_pago or "").strip()
@@ -17995,6 +18025,17 @@ async def gastos_terceros(
         concepto_attr = escape(concepto_raw.lower())
         proveedor_attr = escape(proveedor_raw.lower())
         estado_display = _documento_human_status_badge(doc.estado)
+        if getattr(doc, "is_supplier_advance", False):
+            estado_display += "<div>Anticipo a proveedor</div>"
+            if doc.estado == "pagado" and doc.pagado_en:
+                pending = max(
+                    Decimal(str(doc.monto_solicitado or 0))
+                    - Decimal(str(supplier_applied.get(doc.id) or 0)),
+                    Decimal("0"),
+                )
+                estado_display += f'<small>{"Pendiente de comprobar" if pending else "Comprobado"}: {format_currency(pending, doc_currency)}</small>'
+        elif getattr(doc, "supplier_advance_id", None):
+            estado_display += "<small>Comprobación de anticipo</small>"
         totals_by_currency[doc_currency] = totals_by_currency.get(
             doc_currency, Decimal("0")
         ) + Decimal(str(monto_value))
@@ -32221,6 +32262,10 @@ def _documentos_todos_reporting_type(documento: Documento) -> str:
     doc_type = (getattr(documento, "tipo", None) or "").strip().upper()
     if doc_type == "INFORME":
         return "Informe de gastos"
+    if doc_type == "SOLICITUD" and getattr(documento, "is_supplier_advance", False):
+        return "Anticipo a proveedor"
+    if doc_type == "SOLICITUD" and getattr(documento, "supplier_advance_id", None):
+        return "Comprobación de anticipo a proveedor"
     if doc_type == "SOLICITUD" and is_employee_reimbursement(documento):
         return "Reembolso empleado"
     if doc_type == "SOLICITUD" and getattr(documento, "beneficiario_empleado_id", None):
@@ -37093,7 +37138,27 @@ async def _render_solicitud_terceros_form(
     # El concepto presupuestal ya no se captura al crear solicitudes.
     # Flujo canonico: usuario captura operacion -> Control Presupuestal asigna.
     budget_concept_row_terceros = ""
+    advance_checked = bool(getattr(edit_documento, "is_supplier_advance", False))
+    advance_due = getattr(edit_documento, "supplier_advance_due_date", None)
+    advance_controls_html = (
+        f'<input type="checkbox" id="is_supplier_advance" checked hidden disabled><div class="notice info"><strong>Anticipo a proveedor</strong> · Comprobación esperada: {escape(str(advance_due or ""))}</div>'
+        if edit_documento and advance_checked
+        else (
+            ""
+            if edit_documento
+            else '<label><input type="checkbox" name="is_supplier_advance" id="is_supplier_advance" value="1"> Anticipo a proveedor</label>'
+            "<p>El anticipo pasa a Aprobación y Programación de Pagos. Después del pago podrás comprobarlo con la factura.</p>"
+            '<label>Fecha esperada de comprobación <input type="date" name="supplier_advance_due_date" id="supplier_advance_due_date"></label>'
+            '<script>document.addEventListener("DOMContentLoaded", function() {'
+            'const flag=document.getElementById("is_supplier_advance"); const due=document.getElementById("supplier_advance_due_date");'
+            'const xml=document.getElementById("archivo_xml"); const pdf=document.getElementById("archivo_pdf");'
+            'function sync(){due.required=flag.checked; due.disabled=!flag.checked; if(xml){xml.disabled=flag.checked;if(flag.checked)xml.value="";}document.querySelectorAll("[name=referencia_factura_compartida],[name=cfdi_compartido_confirmado]").forEach(function(el){el.disabled=flag.checked;if(flag.checked){el.value="";el.checked=false;}});'
+            'if(pdf){const row=pdf.closest(".st-doc-row");const label=row&&row.querySelector(".st-doc-label");if(label)label.textContent=flag.checked?"PDF de soporte:":"CFDI PDF:";}}'
+            'flag.addEventListener("change",sync);sync();});</script>'
+        )
+    )
     support_section_html = f"""
+                    {advance_controls_html}
                     <div class="st-support-section">
                         <h3>Documentación de soporte</h3>
                         <div class="st-doc-row st-support-cfdi-pdf-row">
@@ -37702,6 +37767,8 @@ async def crear_nueva_solicitud_terceros(
     cfdi_compartido_confirmado: Optional[str] = Form(None),
     client_submission_id: Optional[str] = Form(None),
     submit_mode: str = Form("create"),
+    is_supplier_advance: Optional[str] = Form(None),
+    supplier_advance_due_date: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """
     Create a new SOLICITUD a terceros (requires proveedor/cliente).
@@ -37741,7 +37808,7 @@ async def crear_nueva_solicitud_terceros(
                 )
             )
 
-        # Toda solicitud entra primero a Control Presupuestal; la partida se asigna ahi.
+        # La factura se clasifica en Control Presupuestal; el anticipo inicial omite esta etapa.
         budget_concept_id = None
 
         fase_err, fase_final = await _validate_solicitud_terceros_fase(
@@ -37789,16 +37856,20 @@ async def crear_nueva_solicitud_terceros(
             pdf_bytes=pdf_bytes,
             pdf_filename=pdf_filename,
             attachments=attachments,
-            **(
-                {"cfdi_uuid_manual": cfdi_uuid_manual}
-                if cfdi_uuid_manual
-                else {}
-            ),
+            **({"cfdi_uuid_manual": cfdi_uuid_manual} if cfdi_uuid_manual else {}),
             pago_urgente=pago_urgente in ("1", "true", "on", "yes"),
             cfdi_compartido_confirmado=(
                 cfdi_compartido_confirmado in ("1", "true", "on", "yes")
             ),
             client_submission_id=client_submission_id,
+            **(
+                {
+                    "is_supplier_advance": True,
+                    "supplier_advance_due_date": supplier_advance_due_date,
+                }
+                if is_supplier_advance in ("1", "true", "on", "yes")
+                else {}
+            ),
             can_disclose_cfdi_conflict=(
                 (getattr(current_empleado, "rol", None) or "").strip().lower()
                 in {"admin", "superadmin", "super_admin", "finanzas"}
@@ -38047,7 +38118,7 @@ async def editar_solicitud_terceros_post(
             archivos_generales=archivos_generales,
         )
 
-        # Toda solicitud entra primero a Control Presupuestal; la partida se asigna ahi.
+        # La factura se clasifica en Control Presupuestal; el anticipo inicial omite esta etapa.
         budget_concept_id = None
 
         fase_err, fase_final = await _validate_solicitud_terceros_fase(
@@ -39588,6 +39659,14 @@ async def ver_documento(
     workflow_guidance_html = _render_document_workflow_guidance_html(
         workflow_guidance
     )
+    if getattr(documento, "is_supplier_advance", False) or getattr(
+        documento, "supplier_advance_id", None
+    ):
+        from .supplier_advance_routes import render_supplier_advance_controls
+
+        workflow_guidance_html += await render_supplier_advance_controls(
+            session, documento, current_empleado
+        )
 
     return_links = []
     if can_edit_solicitud_terceros:
@@ -39843,6 +39922,14 @@ async def ver_documento(
             if adjuntos_doc
             else "—"
         )
+        cfdi_attachment_options = (
+            ""
+            if (
+                getattr(documento, "is_supplier_advance", False)
+                or getattr(documento, "supplier_advance_id", None)
+            )
+            else '<option value="cfdi_pdf">CFDI PDF</option><option value="cfdi_xml">CFDI XML</option>'
+        )
         upload_form_html = ""
         if can_add_solicitud_adjuntos:
             upload_form_html = f"""
@@ -39851,8 +39938,7 @@ async def ver_documento(
                     <label for="adjunto_categoria">Tipo de archivo</label>
                     <select name="categoria" id="adjunto_categoria" required>
                         <option value="supporting">Materialidades / soporte</option>
-                        <option value="cfdi_pdf">CFDI PDF</option>
-                        <option value="cfdi_xml">CFDI XML</option>
+                        {cfdi_attachment_options}
                     </select>
                 </div>
                 <div class="form-group">
@@ -47301,3 +47387,8 @@ async def descargar_reembolso_adjunto(
         media_type=media_type,
         headers={"Content-Disposition": disposition},
     )
+
+
+from .supplier_advance_routes import router as supplier_advance_router
+
+router.include_router(supplier_advance_router)

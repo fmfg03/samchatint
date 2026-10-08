@@ -678,6 +678,14 @@ async def ensure_provider_approval_posting(
     ):
         return DebtorPostingResult(status="skipped", reason="not_provider_request")
 
+    if getattr(documento, "is_supplier_advance", False):
+        return DebtorPostingResult(
+            status="skipped", reason="supplier_advance_no_accrual"
+        )
+    if getattr(documento, "supplier_advance_id", None):
+        from .supplier_advance_service import ensure_supplier_invoice_posting
+
+        return await ensure_supplier_invoice_posting(session, documento=documento)
     numero_poliza = _event_poliza_number("PROV-APR", documento.id)
     existing = await _existing_event_poliza(
         session,
@@ -785,6 +793,14 @@ async def ensure_provider_payment_posting(
         or getattr(documento, "beneficiario_empleado_id", None) is not None
     ):
         return DebtorPostingResult(status="skipped", reason="not_provider_request")
+    if getattr(documento, "is_supplier_advance", False) or getattr(
+        documento, "supplier_advance_id", None
+    ):
+        from .supplier_advance_service import ensure_supplier_payment_posting
+
+        return await ensure_supplier_payment_posting(
+            session, documento=documento, fecha_pago=fecha_pago
+        )
     numero_poliza = _event_poliza_number("PROV-PAY", documento.id)
     existing = await _existing_event_poliza(
         session,

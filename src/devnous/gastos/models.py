@@ -2167,6 +2167,20 @@ class Documento(Base):
     )
     motivo_comprobacion_parcial = Column(Text, nullable=True)
 
+    # Supplier advances retain the paid source; each invoice is a child request.
+    is_supplier_advance = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    supplier_advance_due_date = Column(Date, nullable=True)
+    supplier_advance_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("documentos.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    supplier_advance_applied = Column(Numeric(18, 2), nullable=True)
+    supplier_invoice_total = Column(Numeric(18, 2), nullable=True)
+
     # CFDI capture at solicitud time (canonical UUID; linked to CFDIReport when available)
     cfdi_uuid_manual = Column(Text, nullable=True, index=True)
     cfdi_compartido_confirmado = Column(Boolean, default=False, nullable=False)
