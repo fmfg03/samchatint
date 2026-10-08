@@ -173,6 +173,10 @@ def group_expense_cfdis_for_document(
     documento: Any,
 ) -> List[ExpenseCFDI]:
     """Attach document metadata and bind every INFORME to one COI policy."""
+    if getattr(documento, "supplier_advance_id", None) or getattr(
+        documento, "is_supplier_advance", False
+    ):
+        raise ValueError("Anticipo a proveedor: exporte sus pólizas contables por evento; la póliza de transferencia genérica no representa la aplicación del anticipo.")
     metadata = coi_document_metadata(documento)
     document_type = str(getattr(documento, "tipo", None) or "").strip().upper()
     reference = str(
@@ -281,6 +285,8 @@ async def assess_expense_coi_cleanup_ready(
     expense: ExpenseReport,
 ) -> Tuple[bool, List[str]]:
     """True when the expense is safe to emit in a COI policy."""
+    if getattr(expense, "origen", None) == "supplier_advance_invoice":
+        return False, ["Comprobación de anticipo a proveedor: requiere pólizas contables por evento, fuera de la exportación genérica."]
     state = await build_cleanup_preview(session, expense)
     issues = list(state.get("issues") or [])
     try:
@@ -301,6 +307,8 @@ async def build_expense_cfdi_for_export(
 
     Requires persisted cleanup fields (cuenta, contrapartida, CFDI unless non-fiscal).
     """
+    if getattr(expense, "origen", None) == "supplier_advance_invoice":
+        raise ValueError("Comprobación de anticipo a proveedor excluida de la póliza de transferencia genérica.")
     if require_cleanup_ready:
         ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
         if not ready:
