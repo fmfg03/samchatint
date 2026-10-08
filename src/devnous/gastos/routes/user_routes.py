@@ -12760,11 +12760,12 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
     rol = escape(rol_raw)
     role_norm = (rol_raw or "").strip().lower()
     is_superadmin = role_norm in {"superadmin", "super_admin"}
+    impersonator_id = getattr(current_empleado, "impersonator_empleado_id", None)
     impersonator_name = escape(
         str(getattr(current_empleado, "impersonator_nombre", "") or "")
     )
     impersonation_html = ""
-    if getattr(current_empleado, "impersonator_empleado_id", None):
+    if impersonator_id:
         impersonation_html = f"""
         <div
             style="
@@ -12969,8 +12970,8 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
                             font-size:13px;
                             font-weight:600;
                         "
-                    >Cambiar identidad</a>
-                    ''' if is_superadmin or getattr(current_empleado, "impersonator_empleado_id", None) else ''}
+                    >{'Cambiar identidad (facultad del superadmin)' if impersonator_id else 'Cambiar identidad'}</a>
+                    ''' if is_superadmin or impersonator_id else ''}
                 </div>
             </details>
             <a

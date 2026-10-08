@@ -1196,11 +1196,16 @@ def render_admin_navigation(
     impersonator_id = getattr(current_empleado, "impersonator_empleado_id", None)
     identity_link_html = ""
     if is_superadmin or impersonator_id:
-        identity_link_html = """
+        identity_link_label = (
+            "Cambiar identidad (facultad del superadmin)"
+            if impersonator_id
+            else "Cambiar identidad"
+        )
+        identity_link_html = f"""
                 <a
                     href="/admin/identidad"
                     style="text-decoration:none;padding:10px 14px;border-radius:14px;border:1px solid #f59e0b;background:#fffbeb;color:#78350f;font-size:13px;font-weight:700;"
-                >Cambiar identidad</a>
+                >{identity_link_label}</a>
         """
     impersonation_html = ""
     if impersonator_id:
