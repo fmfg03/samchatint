@@ -60,7 +60,16 @@ def invoice_allocation(total: object, available: object) -> tuple[Decimal, Decim
     return applied, invoice - applied
 
 
+def require_supplier_advance_mxn(document) -> None:
+    if str(getattr(document, "currency", "MXN") or "").strip().upper() != "MXN":
+        raise SolicitudValidationError(
+            "advance_currency_unsupported",
+            "Los anticipos a proveedores requieren MXN; no existe conversión contable verificada.",
+        )
+
+
 def validate_initial_advance(payload, due_date: str | date | None) -> None:
+    require_supplier_advance_mxn(payload)
     payload.supplier_advance_due_date = (
         due_date if isinstance(due_date, date) else parse_optional_date(due_date)
     )
@@ -94,6 +103,7 @@ async def _lock_advance(session, advance_id: UUID) -> Documento:
         raise SolicitudValidationError(
             "invalid_advance", "Anticipo a proveedor no encontrado."
         )
+    require_supplier_advance_mxn(advance)
     return advance
 
 
@@ -173,6 +183,7 @@ async def submit_supplier_invoice(
                 "submission_conflict",
                 "La clave de envío ya pertenece a otro movimiento.",
             )
+        existing._supplier_invoice_created = False
         return existing
     validate_solicitud_terceros_attachment(xml)
     if xml.categoria != "cfdi_xml":
@@ -277,6 +288,7 @@ async def submit_supplier_invoice(
             fecha=datetime.utcnow(),
         )
     )
+    child._supplier_invoice_created = True
     return child
 
 
@@ -367,6 +379,7 @@ async def ensure_supplier_invoice_posting(session, *, documento):
     )
     from .expense_accounting_service import build_expense_accounting_preview
 
+    require_supplier_advance_mxn(documento)
     advance = await _lock_advance(session, documento.supplier_advance_id)
     existing = await _existing(session, documento, "proveedor_anticipo_factura")
     if existing:
@@ -465,7 +478,7 @@ async def ensure_supplier_invoice_posting(session, *, documento):
         proyecto=str(getattr(concept, "tournament_name", None) or "Solicitud"),
         tipo_gasto="manual",
         metodo_pago="TRANSFERENCIA",
-        origen="solicitud_terceros",
+        origen="supplier_advance_invoice",
         tournament_id=str(documento.torneo_id) if documento.torneo_id else None,
         fase_torneo=documento.fase,
         categorias=documento.categorias,
@@ -502,6 +515,7 @@ async def ensure_supplier_payment_posting(session, *, documento, fecha_pago):
         resolve_default_bank_account,
     )
 
+    require_supplier_advance_mxn(documento)
     parent_id = documento.supplier_advance_id or documento.id
     await _lock_advance(session, parent_id)
     event = (

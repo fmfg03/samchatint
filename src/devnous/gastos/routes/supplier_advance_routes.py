@@ -1,6 +1,7 @@
 """Invoice capture under an existing supplier advance, using session authority."""
 
 from html import escape
+import logging
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -21,6 +22,7 @@ from ..services.supplier_advance_service import (
 from .dependencies import get_current_empleado, get_db_session
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 async def _owned_paid_advance(session, document_id, actor):
@@ -145,6 +147,19 @@ async def supplier_invoice_submit(
             pdf=pdf,
         )
         await session.commit()
+        if child._supplier_invoice_created:
+            try:
+                from ..services.documento_telegram import (
+                    schedule_budget_control_telegram_notifications,
+                )
+
+                schedule_budget_control_telegram_notifications(
+                    documento_id=str(child.id), actor_id=str(actor.id)
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to schedule supplier invoice budget notification"
+                )
         return RedirectResponse(f"/documentos/{child.id}", status_code=303)
     except (SolicitudValidationError, CFDIIngestionError) as exc:
         await session.rollback()

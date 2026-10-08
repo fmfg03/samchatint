@@ -9,6 +9,7 @@ const migration=readFileSync('database/migrations/20261008_supplier_advances.sql
 await db.exec(migration); await db.exec(migration);
 const id=n=>`10000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
 await db.query(`INSERT INTO documentos(id,tipo,estado,empleado_id,proveedor_cliente_id,monto_solicitado,monto_total,currency,proyecto_otro,is_supplier_advance,supplier_advance_due_date) VALUES ($1,'SOLICITUD','en_proceso_pago',$2,$3,1000,1000,'MXN','Proyecto',true,'2026-10-31')`,[id(1),id(2),id(3)]);
+await assert.rejects(db.query(`UPDATE documentos SET currency='USD' WHERE id=$1`,[id(1)]),/ck_supplier_advance_mxn/);
 async function child(n,allocation,total,provider=id(3),cfdi=id(100+n)) {
  return db.query(`INSERT INTO documentos(id,tipo,estado,empleado_id,proveedor_cliente_id,monto_solicitado,monto_total,currency,proyecto_otro,supplier_advance_id,supplier_advance_applied,supplier_invoice_total,cfdi_report_id) VALUES ($1,'SOLICITUD','control_presupuestal',$2,$3,$4,$4,'MXN','Proyecto',$5,$6,$7,$8)`,[id(n),id(2),provider,total-allocation,id(1),allocation,total,cfdi]);
 }

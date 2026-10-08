@@ -543,6 +543,10 @@ def build_solicitud_terceros_payload(
 
     due_date = parse_optional_date(supplier_advance_due_date)
     if is_supplier_advance:
+        if normalized_currency != "MXN":
+            raise SolicitudValidationError(
+                "advance_currency_unsupported", "Los anticipos a proveedores requieren MXN."
+            )
         if due_date is None:
             raise SolicitudValidationError(
                 "advance_due_date_required",
@@ -1150,6 +1154,9 @@ async def update_solicitud_terceros_document(
             "La comprobación vinculada no admite edición. Rechace o cancele el movimiento y registre una nueva comprobación.",
         )
     if getattr(documento, "is_supplier_advance", False):
+        from .supplier_advance_service import require_supplier_advance_mxn
+
+        require_supplier_advance_mxn(payload)
         payload.is_supplier_advance = True
         payload.supplier_advance_due_date = documento.supplier_advance_due_date
         if (
@@ -1170,7 +1177,9 @@ async def update_solicitud_terceros_document(
             )
             for a in payload.attachments
         ]
-        if payload.pdf_bytes:
+        if payload.pdf_bytes and not any(
+            a.raw_bytes == payload.pdf_bytes for a in payload.attachments
+        ):
             payload.attachments.append(
                 SolicitudTercerosAttachment(
                     raw_bytes=payload.pdf_bytes,
@@ -1179,7 +1188,7 @@ async def update_solicitud_terceros_document(
                     categoria="supporting",
                 )
             )
-            payload.pdf_bytes = None
+        payload.pdf_bytes = None
     if documento.tipo != "SOLICITUD":
         raise SolicitudValidationError(
             "invalid_documento",

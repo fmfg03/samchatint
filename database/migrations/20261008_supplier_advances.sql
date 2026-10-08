@@ -8,6 +8,11 @@ ALTER TABLE documentos
     ADD COLUMN IF NOT EXISTS supplier_invoice_total numeric(18,2);
 CREATE INDEX IF NOT EXISTS ix_documentos_supplier_advance_id ON documentos(supplier_advance_id);
 DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='documentos'::regclass AND conname='ck_supplier_advance_mxn') THEN
+        ALTER TABLE documentos ADD CONSTRAINT ck_supplier_advance_mxn CHECK (
+            (NOT is_supplier_advance AND supplier_advance_id IS NULL) OR (currency IS NOT NULL AND currency='MXN')
+        );
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='documentos'::regclass AND conname='ck_supplier_advance_document') THEN
         ALTER TABLE documentos ADD CONSTRAINT ck_supplier_advance_document CHECK (
             (NOT is_supplier_advance OR (

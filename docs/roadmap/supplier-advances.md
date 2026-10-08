@@ -134,3 +134,6 @@ source traceability and the operational-cutoff/payment-evidence distinction.
 This dated feature specification records the additional behavior without
 rewriting production/deployment/acceptance claims. No canon amendment is authored
 or approved silently.
+
+
+PR review corrections (2026-10-08): supplier advances are MXN only; creation, edits, invoice approval and bank postings fail closed without verified FX conversion. Supplier flags select supplier-transfer authorization thresholds independently of optional invoice number, urgency or free-form text. Invoice expenses are explicitly excluded from generic transfer COI exports because that path cannot represent the separate accrual/application/payment journals; those accounting events remain persisted, and a dedicated combined export is not included. One PDF upload creates one supporting attachment. New invoice submissions schedule the canonical Budget Control notification only after commit; browser replays do not schedule another notification.

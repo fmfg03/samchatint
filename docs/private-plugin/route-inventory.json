@@ -18636,11 +18636,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "42ce460497aa",
+      "id": "68e7cd82638f",
       "source": "src/devnous/gastos/routes/supplier_advance_routes.py",
-      "line": 89,
+      "line": 91,
       "handler": "supplier_invoice_form",
-      "source_sha256": "8fda92b8aab0b848960c5ee4e8b2414a28c3af9727629d65845130ef999471b7",
+      "source_sha256": "ef658c6031c171c1ed8d3bfe8b69103bbc476006194bdc085e4096e42ff977da",
       "method": "GET",
       "paths": [],
       "declared_path": "/documentos/{documento_id}/comprobar-anticipo-proveedor",
@@ -18660,7 +18660,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/supplier_advance_routes.py:supplier_invoice_form",
-      "proposed_tool": "documents_and_other_supplier_invoice_form_get_42ce46",
+      "proposed_tool": "documents_and_other_supplier_invoice_form_get_68e7cd",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -18679,11 +18679,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "c2416b806ee6",
+      "id": "167b2684455f",
       "source": "src/devnous/gastos/routes/supplier_advance_routes.py",
-      "line": 115,
+      "line": 117,
       "handler": "supplier_invoice_submit",
-      "source_sha256": "8fda92b8aab0b848960c5ee4e8b2414a28c3af9727629d65845130ef999471b7",
+      "source_sha256": "ef658c6031c171c1ed8d3bfe8b69103bbc476006194bdc085e4096e42ff977da",
       "method": "POST",
       "paths": [],
       "declared_path": "/documentos/{documento_id}/comprobar-anticipo-proveedor",
@@ -18705,7 +18705,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/supplier_advance_routes.py:supplier_invoice_submit",
-      "proposed_tool": "documents_and_other_supplier_invoice_submit_post_c2416b",
+      "proposed_tool": "documents_and_other_supplier_invoice_submit_post_167b26",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "documento_id",

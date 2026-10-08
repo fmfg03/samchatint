@@ -498,6 +498,15 @@ async def test_http_submit_commits_canonical_movement_and_replay(case):
     from io import BytesIO
 
     from starlette.datastructures import UploadFile
+    from unittest.mock import Mock
+    from devnous.gastos.services import documento_telegram
+
+    notification = Mock()
+    case.monkeypatch.setattr(
+        documento_telegram,
+        "schedule_budget_control_telegram_notifications",
+        notification,
+    )
 
     await pay(case, case.advance)
     key = uuid4()
@@ -526,6 +535,10 @@ async def test_http_submit_commits_canonical_movement_and_replay(case):
     assert (await service.advance_balances(case.session, case.advance))[
         "reserved"
     ] == 700
+    notification.assert_called_once_with(
+        documento_id=response.headers["location"].rsplit("/", 1)[1],
+        actor_id=str(case.owner.id),
+    )
 
 
 @pytest.mark.asyncio
@@ -703,3 +716,109 @@ async def test_web_creation_and_submission_bypasses_budget_only_for_initial_adva
     )
     assert created.estado == "aprobado"
     assert await balance(case, "1120-001-001") == 0
+
+
+@pytest.mark.parametrize("currency", ["USD", "EUR", None])
+def test_foreign_advance_rejected_before_creation(currency):
+    payload = SimpleNamespace(currency=currency)
+    with pytest.raises(SolicitudValidationError, match="MXN"):
+        service.validate_initial_advance(payload, "2026-10-31")
+
+
+@pytest.mark.asyncio
+async def test_foreign_advance_cannot_post_bank_cash(case):
+    case.advance.currency = "USD"
+    with pytest.raises(SolicitudValidationError, match="MXN"):
+        await service.ensure_supplier_payment_posting(
+            case.session, documento=case.advance, fecha_pago=date.today()
+        )
+    assert not (await case.session.execute(select(AccountingPoliza))).scalars().all()
+
+
+@pytest.mark.parametrize(
+    "invoice_number,concept",
+    [(None, "Servicio"), ("123", "anticipo torneo"), ("123", "urgente")],
+)
+def test_supplier_authorization_uses_supplier_profiles(invoice_number, concept):
+    from devnous.gastos.services.authorization_profile_service import (
+        infer_document_authorization_inputs,
+    )
+    from devnous.gastos.services.authorization_strategy_service import (
+        resolve_authorization_strategy,
+    )
+
+    doc = SimpleNamespace(
+        is_supplier_advance=True,
+        empleado=SimpleNamespace(departamento="operaciones"),
+        monto_solicitado=150000,
+        numero_factura=invoice_number,
+        concepto_pago=concept,
+        tipo="SOLICITUD",
+        pago_urgente=True,
+    )
+    inputs = infer_document_authorization_inputs(doc)
+    assert inputs["erogation_type"] == "supplier_transfer"
+    decision = resolve_authorization_strategy(**inputs)
+    assert decision.rule.key == "ops_supplier_transfer_gt_100k"
+
+
+@pytest.mark.asyncio
+async def test_supplier_invoice_excluded_from_generic_coi_even_without_cleanup(case):
+    from devnous.gastos.services.expense_coi_export_service import (
+        assess_expense_coi_cleanup_ready,
+        build_expense_cfdi_for_export,
+        group_expense_cfdis_for_document,
+    )
+
+    await pay(case, case.advance)
+    child = await submit(case)
+    await approve(case, child)
+    expense = (
+        await case.session.execute(
+            select(ExpenseReport).where(ExpenseReport.documento_id == child.id)
+        )
+    ).scalar_one()
+    ready, issues = await assess_expense_coi_cleanup_ready(case.session, expense)
+    assert not ready and "por evento" in issues[0]
+    with pytest.raises(ValueError, match="genérica"):
+        await build_expense_cfdi_for_export(
+            case.session, expense, require_cleanup_ready=False
+        )
+    with pytest.raises(ValueError, match="por evento"):
+        group_expense_cfdis_for_document([], child)
+
+
+@pytest.mark.asyncio
+async def test_edit_advance_pdf_persists_only_one_support_attachment(case):
+    from devnous.gastos.services.documento_service import (
+        build_solicitud_terceros_payload,
+        update_solicitud_terceros_document,
+    )
+
+    case.advance.estado = "borrador"
+    payload = build_solicitud_terceros_payload(
+        empleado_id=case.owner.id,
+        monto_solicitado="1000",
+        proveedor_cliente_id=str(case.provider.id),
+        torneo_id="__otro__",
+        proyecto_otro="Proyecto",
+        concepto_pago="Servicio",
+        pdf_bytes=b"%PDF-1.4\nsoporte\n%%EOF",
+        pdf_filename="soporte.pdf",
+        currency="MXN",
+    )
+    await update_solicitud_terceros_document(
+        case.session, documento=case.advance, payload=payload
+    )
+    await case.session.flush()
+    attachments = (
+        (
+            await case.session.execute(
+                select(Adjunto).where(Adjunto.documento_id == case.advance.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(attachments) == 1
+    assert attachments[0].categoria == "supporting"
