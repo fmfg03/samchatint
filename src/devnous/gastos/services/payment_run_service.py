@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Iterable, Optional
 from uuid import UUID, uuid4
@@ -315,6 +315,85 @@ async def ensure_payment_run_schema(session: AsyncSession) -> None:
         await session.execute(text(statement))
 
 
+def payment_run_cutoff_date(row: dict[str, Any]) -> Optional[date]:
+    """Return the recorded operational cutoff date, never a scheduled fallback."""
+    value = row.get("run_date") or row.get("closed_at")
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if value:
+        return parse_payment_run_date(str(value)[:10])
+    return None
+
+
+async def prepare_payment_run_confirmation_date(
+    session: AsyncSession,
+    *,
+    documento: Documento,
+    actor: Any,
+    fecha_pago: Optional[str] = None,
+    request: Optional[Any] = None,
+) -> date:
+    """Apply an accounting-confirmed date without changing the closed snapshot.
+
+    This is part of the payment-proof transaction; callers own its commit.
+    """
+    require_payment_run_payment_confirmation(actor)
+    if (
+        documento.tipo != "SOLICITUD"
+        or documento.estado != "en_proceso_pago"
+        or documento.pagado_en is not None
+    ):
+        raise PaymentRunValidationError(
+            "Solo se confirma fecha en solicitudes En Proceso de Pago sin pagar."
+        )
+    result = await session.execute(
+        text(
+            """
+            SELECT c.id AS closure_id, c.run_date, c.closed_at
+            FROM payment_run_closure_items i
+            JOIN payment_run_closures c ON c.id = i.closure_id
+            WHERE i.documento_id = :documento_id
+            ORDER BY c.closed_at DESC
+            LIMIT 1
+            """
+        ),
+        {"documento_id": str(documento.id)},
+    )
+    cutoff = result.mappings().first()
+    cutoff_date = payment_run_cutoff_date(dict(cutoff)) if cutoff else None
+    selected_date = (
+        parse_payment_run_date(fecha_pago) if fecha_pago else cutoff_date
+    )
+    if selected_date is None:
+        raise PaymentRunValidationError(
+            "No hay fecha de corte vinculada; Contabilidad debe capturar la fecha de pago."
+        )
+    before = documento.fecha_pago
+    documento.fecha_pago = selected_date
+    await record_customer_success_audit_event(
+        session,
+        action="payment_run.confirmation_date_selected",
+        actor_empleado_id=actor.id,
+        documento_id=documento.id,
+        documento_referencia=documento.numero_referencia,
+        entity_type="documento",
+        entity_id=documento.id,
+        request=request,
+        summary="Fecha confirmada al adjuntar comprobante de pago.",
+        strict=True,
+        metadata={
+            "before_fecha_pago": before.isoformat() if before else None,
+            "after_fecha_pago": selected_date.isoformat(),
+            "cutoff_date": cutoff_date.isoformat() if cutoff_date else None,
+            "closure_id": str(cutoff["closure_id"]) if cutoff else None,
+            "date_source": "accounting" if fecha_pago else "cutoff",
+        },
+    )
+    return selected_date
+
+
 def _status_for_row(
     row: dict[str, Any],
     *,
@@ -469,6 +548,9 @@ async def list_payment_run_items(
         row["can_edit_fecha_pago"] = row["status"] in {"programada", "vencida"}
         row["can_close"] = row["status"] in {"programada", "vencida"}
         row["can_upload_payment_proof"] = row["status"] == "en proceso de pago"
+        cutoff_date = payment_run_cutoff_date(row)
+        row["confirmation_date"] = cutoff_date
+        row["cutoff_date_missing"] = cutoff_date is None
         row["amount_issue"] = (
             "Reembolso sin monto_total; requiere conciliacion."
             if row.get("monto") is None

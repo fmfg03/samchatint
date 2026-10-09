@@ -1552,6 +1552,7 @@ async def support_system_status(
         approval_rows_html += f"""
         <tr>
             <td style="padding:8px 10px;font-family:monospace;">{escape(str(doc.numero_referencia))}</td>
+            <td style="padding:8px 10px;">{escape(str(doc.referencia_operaciones or "—"))}</td>
             <td style="padding:8px 10px;">{requester}</td>
             <td style="padding:8px 10px;">{days} d</td>
         </tr>
@@ -1564,6 +1565,7 @@ async def support_system_status(
         payment_rows_html += f"""
         <tr>
             <td style="padding:8px 10px;font-family:monospace;">{escape(str(doc.numero_referencia))}</td>
+            <td style="padding:8px 10px;">{escape(str(doc.referencia_operaciones or "—"))}</td>
             <td style="padding:8px 10px;">{requester}</td>
             <td style="padding:8px 10px;">{days} d</td>
         </tr>
@@ -1614,6 +1616,7 @@ async def support_system_status(
         workflow_telegram_rows_html += f"""
         <tr>
             <td style="padding:8px 10px;font-family:monospace;">{escape(str(documento.numero_referencia or "—"))}</td>
+            <td style="padding:8px 10px;">{escape(str(documento.referencia_operaciones or "—"))}</td>
             <td style="padding:8px 10px;">{requester}</td>
             <td style="padding:8px 10px;">{recipient_name}</td>
             <td style="padding:8px 10px;">{status}</td>
@@ -1723,10 +1726,11 @@ async def support_system_status(
                         <table style="width:100%;border-collapse:collapse;font-size:13px;">
                             <thead><tr style="color:#64748b;font-size:11px;text-transform:uppercase;">
                                 <th style="padding:6px 8px;text-align:left;">Ref</th>
+                                <th style="padding:6px 8px;text-align:left;">Referencia Operaciones</th>
                                 <th style="padding:6px 8px;text-align:left;">Solicitante</th>
                                 <th style="padding:6px 8px;text-align:left;">Espera</th>
                             </tr></thead>
-                            <tbody>{approval_rows_html or '<tr><td colspan="3" style="padding:8px;color:#64748b;">Sin casos</td></tr>'}</tbody>
+                            <tbody>{approval_rows_html or '<tr><td colspan="4" style="padding:8px;color:#64748b;">Sin casos</td></tr>'}</tbody>
                         </table>
                     </div>
                     <div>
@@ -1734,10 +1738,11 @@ async def support_system_status(
                         <table style="width:100%;border-collapse:collapse;font-size:13px;">
                             <thead><tr style="color:#64748b;font-size:11px;text-transform:uppercase;">
                                 <th style="padding:6px 8px;text-align:left;">Ref</th>
+                                <th style="padding:6px 8px;text-align:left;">Referencia Operaciones</th>
                                 <th style="padding:6px 8px;text-align:left;">Solicitante</th>
                                 <th style="padding:6px 8px;text-align:left;">Espera</th>
                             </tr></thead>
-                            <tbody>{payment_rows_html or '<tr><td colspan="3" style="padding:8px;color:#64748b;">Sin casos</td></tr>'}</tbody>
+                            <tbody>{payment_rows_html or '<tr><td colspan="4" style="padding:8px;color:#64748b;">Sin casos</td></tr>'}</tbody>
                         </table>
                     </div>
                 </div>
@@ -1766,12 +1771,13 @@ async def support_system_status(
                 <table style="width:100%;border-collapse:collapse;font-size:13px;">
                     <thead><tr style="color:#64748b;font-size:11px;text-transform:uppercase;">
                         <th style="padding:6px 8px;text-align:left;">Ref</th>
+                                <th style="padding:6px 8px;text-align:left;">Referencia Operaciones</th>
                         <th style="padding:6px 8px;text-align:left;">Solicitante</th>
                         <th style="padding:6px 8px;text-align:left;">Destinatario</th>
                         <th style="padding:6px 8px;text-align:left;">Outbox</th>
                         <th style="padding:6px 8px;text-align:left;">Espera</th>
                     </tr></thead>
-                    <tbody>{workflow_telegram_rows_html or '<tr><td colspan="5" style="padding:8px;color:#64748b;">Sin pendientes</td></tr>'}</tbody>
+                    <tbody>{workflow_telegram_rows_html or '<tr><td colspan="6" style="padding:8px;color:#64748b;">Sin pendientes</td></tr>'}</tbody>
                 </table>
             </section>
             <section class="surface" style="padding:14px 18px;margin-bottom:14px;">

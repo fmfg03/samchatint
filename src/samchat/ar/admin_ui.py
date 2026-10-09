@@ -898,6 +898,50 @@ def render_ar_matching_workbench_html(
     """
 
 
+def _pending_income_links_html(
+    links: list[dict[str, Any]], *, base_url: str = ""
+) -> str:
+    """Show proposed invoice links through the existing budget decision surface."""
+    if not links:
+        return ""
+    rows = []
+    edition_year = dict(parse_qsl(urlsplit(base_url).query)).get("edition_year")
+    for link in links:
+        tournament_key = str(link.get("tournament_id") or "").strip()
+        version_id = str(link.get("budget_version_id") or "").strip()
+        action = "Falta torneo; revisar vínculo en Presupuestos"
+        if tournament_key:
+            target = (
+                f"/admin/presupuestos/torneo/{quote(tournament_key, safe='')}"
+                f"?budget_view=income&version_id={quote(version_id, safe='')}"
+            )
+            if edition_year:
+                target += f"&edition_year={quote(edition_year, safe='')}"
+            target += "#presupuesto-ingresos"
+            action = (
+                f'<a href="{escape(target)}">Revisar aprobación en Presupuestos</a>'
+            )
+        rows.append(
+            "<tr>"
+            f"<td>{escape(str(link.get('cfdi_uuid') or '—'))}</td>"
+            f"<td>{escape(str(link.get('receptor_nombre') or link.get('receptor_rfc') or '—'))}</td>"
+            f"<td>{escape(str(link.get('concept_name') or '—'))}</td>"
+            f"<td>{_money(link.get('amount'))}</td>"
+            f"<td>Pendiente de aprobación</td><td>{action}</td>"
+            "</tr>"
+        )
+    return (
+        '<section class="workspace-card" style="margin-bottom:18px;">'
+        '<div class="workspace-section-title">Facturas vinculadas pendientes de aprobación</div>'
+        '<p>El vínculo ya existe. Su aprobación sigue en Presupuestos; '
+        'estos importes no se suman a ingresos reconocidos ni a cobros.</p>'
+        '<div class="ar-table-wrap"><table class="ar-table">'
+        '<thead><tr><th>CFDI</th><th>Cliente</th><th>Partida</th>'
+        '<th>Importe propuesto</th><th>Estado</th><th>Acción</th></tr></thead>'
+        f"<tbody>{''.join(rows)}</tbody></table></div></section>"
+    )
+
+
 def render_ar_read_model_html(
     payload: dict[str, Any],
     *,
@@ -1208,6 +1252,7 @@ def render_ar_read_model_html(
                 <tbody>{_linked_rows(issued_linked)}</tbody>
             </table>
         </section>
+        {_pending_income_links_html(list(payload.get('pending_links') or []), base_url=base_url)}
         <section class="workspace-card" style="margin-bottom:18px;">
             <div class="workspace-section-title">CFDI PSP no ligado</div>
             <table class="ar-table">

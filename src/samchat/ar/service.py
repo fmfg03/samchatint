@@ -289,6 +289,17 @@ async def build_ar_read_model(
         tournament_id=clean_tournament_id,
         approved_only=True,
     )
+    proposed_links = await list_budget_cfdi_income_links(
+        session,
+        budget_version_id=clean_version_id,
+        tournament_id=clean_tournament_id,
+        approved_only=False,
+    )
+    pending_links = [
+        dict(link)
+        for link in proposed_links
+        if link.get("status") == "pending_approval" and not link.get("unlinked_at")
+    ]
     candidates = await list_psp_cfdi_income_candidates(
         session,
         budget_version_id=clean_version_id,
@@ -304,6 +315,15 @@ async def build_ar_read_model(
     matches_by_item = {
         _safe_str(match.get("ar_item_id")): match for match in collection_matches
     }
+    # Active links are absent from the candidate picker. Keep pending ones
+    # visible separately, without treating them as recognized income or cash.
+    active_cfdi_ids = {
+        _safe_str(link.get("cfdi_report_id")) for link in links + pending_links
+    }
+    candidates = [
+        candidate for candidate in candidates
+        if _safe_str(candidate.get("id")) not in active_cfdi_ids
+    ]
 
     linked_by_line: dict[str, list[dict[str, Any]]] = {}
     for link in links:
@@ -591,6 +611,7 @@ async def build_ar_read_model(
             "mixed" if collected_total else "unknown"
         ),
         "summary": {
+            "pending_link_count": len(pending_links),
             "expected_income_count": len(expected_income),
             "expected_income_total": _safe_float(expected_total),
             "issued_linked_count": len(issued_linked),
@@ -606,6 +627,7 @@ async def build_ar_read_model(
         },
         "expected_income": expected_income,
         "issued_linked": issued_linked,
+        "pending_links": pending_links,
         "issued_unlinked": issued_unlinked,
         "collection_gaps": collection_gaps,
         "matching_gaps": matching_gaps,

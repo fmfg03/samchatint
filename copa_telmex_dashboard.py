@@ -1707,7 +1707,33 @@ MODERN_UI_HEAD_INJECTION = """
     border-left-color: #d97706 !important;
   }
 
-  /* 3) Tables use page scroll on desktop; horizontal scroll is a narrow-screen fallback. */
+  /* Shared information tables keep headings and horizontal access visible. */
+  .sam-information-table {
+    overflow:auto !important;
+    max-block-size:min(68vh, 46rem) !important;
+    scrollbar-gutter:stable;
+    -webkit-overflow-scrolling:touch;
+  }
+  .sam-information-table > table { overflow:visible !important; }
+  .sam-information-table > table > thead > tr > th {
+    position:sticky !important;
+    top:0;
+    z-index:3;
+    background:#0f172a;
+    color:#f8fafc;
+  }
+  .sam-table-scrollbar {
+    position:fixed;
+    z-index:30;
+    overflow-x:auto;
+    overflow-y:hidden;
+    height:20px;
+    background:#fff;
+    border:1px solid var(--sam-line);
+  }
+  .sam-table-scrollbar[hidden] { display:none; }
+  .sam-table-scrollbar > div { height:1px; }
+
   .sam-table-wrap {
     width: 100%;
     border-radius: 12px;
@@ -1746,13 +1772,80 @@ MODERN_UI_HEAD_INJECTION = """
 </style>
 <script>
   document.addEventListener('DOMContentLoaded', function() {
-    document.querySelectorAll('table').forEach(function(table) {
-      if (table.closest('.sam-table-wrap')) return;
-      const wrapper = document.createElement('div');
-      wrapper.className = 'sam-table-wrap';
-      table.parentNode.insertBefore(wrapper, table);
-      wrapper.appendChild(table);
-    });
+    const informationTables = new Map();
+    const initializeTable = function(table) {
+      if (informationTables.has(table)) return;
+      let wrapper = table.parentElement;
+      if (!wrapper.matches('.table-shell, .ar-table-wrap, .table-wrap, .sam-table-wrap')) {
+        wrapper = document.createElement('div');
+        wrapper.className = 'sam-table-wrap';
+        table.parentNode.insertBefore(wrapper, table);
+        wrapper.appendChild(table);
+      }
+      // Detail key/value tables retain their existing compact layout.
+      if (!table.tHead) return;
+      wrapper.classList.add('sam-information-table');
+      wrapper.tabIndex = 0;
+      wrapper.setAttribute('role', 'region');
+      const title = table.getAttribute('aria-label') ||
+        table.caption?.textContent.trim() || 'Tabla de información';
+      wrapper.setAttribute('aria-label', title);
+      const bar = document.createElement('div');
+      bar.className = 'sam-table-scrollbar';
+      bar.tabIndex = 0;
+      bar.setAttribute('role', 'region');
+      bar.setAttribute('aria-label', 'Desplazamiento horizontal: ' + title);
+      const track = document.createElement('div');
+      bar.appendChild(track);
+      document.body.appendChild(bar);
+      const update = function() {
+        const rect = wrapper.getBoundingClientRect();
+        const width = Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0);
+        const visible = rect.bottom > 20 && rect.top < window.innerHeight - 20;
+        bar.hidden = !visible || width <= 0 || wrapper.scrollWidth <= wrapper.clientWidth + 1;
+        if (bar.hidden) return;
+        bar.style.left = Math.max(rect.left, 0) + 'px';
+        bar.style.width = width + 'px';
+        bar.style.bottom = Math.max(0, window.innerHeight - rect.bottom) + 'px';
+        track.style.width = (wrapper.scrollWidth - wrapper.clientWidth + bar.clientWidth) + 'px';
+        bar.scrollLeft = wrapper.scrollLeft;
+      };
+      wrapper.addEventListener('scroll', function() { bar.scrollLeft = wrapper.scrollLeft; });
+      bar.addEventListener('scroll', function() { wrapper.scrollLeft = bar.scrollLeft; });
+      window.addEventListener('scroll', update, {passive:true});
+      window.addEventListener('resize', update, {passive:true});
+      const resizeObserver = new ResizeObserver(update);
+      resizeObserver.observe(table);
+      resizeObserver.observe(wrapper);
+      informationTables.set(table, function() {
+        resizeObserver.disconnect();
+        window.removeEventListener('scroll', update);
+        window.removeEventListener('resize', update);
+        bar.remove();
+      });
+      update();
+    };
+    const refreshTables = function() {
+      informationTables.forEach(function(dispose, table) {
+        if (!table.isConnected) {
+          dispose();
+          informationTables.delete(table);
+        }
+      });
+      document.querySelectorAll('table').forEach(initializeTable);
+      // Row replacement can change width before the next ResizeObserver event.
+      window.dispatchEvent(new Event('resize'));
+    };
+    let refreshPending = false;
+    new MutationObserver(function() {
+      if (refreshPending) return;
+      refreshPending = true;
+      requestAnimationFrame(function() {
+        refreshPending = false;
+        refreshTables();
+      });
+    }).observe(document.body, {childList:true, subtree:true});
+    refreshTables();
 
     document.querySelectorAll('div[style*=\"#f8d7da\"], div[style*=\"#721c24\"], div[style*=\"#dc3545\"]').forEach(function(el) {
       el.classList.add('sam-alert', 'sam-alert-error');
@@ -4162,6 +4255,10 @@ async def root_enterprise_home(request: Request):
     if not _has_internal_session(request):
         return _redirect_to_login(request, fallback="/assistant")
     if _is_session_empleado_role(request):
+        return RedirectResponse(url="/panel", status_code=307)
+    if str(request.session.get("rol") or "").strip().lower() in {
+        "admin", "finanzas", "superadmin", "super_admin"
+    }:
         return RedirectResponse(url="/panel", status_code=307)
     return RedirectResponse(url="/assistant", status_code=307)
 

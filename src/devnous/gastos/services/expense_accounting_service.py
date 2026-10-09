@@ -20,6 +20,7 @@ from .accounting_constants import (
     DEFAULT_ISR_RETENTION_ACCOUNT_CODE,
 )
 from .hospedaje_tax_service import resolve_hospedaje_local_tax
+from .budget_concept_account_service import load_effective_budget_concept
 
 _RESTAURANT_KEYWORDS = (
     "restaurante",
@@ -404,7 +405,7 @@ def summarize_cfdi_tax_components(
             if str(item.get("impuesto") or "").strip() == "002"
         )
     )
-    if iva_trasladado <= 0:
+    if not traslados:
         iva_trasladado = _money(
             getattr(cfdi_report, "total_impuestos_trasladados", None) or fallback_iva
         )
@@ -433,8 +434,23 @@ def summarize_cfdi_tax_components(
     subtotal = _money(getattr(cfdi_report, "subtotal", None))
     descuento = _money(getattr(cfdi_report, "descuento", None))
     total = _money(getattr(cfdi_report, "total", None))
-    derived_trasladados = _money(total - (subtotal - descuento) + retenciones_total)
-    if subtotal > 0 and total > 0 and derived_trasladados > iva_trasladado:
+    locales = list(impuestos.get("locales") or [])
+    local_net = sum(
+        _money(item.get("importe"))
+        * (-1 if str(item.get("tipo") or "").lower() == "retencion" else 1)
+        for item in locales
+    )
+    derived_trasladados = _money(
+        total - (subtotal - descuento) + retenciones_total - local_net
+    )
+    # Detailed transfers identify IVA. Never replace it with ISH/IEPS or a
+    # discrepancy in the invoice total.
+    if (
+        not traslados
+        and subtotal > 0
+        and total > 0
+        and derived_trasladados > iva_trasladado
+    ):
         iva_trasladado = derived_trasladados
 
     return {
@@ -674,6 +690,29 @@ async def build_expense_accounting_preview(
 
     retention_lines: List[Dict[str, Any]] = []
     notes: List[str] = []
+    effective_concept = await load_effective_budget_concept(session, expense)
+    mapped_id = getattr(effective_concept, "cuenta_contable_id", None)
+    assigned_id = getattr(expense, "cuenta_contable_id", None)
+    if effective_concept is not None:
+        if not mapped_id:
+            notes.append("La partida presupuestal no tiene cuenta contable mapeada.")
+        elif assigned_id and str(assigned_id) != str(mapped_id):
+            notes.append(
+                "La cuenta de cargo asignada difiere del catálogo presupuestal; "
+                "revisar la selección contable sin sustituirla automáticamente."
+            )
+    if cfdi_report is None and getattr(expense, "iva", None) is None:
+        notes.append(
+            "Sin desglose fiscal: Impuestos y Retenciones no acredita un importe "
+            "de IVA. Vincular CFDI o revisar el desglose en Contabilidad."
+        )
+    elif cfdi_report is not None and not (
+        (getattr(cfdi_report, "impuestos_detalle", None) or {}).get("traslados")
+    ) and taxes["iva_trasladado"] > 0:
+        notes.append(
+            "IVA estimado sin desglose de traslados del CFDI; verificar "
+            "clasificación fiscal antes de exportar."
+        )
     local_tax_lines: List[Dict[str, Any]] = []
     for item in taxes["retenciones"]:
         account = await _resolve_explicit_retention_account(
