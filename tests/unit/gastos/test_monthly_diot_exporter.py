@@ -49,12 +49,13 @@ def test_monthly_export_uses_effective_date_and_prorates_shared_cfdi():
         link_xml="",
         cuenta_contable_base="",
         cfdi_report=cfdi,
-        cfdi_compartido_confirmado=True,
+        cfdi_compartido_confirmado=False,
     )
 
     export = build_diot_export(
         [expense],
         effective_payment_dates={str(expense.id): date(2026, 9, 15)},
+        shared_cfdi_confirmations={str(expense.id): True},
     )
 
     row = export.detail_rows[0]

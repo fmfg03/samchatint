@@ -135,6 +135,22 @@ def test_scope_does_not_guess_multiple_direct_dates():
     assert [issue.code for issue in scope.undated] == ["fecha_pago_ambigua"]
 
 
+def test_missing_direct_date_does_not_fall_back_to_account_date():
+    account_id = uuid4()
+    expense = _expense(account_id=account_id)
+
+    scope = build_monthly_diot_scope_from_records(
+        [expense],
+        year=2026,
+        month=9,
+        direct_payment_dates={str(expense.id): [None]},
+        account_payment_dates={str(account_id): [date(2026, 9, 5)]},
+    )
+
+    assert scope.eligible_expenses == []
+    assert [issue.code for issue in scope.undated] == ["fecha_pago_faltante"]
+
+
 def test_period_blockers_disable_txt_without_hiding_excel_scope():
     expense = _expense(
         cfdi=SimpleNamespace(id=uuid4(), cfdi_uuid="X", emisor_rfc="")
@@ -192,6 +208,34 @@ def test_period_fiscal_blockers(expense, expected_code):
     assert [issue.code for issue in scope.blockers] == [expected_code]
 
 
+def test_eight_percent_iva_is_blocked_instead_of_reported_as_sixteen():
+    cfdi = _cfdi()
+    cfdi.impuestos_detalle = {
+        "traslados": [
+            {
+                "impuesto": "002",
+                "tipo_factor": "Tasa",
+                "tasa_o_cuota": "0.080000",
+                "base": "1000",
+                "importe": "80",
+            }
+        ]
+    }
+    expense = _expense(cfdi=cfdi)
+
+    scope = build_monthly_diot_scope_from_records(
+        [expense],
+        year=2026,
+        month=9,
+        direct_payment_dates={str(expense.id): [date(2026, 9, 5)]},
+        account_payment_dates={},
+    )
+
+    assert [issue.code for issue in scope.blockers] == [
+        "tasa_iva_no_soportada"
+    ]
+
+
 def test_unconfirmed_multiuse_cfdi_is_blocked():
     cfdi = _cfdi(total=1000)
     first = _expense(cfdi=cfdi, amount=500)
@@ -235,6 +279,31 @@ def test_invalid_confirmed_shared_application_is_blocked():
     assert {issue.code for issue in scope.blockers} == {
         "cfdi_duplicado_no_confirmado"
     }
+
+
+def test_document_confirmation_allows_historical_shared_expenses():
+    cfdi = _cfdi(total=1000)
+    first = _expense(cfdi=cfdi, amount=500)
+    second = _expense(cfdi=cfdi, amount=500)
+
+    scope = build_monthly_diot_scope_from_records(
+        [first, second],
+        year=2026,
+        month=9,
+        direct_payment_dates={
+            str(first.id): [date(2026, 9, 3)],
+            str(second.id): [date(2026, 9, 4)],
+        },
+        account_payment_dates={},
+        direct_shared_confirmations={
+            str(first.id): [True],
+            str(second.id): [True],
+        },
+    )
+
+    assert len(scope.eligible_expenses) == 2
+    assert scope.blockers == []
+    assert all(scope.shared_cfdi_confirmations.values())
 
 
 def test_out_of_period_and_reversed_expenses_are_excluded():
@@ -289,6 +358,7 @@ async def test_async_loader_resolves_direct_and_unique_account_dates():
         id=direct.documento_id,
         gasto_generado_id=None,
         fecha_pago_efectiva=date(2026, 9, 8),
+        cfdi_compartido_confirmado=True,
     )
     account_document = SimpleNamespace(
         cuenta_gastos_id=account_id,
@@ -306,6 +376,7 @@ async def test_async_loader_resolves_direct_and_unique_account_dates():
         scope.payment_date_sources[str(fallback.id)]
         == "cuenta_gastos_fecha_unica"
     )
+    assert scope.shared_cfdi_confirmations[str(direct.id)] is True
 
 
 @pytest.mark.asyncio
@@ -316,3 +387,30 @@ async def test_async_loader_returns_empty_scope_without_extra_queries():
 
     assert scope.eligible_expenses == []
     assert scope.blockers == []
+
+
+@pytest.mark.asyncio
+async def test_async_loader_preserves_missing_direct_date_over_account_date():
+    account_id = uuid4()
+    expense = _expense(account_id=account_id)
+    expense.documento_id = uuid4()
+    expense.solicitud_documento_id = None
+    direct_document = SimpleNamespace(
+        id=expense.documento_id,
+        gasto_generado_id=None,
+        fecha_pago_efectiva=None,
+        cfdi_compartido_confirmado=False,
+    )
+    account_document = SimpleNamespace(
+        cuenta_gastos_id=account_id,
+        fecha_pago_efectiva=date(2026, 9, 9),
+    )
+
+    scope = await build_monthly_diot_scope(
+        _FakeSession([[expense], [direct_document], [account_document]]),
+        year=2026,
+        month=9,
+    )
+
+    assert scope.eligible_expenses == []
+    assert [issue.code for issue in scope.undated] == ["fecha_pago_faltante"]

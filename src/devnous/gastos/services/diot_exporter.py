@@ -369,6 +369,7 @@ def build_diot_export(
     expenses: Sequence[Any],
     *,
     effective_payment_dates: Optional[Mapping[str, Any]] = None,
+    shared_cfdi_confirmations: Optional[Mapping[str, bool]] = None,
 ) -> DiotExport:
     detail_rows: List[DiotDetailRow] = []
     warnings: List[str] = []
@@ -412,9 +413,11 @@ def build_diot_export(
         )
         iva_ret = _iva_retenido(cfdi) if cfdi else Decimal("0")
 
-        if cfdi is not None and bool(
-            getattr(expense, "cfdi_compartido_confirmado", False)
-        ):
+        shared_confirmed = bool(
+            (shared_cfdi_confirmations or {}).get(str(expense.id), False)
+            or getattr(expense, "cfdi_compartido_confirmado", False)
+        )
+        if cfdi is not None and shared_confirmed:
             fiscal_total = _money(getattr(cfdi, "total", None))
             applied_total = _money(
                 total_gasto

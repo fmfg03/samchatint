@@ -35361,6 +35361,7 @@ async def contabilidad_diot_mensual_view(
     export = build_diot_export(
         scope.eligible_expenses,
         effective_payment_dates=scope.effective_payment_dates,
+        shared_cfdi_confirmations=scope.shared_cfdi_confirmations,
     )
     base_16 = sum(
         (row.amounts.get("base_16", Decimal("0")) for row in export.summary_rows),
@@ -35497,6 +35498,7 @@ async def exportar_diot_mensual_txt(
     export = build_diot_export(
         scope.eligible_expenses,
         effective_payment_dates=scope.effective_payment_dates,
+        shared_cfdi_confirmations=scope.shared_cfdi_confirmations,
     )
     return Response(
         content=generate_diot_txt(export),
@@ -35526,6 +35528,7 @@ async def exportar_diot_mensual_excel(
     export = build_diot_export(
         scope.eligible_expenses,
         effective_payment_dates=scope.effective_payment_dates,
+        shared_cfdi_confirmations=scope.shared_cfdi_confirmations,
     )
     content = create_diot_excel(
         export,

@@ -47,6 +47,7 @@ class MonthlyDiotScope:
     eligible_expenses: List[ExpenseReport] = field(default_factory=list)
     effective_payment_dates: Dict[str, date] = field(default_factory=dict)
     payment_date_sources: Dict[str, str] = field(default_factory=dict)
+    shared_cfdi_confirmations: Dict[str, bool] = field(default_factory=dict)
     blockers: List[MonthlyDiotIssue] = field(default_factory=list)
     undated: List[MonthlyDiotIssue] = field(default_factory=list)
 
@@ -103,13 +104,39 @@ def _applied_fiscal_amount(expense: ExpenseReport) -> Decimal:
     return amount - tip
 
 
+def _unsupported_iva_rates(cfdi: Any) -> List[Decimal]:
+    detail = getattr(cfdi, "impuestos_detalle", None)
+    if not isinstance(detail, dict):
+        return []
+    transfers = detail.get("traslados") or []
+    if isinstance(transfers, dict):
+        transfers = [transfers]
+    unsupported = set()
+    for transfer in transfers:
+        if not isinstance(transfer, dict):
+            continue
+        tax = str(transfer.get("impuesto") or "")
+        factor = str(transfer.get("tipo_factor") or "").strip().lower()
+        if tax not in {"", "002"} or factor != "tasa":
+            continue
+        try:
+            rate = Decimal(str(transfer.get("tasa_o_cuota") or 0))
+        except Exception:
+            unsupported.add(Decimal("-1"))
+            continue
+        if rate not in {Decimal("0"), Decimal("0.16")}:
+            unsupported.add(rate)
+    return sorted(unsupported)
+
+
 def build_monthly_diot_scope_from_records(
     expenses: Sequence[ExpenseReport],
     *,
     year: int,
     month: int,
-    direct_payment_dates: Mapping[str, Sequence[date]],
+    direct_payment_dates: Mapping[str, Sequence[date | None]],
     account_payment_dates: Mapping[str, Sequence[date]],
+    direct_shared_confirmations: Mapping[str, Sequence[bool]] | None = None,
 ) -> MonthlyDiotScope:
     """Classify loaded expenses without mutating financial records."""
     start_date, end_date = monthly_period_bounds(year, month)
@@ -127,6 +154,15 @@ def build_monthly_diot_scope_from_records(
         )
     ]
 
+    direct_shared_confirmations = direct_shared_confirmations or {}
+    shared_confirmed_by_expense = {
+        _expense_key(expense): bool(
+            getattr(expense, "cfdi_compartido_confirmado", False)
+        )
+        or any(direct_shared_confirmations.get(_expense_key(expense), ()))
+        for expense in active_expenses
+    }
+
     duplicate_groups: Dict[str, List[ExpenseReport]] = {}
     for expense in active_expenses:
         cfdi_id = getattr(expense, "cfdi_report_id", None)
@@ -138,7 +174,7 @@ def build_monthly_diot_scope_from_records(
         if len(group) <= 1:
             continue
         if not all(
-            bool(getattr(expense, "cfdi_compartido_confirmado", False))
+            shared_confirmed_by_expense[_expense_key(expense)]
             for expense in group
         ):
             for expense in group:
@@ -167,7 +203,8 @@ def build_monthly_diot_scope_from_records(
 
     for expense in active_expenses:
         key = _expense_key(expense)
-        direct_dates = _normalized_dates(direct_payment_dates.get(key, ()))
+        direct_values = list(direct_payment_dates.get(key, ()))
+        direct_dates = _normalized_dates(direct_values)
         account_dates = _normalized_dates(
             account_payment_dates.get(
                 str(getattr(expense, "cuenta_gastos_id", "")), ()
@@ -175,6 +212,16 @@ def build_monthly_diot_scope_from_records(
         )
         effective_date: date | None = None
         source = ""
+        if any(value is None for value in direct_values):
+            scope.undated.append(
+                _issue(
+                    expense,
+                    "fecha_pago_faltante",
+                    "El documento de pago vinculado directamente no tiene "
+                    "fecha efectiva.",
+                )
+            )
+            continue
         if len(direct_dates) == 1:
             effective_date = direct_dates[0]
             source = "documento_directo"
@@ -262,6 +309,19 @@ def build_monthly_diot_scope_from_records(
                 )
             )
             continue
+        unsupported_rates = _unsupported_iva_rates(cfdi)
+        if unsupported_rates:
+            display_rates = ", ".join(str(rate) for rate in unsupported_rates)
+            scope.blockers.append(
+                _issue(
+                    expense,
+                    "tasa_iva_no_soportada",
+                    "La DIOT mensual no clasifica automáticamente la tasa "
+                    f"de IVA {display_rates}.",
+                    effective_payment_date=effective_date,
+                )
+            )
+            continue
         if key in duplicate_errors:
             scope.blockers.append(
                 _issue(
@@ -276,6 +336,7 @@ def build_monthly_diot_scope_from_records(
         scope.eligible_expenses.append(expense)
         scope.effective_payment_dates[key] = effective_date
         scope.payment_date_sources[key] = source
+        scope.shared_cfdi_confirmations[key] = shared_confirmed_by_expense[key]
 
     scope.eligible_expenses.sort(
         key=lambda expense: (
@@ -344,7 +405,6 @@ async def build_monthly_diot_scope(
             await session.execute(
                 select(Documento).where(
                     or_(*direct_conditions),
-                    Documento.fecha_pago_efectiva.is_not(None),
                     or_(
                         Documento.estado == "pagado",
                         Documento.pagado_en.is_not(None),
@@ -355,7 +415,8 @@ async def build_monthly_diot_scope(
         .scalars()
         .all()
     )
-    direct_dates: Dict[str, List[date]] = {}
+    direct_dates: Dict[str, List[date | None]] = {}
+    direct_shared_confirmations: Dict[str, List[bool]] = {}
     for document in direct_documents:
         linked_expense_ids = set(
             document_to_expenses.get(str(document.id), set())
@@ -365,6 +426,9 @@ async def build_monthly_diot_scope(
         for expense_id in linked_expense_ids:
             direct_dates.setdefault(expense_id, []).append(
                 document.fecha_pago_efectiva
+            )
+            direct_shared_confirmations.setdefault(expense_id, []).append(
+                bool(document.cfdi_compartido_confirmado)
             )
 
     account_ids = {
@@ -403,6 +467,7 @@ async def build_monthly_diot_scope(
         month=month,
         direct_payment_dates=direct_dates,
         account_payment_dates=account_dates,
+        direct_shared_confirmations=direct_shared_confirmations,
     )
 
 
