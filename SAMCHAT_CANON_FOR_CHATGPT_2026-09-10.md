@@ -161,6 +161,43 @@ The deployed guard does not by itself close the business incident: historical
 reconciliation and affected-reference verification remain required, and Finance
 UAT is separate evidence.
 
+### 9.1 Expense-report COI policy granularity
+
+Date: 2026-09-29
+
+An `INFORME` is the accounting export unit. Its active expense items, tax
+movements, and CFDI evidence must be emitted under exactly one COI policy
+header. A single expense that belongs to an `INFORME` must not be exported as
+an independent policy.
+
+The export is atomic. If any active item is not COI-ready, the complete
+`INFORME` policy is blocked. No partial file is generated and no item is
+marked `contabilizado`.
+Cancelled items remain excluded. Standalone third-party requests retain their
+existing policy granularity.
+
+Amendment date: 2026-10-05. Reason: explicit human approval to remove the
+cross-month export restriction. Active items may have dates in different
+months or years while remaining under one complete `INFORME` policy. Their
+original expense dates and CFDI evidence are preserved. Each normal report is
+discovered only in its approval month for both monthly COI surfaces and Finance
+batches, including all its active items regardless of their dates. Missing
+approval dates remain explicit blockers, without a creation-date fallback.
+Company-AMEX reports retain their canonical cut controls and are exported only
+from the immutable initial cut in that cut's accounting month; this change does
+not authorize cross-month cut creation or rebuilding mutable classifications.
+Approval, accounting readiness, beneficiary and tax validations remain required.
+Evidence: the scoped correction in
+`user_routes.py` and `admin_routes.py`, with regression cases in
+`tests/unit/gastos/test_coi_exportable_status_ui.py`. This amendment describes
+the approved implementation scope; merge, deployment and Finance UAT remain
+pending their own evidence.
+
+Repository evidence for this amendment is the approved 2026-09-29 correction
+that groups XLSX, CSV, ZIP, document, and batch exports by `INFORME` and adds
+focused regression coverage. Merge, deployment, authenticated Finance UAT, and
+business acceptance remain separate evidence.
+
 ## 10. Current closure gates
 
 A finance capability is not “done” until it passes a real UAT path showing:
@@ -249,3 +286,93 @@ portfolio and tournament scope was configured for the eligible Direction
 positions. The expanded executive dossier remains an approved repository
 change under review until its own merge and deployment. Authenticated UAT and
 business acceptance remain pending.
+
+## 15. Direction supervision and independent documentary facts amendment
+
+Date: 2026-10-02. Human authorization: Francisco explicitly authorized SUPERADMIN
+to read all active tournaments in these boards, relayed at 18:27 UTC. This
+amendment is proposed in a draft PR and requires human review before merge.
+
+SUPERADMIN supervision now includes the active tournament catalog of the current
+Plataforma Sports installation even without portfolio membership. It does not
+include unrelated organizations, external catalogs, inactive tournaments, or any
+new action authority. Other profiles retain their assigned active portfolios and
+positions. An explicit portfolio filter narrows even SUPERADMIN's selection;
+explicit denials still prevail. No persistent assignment is created by a read.
+
+Documentary facts with their own verified source coverage must remain visible
+without an approved budget. Absence of an approved budget is not an authorized
+zero. Expenses use the canonical fiscal base and expense date; commitments and
+documentary paid amounts use the canonical payable amount in the request creation
+cohort. These stages are not added together, and none proves bank cash. Monthly
+budget, operating classifications, reconciled cash and comparative periods require
+their own source evidence; the supplied workbook examples are not production data.
+
+Evidence: isolated worktree from PR452, synthetic unit/browser/export verification
+and draft review evidence in `docs/evidence/direction-report-redesign`. No production
+access, merge, deployment, or business acceptance is claimed.
+
+## 16. Copa Telmex registration PostgreSQL candidate amendment
+
+Date: 2026-10-05
+
+Reason: human-approved first delivery of registration read-source consolidation; preserve the distinction between local candidate, production activation, and canonical intake. The final diff and this amendment were explicitly approved in the conversation.
+
+La primera entrega de consolidación de inscripción de Copa Telmex añade un catálogo explícito de torneo y edición. Para ediciones configuradas en ese catálogo, el asistente y Dirección consumen una misma proyección del registro operativo PostgreSQL, distinguiendo equipos, jugadores activos y provisionales, revisiones pendientes y disponibilidad de fuente. La captura y el estado activo no acreditan elegibilidad externa. La revisión visual de los 11 expedientes se conserva como evidencia pendiente de admisión canónica; no constituye una importación ni autorización automática. Las ediciones sin configurar conservan su ruta anterior. La activación productiva y la aceptación autenticada deben documentarse por separado.
+
+Evidence: `docs/roadmap/ctt-postgres-registration-first-delivery.md` and its scoped test and review receipts. This is an isolated-worktree candidate; merge, deployment, data application, authenticated UAT, and business acceptance remain separate.
+
+### Proposed 2026-10-06 amendment: partial paid-advance comprobaciones
+
+Requires explicit human PR review. Reason: Francisco requests applicant-confirmed
+motives, approver comments, an open original report until zero, and incremental
+accounting without duplicate recognition. This proposal does not establish
+production or business acceptance.
+
+For an open, unapproved, non-AMEX report with an actually paid advance and its
+existing debtor posting, the applicant may explicitly submit the newly captured
+expenses as a child `INFORME`. The original report remains an open case container;
+it must never be approved or exported again in partial mode. Each child owns
+only its explicitly assigned expenses and retains its confirmed applicant motive.
+The authorized approver must read that motive and record comments. Budget-control
+and accounting-readiness gates still apply. Each approved child has its own
+idempotent debtor recognition and one atomic COI policy in its approval month.
+Previously approved expenses cannot be reassigned or mutated; corrections require
+accounting reversal rather than overwriting recognized evidence.
+
+Actual, evidenced advance returns reduce the same collaborator debtor balance.
+Repeated submissions reuse the original result; additional returns require new
+submission identities. The original closes only when all children are approved,
+no active expenses remain unassigned, and the persisted debtor auxiliary is zero.
+Ordinary full reimbursement and company-AMEX immutable-cut rules remain intact.
+
+Evidence: `docs/roadmap/partial-advance-comprobaciones.md`, scoped implementation,
+SQLite-backed workflow/ledger tests and isolated PostgreSQL/WASM migration tests.
+No production migration, deployment, authenticated UAT, or historical mutation
+has been performed.
+
+## 17. Copa Telmex reviewed-dossier admission candidate amendment
+
+Date: 2026-10-06
+
+Reason: add a review-only, source-bound admission path for the 11 manually
+reconciled Copa Telmex 2026 dossiers while preserving the distinction between
+draft admission, governed team commit, eligibility, production data application,
+and business acceptance.
+
+The candidate accepts an authenticated private batch manifest bound to the exact
+tournament edition, PDF hashes, ordered source pages, extraction payloads, and
+two technical-staff slots. It creates idempotent registration-review drafts and
+receipts; it does not create teams, players, staff, or eligibility. Director
+tecnico and auxiliar evidence remains visible in review. Because the current
+REG-S05/Zaubern decision contract authorizes player slots only, any draft with
+technical staff fails closed with `STAFF_GOVERNANCE_CONTRACT_REQUIRED`. Staff
+commit requires a separately approved external contract expansion and a later
+SamChat commit integration. The 11 dossiers remain pending production admission
+until the owner migration, deployment, authenticated submission, and resulting
+zero-team/zero-eligibility receipt are verified.
+
+Evidence: `docs/roadmap/ctt-pilot-batch-admission.md`, scoped tests, isolated
+PostgreSQL migration verification, and independent implementation validation.
+This remains an isolated-worktree candidate; merge, deployment, migration/data
+application, authenticated UAT, and business acceptance are separate.

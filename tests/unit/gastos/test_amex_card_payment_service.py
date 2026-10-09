@@ -14,7 +14,7 @@ from devnous.gastos.services import amex_card_payment_service as svc
 async def test_create_amex_card_payment_request_creates_approved_solicitud(monkeypatch):
     actor_id = uuid4()
     card_id = uuid4()
-    cuenta = SimpleNamespace(codigo="2120-002-062")
+    cuenta = SimpleNamespace(id=uuid4(), codigo="2120-002-062", activo=True)
     card = SimpleNamespace(
         id=card_id,
         card_label="FGV AMEX",

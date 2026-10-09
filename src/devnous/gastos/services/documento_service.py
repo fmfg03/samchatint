@@ -173,6 +173,7 @@ async def validate_shared_cfdi_payment_amount(
     cfdi_report: object,
     requested_amount: object,
     exclude_documento_id: Optional[UUID] = None,
+    exclude_expense_id: Optional[UUID] = None,
 ) -> Decimal:
     """Atomically enforce that shared CFDI requests never exceed fiscal total."""
     report_id = getattr(cfdi_report, "id", None)
@@ -201,6 +202,7 @@ async def validate_shared_cfdi_payment_amount(
     # its paid request and an INFORME; exclude it when any linked Documento has
     # already supplied the reservation.
     reservation_document_exists = select(Documento.id).where(
+        Documento.cfdi_report_id == report_id,
         Documento.estado.in_(_CFDI_PAYMENT_RESERVING_STATES),
         Documento.monto_solicitado.is_not(None),
         or_(
@@ -218,8 +220,13 @@ async def validate_shared_cfdi_payment_amount(
         ExpenseReport.estado_gasto != "cancelado",
         ~reservation_document_exists.exists(),
     ]
+    if exclude_expense_id is not None:
+        expense_conditions.append(ExpenseReport.id != exclude_expense_id)
     expense_result = await session.execute(
-        select(ExpenseReport.gasto_cantidad)
+        select(
+            ExpenseReport.gasto_cantidad
+            - func.coalesce(ExpenseReport.propina_no_deducible, 0)
+        )
         .where(and_(*expense_conditions))
     )
     return shared_cfdi_remaining_amount(
@@ -258,6 +265,8 @@ class SolicitudTercerosPayload:
     cfdi_compartido_confirmado: bool = False
     client_submission_id: Optional[UUID] = None
     can_disclose_cfdi_conflict: bool = False
+    is_supplier_advance: bool = False
+    supplier_advance_due_date: Optional[date] = None
 
 
 @dataclass(slots=True)
@@ -432,6 +441,8 @@ def build_solicitud_terceros_payload(
     cfdi_compartido_confirmado: bool = False,
     client_submission_id: Optional[str] = None,
     can_disclose_cfdi_conflict: bool = False,
+    is_supplier_advance: bool = False,
+    supplier_advance_due_date: Optional[str] = None,
 ) -> SolicitudTercerosPayload:
     try:
         monto = float(monto_solicitado)
@@ -530,6 +541,27 @@ def build_solicitud_terceros_payload(
     except ValueError as exc:
         raise SolicitudValidationError("invalid_metadata", str(exc)) from exc
 
+    due_date = parse_optional_date(supplier_advance_due_date)
+    if is_supplier_advance:
+        if normalized_currency != "MXN":
+            raise SolicitudValidationError(
+                "advance_currency_unsupported", "Los anticipos a proveedores requieren MXN."
+            )
+        if due_date is None:
+            raise SolicitudValidationError(
+                "advance_due_date_required",
+                "Indique la fecha esperada de comprobación.",
+            )
+        if (
+            cfdi_uuid_manual
+            or cfdi_compartido_confirmado
+            or any(a.categoria == "cfdi_xml" for a in payload_attachments)
+        ):
+            raise SolicitudValidationError(
+                "advance_invoice_not_allowed",
+                "La factura se registra después del pago mediante Comprobar anticipo. Use Materialidades para el soporte inicial.",
+            )
+
     return SolicitudTercerosPayload(
         empleado_id=empleado_id,
         monto_solicitado=monto,
@@ -556,6 +588,8 @@ def build_solicitud_terceros_payload(
         cfdi_compartido_confirmado=bool(cfdi_compartido_confirmado),
         client_submission_id=submission_id,
         can_disclose_cfdi_conflict=bool(can_disclose_cfdi_conflict),
+        is_supplier_advance=bool(is_supplier_advance),
+        supplier_advance_due_date=due_date,
     )
 
 
@@ -701,6 +735,10 @@ async def create_solicitud_terceros_document(
     payload: SolicitudTercerosPayload,
 ) -> Documento:
     """Create a SOLICITUD document for a third-party payment request."""
+    if payload.is_supplier_advance:
+        from .supplier_advance_service import validate_initial_advance
+
+        validate_initial_advance(payload, payload.supplier_advance_due_date)
     if payload.client_submission_id is not None:
         # The lock plus the database unique index makes a duplicate POST from
         # the same browser form a replay, even when both requests arrive at
@@ -869,9 +907,17 @@ async def create_solicitud_terceros_document(
         cfdi_compartido_confirmado=payload.cfdi_compartido_confirmado,
         client_submission_id=payload.client_submission_id,
         cfdi_report_id=cfdi_report_id,
+        is_supplier_advance=payload.is_supplier_advance,
+        supplier_advance_due_date=payload.supplier_advance_due_date,
     )
     session.add(documento)
     await session.flush()
+
+    if payload.is_supplier_advance:
+        validated_attachments = [
+            (raw, mime, name, "supporting")
+            for raw, mime, name, _category in validated_attachments
+        ]
 
     await _ingest_solicitud_cfdi_from_attachments(
         session,
@@ -1023,6 +1069,14 @@ async def add_solicitud_documento_adjuntos(
     commit: bool = True,
 ) -> int:
     """Append validated attachments to an existing SOLICITUD document."""
+    if getattr(documento, "is_supplier_advance", False) or getattr(
+        documento, "supplier_advance_id", None
+    ):
+        if any(a.categoria in {"cfdi_xml", "cfdi_pdf"} for a in attachments):
+            raise SolicitudValidationError(
+                "advance_invoice_immutable",
+                "Registre cada factura desde Comprobar anticipo; no sustituya la evidencia fiscal de un movimiento existente.",
+            )
     if not attachments:
         return 0
     await _persist_solicitud_terceros_adjuntos(
@@ -1056,6 +1110,13 @@ async def remove_solicitud_documento_adjunto(
         )
 
     categoria = (adjunto.categoria or "supporting").strip().lower()
+    if categoria in {"cfdi_xml", "cfdi_pdf"}:
+        document = await session.get(Documento, documento_id)
+        if document is not None and getattr(document, "supplier_advance_id", None):
+            raise SolicitudValidationError(
+                "advance_invoice_immutable",
+                "La evidencia fiscal vinculada requiere un ajuste contable autorizado antes de sustituirse.",
+            )
     nombre = (adjunto.nombre_archivo or "archivo").strip() or "archivo"
     await session.delete(adjunto)
     await session.flush()
@@ -1087,6 +1148,47 @@ async def update_solicitud_terceros_document(
 
     Rejected solicitudes return to borrador when saved so the owner can re-send.
     """
+    if getattr(documento, "supplier_advance_id", None):
+        raise SolicitudValidationError(
+            "advance_invoice_immutable",
+            "La comprobación vinculada no admite edición. Rechace o cancele el movimiento y registre una nueva comprobación.",
+        )
+    if getattr(documento, "is_supplier_advance", False):
+        from .supplier_advance_service import require_supplier_advance_mxn
+
+        require_supplier_advance_mxn(payload)
+        payload.is_supplier_advance = True
+        payload.supplier_advance_due_date = documento.supplier_advance_due_date
+        if (
+            payload.cfdi_uuid_manual
+            or payload.cfdi_compartido_confirmado
+            or any(a.categoria == "cfdi_xml" for a in payload.attachments)
+        ):
+            raise SolicitudValidationError(
+                "advance_invoice_not_allowed",
+                "Use Comprobar anticipo después del pago.",
+            )
+        payload.attachments = [
+            SolicitudTercerosAttachment(
+                raw_bytes=a.raw_bytes,
+                filename=a.filename,
+                mime_type=a.mime_type,
+                categoria="supporting",
+            )
+            for a in payload.attachments
+        ]
+        if payload.pdf_bytes and not any(
+            a.raw_bytes == payload.pdf_bytes for a in payload.attachments
+        ):
+            payload.attachments.append(
+                SolicitudTercerosAttachment(
+                    raw_bytes=payload.pdf_bytes,
+                    filename=payload.pdf_filename or "soporte.pdf",
+                    mime_type="application/pdf",
+                    categoria="supporting",
+                )
+            )
+        payload.pdf_bytes = None
     if documento.tipo != "SOLICITUD":
         raise SolicitudValidationError(
             "invalid_documento",

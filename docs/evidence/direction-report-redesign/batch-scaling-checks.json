@@ -1,0 +1,46 @@
+{
+  "synthetic_only": true,
+  "catalog_scaling": [
+    {
+      "tournaments": 1,
+      "catalog_queries_with_recheck": 2,
+      "sql_batch_queries": 2,
+      "sql_batch_rows_returned": 2,
+      "returned_catalog_items_with_recheck": 4,
+      "metadata_aggregates_executed": 2,
+      "metadata_note": "EXPLAIN ANALYZE proves two full-scope ID aggregates once per unchanged MVCC revision, zero on subsequent pages/rechecks; keyset pages skip no prior rows."
+    },
+    {
+      "tournaments": 25,
+      "catalog_queries_with_recheck": 2,
+      "sql_batch_queries": 2,
+      "sql_batch_rows_returned": 26,
+      "returned_catalog_items_with_recheck": 100,
+      "metadata_aggregates_executed": 2,
+      "metadata_note": "EXPLAIN ANALYZE proves two full-scope ID aggregates once per unchanged MVCC revision, zero on subsequent pages/rechecks; keyset pages skip no prior rows."
+    },
+    {
+      "tournaments": 100,
+      "catalog_queries_with_recheck": 8,
+      "sql_batch_queries": 8,
+      "sql_batch_rows_returned": 104,
+      "returned_catalog_items_with_recheck": 400,
+      "metadata_aggregates_executed": 2,
+      "metadata_note": "EXPLAIN ANALYZE proves two full-scope ID aggregates once per unchanged MVCC revision, zero on subsequent pages/rechecks; keyset pages skip no prior rows."
+    },
+    {
+      "tournaments": 1001,
+      "catalog_queries_with_recheck": 82,
+      "sql_batch_queries": 82,
+      "sql_batch_rows_returned": 1042,
+      "returned_catalog_items_with_recheck": 4004,
+      "metadata_aggregates_executed": 2,
+      "metadata_note": "EXPLAIN ANALYZE proves two full-scope ID aggregates once per unchanged MVCC revision, zero on subsequent pages/rechecks; keyset pages skip no prior rows."
+    }
+  ],
+  "role_scope_parity": true,
+  "revocation_digest": true,
+  "postgres_batch_types_and_failure_isolation": true,
+  "cache_commit_revocation_actor_role_and_mutation_isolation": true,
+  "database_read_only_enforced": true
+}

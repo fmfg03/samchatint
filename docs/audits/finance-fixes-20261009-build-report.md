@@ -2,8 +2,9 @@
 
 Date: 2026-10-09. Base: `d548d148f7521988587d6498b5461901c21a2ee3`.
 Candidate: `/tmp/samchat-finance-fixes-20261009`, isolated detached worktree.
-Status: implemented; local acceptance passed with validation limitations;
-final diff approval pending. No commit, push, PR, merge or deployment performed.
+This section records the original approved candidate and its local validation.
+The final diff was approved and commit/push/PR/merge were subsequently authorized.
+Delivery and integration evidence is recorded below; deployment is excluded.
 
 The user approved the seven-point functional scope and then the technical spec
 in this conversation. DIOT is excluded and belongs to another assistant.
@@ -72,7 +73,7 @@ Tests updated: `tests/unit/gastos/test_payment_run_routes.py` and
 `tests/unit/test_ar_read_model.py`. Documentation: this report and the table
 inventory. No migration, application dependency or historical backfill.
 
-## Commands and final results
+## Original candidate commands and results
 
 Environment: existing `/root/samchat/.venv/bin/python` (Python 3.12.3), with
 `PYTHONPATH=src`; financial fixtures are synthetic and sessions are mocked.
@@ -152,3 +153,52 @@ Canon unchanged: this restores existing catalog lineage, tax-component separatio
 approval boundaries, payment evidence and information-board presentation. It uses
 existing permissions, services and sources and makes no architecture, integration,
 contractual-delivery or business-acceptance claim. Canon contents remain untouched.
+
+## Approved delivery integration (2026-10-09)
+
+Original approved commit: `96f4d82e39b525c2c5aa7ea1e5cf13ad8b36ba8f`.
+Integrated current main: `7d857ad326a48e0c2a8315caf81f792f3279ce51`.
+The user explicitly authorized commit, push, PR and merge; deployment was not
+authorized. The primary dirty checkout remains outside the delivery worktree.
+
+Integration adapts cutoff prefill to main's canonical `fecha_pago_efectiva` and
+preserves scheduled `fecha_pago`, proof review/conflict reasons, detected-date
+checks and sequential batch retry behavior. Cleanup keeps main's server filters,
+focus and beneficiary column (12 columns after adding Operations). Pending CxC
+links also pass main's strict tournament guard. These preserve existing scope,
+authority and newer safeguards; there is no material spec deviation.
+
+Current validation supersedes the original candidate counts above:
+
+- Final 29-file suite using `/tmp/run_samchat_finance_fix_checks.py`:
+  **422 passed**, 42 inherited warnings, no failures. The two old baseline
+  budget-route failures are already corrected by current main.
+- Additional merged payment/shared-invoice/browser suite: **124 passed and
+  8 subtests passed**. Existing fixtures isolate the new helper/mapping seam;
+  dedicated tests still exercise actual permission, mapping and audit behavior.
+- Browser acceptance: **8 passed** (six information-table cases plus two payment
+  date cases), in separate processes from async unit suites.
+- AR adjacent verification: **87 passed**, plus two pending-link strict-scope
+  negative regressions passed. Frontend/cleanup adjacent verification:
+  **72 passed**. These overlap the final suite and are not additive counts.
+- Current changed executable Python coverage: **114/121 = 94.21%** locally
+  compared with `origin/main`. Remote changed-code coverage remains the merge
+  gate authority; this local calculation is not a CI receipt.
+- Full production/test `compileall`, diff hygiene, PR workflow contract,
+  runtime packaging, registration-surface and accepted-regression checks passed.
+- Route inventory regenerated: **1338 routes, 44 canonical actions, no parse
+  gaps**; all nine inventory tests passed. Generated files are included in scope.
+- Scoped lint reports **413 diagnostics both on current main and candidate**;
+  none on changed lines. Whole-file lint is not green. Black/isort/mypy remain
+  unavailable locally. An extra upstream ISH-upload suite requires missing
+  `pypdf` and was not run locally; no application dependency was installed.
+- Independent read-only validation found no unresolved code findings or
+  material scope expansion. Canon hashes match the current convergence register.
+
+Updated fixture files additionally include
+`tests/unit/gastos/test_quick_shared_invoice_amounts.py`; regenerated delivery
+artifacts additionally include `docs/private-plugin/route-inventory.json` and
+`route-matrix.csv`. No other task scope is added.
+
+Authenticated Finance UAT, real persistence/reconciliation and physical-device
+acceptance remain pending. DIOT and production deployment remain excluded.

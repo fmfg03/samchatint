@@ -65,6 +65,25 @@ def effective_document_beneficiary_name(
     return name or fallback
 
 
+def effective_document_project_name(documento: Any, *, fallback: str = "") -> str:
+    """Return the explicit project/tournament label already owned by a document."""
+    if documento is None:
+        return fallback
+    manual_project = str(getattr(documento, "proyecto_otro", None) or "").strip()
+    if manual_project:
+        return manual_project
+    tournament = getattr(documento, "torneo", None)
+    tournament_name = str(getattr(tournament, "name", None) or "").strip()
+    if tournament_name:
+        return tournament_name
+    account = getattr(documento, "cuenta_gastos", None)
+    account_tournament = getattr(account, "torneo", None)
+    account_tournament_name = str(
+        getattr(account_tournament, "name", None) or ""
+    ).strip()
+    return account_tournament_name or fallback
+
+
 def reimbursement_concept_from_cuenta(cuenta: Any) -> str:
     """Build the SOLICITUD concept for an employee reimbursement from an expense report.
 

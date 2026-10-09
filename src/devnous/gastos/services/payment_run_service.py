@@ -332,7 +332,7 @@ async def prepare_payment_run_confirmation_date(
     *,
     documento: Documento,
     actor: Any,
-    fecha_pago: Optional[str] = None,
+    fecha_pago_efectiva: Optional[str] = None,
     request: Optional[Any] = None,
 ) -> date:
     """Apply an accounting-confirmed date without changing the closed snapshot.
@@ -364,14 +364,17 @@ async def prepare_payment_run_confirmation_date(
     cutoff = result.mappings().first()
     cutoff_date = payment_run_cutoff_date(dict(cutoff)) if cutoff else None
     selected_date = (
-        parse_payment_run_date(fecha_pago) if fecha_pago else cutoff_date
+        parse_payment_run_date(fecha_pago_efectiva)
+        if fecha_pago_efectiva
+        else cutoff_date
     )
     if selected_date is None:
         raise PaymentRunValidationError(
-            "No hay fecha de corte vinculada; Contabilidad debe capturar la fecha de pago."
+            "No hay fecha de corte vinculada; Contabilidad debe capturar "
+            "la fecha de pago."
         )
-    before = documento.fecha_pago
-    documento.fecha_pago = selected_date
+    before = documento.fecha_pago_efectiva
+    documento.fecha_pago_efectiva = selected_date
     await record_customer_success_audit_event(
         session,
         action="payment_run.confirmation_date_selected",
@@ -384,11 +387,11 @@ async def prepare_payment_run_confirmation_date(
         summary="Fecha confirmada al adjuntar comprobante de pago.",
         strict=True,
         metadata={
-            "before_fecha_pago": before.isoformat() if before else None,
-            "after_fecha_pago": selected_date.isoformat(),
+            "before_fecha_pago_efectiva": before.isoformat() if before else None,
+            "after_fecha_pago_efectiva": selected_date.isoformat(),
             "cutoff_date": cutoff_date.isoformat() if cutoff_date else None,
             "closure_id": str(cutoff["closure_id"]) if cutoff else None,
-            "date_source": "accounting" if fecha_pago else "cutoff",
+            "date_source": "accounting" if fecha_pago_efectiva else "cutoff",
         },
     )
     return selected_date
@@ -466,11 +469,14 @@ async def list_payment_run_items(
         filters.append("d.pagado_en IS NULL")
         filters.append("ci.documento_id IS NULL")
 
+    report_date_column = (
+        "d.fecha_pago_efectiva" if normalized_status == "pagadas" else "d.fecha_pago"
+    )
     if date_from:
-        filters.append("d.fecha_pago >= :date_from")
+        filters.append(f"{report_date_column} >= :date_from")
         params["date_from"] = date_from
     if date_to:
-        filters.append("d.fecha_pago <= :date_to")
+        filters.append(f"{report_date_column} <= :date_to")
         params["date_to"] = date_to
     if query:
         filters.append(
@@ -506,6 +512,7 @@ async def list_payment_run_items(
                 d.referencia_operaciones,
                 d.estado,
                 d.fecha_pago,
+                d.fecha_pago_efectiva,
                 d.aprobado_en,
                 d.pagado_en,
                 d.pago_urgente,
@@ -530,7 +537,7 @@ async def list_payment_run_items(
             LEFT JOIN closure_items ci ON ci.documento_id = d.id
             WHERE {" AND ".join(filters)}
             ORDER BY
-                d.fecha_pago NULLS LAST,
+                {report_date_column} NULLS LAST,
                 d.aprobado_en NULLS LAST,
                 d.creado_en DESC
             LIMIT :limit

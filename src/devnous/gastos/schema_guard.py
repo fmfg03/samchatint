@@ -71,6 +71,12 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("copa_telmex_players", "photo_ahash"),
     RequiredColumn("copa_telmex_teams", "contact_email"),
     RequiredColumn("copa_telmex_teams", "tournament_slug"),
+    RequiredColumn("copa_telmex_registration_batch_uploads", "manifest_sha256"),
+    RequiredColumn("copa_telmex_registration_batch_uploads", "status"),
+    RequiredColumn("copa_telmex_registration_batch_uploads", "expires_at"),
+    RequiredColumn("copa_telmex_registration_batch_upload_files", "expected_sha256"),
+    RequiredColumn("copa_telmex_registration_batch_upload_files", "status"),
+    RequiredColumn("copa_telmex_registration_batch_upload_files", "storage_key"),
     RequiredColumn("assistant_conversations", "metadata"),
     RequiredColumn("assistant_conversations", "tournament_key"),
     RequiredColumn("assistant_conversations", "archived"),
@@ -83,6 +89,7 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("documentos", "beneficiario_proveedor_cliente_id"),
     RequiredColumn("documentos", "beneficiario_alterno_tipo"),
     RequiredColumn("documentos", "fecha_pago"),
+    RequiredColumn("documentos", "fecha_pago_efectiva"),
     RequiredColumn("documentos", "concepto_pago"),
     RequiredColumn("documentos", "numero_factura"),
     RequiredColumn("documentos", "referencia_pago"),
@@ -195,6 +202,16 @@ REQUIRED_INDEXES: Sequence[RequiredIndex] = (
     RequiredIndex("documentos", "idx_documentos_proveedor_cliente_id"),
     RequiredIndex("copa_telmex_players", "idx_copa_telmex_players_team_roster_index"),
     RequiredIndex("copa_telmex_teams", "idx_copa_telmex_teams_tournament_slug"),
+    RequiredIndex(
+        "copa_telmex_registration_batch_uploads", "ix_ctt_batch_uploads_status"
+    ),
+    RequiredIndex(
+        "copa_telmex_registration_batch_uploads", "ix_ctt_batch_uploads_expires"
+    ),
+    RequiredIndex(
+        "copa_telmex_registration_batch_upload_files",
+        "ix_ctt_batch_upload_files_upload",
+    ),
     RequiredIndex("assistant_conversations", "ix_assistant_conversations_empleado_id"),
     RequiredIndex(
         "assistant_conversations", "ix_assistant_conversations_tournament_key"
@@ -315,6 +332,16 @@ REQUIRED_INDEXES: Sequence[RequiredIndex] = (
 
 
 REQUIRED_CONSTRAINTS: Sequence[RequiredConstraint] = (
+    RequiredConstraint(
+        "copa_telmex_registration_batch_uploads",
+        "ck_ctt_batch_upload_status",
+        ("staging", "ready", "admitting", "admitted", "expired"),
+    ),
+    RequiredConstraint(
+        "copa_telmex_registration_batch_upload_files",
+        "ck_ctt_batch_upload_file_size",
+        ("67108864",),
+    ),
     RequiredConstraint(
         "aprobaciones",
         "aprobaciones_tipo_entidad_check",
@@ -1764,6 +1791,14 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "documentos_fecha_pago_column",
         "ALTER TABLE IF EXISTS documentos ADD COLUMN IF NOT EXISTS fecha_pago DATE NULL",
+    ),
+    (
+        "documentos_fecha_pago_efectiva_column",
+        "ALTER TABLE IF EXISTS documentos ADD COLUMN IF NOT EXISTS fecha_pago_efectiva DATE NULL",
+    ),
+    (
+        "documentos_fecha_pago_efectiva_index",
+        "CREATE INDEX IF NOT EXISTS ix_documentos_fecha_pago_efectiva ON documentos (fecha_pago_efectiva)",
     ),
     (
         "documentos_concepto_pago_column",

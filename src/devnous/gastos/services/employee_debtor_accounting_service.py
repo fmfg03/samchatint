@@ -21,6 +21,7 @@ from ..models import (
     Documento,
     Empleado,
     ExpenseReport,
+    ProveedorCliente,
     Reembolso,
 )
 from .amex_expense_service import employee_paid_sql_condition
@@ -329,6 +330,36 @@ async def resolve_cuenta_debtor_account(
             )
         )
         return result.scalar_one_or_none()
+    operator_id = (
+        getattr(cuenta, "beneficiario_proveedor_cliente_id", None)
+        if cuenta is not None
+        and getattr(cuenta, "beneficiario_empleado_id", None) is None
+        else None
+    )
+    if operator_id is not None:
+        operator = await session.get(ProveedorCliente, operator_id)
+        if (
+            operator is None
+            or not getattr(operator, "activo", False)
+            or getattr(operator, "tipo", None) != "operadores_regionales"
+        ):
+            return None
+        operator_name = _normalize_text(getattr(operator, "nombre", None))
+        if not operator_name:
+            return None
+        result = await session.execute(
+            select(CuentaContable).where(
+                CuentaContable.activo.is_(True),
+                CuentaContable.codigo.like(f"{DEBTOR_ACCOUNT_PREFIX}%"),
+                CuentaContable.codigo != DEBTOR_ACCOUNT_ROOT_CODE,
+            )
+        )
+        matches = [
+            account
+            for account in result.scalars().all()
+            if _normalize_text(account.nombre) == operator_name
+        ]
+        return matches[0] if len(matches) == 1 else None
     if empleado is None:
         return None
     return await resolve_employee_debtor_account(session, empleado)
@@ -647,6 +678,14 @@ async def ensure_provider_approval_posting(
     ):
         return DebtorPostingResult(status="skipped", reason="not_provider_request")
 
+    if getattr(documento, "is_supplier_advance", False):
+        return DebtorPostingResult(
+            status="skipped", reason="supplier_advance_no_accrual"
+        )
+    if getattr(documento, "supplier_advance_id", None):
+        from .supplier_advance_service import ensure_supplier_invoice_posting
+
+        return await ensure_supplier_invoice_posting(session, documento=documento)
     numero_poliza = _event_poliza_number("PROV-APR", documento.id)
     existing = await _existing_event_poliza(
         session,
@@ -754,6 +793,14 @@ async def ensure_provider_payment_posting(
         or getattr(documento, "beneficiario_empleado_id", None) is not None
     ):
         return DebtorPostingResult(status="skipped", reason="not_provider_request")
+    if getattr(documento, "is_supplier_advance", False) or getattr(
+        documento, "supplier_advance_id", None
+    ):
+        from .supplier_advance_service import ensure_supplier_payment_posting
+
+        return await ensure_supplier_payment_posting(
+            session, documento=documento, fecha_pago=fecha_pago
+        )
     numero_poliza = _event_poliza_number("PROV-PAY", documento.id)
     existing = await _existing_event_poliza(
         session,
@@ -861,6 +908,21 @@ async def ensure_debtor_payment_posting_for_document(
         and getattr(documento, "beneficiario_empleado_id", None) is None
     ):
         return DebtorPostingResult(status="skipped", reason="not_employee_cuenta_payment")
+    cuenta = await session.get(CuentaDeGastos, cuenta_gastos_id)
+    if cuenta is None:
+        return DebtorPostingResult(status="pending", reason="missing_cuenta_gastos")
+    operator_id = (
+        getattr(cuenta, "beneficiario_proveedor_cliente_id", None)
+        if getattr(cuenta, "beneficiario_empleado_id", None) is None
+        else None
+    )
+    if operator_id is not None and (
+        getattr(documento, "beneficiario_proveedor_cliente_id", None) != operator_id
+        or getattr(documento, "proveedor_cliente_id", None) != operator_id
+    ):
+        return DebtorPostingResult(
+            status="pending", reason="operator_beneficiary_mismatch"
+        )
     numero_poliza = _event_poliza_number("DEU-PAY", documento.id)
     existing = await _existing_event_poliza(
         session,
@@ -870,11 +932,16 @@ async def ensure_debtor_payment_posting_for_document(
     )
     if existing is not None:
         return DebtorPostingResult(status="exists", poliza=existing)
-
-    cuenta = await session.get(CuentaDeGastos, cuenta_gastos_id)
     debtor = await resolve_cuenta_debtor_account(session, cuenta, empleado)
     if debtor is None:
-        return DebtorPostingResult(status="pending", reason="missing_employee_debtor_account")
+        return DebtorPostingResult(
+            status="pending",
+            reason=(
+                "missing_operator_debtor_account"
+                if operator_id is not None
+                else "missing_employee_debtor_account"
+            ),
+        )
     bank = await resolve_default_bank_account(session)
     if bank is None:
         return DebtorPostingResult(status="pending", reason="missing_santander_account")
@@ -894,15 +961,16 @@ async def ensure_debtor_payment_posting_for_document(
         documento_id=documento.id,
     )
     concepto = format_samchat_poliza_concept(
-        "Pago a deudor empleado",
+        "Anticipo a operador regional" if operator_id else "Pago a deudor empleado",
         documento=documento,
     )
+    operator = await session.get(ProveedorCliente, operator_id) if operator_id else None
     poliza = await _create_poliza(
         session,
         origen="deudores_anticipo",
         numero_poliza=numero_poliza,
         fecha=fecha_dt,
-        beneficiario_nombre=empleado.nombre,
+        beneficiario_nombre=(operator.nombre if operator is not None else empleado.nombre),
         concepto=concepto,
         lines=[
             {
@@ -934,6 +1002,10 @@ async def ensure_debtor_comprobacion_posting_for_informe(
     informe_documento: Documento,
 ) -> DebtorPostingResult:
     cuenta_gastos_id = getattr(informe_documento, "cuenta_gastos_id", None)
+    origin_id = getattr(informe_documento, "informe_origen_id", None)
+    if origin_id:
+        origin = await session.get(Documento, origin_id)
+        cuenta_gastos_id = getattr(origin, "cuenta_gastos_id", None)
     if cuenta_gastos_id is None or informe_documento.tipo != "INFORME":
         return DebtorPostingResult(status="skipped", reason="not_informe_cuenta")
     numero_poliza = _event_poliza_number("DEU-COMP", informe_documento.id)
@@ -941,7 +1013,9 @@ async def ensure_debtor_comprobacion_posting_for_informe(
         session,
         origen="deudores_comprobacion",
         numero_poliza=numero_poliza,
-        legacy_numero_poliza=f"DEU-COMP-{str(cuenta_gastos_id)[:8]}",
+        legacy_numero_poliza=(
+            None if origin_id else f"DEU-COMP-{str(cuenta_gastos_id)[:8]}"
+        ),
     )
     if existing is not None:
         return DebtorPostingResult(status="exists", poliza=existing)
@@ -962,7 +1036,11 @@ async def ensure_debtor_comprobacion_posting_for_informe(
             selectinload(ExpenseReport.cfdi_report),
         )
         .where(
-            ExpenseReport.cuenta_gastos_id == cuenta_gastos_id,
+            (
+                ExpenseReport.informe_documento_id == informe_documento.id
+                if origin_id
+                else ExpenseReport.cuenta_gastos_id == cuenta_gastos_id
+            ),
             ExpenseReport.estado_gasto != "cancelado",
             employee_paid_sql_condition(),
         )
@@ -971,6 +1049,10 @@ async def ensure_debtor_comprobacion_posting_for_informe(
     expenses = list(result.scalars().all())
     if not expenses:
         return DebtorPostingResult(status="skipped", reason="no_employee_paid_expenses")
+    if origin_id and informe_documento.estado != "aprobado":
+        informe_documento.monto_total = sum(
+            (_money(e.gasto_cantidad) for e in expenses), Decimal("0.00")
+        )
 
     lines: list[dict[str, Any]] = []
     total_credit = Decimal("0.00")
@@ -1145,6 +1227,16 @@ async def ensure_debtor_settlement_posting(
     )
 
 
+def _sum_posted_comprobacion(lines: Iterable[AccountingPolizaLine]) -> float:
+    """Count only posted debtor credits from approved report comprobaciones."""
+    return sum(
+        float(line.haber or 0)
+        for line in lines
+        if line.poliza.origen == "deudores_comprobacion"
+        and _is_debtor_or_petty_cash_line_code(line.cuenta_codigo)
+    )
+
+
 async def build_cuenta_debtor_auxiliary(
     session: AsyncSession,
     *,
@@ -1172,12 +1264,17 @@ async def build_cuenta_debtor_auxiliary(
     ).scalars().all()
     debe = sum(float(line.debe or 0) for line in lines if _is_debtor_or_petty_cash_line_code(line.cuenta_codigo))
     haber = sum(float(line.haber or 0) for line in lines if _is_debtor_or_petty_cash_line_code(line.cuenta_codigo))
+    comprobado = _sum_posted_comprobacion(lines)
     saldo = round(debe - haber, 2)
     status = "saldado" if abs(saldo) < 0.01 and lines else "pendiente"
     if debtor is None:
         status = "sin_subcuenta"
     elif lines and abs(saldo) >= 0.01:
-        status = "diferencia_contable"
+        status = (
+            "pendiente_comprobar"
+            if getattr(cuenta, "comprobacion_parcial", False) and saldo > 0
+            else "diferencia_contable"
+        )
     return {
         "cuenta": cuenta,
         "empleado": empleado,
@@ -1187,6 +1284,7 @@ async def build_cuenta_debtor_auxiliary(
         "lines": lines,
         "debe": round(debe, 2),
         "haber": round(haber, 2),
+        "comprobado": round(comprobado, 2),
         "saldo": saldo,
         "status": status,
     }

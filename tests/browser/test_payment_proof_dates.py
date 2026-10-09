@@ -62,10 +62,30 @@ def proof_html():
 
 
 def _upload(page):
+    page.evaluate("""() => {
+        window.paymentReceipts = [];
+        window.fetch = async (url, options) => {
+            if (String(url).endsWith('/revision')) {
+                return new Response(JSON.stringify({status:'revision_required'}), {
+                    headers:{'content-type':'application/json'}
+                });
+            }
+            window.paymentReceipts.push(Array.from(options.body.entries()).filter(
+                ([key]) => key === 'effective_payment_dates' ||
+                           key === 'selected_document_ids'
+            ));
+            return new Response(JSON.stringify({ok:true}), {
+                headers:{'content-type':'application/json'}
+            });
+        };
+    }""")
     page.locator("#payment-proof-files").set_input_files(
         {"name": "proof.pdf", "mimeType": "application/pdf", "buffer": b"%PDF-test"}
     )
     page.locator("#payment-proof-apply-one").check()
+    page.wait_for_function("""() => Array.from(document.querySelectorAll(
+        '#payment-proof-mapping [data-payment-proof-review]'
+    )).every(element => element.dataset.reviewStatus !== 'checking')""")
 
 
 def test_bulk_proof_submits_edited_dates_only_for_selected_documents(page, proof_html):
@@ -77,25 +97,22 @@ def test_bulk_proof_submits_edited_dates_only_for_selected_documents(page, proof
         page.locator(
             f'[data-payment-proof-selection][value="{identifier}"]'
         ).check()
-    for identifier, value in zip(identifiers, ["2026-10-07", "2026-10-09", ""]):
-        page.locator(f'[data-payment-date-document="{identifier}"]').fill(value)
     _upload(page)
-    result = page.evaluate("""() => {
-        const form = document.querySelector('#payment-run-bulk-proof-form');
-        let valid;
-        form.addEventListener('submit', event => {
-            valid = !event.defaultPrevented; event.preventDefault();
-        });
-        form.dispatchEvent(new Event('submit', {cancelable:true}));
-        return {valid, entries:Array.from(new FormData(form).entries()).filter(
-            ([key]) => key.startsWith('fecha_pago') || key === 'selected_document_ids'
-        )};
-    }""")
-    assert result["valid"]
-    entries = result["entries"]
-    assert {key: value for key, value in entries if key.startswith("fecha_pago")} == {
-        f"fecha_pago_{identifiers[0]}": "2026-10-07",
-        f"fecha_pago_{identifiers[1]}": "2026-10-09",
+    for identifier, value in zip(identifiers[:2], ["2026-10-07", "2026-10-09"]):
+        field = page.locator(
+            f'#payment-proof-mapping [data-payment-proof-document-id="{identifier}"] '
+            'input[name="effective_payment_dates"]'
+        )
+        assert field.input_value() == "2026-10-08"
+        field.fill(value)
+    page.evaluate("""() => document.querySelector('#payment-run-bulk-proof-form')
+        .dispatchEvent(new Event('submit', {cancelable:true}))""")
+    page.wait_for_function("() => window.paymentReceipts.length === 1")
+    entries = page.evaluate("() => window.paymentReceipts[0]")
+    ids = [value for key, value in entries if key == "selected_document_ids"]
+    dates = [value for key, value in entries if key == "effective_payment_dates"]
+    assert dict(zip(ids, dates)) == {
+        str(identifiers[0]): "2026-10-07", str(identifiers[1]): "2026-10-09"
     }
     assert {value for key, value in entries if key == "selected_document_ids"} == {
         str(identifier) for identifier in identifiers[:2]
@@ -111,15 +128,14 @@ def test_bulk_proof_blocks_selected_document_without_date(page, proof_html):
     page.set_content(html)
     identifier = identifiers[0]
     page.locator(f'[data-payment-proof-selection][value="{identifier}"]').check()
-    page.locator(f'[data-payment-date-document="{identifier}"]').fill("")
     _upload(page)
-    blocked = page.evaluate("""() => {
-        const form = document.querySelector('#payment-run-bulk-proof-form');
-        const event = new Event('submit', {cancelable:true});
-        form.dispatchEvent(event);
-        return event.defaultPrevented;
-    }""")
-    assert blocked
-    assert "Revisa la fecha" in page.locator("#payment-proof-form-error").inner_text()
-    assert page.locator('#payment-proof-selected-inputs input').count() == 0
+    page.locator(
+        '#payment-proof-mapping input[name="effective_payment_dates"]'
+    ).fill("")
+    page.evaluate("""() => document.querySelector('#payment-run-bulk-proof-form')
+        .dispatchEvent(new Event('submit', {cancelable:true}))""")
+    assert "Captura una fecha efectiva" in page.locator(
+        "#payment-proof-form-error"
+    ).inner_text()
+    assert page.evaluate("() => window.paymentReceipts") == []
     assert errors == []

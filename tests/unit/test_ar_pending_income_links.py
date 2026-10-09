@@ -80,3 +80,32 @@ def test_pending_links_escape_invoice_and_client_and_do_not_invent_tournament():
     assert "&lt;cliente&gt;" in html
     assert "Falta torneo" in html
     assert "/admin/presupuestos/torneo/" not in html
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("link_tournament", ["other-tournament", None])
+async def test_strict_scope_rejects_pending_links_outside_selected_tournament(
+    monkeypatch, link_tournament
+):
+    monkeypatch.setattr(service, "list_budget_lines", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        service, "list_monthly_plan_for_lines", AsyncMock(return_value={})
+    )
+    monkeypatch.setattr(
+        service, "list_psp_cfdi_income_candidates", AsyncMock(return_value=[])
+    )
+    monkeypatch.setattr(
+        service, "list_budget_cfdi_income_links",
+        AsyncMock(side_effect=[[], [{
+            "id": "pending-link", "cfdi_report_id": "pending-invoice",
+            "status": "pending_approval", "tournament_id": link_tournament,
+        }]]),
+    )
+    collections = AsyncMock(return_value=[])
+    monkeypatch.setattr(service, "list_ar_collection_matches", collections)
+    with pytest.raises(ValueError, match="income links escaped tournament scope"):
+        await service.build_ar_read_model(
+            object(), budget_version_id="version-1", tournament_id="tournament-1",
+            strict_tournament_scope=True, ensure_schema=False,
+        )
+    collections.assert_not_awaited()

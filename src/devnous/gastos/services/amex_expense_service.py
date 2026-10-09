@@ -5,11 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Iterable, List, Optional, Sequence
+from typing import Any, Iterable, List, Optional, Sequence
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from ..models import Aprobacion, Empleado, ExpenseReport
 from .budget_concept_account_service import apply_budget_concept_cuenta_mapping
@@ -66,6 +67,24 @@ def sum_paid_solicitud_amounts(documentos: Iterable[object]) -> float:
             _quantize_money(getattr(doc, "monto_solicitado", 0) or 0)
             for doc in documentos
             if (getattr(doc, "estado", None) or "").strip().lower() == "pagado"
+        ),
+        Decimal("0"),
+    )
+    return float(total)
+
+
+def sum_active_solicitud_amounts(documentos: Iterable[object]) -> float:
+    """Sum linked requests still in the workflow, including unpaid requests.
+
+    Rejected and cancelled requests remain visible in the audit trail but no
+    longer represent money requested from the company.
+    """
+    excluded = {"rechazado", "rechazada", "cancelado", "cancelada", "anulado", "anulada"}
+    total = sum(
+        (
+            _quantize_money(getattr(doc, "monto_solicitado", 0) or 0)
+            for doc in documentos
+            if (getattr(doc, "estado", None) or "").strip().lower() not in excluded
         ),
         Decimal("0"),
     )
@@ -162,12 +181,15 @@ def is_company_amex_expense(expense: ExpenseReport) -> bool:
     return (getattr(expense, "origen", None) or "").strip().lower() == "amex_batch"
 
 
-def company_amex_sql_condition():
+def company_amex_sql_condition(
+    expense_model: Any = ExpenseReport,
+) -> ColumnElement[bool]:
+    """Company-paid AMEX predicate, including aliased expense queries."""
     return or_(
-        ExpenseReport.pagado_con_amex_empresa.is_(True),
+        expense_model.pagado_con_amex_empresa.is_(True),
         and_(
-            ExpenseReport.pagado_con_amex_empresa.is_(None),
-            ExpenseReport.origen == "amex_batch",
+            expense_model.pagado_con_amex_empresa.is_(None),
+            expense_model.origen == "amex_batch",
         ),
     )
 

@@ -29,6 +29,7 @@ def _document(**overrides):
             "id": uuid4(), "numero_referencia": "S-260001",
             "tipo": "SOLICITUD", "estado": "en_proceso_pago",
             "pagado_en": None, "fecha_pago": date(2026, 10, 1),
+            "fecha_pago_efectiva": None,
             **overrides,
         }
     )
@@ -51,16 +52,17 @@ async def test_accounting_confirmation_uses_cutoff_or_override_with_audit(monkey
     monkeypatch.setattr(payment_run_service, "record_customer_success_audit_event", audit)
 
     selected = await payment_run_service.prepare_payment_run_confirmation_date(
-        session, documento=document, actor=actor, fecha_pago=override,
+        session, documento=document, actor=actor, fecha_pago_efectiva=override,
     )
 
     assert selected == date(2026, 10, 7 if override else 8)
-    assert document.fecha_pago == selected
+    assert document.fecha_pago_efectiva == selected
+    assert document.fecha_pago == date(2026, 10, 1)
     assert document.estado == "en_proceso_pago"
     assert cutoff["run_date"] == date(2026, 10, 8)
     metadata = audit.await_args.kwargs["metadata"]
-    assert metadata["before_fecha_pago"] == "2026-10-01"
-    assert metadata["after_fecha_pago"] == selected.isoformat()
+    assert metadata["before_fecha_pago_efectiva"] is None
+    assert metadata["after_fecha_pago_efectiva"] == selected.isoformat()
     assert metadata["date_source"] == ("accounting" if override else "cutoff")
     assert audit.await_args.kwargs["actor_empleado_id"] == actor.id
     assert audit.await_args.kwargs["strict"] is True
@@ -81,7 +83,7 @@ async def test_missing_cutoff_requires_accounting_date(monkeypatch):
     assert document.fecha_pago == date(2026, 10, 1)
     audit.assert_not_awaited()
     assert await payment_run_service.prepare_payment_run_confirmation_date(
-        _session(None), documento=document, actor=actor, fecha_pago="2026-10-09",
+        _session(None), documento=document, actor=actor, fecha_pago_efectiva="2026-10-09",
     ) == date(2026, 10, 9)
 
 
@@ -92,7 +94,7 @@ async def test_confirmation_date_rejects_invalid_states(state):
     with pytest.raises(payment_run_service.PaymentRunValidationError):
         await payment_run_service.prepare_payment_run_confirmation_date(
             session, documento=_document(estado=state),
-            actor=SimpleNamespace(id=uuid4(), rol="contabilidad"), fecha_pago="2026-10-09",
+            actor=SimpleNamespace(id=uuid4(), rol="contabilidad"), fecha_pago_efectiva="2026-10-09",
         )
     session.execute.assert_not_awaited()
 
@@ -103,7 +105,7 @@ async def test_confirmation_date_rejects_finance_without_accounting_authority():
     with pytest.raises(payment_run_service.PaymentRunPermissionError):
         await payment_run_service.prepare_payment_run_confirmation_date(
             session, documento=_document(),
-            actor=SimpleNamespace(id=uuid4(), rol="finanzas"), fecha_pago="2026-10-09",
+            actor=SimpleNamespace(id=uuid4(), rol="finanzas"), fecha_pago_efectiva="2026-10-09",
         )
     session.execute.assert_not_awaited()
 
@@ -116,7 +118,7 @@ async def test_invalid_override_never_changes_document(monkeypatch):
     with pytest.raises(payment_run_service.PaymentRunValidationError):
         await payment_run_service.prepare_payment_run_confirmation_date(
             _session({"run_date": date(2026, 10, 8)}), documento=document,
-            actor=SimpleNamespace(id=uuid4(), rol="contabilidad"), fecha_pago="invalid",
+            actor=SimpleNamespace(id=uuid4(), rol="contabilidad"), fecha_pago_efectiva="invalid",
         )
     assert document.fecha_pago == date(2026, 10, 1)
     audit.assert_not_awaited()
@@ -132,12 +134,12 @@ def test_proof_form_defaults_to_cutoff_and_shows_missing_cutoff():
     html = admin_routes._render_payment_run_items(
         [row], can_confirm_payment=True, payment_proof_selection=True,
     )
-    assert 'name="fecha_pago" value="2026-10-08"' in html
+    assert 'name="fecha_pago_efectiva" value="2026-10-08"' in html
     assert f'data-payment-date-document="{document.id}"' in html
     row.update(confirmation_date=None, cutoff_date_missing=True)
     html = admin_routes._render_payment_run_items([row], can_confirm_payment=True)
     assert "Sin fecha de corte vinculada" in html
-    assert 'name="fecha_pago" value=""' in html
+    assert 'name="fecha_pago_efectiva" value=""' in html
 
 
 @pytest.mark.asyncio
@@ -148,17 +150,28 @@ async def test_single_proof_applies_selected_date_before_registering_payment(mon
     session.get.return_value = document
     monkeypatch.setattr(payment_run_service, "record_customer_success_audit_event", AsyncMock())
     monkeypatch.setattr(admin_routes, "add_solicitud_documento_adjuntos", AsyncMock())
+    from devnous.gastos.services import payment_proof_review_service
+    review = SimpleNamespace(
+        status="revision_required", detected_date=None, reasons=[],
+        evidence_source="none", detected_amount=None, detected_currency=None,
+        detected_beneficiary=None, template_id=None,
+    )
+    monkeypatch.setattr(
+        payment_proof_review_service, "review_payment_proof", lambda **k: review
+    )
+    monkeypatch.setattr(admin_routes, "validate_solicitud_terceros_attachment", lambda _: None)
     observed_dates = []
 
     async def register(*args, **kwargs):
-        observed_dates.append(document.fecha_pago)
+        observed_dates.append(document.fecha_pago_efectiva)
+        assert document.fecha_pago == date(2026, 10, 1)
         return SimpleNamespace(documento=document)
 
     monkeypatch.setattr(documento_payment_service, "register_document_payment", register)
     response = await admin_routes.admin_finance_payment_run_upload_payment_proof(
-        document.id, SimpleNamespace(), session, actor,
+        document.id, SimpleNamespace(headers={}, query_params={}), session, actor,
         SimpleNamespace(filename="proof.pdf", content_type="application/pdf", read=AsyncMock(return_value=b"%PDF")),
-        fecha_pago="2026-10-07",
+        fecha_pago_efectiva="2026-10-07",
     )
     assert response.status_code == 303
     assert "success_msg" in response.headers["location"]
@@ -178,25 +191,35 @@ async def test_bulk_dates_are_per_document_and_invalid_date_rolls_back_batch(mon
     attachments = AsyncMock()
     monkeypatch.setattr(admin_routes, "add_solicitud_documento_adjuntos", attachments)
     monkeypatch.setattr(admin_routes, "validate_solicitud_terceros_attachment", lambda _: None)
+    from devnous.gastos.services import payment_proof_review_service
+    review = SimpleNamespace(
+        status="revision_required", detected_date=None, reasons=[],
+        evidence_source="none", detected_amount=None, detected_currency=None,
+        detected_beneficiary=None, template_id=None,
+    )
+    monkeypatch.setattr(
+        payment_proof_review_service, "review_payment_proof", lambda **k: review
+    )
+    monkeypatch.setattr(admin_routes, "validate_solicitud_terceros_attachment", lambda _: None)
     observed_dates = []
 
     async def register(*args, documento_id, **kwargs):
-        observed_dates.append((documento_id, documents[documento_id].fecha_pago))
+        observed_dates.append((documento_id, documents[documento_id].fecha_pago_efectiva))
         assert kwargs["commit"] is False
+        assert documents[documento_id].fecha_pago == date(2026, 10, 1)
         return SimpleNamespace(documento=documents[documento_id])
 
     notifications = []
     monkeypatch.setattr(documento_payment_service, "register_document_payment", register)
     monkeypatch.setattr(documento_payment_service, "_schedule_solicitud_paid_telegram_notifications", lambda **kwargs: notifications.append(kwargs))
     upload = SimpleNamespace(filename="proof.pdf", content_type="application/pdf", read=AsyncMock(return_value=b"%PDF"))
-    request = SimpleNamespace(form=AsyncMock(return_value={
-        f"fecha_pago_{first.id}": "2026-10-07",
-        f"fecha_pago_{second.id}": second_date,
-    }))
+    request = SimpleNamespace(headers={}, query_params={})
     response = await admin_routes.admin_finance_payment_run_upload_payment_proofs_bulk(
         request=request, session=session, current_empleado=actor,
         selected_document_ids=[str(first.id), str(second.id)],
         proof_document_ids=[], comprobantes_pago=[upload], apply_one_to_all=True,
+        effective_payment_dates=["2026-10-07", second_date],
+        payment_proof_resolution_reasons=[],
     )
     assert response.status_code == 303
     if second_date == "invalid":
@@ -211,7 +234,7 @@ async def test_bulk_dates_are_per_document_and_invalid_date_rolls_back_batch(mon
         assert observed_dates == [(first.id, date(2026, 10, 7)), (second.id, date(2026, 10, 9))]
         assert attachments.await_count == 2
         assert audit.await_count == 2
-        assert [call.kwargs["metadata"]["after_fecha_pago"] for call in audit.await_args_list] == ["2026-10-07", "2026-10-09"]
+        assert [call.kwargs["metadata"]["after_fecha_pago_efectiva"] for call in audit.await_args_list] == ["2026-10-07", "2026-10-09"]
         assert len(notifications) == 2
 
 

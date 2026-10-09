@@ -20,6 +20,8 @@ from sqlalchemy import (
     Integer,
     Numeric,
     CheckConstraint,
+    Index,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.ext.declarative import declarative_base
@@ -33,6 +35,179 @@ from devnous.gastos.expense_receipt_column import (
 )
 
 configure_expense_receipt_blob_column_from_db()
+
+
+class AmexRecognitionActivation(Base):
+    """Owner-installed cutoff; runtime code never creates this schema or row."""
+
+    __tablename__ = "amex_recognition_activation"
+    __table_args__ = (CheckConstraint("id = 1"),)
+
+    id = Column(Integer, primary_key=True)
+    activated_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class AmexRecognitionConsumption(Base):
+    """One explicitly identified corporate-card consumption and its receipt."""
+
+    __tablename__ = "amex_recognition_consumptions"
+    __table_args__ = (CheckConstraint("amount > 0"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    imported_expense_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("expense_reports.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    card_account_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_card_accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    amount = Column(Numeric(18, 2), nullable=False)
+    currency = Column(String(3), nullable=False)
+    economic_date = Column(Date, nullable=False)
+    liability_account_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("cuentas_contables.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    liability_code = Column(String(30), nullable=False)
+    classification_json = Column(JSONB, nullable=False, default=dict)
+    accounting_poliza_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("accounting_polizas.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    actor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class AmexRecognitionRepresentation(Base):
+    """An expense representation belongs to exactly one economic consumption."""
+
+    __tablename__ = "amex_recognition_representations"
+    __table_args__ = (CheckConstraint("role IN ('statement', 'report')"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    consumption_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_recognition_consumptions.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    expense_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("expense_reports.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    role = Column(String(20), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class AmexAccountingReview(Base):
+    """Versioned manual review of an INFORME item, shared by both AMEX paths."""
+
+    __tablename__ = "amex_accounting_reviews"
+    __table_args__ = (
+        CheckConstraint("treatment IN ('expense', 'partner_receivable')"),
+        CheckConstraint("version > 0"),
+        CheckConstraint(
+            "(treatment = 'expense' AND debtor_account_id IS NULL) OR "
+            "(treatment = 'partner_receivable' AND debtor_account_id IS NOT NULL)"
+        ),
+    )
+
+    expense_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("expense_reports.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    informe_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("documentos.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    treatment = Column(String(30), nullable=False)
+    debtor_account_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("cuentas_contables.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    actor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    reason = Column(Text, nullable=False, default="")
+    version = Column(Integer, nullable=False, default=1)
+    source_key = Column(String(64), nullable=False)
+    reviewed_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class AmexAccountingCut(Base):
+    """One atomic journal per complete report cut; adjustments preserve history."""
+
+    __tablename__ = "amex_accounting_cuts"
+    __table_args__ = (
+        CheckConstraint("kind IN ('initial', 'adjustment')"),
+        Index(
+            "ux_amex_accounting_cuts_initial_informe",
+            "informe_id",
+            unique=True,
+            postgresql_where=text("kind = 'initial'"),
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    informe_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("documentos.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    kind = Column(String(20), nullable=False)
+    state_key = Column(String(64), nullable=False, unique=True)
+    accounting_date = Column(Date, nullable=False)
+    accounting_poliza_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("accounting_polizas.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    actor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    reason = Column(Text, nullable=False, default="")
+    snapshot_json = Column(JSONB, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
 
 
 class ExpenseReport(Base):
@@ -1950,6 +2125,7 @@ class Documento(Base):
     pagado_en = Column(DateTime(timezone=True), nullable=True)
     # SOLICITUD-specific payment fields
     fecha_pago = Column(Date, nullable=True)  # Payment date for SOLICITUD
+    fecha_pago_efectiva = Column(Date, nullable=True, index=True)
     pago_urgente = Column(Boolean, default=False, nullable=False, index=True)
     concepto_pago = Column(
         Text, nullable=True
@@ -1980,6 +2156,30 @@ class Documento(Base):
         nullable=True,
         index=True,
     )
+
+    # A partial comprobación is a separately approved/exported INFORME, while
+    # the original cuenta stays open. It never owns a second advance/payment.
+    informe_origen_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("documentos.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    motivo_comprobacion_parcial = Column(Text, nullable=True)
+
+    # Supplier advances retain the paid source; each invoice is a child request.
+    is_supplier_advance = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    supplier_advance_due_date = Column(Date, nullable=True)
+    supplier_advance_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("documentos.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    supplier_advance_applied = Column(Numeric(18, 2), nullable=True)
+    supplier_invoice_total = Column(Numeric(18, 2), nullable=True)
 
     # CFDI capture at solicitud time (canonical UUID; linked to CFDIReport when available)
     cfdi_uuid_manual = Column(Text, nullable=True, index=True)
@@ -2086,6 +2286,11 @@ class Documento(Base):
             "aprobado_en": self.aprobado_en.isoformat() if self.aprobado_en else None,
             "pagado_en": self.pagado_en.isoformat() if self.pagado_en else None,
             "fecha_pago": self.fecha_pago.isoformat() if self.fecha_pago else None,
+            "fecha_pago_efectiva": (
+                self.fecha_pago_efectiva.isoformat()
+                if self.fecha_pago_efectiva
+                else None
+            ),
             "pago_urgente": bool(self.pago_urgente),
             "concepto_pago": self.concepto_pago,
             "numero_factura": self.numero_factura,
@@ -2464,6 +2669,7 @@ class Reembolso(Base):
         nullable=True,
         index=True,
     )
+    client_submission_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     tipo = Column(String(20), nullable=False, default="reembolso")
     monto = Column(Numeric, nullable=False)
     moneda = Column(String(10), nullable=False)
@@ -2652,6 +2858,9 @@ class CuentaDeGastos(Base):
     nombre = Column(
         Text, nullable=True
     )  # Optional display name (Nombre de Cuenta de Gastos)
+    comprobacion_parcial = Column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     estado = Column(Text, nullable=False, default="abierta")  # 'abierta' or 'cerrada'
     created_at = Column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False

@@ -24,11 +24,13 @@ _CFDI_UUID_PREFIX_RE = re.compile(r"^[0-9a-fA-F]{8}$")
 class ExpenseCFDIDuplicateError(ValueError):
     """A fiscal UUID is already linked to another active expense."""
 
-    def __init__(self, fiscal_uuid: str):
+    def __init__(self, fiscal_uuid: str, duplicate_id: Optional[UUID] = None):
         self.fiscal_uuid = fiscal_uuid
+        self.duplicate_id = duplicate_id
         super().__init__(
             "La factura ya está vinculada a otra partida activa. "
-            "Confirma factura compartida e indica el motivo para continuar."
+            "Solicita a Finanzas y Operaciones que revisen ese registro. "
+            "No marques ‘Factura compartida’ para continuar."
         )
 
 # PostgreSQL: link any pending expense that has a manual fiscal UUID to a CFDI
@@ -152,13 +154,13 @@ async def _enforce_expense_cfdi_uniqueness(
         .limit(1)
     )
     duplicate_id = duplicate_result.scalar_one_or_none()
-    if not duplicate_id:
+    if not duplicate_id and not allow_shared:
         expense.cfdi_compartido_confirmado = False
         expense.cfdi_compartido_motivo = None
         return
     reason = (shared_reason or "").strip()
     if not allow_shared:
-        raise ExpenseCFDIDuplicateError(expense.cfdi_uuid_manual)
+        raise ExpenseCFDIDuplicateError(expense.cfdi_uuid_manual, duplicate_id)
     if not reason:
         raise ValueError("Indique el motivo de la factura compartida.")
     if actor_id is None:
@@ -172,8 +174,12 @@ async def _enforce_expense_cfdi_uniqueness(
             aprobador_id=actor_id,
             accion="confirmar_cfdi_compartido",
             comentario=(
-                f"CFDI {expense.cfdi_uuid_manual} compartido con partida "
-                f"{duplicate_id}: {reason}"
+                f"CFDI {expense.cfdi_uuid_manual}: {reason}. "
+                + (
+                    f"Compartido con partida {duplicate_id}."
+                    if duplicate_id
+                    else "Primera partida de una factura compartida."
+                )
             ),
         )
     )

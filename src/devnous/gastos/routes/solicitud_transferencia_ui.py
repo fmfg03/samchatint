@@ -948,6 +948,8 @@ def render_cfdi_solicitud_terceros_autofill_script(
             }}
 
             async function requestAutofill(sourceInput, otherInput, preferXml) {{
+                const advance = document.getElementById("is_supplier_advance");
+                if (advance && advance.checked) {{ hideNotice(); return; }}
                 if (!sourceInput || !sourceInput.files || !sourceInput.files.length) {{
                     hideNotice();
                     return;
@@ -985,6 +987,7 @@ def render_cfdi_solicitud_terceros_autofill_script(
                         showNotice(errMsg, true);
                         return;
                     }}
+                    if (advance && advance.checked) {{ hideNotice(); return; }}
                     applyAutofill(payload.data || {{}});
                     showNotice(
                         'Campos precargados desde el CFDI. Revise antes de enviar.',

@@ -8,6 +8,8 @@ from devnous.gastos.services.authorization_profile_service import (
     summarize_profile_rules,
 )
 
+SERVICES_ROOT = Path(__file__).resolve().parents[3] / "src/devnous/gastos/services"
+
 
 def test_default_authorization_profiles_are_person_like():
     names = {name for _key, name, _role, _matcher in PROFILE_DEFINITIONS}
@@ -46,9 +48,7 @@ def test_profile_summary_counts_switches_and_exceptions():
 
 def test_authorization_profile_board_routes_and_nav_are_registered():
     source = Path(user_routes.__file__).read_text()
-    access_source = Path(
-        "/root/samchat/src/devnous/gastos/services/access_control_service.py"
-    ).read_text()
+    access_source = (SERVICES_ROOT / "access_control_service.py").read_text()
     tool_start = access_source.index('"configuracion.estrategias_autorizacion"')
     tool_end = access_source.index(
         'AccessTool(',
@@ -95,9 +95,7 @@ def test_document_authorization_input_inference_for_no_invoice_solicitud():
 
 
 def test_document_workflow_send_persists_authorization_strategy_evidence():
-    source = Path(
-        "/root/samchat/src/devnous/gastos/services/documento_workflow_service.py"
-    ).read_text()
+    source = (SERVICES_ROOT / "documento_workflow_service.py").read_text()
     send_block_start = source.index(
         'if normalized_action == "send":',
         source.index("authorization_strategy_evidence"),
@@ -147,12 +145,8 @@ def test_document_detail_previews_authorization_strategy_before_send():
 
 
 def test_document_workflow_approval_persists_soft_authorization_warning():
-    source = Path(
-        "/root/samchat/src/devnous/gastos/services/documento_workflow_service.py"
-    ).read_text()
-    profile_source = Path(
-        "/root/samchat/src/devnous/gastos/services/authorization_profile_service.py"
-    ).read_text()
+    source = (SERVICES_ROOT / "documento_workflow_service.py").read_text()
+    profile_source = (SERVICES_ROOT / "authorization_profile_service.py").read_text()
 
     assert "build_authorization_route_soft_warning" in profile_source
     assert "authorization_route_mismatch" in profile_source
@@ -173,9 +167,7 @@ def test_document_detail_renders_soft_authorization_warning_panel():
 
 def test_authorization_warnings_dashboard_is_registered_read_only():
     source = Path(user_routes.__file__).read_text()
-    access_source = Path(
-        "/root/samchat/src/devnous/gastos/services/access_control_service.py"
-    ).read_text()
+    access_source = (SERVICES_ROOT / "access_control_service.py").read_text()
 
     assert '@router.get("/admin/estrategias-autorizacion/warnings"' in source
     assert "authorization_strategy_warnings_page" in source
@@ -235,12 +227,8 @@ def test_authorization_strategy_actor_profile_matching_uses_copied_profile_match
 
 
 def test_document_workflow_has_feature_flagged_authorization_enforcement():
-    source = Path(
-        "/root/samchat/src/devnous/gastos/services/documento_workflow_service.py"
-    ).read_text()
-    profile_source = Path(
-        "/root/samchat/src/devnous/gastos/services/authorization_profile_service.py"
-    ).read_text()
+    source = (SERVICES_ROOT / "documento_workflow_service.py").read_text()
+    profile_source = (SERVICES_ROOT / "authorization_profile_service.py").read_text()
 
     assert "SAMCHAT_AUTHORIZATION_STRATEGY_ENFORCEMENT" in profile_source
     assert "build_authorization_route_hard_block" in profile_source

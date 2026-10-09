@@ -15,15 +15,16 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import sys
 import secrets
 from html import escape
 from pathlib import Path
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timedelta, timezone
 from typing import List, Optional, Dict, Any, Tuple, Iterable
 from urllib.parse import urlparse
 from urllib.parse import quote, unquote
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -46,10 +47,30 @@ import uvicorn
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import (  # noqa: E402
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy import delete, func, select, text  # noqa: E402
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import aliased, selectinload
+from devnous.copa_telmex.batch_admission import (
+    BatchAdmissionError,
+    admission_receipt as build_batch_admission_receipt,
+    validate_manifest as validate_batch_admission_manifest,
+)
+from devnous.copa_telmex.batch_upload_staging import (  # noqa: E402
+    BatchUploadStorageError,
+    StagedUploadFile,
+    ensure_private_root as ensure_batch_staging_root,
+    initialize_upload_directory,
+    load_manifest as load_staged_batch_manifest,
+    purge_upload as purge_staged_batch_upload,
+    staged_pdf_path,
+    staging_root as configured_batch_staging_root,
+    store_pdf as store_staged_batch_pdf,
+)
 from devnous.copa_telmex.database import CopaTelmexDB
 from devnous.copa_telmex.draft_versioning import (
     append_draft_version,
@@ -74,6 +95,10 @@ from devnous.copa_telmex.models import (
     Base,
     Player,
     RegistrationHumanFieldEditProposal,
+    RegistrationBatch,
+    RegistrationBatchDocument,
+    RegistrationBatchUpload,
+    RegistrationBatchUploadFile,
     RegistrationOcrFieldDiff,
     RegistrationOcrReprocessDecision,
     RegistrationOcrRun,
@@ -363,11 +388,30 @@ TEAM_PLAYER_MUTATION_ALLOWED_SESSION_ROLES = REVIEW_ALLOWED_SESSION_ROLES
 LEGACY_COPA_DASHBOARD_ALLOWED_SESSION_ROLES = REVIEW_ALLOWED_SESSION_ROLES
 REVIEW_SESSION_MAX_FILES = 4
 MAX_REVIEW_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_BATCH_PDF_BYTES = 64 * 1024 * 1024
+BATCH_UPLOAD_TTL_HOURS_DEFAULT = 24
 MAX_REVIEW_IMAGE_PIXELS = 25_000_000
 MAX_REVIEW_IMAGE_DIMENSION = 8000
 REVIEW_UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
 REVIEW_ALLOWED_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".pdf"})
 REVIEW_ALLOWED_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
+
+
+def _batch_upload_ttl_hours() -> int:
+    try:
+        configured = int(
+            str(
+                os.getenv("CTT_BATCH_UPLOAD_TTL_HOURS")
+                or BATCH_UPLOAD_TTL_HOURS_DEFAULT
+            ).strip()
+        )
+    except ValueError:
+        configured = BATCH_UPLOAD_TTL_HOURS_DEFAULT
+    return configured if configured > 0 else BATCH_UPLOAD_TTL_HOURS_DEFAULT
+
+
+def _batch_staging_root() -> Path:
+    return configured_batch_staging_root(production=_is_production_runtime())
 
 
 def _canonical_promotion_enabled() -> bool:
@@ -512,6 +556,32 @@ async def _read_upload_limited(upload: Any) -> bytes:
     return bytes(payload)
 
 
+async def _batch_pdf_digest(upload: Any) -> str:
+    """Hash one uploaded PDF with a separate bounded batch limit."""
+    digest = hashlib.sha256()
+    total = 0
+    await upload.seek(0)
+    while True:
+        chunk = await upload.read(REVIEW_UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_BATCH_PDF_BYTES:
+            raise _review_error("file_too_large", "Un PDF del lote excede 64 MB.")
+        digest.update(chunk)
+    await upload.seek(0)
+    return digest.hexdigest()
+
+
+async def _read_batch_pdf(upload: Any) -> bytes:
+    await upload.seek(0)
+    payload = await upload.read(MAX_BATCH_PDF_BYTES + 1)
+    await upload.seek(0)
+    if len(payload) > MAX_BATCH_PDF_BYTES:
+        raise _review_error("file_too_large", "Un PDF del lote excede 64 MB.")
+    return payload
+
+
 def _sniff_pdf_bytes(payload: bytes) -> bool:
     return payload[:5] == b"%PDF-"
 
@@ -652,6 +722,85 @@ def _render_pdf_review_assets(
                 }
             )
         return stored_assets
+
+
+def _render_pdf_review_asset_pages(
+    session_dir: Path, payload: bytes, *, pages: List[int]
+) -> List[Dict[str, Any]]:
+    """Render only the immutable one-based source pages admitted for a dossier."""
+    if fitz is None:
+        raise _review_error(
+            "invalid_file_type", "Los PDF no están habilitados en este entorno."
+        )
+    try:
+        document = fitz.open(stream=payload, filetype="pdf")
+    except Exception as exc:
+        raise _review_error(
+            "corrupt_image", "No pude leer uno de los PDF del lote."
+        ) from exc
+    session_dir.mkdir(parents=True, exist_ok=True)
+    with document:
+        if not pages or pages != sorted(set(pages)) or pages[-1] > document.page_count:
+            raise _review_error(
+                "source_page_mismatch", "Las páginas no coinciden con el PDF."
+            )
+        stored_assets = []
+        for page_index, source_page in enumerate(pages, 1):
+            page = document.load_page(source_page - 1)
+            pix = page.get_pixmap(alpha=False)
+            width, height = int(pix.width), int(pix.height)
+            if (
+                width > MAX_REVIEW_IMAGE_DIMENSION
+                or height > MAX_REVIEW_IMAGE_DIMENSION
+                or width * height > MAX_REVIEW_IMAGE_PIXELS
+            ):
+                raise _review_error(
+                    "image_too_large", "Una página del expediente excede el límite."
+                )
+            page_bytes = pix.tobytes("png")
+            output_path = session_dir / f"page-{page_index:02d}.png"
+            output_path.write_bytes(page_bytes)
+            stored_assets.append(
+                {
+                    "page_index": page_index,
+                    "source_pdf_page": source_page,
+                    "image_path": str(output_path),
+                    "sha256": hashlib.sha256(page_bytes).hexdigest(),
+                    "width": width,
+                    "height": height,
+                }
+            )
+        return stored_assets
+
+
+def _batch_player_page_map(document: Dict[str, Any]) -> Dict[str, int]:
+    """Translate physical manifest pages to sequential stored-asset indices."""
+    source_pages = document.get("pages") or []
+    asset_index_by_source_page = {
+        source_page: asset_index
+        for asset_index, source_page in enumerate(source_pages, 1)
+    }
+    player_page_map: Dict[str, int] = {}
+    players = (document.get("extraction") or {}).get("players") or []
+    for player_slot, player in enumerate(players, 1):
+        slot_ref = (
+            str(player.get("slot_ref") or "") if isinstance(player, dict) else ""
+        )
+        parts = slot_ref.split(":", 2)
+        try:
+            source_page = int(parts[1])
+        except (IndexError, ValueError) as exc:
+            raise _review_error(
+                "player_source_page_missing",
+                "Un jugador no declara una página fuente válida.",
+            ) from exc
+        if parts[0] != "page" or source_page not in asset_index_by_source_page:
+            raise _review_error(
+                "player_source_page_mismatch",
+                "La página fuente de un jugador no pertenece al expediente.",
+            )
+        player_page_map[str(player_slot)] = asset_index_by_source_page[source_page]
+    return player_page_map
 
 
 def _dedupe_review_items(items: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1038,6 +1187,9 @@ def _build_review_commit_validation(
             }
         )
 
+    if extraction.get("staff"):
+        blockers.append(_staff_governance_contract_blocker())
+
     for idx, player in enumerate(players):
         player_number = idx + 1
         field_prefix = f"players[{idx}]"
@@ -1149,6 +1301,66 @@ def _build_review_commit_validation(
     enriched["capture_warning_count"] = len(warnings)
     enriched["capture_warning_messages"] = [item["message"] for item in warnings]
     return enriched
+
+
+def _staff_governance_contract_blocker() -> Dict[str, str]:
+    return {
+        "code": "STAFF_GOVERNANCE_CONTRACT_REQUIRED",
+        "field": "staff",
+        "message": (
+            "El cuerpo técnico está conservado en el draft, pero el contrato "
+            "vigente de gobernanza solo autoriza jugadores."
+        ),
+    }
+
+
+def _attach_batch_staff_governance_blocker(
+    validation: Dict[str, Any],
+) -> Dict[str, Any]:
+    enriched = dict(validation or {})
+    blockers = list(enriched.get("blockers") or [])
+    blockers.append(_staff_governance_contract_blocker())
+    blockers = _dedupe_review_items(blockers)
+    enriched["blockers"] = blockers
+    enriched["blocking_issue_count"] = len(blockers)
+    enriched["ready_to_commit"] = False
+    return enriched
+
+
+def _batch_staff_evidence_preserved(
+    current_extraction: Dict[str, Any], proposed_extraction: Dict[str, Any]
+) -> bool:
+    current_staff = current_extraction.get("staff")
+    return (
+        isinstance(current_staff, list)
+        and len(current_staff) == 2
+        and proposed_extraction.get("staff") == current_staff
+    )
+
+
+def _ensure_batch_reprocess_staff_preserved(
+    *,
+    batch_binding_exists: bool,
+    current_extraction: Dict[str, Any],
+    proposed_extraction: Dict[str, Any],
+) -> None:
+    if batch_binding_exists and not _batch_staff_evidence_preserved(
+        current_extraction, proposed_extraction
+    ):
+        raise _review_error(
+            "batch_staff_evidence_immutable",
+            "El reproceso no puede eliminar ni cambiar el cuerpo técnico admitido.",
+            status_code=409,
+        )
+
+
+def _ensure_batch_reprocess_supported(*, batch_binding_exists: bool) -> None:
+    if batch_binding_exists:
+        raise _review_error(
+            "batch_reprocess_not_supported",
+            "El reproceso OCR no está habilitado para expedientes admitidos por lote.",
+            status_code=409,
+        )
 
 
 def _attach_unresolved_reprocess_blocker(
@@ -2218,6 +2430,8 @@ def _normalize_review_extraction(payload: Optional[Dict[str, Any]], note: Option
     if note:
         merged_note = " | ".join(part for part in [normalized.get("notes"), note] if part)
         normalized["notes"] = merged_note
+    if isinstance(payload.get("staff"), list):
+        normalized["staff"] = copy.deepcopy(payload["staff"])
     return normalized
 
 
@@ -3885,7 +4099,9 @@ def _prepare_review_draft_values(
     )
     draft = base_draft or review_session.draft
 
-    existing_audit = _review_audit_state(draft.validation if isinstance(draft.validation, dict) else None)
+    existing_audit = _review_audit_state(
+        draft.validation if draft and isinstance(draft.validation, dict) else None
+    )
     extraction_metadata = _build_review_extraction_metadata(
         raw_payload,
         extraction,
@@ -4217,7 +4433,12 @@ async def startup_event():
     try:
         # Create all tables (including CFDIReport)
         async with db_engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+            from devnous.gastos.amex_schema_policy import runtime_managed_tables
+
+            await conn.run_sync(
+                Base.metadata.create_all,
+                tables=runtime_managed_tables(Base.metadata),
+            )
             guard_report = await apply_schema_guard(conn, logger=logger, strict=False)
             health_report = await check_schema_health(conn)
         logger.info("✅ Database tables created/verified")
@@ -4225,6 +4446,14 @@ async def startup_event():
             logger.warning("⚠️ Schema guard had failures: %s", guard_report.get("failed"))
         if not health_report.get("ok"):
             logger.warning("⚠️ Schema health still has gaps: %s", health_report)
+
+        ensure_batch_staging_root(_batch_staging_root())
+        purged_uploads = await _purge_expired_batch_uploads()
+        if purged_uploads:
+            logger.info(
+                "Purged %s expired registration batch upload(s) on startup",
+                purged_uploads,
+            )
 
         async with async_session_maker() as session:
             copa_db = CopaTelmexDB(session)
@@ -4280,12 +4509,25 @@ async def healthz() -> JSONResponse:
 
 @app.get("/readyz", include_in_schema=False)
 async def readyz() -> JSONResponse:
-    """Readiness check covering DB connectivity and schema health."""
+    """Readiness check covering DB, schema, and private staging storage."""
     try:
         async with db_engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
             schema_health = await check_schema_health(conn)
-        ok = bool(schema_health.get("ok"))
+        try:
+            root = _batch_staging_root()
+            storage_ok = (
+                root.is_dir()
+                and not root.is_symlink()
+                and os.access(root, os.R_OK | os.W_OK | os.X_OK)
+            )
+            storage_health = {
+                "ok": storage_ok,
+                "status": "ready" if storage_ok else "unavailable",
+            }
+        except BatchUploadStorageError as storage_exc:
+            storage_health = {"ok": False, "status": storage_exc.code}
+        ok = bool(schema_health.get("ok")) and bool(storage_health.get("ok"))
         status_code = 200 if ok else 503
         status = "healthy" if ok else "degraded"
         return JSONResponse(
@@ -4296,6 +4538,7 @@ async def readyz() -> JSONResponse:
                 "service": "samchat-gastos",
                 "app_url": public_app_url,
                 "schema_health": schema_health,
+                "batch_staging_health": storage_health,
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             },
         )
@@ -4717,6 +4960,852 @@ async def create_registration_review_session(request: Request):
     return RedirectResponse(url=f"/registration-review/{review_session.id}", status_code=303)
 
 
+@app.post("/api/registration-review/batches", response_class=JSONResponse)
+async def admit_registration_review_batch(request: Request):
+    """Admit exact reviewed dossiers as drafts; never commit teams or eligibility."""
+    _ensure_registration_review_access(request)
+    actor = _review_session_actor(request)
+    actor_id = str(actor.get("user_id") or "").strip()
+    if not actor_id:
+        raise HTTPException(status_code=401, detail="Sesión inválida para admitir el lote.")
+    form_data = await request.form()
+    manifest_upload = form_data.get("manifest")
+    if not getattr(manifest_upload, "filename", None):
+        raise _review_error("manifest_missing", "Adjunta el manifiesto privado del lote.")
+    try:
+        manifest_bytes = await _read_upload_limited(manifest_upload)
+        raw_manifest = json.loads(manifest_bytes.decode("utf-8"))
+        manifest = validate_batch_admission_manifest(raw_manifest)
+    except (BatchAdmissionError, UnicodeDecodeError, ValueError) as exc:
+        code = exc.code if isinstance(exc, BatchAdmissionError) else "MANIFEST_INVALID"
+        raise _review_error(code.lower(), "El manifiesto no es válido.") from exc
+
+    uploads = [
+        upload
+        for upload in form_data.getlist("files")
+        if getattr(upload, "filename", None)
+    ]
+    upload_files: Dict[str, Any] = {}
+    for upload in uploads:
+        filename = Path(str(upload.filename)).name
+        if filename != upload.filename or filename in upload_files:
+            raise _review_error(
+                "source_file_ambiguous", "Los nombres de PDF deben ser únicos y seguros."
+            )
+        upload_files[filename] = upload
+    expected_files = {item["pdf"] for item in manifest["documents"]}
+    if set(upload_files) != expected_files:
+        raise _review_error(
+            "source_file_set_mismatch", "Adjunta exactamente los PDF del manifiesto."
+        )
+    for document in manifest["documents"]:
+        if await _batch_pdf_digest(upload_files[document["pdf"]]) != document["pdf_sha256"]:
+            raise _review_error(
+                "source_pdf_hash_mismatch", "Un PDF no coincide con el manifiesto."
+            )
+
+    result = await _admit_validated_registration_review_batch(
+        manifest=manifest,
+        upload_files=upload_files,
+        actor_id=actor_id,
+    )
+    return JSONResponse(result, status_code=200)
+
+
+async def _admit_validated_registration_review_batch(
+    *,
+    manifest: Dict[str, Any],
+    upload_files: Dict[str, Any],
+    actor_id: str,
+    max_new_documents: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Admit validated sources, optionally advancing one new dossier per call."""
+
+    edition = manifest["edition"]
+    async with async_session_maker() as session:
+        edition_row = (
+            await session.execute(
+                text(
+                    """SELECT e.id::text AS id FROM copa_telmex_tournament_editions e
+                       JOIN tournaments t ON t.id = e.tournament_id
+                       WHERE e.tournament_id = CAST(:tournament_id AS uuid)
+                         AND e.edition_year = :edition_year
+                         AND e.roster_slug = :roster_slug
+                         AND e.active = TRUE AND t.active = TRUE"""
+                ),
+                edition,
+            )
+        ).mappings().one_or_none()
+        if edition_row is None:
+            raise _review_error(
+                "edition_scope_missing", "La edición activa del manifiesto no existe."
+            )
+        edition_id = UUID(edition_row["id"])
+        batch_id = uuid5(
+            NAMESPACE_URL,
+            f"ctt-registration-batch:{edition_id}:{manifest['manifest_sha256']}",
+        )
+        documents_by_id = {
+            item["document_id"]: item for item in manifest["documents"]
+        }
+        existing_bindings = (
+            (
+                await session.execute(
+                    select(RegistrationBatchDocument).where(
+                        RegistrationBatchDocument.tournament_edition_id == edition_id,
+                        RegistrationBatchDocument.document_id.in_(documents_by_id),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for existing in existing_bindings:
+            expected = documents_by_id[existing.document_id]
+            receipt = (
+                existing.admission_receipt
+                if isinstance(existing.admission_receipt, dict)
+                else {}
+            )
+            if (
+                existing.batch_id != batch_id
+                or existing.source_filename != expected["pdf"]
+                or existing.pdf_sha256 != expected["pdf_sha256"]
+                or existing.source_pages_sha256
+                != expected["source_pages_sha256"]
+                or existing.payload_sha256 != expected["payload_sha256"]
+                or receipt.get("manifest_sha256") != manifest["manifest_sha256"]
+            ):
+                raise _review_error(
+                    "document_identity_conflict",
+                    "Un expediente existente pertenece a otro lote o evidencia.",
+                )
+        await session.execute(
+            text(
+                """INSERT INTO copa_telmex_registration_batches
+                   (id, tournament_edition_id, manifest_sha256, document_count,
+                    admitted_by_user_id)
+                   VALUES (:id, :edition_id, :manifest_sha256, :document_count,
+                           :actor_id)
+                   ON CONFLICT (id) DO NOTHING"""
+            ),
+            {
+                "id": batch_id,
+                "edition_id": edition_id,
+                "manifest_sha256": manifest["manifest_sha256"],
+                "document_count": len(manifest["documents"]),
+                "actor_id": actor_id,
+            },
+        )
+        batch = (
+            await session.execute(
+                select(RegistrationBatch)
+                .where(RegistrationBatch.id == batch_id)
+                .with_for_update()
+            )
+        ).scalar_one()
+        if (
+            batch.manifest_sha256 != manifest["manifest_sha256"]
+            or batch.tournament_edition_id != edition_id
+            or batch.document_count != len(manifest["documents"])
+        ):
+            raise _review_error("batch_identity_conflict", "El lote existente no coincide.")
+        await session.commit()
+
+    results = []
+    new_documents = 0
+    for document in manifest["documents"]:
+        if (
+            max_new_documents is not None
+            and new_documents >= max_new_documents
+        ):
+            break
+        async with async_session_maker() as session:
+            await session.execute(
+                select(RegistrationBatch)
+                .where(RegistrationBatch.id == batch_id)
+                .with_for_update()
+            )
+            existing = (
+                await session.execute(
+                    select(RegistrationBatchDocument).where(
+                        RegistrationBatchDocument.tournament_edition_id == edition_id,
+                        RegistrationBatchDocument.document_id == document["document_id"],
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                if (
+                    existing.batch_id != batch_id
+                    or existing.source_filename != document["pdf"]
+                    or existing.pdf_sha256 != document["pdf_sha256"]
+                    or existing.source_pages_sha256
+                    != document["source_pages_sha256"]
+                    or existing.payload_sha256 != document["payload_sha256"]
+                    or not isinstance(existing.admission_receipt, dict)
+                    or existing.admission_receipt.get("manifest_sha256")
+                    != manifest["manifest_sha256"]
+                ):
+                    raise _review_error(
+                        "document_identity_conflict",
+                        "Un expediente existente tiene evidencia diferente.",
+                    )
+                results.append(
+                    {
+                        "document_id": document["document_id"],
+                        "status": "RECOVERED",
+                        "review_session_id": str(existing.review_session_id),
+                    }
+                )
+                continue
+
+            review_session_id = uuid5(
+                NAMESPACE_URL,
+                f"ctt-registration-document:{edition_id}:{document['document_id']}",
+            )
+            review_session = RegistrationReviewSession(
+                id=review_session_id,
+                status="uploaded",
+                source="batch_admission",
+                provider="reviewed_manifest",
+                tournament_slug=edition["roster_slug"],
+                created_by_user_id=actor_id,
+            )
+            session.add(review_session)
+            await session.flush()
+            session_assets_dir = review_uploads_dir / str(review_session_id)
+            shutil.rmtree(session_assets_dir, ignore_errors=True)
+            try:
+                stored_assets = _render_pdf_review_asset_pages(
+                    session_assets_dir,
+                    await _read_batch_pdf(upload_files[document["pdf"]]),
+                    pages=document["pages"],
+                )
+            except BaseException:
+                shutil.rmtree(session_assets_dir, ignore_errors=True)
+                raise
+            try:
+                assets = []
+                for asset_payload in stored_assets:
+                    asset = RegistrationReviewAsset(
+                        session_id=review_session_id,
+                        page_index=asset_payload["page_index"],
+                        image_path=asset_payload["image_path"],
+                        sha256=asset_payload["sha256"],
+                        width=asset_payload["width"],
+                        height=asset_payload["height"],
+                        source_ocr_run_ref=(
+                            f"batch:{manifest['manifest_sha256']}:"
+                            f"source-page:{asset_payload['source_pdf_page']}"
+                        ),
+                    )
+                    session.add(asset)
+                    assets.append(asset)
+            except BaseException:
+                shutil.rmtree(session_assets_dir, ignore_errors=True)
+                raise
+            try:
+                draft = await _upsert_review_draft(
+                    session,
+                    review_session,
+                    document["extraction"],
+                    {
+                        "provider": "reviewed_manifest",
+                        "batch_manifest_sha256": manifest["manifest_sha256"],
+                        "document_id": document["document_id"],
+                        "pdf_sha256": document["pdf_sha256"],
+                        "source_pages": document["pages"],
+                        "payload_sha256": document["payload_sha256"],
+                        "human_reviewed": False,
+                        "canonical_import_ready": False,
+                    },
+                    layout_regions={
+                        "source_pages": document["pages"],
+                        "player_page_map": _batch_player_page_map(document),
+                        "staff_evidence": [
+                            {
+                                "staff_entry_id": item["staff_entry_id"],
+                                "slot": item["slot"],
+                            }
+                            for item in document["extraction"]["staff"]
+                        ],
+                    },
+                    mutation_type="batch_manifest_admitted",
+                    actor_id=actor_id,
+                )
+            except BaseException:
+                shutil.rmtree(session_assets_dir, ignore_errors=True)
+                raise
+            try:
+                for asset in assets:
+                    asset.admitted_draft_id = draft.id
+                    asset.source_base_draft_id = draft.id
+                    asset.source_base_content_hash = draft.content_hash
+                receipt = build_batch_admission_receipt(
+                    manifest_sha256=manifest["manifest_sha256"],
+                    document=document,
+                    actor_id=actor_id,
+                    review_session_id=str(review_session_id),
+                )
+                session.add(
+                    RegistrationBatchDocument(
+                        id=uuid5(
+                            NAMESPACE_URL,
+                            "ctt-registration-binding:"
+                            f"{edition_id}:{document['document_id']}",
+                        ),
+                        batch_id=batch_id,
+                        tournament_edition_id=edition_id,
+                        document_id=document["document_id"],
+                        source_filename=document["pdf"],
+                        pdf_sha256=document["pdf_sha256"],
+                        source_pages=document["pages"],
+                        source_pages_sha256=document["source_pages_sha256"],
+                        payload_sha256=document["payload_sha256"],
+                        review_session_id=review_session_id,
+                        admission_receipt=receipt,
+                    )
+                )
+                await session.commit()
+            except BaseException:
+                shutil.rmtree(session_assets_dir, ignore_errors=True)
+                raise
+            results.append(
+                {
+                    "document_id": document["document_id"],
+                    "status": "ADMITTED_FOR_REVIEW",
+                    "review_session_id": str(review_session_id),
+                }
+            )
+            new_documents += 1
+    return {
+        "batch_id": str(batch_id),
+        "manifest_sha256": manifest["manifest_sha256"],
+        "documents": results,
+        "committed_teams": 0,
+        "grants_eligibility": False,
+    }
+
+
+def _batch_upload_storage_error(exc: BatchUploadStorageError) -> HTTPException:
+    return _review_error(exc.code, str(exc))
+
+
+async def _batch_upload_for_actor(
+    session: AsyncSession,
+    *,
+    upload_id: UUID,
+    actor_id: str,
+    lock: bool = False,
+) -> RegistrationBatchUpload:
+    statement = (
+        select(RegistrationBatchUpload)
+        .options(selectinload(RegistrationBatchUpload.files))
+        .where(
+            RegistrationBatchUpload.id == upload_id,
+            RegistrationBatchUpload.created_by_user_id == actor_id,
+        )
+    )
+    if lock:
+        statement = statement.with_for_update()
+    upload = (await session.execute(statement)).scalar_one_or_none()
+    if upload is None:
+        raise _review_error(
+            "batch_upload_not_found",
+            "La carga temporal no existe o pertenece a otra sesión.",
+            status_code=404,
+        )
+    if (
+        upload.expires_at <= datetime.utcnow()
+        and upload.status not in {"admitted", "cancelled"}
+    ):
+        try:
+            purge_staged_batch_upload(_batch_staging_root(), upload.id)
+        except (BatchUploadStorageError, OSError):
+            upload.status = "expired"
+            logger.warning(
+                "Could not purge accessed expired staged batch upload %s",
+                upload.id,
+            )
+        else:
+            await session.delete(upload)
+        await session.commit()
+        raise _review_error(
+            "batch_upload_expired",
+            "La carga temporal venció. Inicia una carga nueva.",
+            status_code=410,
+        )
+    return upload
+
+
+async def _batch_upload_status_payload(
+    session: AsyncSession, upload: RegistrationBatchUpload
+) -> Dict[str, Any]:
+    uploaded_files = sum(
+        1 for item in upload.files if item.status in {"uploaded", "purged"}
+    )
+    admitted_documents = 0
+    if upload.batch_id is not None:
+        admitted_documents = int(
+            await session.scalar(
+                select(func.count(RegistrationBatchDocument.id)).where(
+                    RegistrationBatchDocument.batch_id == upload.batch_id
+                )
+            )
+            or 0
+        )
+    return {
+        "ok": True,
+        "upload_id": str(upload.id),
+        "status": upload.status,
+        "expected_files": upload.file_count,
+        "uploaded_files": uploaded_files,
+        "expected_documents": upload.document_count,
+        "admitted_documents": admitted_documents,
+        "expires_at": upload.expires_at.isoformat(),
+        "files": [
+            {
+                "name": item.source_filename,
+                "status": item.status,
+                "byte_count": item.byte_count,
+            }
+            for item in upload.files
+        ],
+        "committed_teams": 0,
+        "grants_eligibility": False,
+    }
+
+
+async def _purge_expired_batch_uploads() -> int:
+    now = datetime.utcnow()
+    async with async_session_maker() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(RegistrationBatchUpload).where(
+                        RegistrationBatchUpload.expires_at <= now,
+                        RegistrationBatchUpload.status.notin_(
+                            ("admitted", "cancelled")
+                        ),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        purged_count = 0
+        for upload in rows:
+            try:
+                purge_staged_batch_upload(_batch_staging_root(), upload.id)
+            except (BatchUploadStorageError, OSError):
+                upload.status = "expired"
+                logger.warning(
+                    "Could not purge expired staged batch upload %s", upload.id
+                )
+                continue
+            await session.delete(upload)
+            purged_count += 1
+        if rows:
+            await session.commit()
+        return purged_count
+
+
+def _expected_batch_upload_files(manifest: Dict[str, Any]) -> Dict[str, str]:
+    """Return one immutable digest per source filename."""
+    expected_files: Dict[str, str] = {}
+    for document in manifest["documents"]:
+        filename = document["pdf"]
+        digest = document["pdf_sha256"]
+        previous = expected_files.get(filename)
+        if previous is not None and previous != digest:
+            raise _review_error(
+                "source_file_hash_conflict",
+                "Un mismo PDF aparece con hashes distintos en el manifiesto.",
+            )
+        expected_files[filename] = digest
+    return expected_files
+
+
+@app.post("/api/registration-review/batch-uploads", response_class=JSONResponse)
+async def create_registration_batch_upload(request: Request):
+    """Validate one manifest and initialize resumable private PDF staging."""
+    _ensure_registration_review_access(request)
+    actor = _review_session_actor(request)
+    actor_id = str(actor.get("user_id") or "").strip()
+    if not actor_id:
+        raise HTTPException(
+            status_code=401,
+            detail="Sesión inválida para cargar el lote.",
+        )
+    form_data = await request.form()
+    manifest_upload = form_data.get("manifest")
+    if not getattr(manifest_upload, "filename", None):
+        raise _review_error(
+            "manifest_missing",
+            "Selecciona el manifiesto privado del lote.",
+        )
+    try:
+        manifest_bytes = await _read_upload_limited(manifest_upload)
+        manifest = validate_batch_admission_manifest(
+            json.loads(manifest_bytes.decode("utf-8"))
+        )
+    except (BatchAdmissionError, UnicodeDecodeError, ValueError) as exc:
+        code = exc.code if isinstance(exc, BatchAdmissionError) else "MANIFEST_INVALID"
+        raise _review_error(code.lower(), "El manifiesto no es válido.") from exc
+
+    await _purge_expired_batch_uploads()
+    edition = manifest["edition"]
+    async with async_session_maker() as session:
+        edition_row = (
+            await session.execute(
+                text(
+                    """SELECT e.id::text AS id FROM copa_telmex_tournament_editions e
+                       JOIN tournaments t ON t.id = e.tournament_id
+                       WHERE e.tournament_id = CAST(:tournament_id AS uuid)
+                         AND e.edition_year = :edition_year
+                         AND e.roster_slug = :roster_slug
+                         AND e.active = TRUE AND t.active = TRUE"""
+                ),
+                edition,
+            )
+        ).mappings().one_or_none()
+        if edition_row is None:
+            raise _review_error(
+                "edition_scope_missing", "La edición activa del manifiesto no existe."
+            )
+        edition_id = UUID(edition_row["id"])
+        upload_id = uuid5(
+            NAMESPACE_URL,
+            "ctt-registration-upload:"
+            f"{edition_id}:{actor_id}:{manifest['manifest_sha256']}",
+        )
+        upload = (
+            (
+                await session.execute(
+                    select(RegistrationBatchUpload)
+                    .options(selectinload(RegistrationBatchUpload.files))
+                    .where(RegistrationBatchUpload.id == upload_id)
+                )
+            )
+            .scalar_one_or_none()
+        )
+        expected_files = _expected_batch_upload_files(manifest)
+        if upload is None:
+            upload = RegistrationBatchUpload(
+                id=upload_id,
+                tournament_edition_id=edition_id,
+                manifest_sha256=manifest["manifest_sha256"],
+                document_count=len(manifest["documents"]),
+                file_count=len(expected_files),
+                status="staging",
+                created_by_user_id=actor_id,
+                expires_at=datetime.utcnow()
+                + timedelta(hours=_batch_upload_ttl_hours()),
+            )
+            upload.files = [
+                RegistrationBatchUploadFile(
+                    id=uuid5(
+                        NAMESPACE_URL,
+                        f"ctt-registration-upload-file:{upload_id}:{name}:{digest}",
+                    ),
+                    source_filename=name,
+                    expected_sha256=digest,
+                    status="pending",
+                )
+                for name, digest in sorted(expected_files.items())
+            ]
+            session.add(upload)
+        elif (
+            upload.created_by_user_id != actor_id
+            or upload.tournament_edition_id != edition_id
+            or upload.manifest_sha256 != manifest["manifest_sha256"]
+            or upload.document_count != len(manifest["documents"])
+            or upload.file_count != len(expected_files)
+            or {item.source_filename: item.expected_sha256 for item in upload.files}
+            != expected_files
+        ):
+            raise _review_error(
+                "batch_upload_identity_conflict",
+                "La carga existente no coincide con el manifiesto.",
+                status_code=409,
+            )
+        if upload.status != "admitted":
+            try:
+                ensure_batch_staging_root(_batch_staging_root())
+                initialize_upload_directory(
+                    _batch_staging_root(), upload_id, manifest
+                )
+            except BatchUploadStorageError as exc:
+                raise _batch_upload_storage_error(exc) from exc
+        await session.commit()
+        return JSONResponse(
+            await _batch_upload_status_payload(session, upload), status_code=200
+        )
+
+
+@app.get(
+    "/api/registration-review/batch-uploads/{upload_id}",
+    response_class=JSONResponse,
+)
+async def registration_batch_upload_status(upload_id: UUID, request: Request):
+    """Return bounded, actor-scoped progress for one staged batch."""
+    _ensure_registration_review_access(request)
+    actor_id = str(_review_session_actor(request).get("user_id") or "").strip()
+    async with async_session_maker() as session:
+        upload = await _batch_upload_for_actor(
+            session, upload_id=upload_id, actor_id=actor_id
+        )
+        return JSONResponse(await _batch_upload_status_payload(session, upload))
+
+
+@app.post(
+    "/api/registration-review/batch-uploads/{upload_id}/files",
+    response_class=JSONResponse,
+)
+async def upload_registration_batch_file(upload_id: UUID, request: Request):
+    """Stream and verify one expected source PDF below the proxy body limit."""
+    _ensure_registration_review_access(request)
+    actor_id = str(_review_session_actor(request).get("user_id") or "").strip()
+    form_data = await request.form()
+    source_upload = form_data.get("file")
+    filename = str(getattr(source_upload, "filename", "") or "")
+    if not filename:
+        raise _review_error("source_file_missing", "Selecciona un PDF del manifiesto.")
+    if Path(filename).name != filename or Path(filename).suffix.lower() != ".pdf":
+        raise _review_error(
+            "source_file_ambiguous",
+            "Selecciona un PDF con nombre válido.",
+        )
+    content_type = str(getattr(source_upload, "content_type", "") or "").lower()
+    if content_type and content_type != "application/pdf":
+        raise _review_error(
+            "invalid_file_type",
+            "El archivo seleccionado no es un PDF válido.",
+        )
+    async with async_session_maker() as session:
+        upload = await _batch_upload_for_actor(
+            session, upload_id=upload_id, actor_id=actor_id, lock=True
+        )
+        if upload.status in {"admitted", "cancelled", "expired"}:
+            raise _review_error(
+                "batch_upload_closed",
+                "Esta carga ya no admite archivos.",
+                status_code=409,
+            )
+        expected = next(
+            (item for item in upload.files if item.source_filename == filename), None
+        )
+        if expected is None:
+            raise _review_error(
+                "source_file_set_mismatch",
+                "Selecciona exactamente los PDF indicados por el manifiesto.",
+            )
+        try:
+            path, byte_count = await store_staged_batch_pdf(
+                root=_batch_staging_root(),
+                upload_id=upload_id,
+                upload=source_upload,
+                expected_sha256=expected.expected_sha256,
+            )
+        except BatchUploadStorageError as exc:
+            raise _batch_upload_storage_error(exc) from exc
+        expected.stored_sha256 = expected.expected_sha256
+        expected.byte_count = byte_count
+        expected.storage_key = path.name
+        expected.status = "uploaded"
+        expected.uploaded_at = datetime.utcnow()
+        uploaded_files = sum(1 for item in upload.files if item.status == "uploaded")
+        upload.status = "ready" if uploaded_files == upload.file_count else "staging"
+        upload.expires_at = datetime.utcnow() + timedelta(
+            hours=_batch_upload_ttl_hours()
+        )
+        await session.commit()
+        return JSONResponse(await _batch_upload_status_payload(session, upload))
+
+
+@app.post(
+    "/api/registration-review/batch-uploads/{upload_id}/admit-next",
+    response_class=JSONResponse,
+)
+async def admit_next_registration_batch_document(upload_id: UUID, request: Request):
+    """Admit at most one new dossier so progress is resumable and observable."""
+    _ensure_registration_review_access(request)
+    actor_id = str(_review_session_actor(request).get("user_id") or "").strip()
+    advisory_key = upload_id.int & ((1 << 63) - 1)
+    async with async_session_maker() as lock_session:
+        locked = bool(
+            await lock_session.scalar(
+                text("SELECT pg_try_advisory_xact_lock(:lock_key)"),
+                {"lock_key": advisory_key},
+            )
+        )
+        if not locked:
+            raise _review_error(
+                "batch_admission_in_progress",
+                "El lote ya está avanzando en otra solicitud.",
+                status_code=409,
+            )
+        readers: Dict[str, StagedUploadFile] = {}
+        try:
+            upload = await _batch_upload_for_actor(
+                lock_session, upload_id=upload_id, actor_id=actor_id, lock=True
+            )
+            if any(item.status != "uploaded" for item in upload.files):
+                raise _review_error(
+                    "batch_upload_incomplete",
+                    "Completa los PDF pendientes antes de admitir expedientes.",
+                    status_code=409,
+                )
+            try:
+                manifest = load_staged_batch_manifest(
+                    _batch_staging_root(), upload_id
+                )
+                if manifest["manifest_sha256"] != upload.manifest_sha256:
+                    raise BatchUploadStorageError(
+                        "batch_manifest_mismatch",
+                        "El manifiesto temporal no coincide con la carga.",
+                    )
+                admitted_document_ids = set(
+                    (
+                        await lock_session.execute(
+                            select(RegistrationBatchDocument.document_id).where(
+                                RegistrationBatchDocument.tournament_edition_id
+                                == upload.tournament_edition_id,
+                                RegistrationBatchDocument.document_id.in_(
+                                    document["document_id"]
+                                    for document in manifest["documents"]
+                                ),
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                next_document = next(
+                    (
+                        document
+                        for document in manifest["documents"]
+                        if document["document_id"] not in admitted_document_ids
+                    ),
+                    None,
+                )
+                required_filenames = (
+                    {next_document["pdf"]} if next_document is not None else set()
+                )
+                required_files = [
+                    item
+                    for item in upload.files
+                    if item.source_filename in required_filenames
+                ]
+                for item in required_files:
+                    path = staged_pdf_path(
+                        _batch_staging_root(), upload_id, item.expected_sha256
+                    )
+                    readers[item.source_filename] = StagedUploadFile(
+                        path, item.source_filename
+                    )
+                for item in required_files:
+                    if (
+                        await _batch_pdf_digest(readers[item.source_filename])
+                        != item.expected_sha256
+                    ):
+                        raise BatchUploadStorageError(
+                            "source_pdf_hash_mismatch",
+                            "Un PDF temporal no coincide con el manifiesto.",
+                        )
+            except BatchUploadStorageError as exc:
+                raise _batch_upload_storage_error(exc) from exc
+            result = await _admit_validated_registration_review_batch(
+                manifest=manifest,
+                upload_files=readers,
+                actor_id=actor_id,
+                max_new_documents=1,
+            )
+            upload.batch_id = UUID(result["batch_id"])
+            admitted_documents = int(
+                await lock_session.scalar(
+                    select(func.count(RegistrationBatchDocument.id)).where(
+                        RegistrationBatchDocument.batch_id == upload.batch_id
+                    )
+                )
+                or 0
+            )
+            complete = admitted_documents == upload.document_count
+            upload.status = "admitted" if complete else "ready"
+            upload.expires_at = datetime.utcnow() + timedelta(
+                hours=_batch_upload_ttl_hours()
+            )
+            await lock_session.commit()
+            if complete:
+                purge_staged_batch_upload(_batch_staging_root(), upload_id)
+                async with async_session_maker() as cleanup_session:
+                    cleanup_upload = await _batch_upload_for_actor(
+                        cleanup_session,
+                        upload_id=upload_id,
+                        actor_id=actor_id,
+                        lock=True,
+                    )
+                    for item in cleanup_upload.files:
+                        item.status = "purged"
+                        item.storage_key = None
+                    await cleanup_session.commit()
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "upload_id": str(upload_id),
+                    "status": "admitted" if complete else "ready",
+                    "expected_files": upload.file_count,
+                    "uploaded_files": upload.file_count,
+                    "expected_documents": upload.document_count,
+                    "admitted_documents": admitted_documents,
+                    "committed_teams": 0,
+                    "grants_eligibility": False,
+                }
+            )
+        finally:
+            for reader in readers.values():
+                await reader.close()
+
+
+@app.delete(
+    "/api/registration-review/batch-uploads/{upload_id}",
+    response_class=JSONResponse,
+)
+async def cancel_registration_batch_upload(upload_id: UUID, request: Request):
+    """Cancel staging only while no dossier has been admitted."""
+    _ensure_registration_review_access(request)
+    actor_id = str(_review_session_actor(request).get("user_id") or "").strip()
+    async with async_session_maker() as session:
+        upload = await _batch_upload_for_actor(
+            session, upload_id=upload_id, actor_id=actor_id, lock=True
+        )
+        admitted_documents = 0
+        if upload.batch_id is not None:
+            admitted_documents = int(
+                await session.scalar(
+                    select(func.count(RegistrationBatchDocument.id)).where(
+                        RegistrationBatchDocument.batch_id == upload.batch_id
+                    )
+                )
+                or 0
+            )
+        if admitted_documents:
+            raise _review_error(
+                "batch_upload_has_admissions",
+                "El lote ya contiene expedientes; reanuda la admisión "
+                "en lugar de cancelarla.",
+                status_code=409,
+            )
+        purge_staged_batch_upload(_batch_staging_root(), upload_id)
+        await session.execute(
+            delete(RegistrationBatchUpload).where(
+                RegistrationBatchUpload.id == upload_id
+            )
+        )
+        await session.commit()
+        return JSONResponse({"ok": True, "status": "cancelled"})
+
+
 @app.get("/api/registration-review/{session_id}", response_class=JSONResponse)
 async def get_registration_review_session_payload(session_id: str, request: Request):
     """Return raw draft payload for a review session."""
@@ -4886,6 +5975,7 @@ async def view_registration_review_session(request: Request, session_id: str):
                 "assets": assets,
                 "team": extraction.get("team") or {},
                 "manager": extraction.get("manager") or {},
+                "staff": extraction.get("staff") or [],
                 "players": players,
                 "notes": extraction.get("notes") or "",
                 "validation": validation,
@@ -5500,6 +6590,16 @@ async def reprocess_registration_review_session(session_id: str, request: Reques
                     status_code=303,
                 )
             existing_run_id = existing_run.id
+        batch_binding_result = await session.execute(
+            select(RegistrationBatchDocument.id).where(
+                RegistrationBatchDocument.review_session_id == session_uuid
+            )
+        )
+        _ensure_batch_reprocess_supported(
+            batch_binding_exists=(
+                batch_binding_result.scalar_one_or_none() is not None
+            )
+        )
         asset_payloads = [
             {
                 "page_index": asset.page_index,
@@ -5647,6 +6747,18 @@ async def reprocess_registration_review_session(session_id: str, request: Reques
                 status_code=303,
             )
         public_diffs = public_field_diffs(ocr_run.field_diffs)
+        batch_binding_result = await session.execute(
+            select(RegistrationBatchDocument.id)
+            .where(RegistrationBatchDocument.review_session_id == session_uuid)
+            .with_for_update()
+        )
+        _ensure_batch_reprocess_staff_preserved(
+            batch_binding_exists=(
+                batch_binding_result.scalar_one_or_none() is not None
+            ),
+            current_extraction=_get_review_extraction(current_draft),
+            proposed_extraction=ocr_run.proposed_extraction or {},
+        )
         previous_run_result = await session.execute(
             select(RegistrationOcrRun.id)
             .join(
@@ -6139,6 +7251,12 @@ async def commit_registration_review_session(session_id: str, request: Request):
             .where(RegistrationReviewDraft.id == review_session.draft.id)
             .with_for_update()
         )
+        batch_binding_result = await session.execute(
+            select(RegistrationBatchDocument.id)
+            .where(RegistrationBatchDocument.review_session_id == session_uuid)
+            .with_for_update()
+        )
+        batch_binding_exists = batch_binding_result.scalar_one_or_none() is not None
 
         form_data = await request.form()
         extraction = _apply_review_form_edits(form_data, _get_review_extraction(review_session.draft))
@@ -6175,6 +7293,8 @@ async def commit_registration_review_session(session_id: str, request: Request):
             ),
             review_session=review_session,
         )
+        if batch_binding_exists:
+            validation = _attach_batch_staff_governance_blocker(validation)
         if not draft_incident_policy:
             draft_incident_policy = copy.deepcopy(
                 validation.get("incident_policy") or {}

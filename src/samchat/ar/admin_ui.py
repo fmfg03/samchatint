@@ -83,6 +83,34 @@ def _url_with_query_value(base_url: str, key: str, value: Any) -> str:
     )
 
 
+def _accounting_cxc_href(base_url: str) -> str:
+    """Carry only equivalent Finance CxC context into the accounting view."""
+    parsed = urlsplit(base_url)
+    finance_query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    accounting_query = [
+        (accounting_key, value)
+        for finance_key, accounting_key in (
+            ("edition_year", "edition_year"),
+            ("tournament_id", "torneo_id"),
+            ("cliente", "cliente"),
+            ("dias_credito", "dias_credito"),
+        )
+        if (value := finance_query.get(finance_key))
+    ]
+    status = str(finance_query.get("estado") or "").strip().lower()
+    accounting_status = {
+        "todos": "todos",
+        "cobrado": "cobrado",
+        "vencido": "vencido",
+    }.get(status)
+    if accounting_status:
+        accounting_query.append(("estado", accounting_status))
+    query = urlencode(accounting_query)
+    return "/admin/contabilidad/cuentas-por-cobrar" + (
+        f"?{query}" if query else ""
+    )
+
+
 def _executive_kpi_card(
     label: str,
     value: Any,
@@ -518,16 +546,12 @@ def _detail_action_links(item: dict[str, Any], *, return_to: str) -> str:
             accounting_query.append(
                 f"torneo_id={quote(str(item.get('tournament_id')), safe='')}"
             )
-        if budget_version_id:
-            accounting_query.append(
-                f"budget_version_id={quote(budget_version_id, safe='')}"
-            )
         accounting_href = "/admin/contabilidad/cuentas-por-cobrar"
         if accounting_query:
             accounting_href = f"{accounting_href}?{'&'.join(accounting_query)}"
         links.append(
             '<a class="button secondary" '
-            f'href="{escape(accounting_href)}">Vista contable CxC</a>'
+            f'href="{escape(accounting_href)}">Vista contable: CFDI y pólizas</a>'
         )
     return "".join(links)
 
@@ -839,41 +863,38 @@ def render_ar_matching_workbench_html(
     accepted_header = (
         "<thead><tr><th>AR item</th><th>Movimiento</th><th>Monto</th>"
         "<th>Fecha cobranza</th><th>Receptor</th><th>Estado</th>"
-        "<th>Accion</th></tr></thead>"
+        "<th>Reversión auditada</th></tr></thead>"
     )
     bank_header = (
         "<thead><tr><th>Movimiento</th><th>Fecha</th><th>Ordenante</th>"
         "<th>RFC</th><th>Monto</th><th>Estado</th></tr></thead>"
     )
+    evidence_heading = "Conciliación CxC: evidencia y decisión"
+    candidate_heading = "1. Evidencia candidata — requiere decisión"
+    accepted_heading = "2. Matches AR aceptados — cobranza comprobada"
+    unmatched_heading = "3. Entradas bancarias sin AR — pendientes de investigación"
     return f"""
-        <section class="workspace-card ar-warning" id="prematching" style="margin-bottom:18px;">
-            <div class="workspace-section-title">Pre-matching AR</div>
+        <section class="ar-evidence-flow"
+                 aria-labelledby="ar-conciliation-evidence-heading">
+        <section class="workspace-card ar-warning" id="prematching"
+                 style="margin-bottom:18px;">
+            <h2 class="workspace-section-title"
+                id="ar-conciliation-evidence-heading">{evidence_heading}</h2>
             <div class="workspace-section-subtitle">
-                Evidencia candidata; no prueba cobranza hasta su aceptación.
-                Al aceptar se registra el match y su póliza Banco contra CxC;
-                no modifica la conciliación bancaria legacy.
+                Un candidato bancario es evidencia para revisar, no prueba de cobranza.
+                Sólo un match AR aceptado comprueba cobranza; ninguna acción aquí
+                modifica la conciliación bancaria legacy.
             </div>
             <div class="ar-metrics">{summary_cards}</div>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">
-            <div class="workspace-section-title">Matches AR aceptados</div>
-            <div class="workspace-section-subtitle">
-                Autoridad AR dedicada. No cambia conciliacion contable legacy.
+            <div class="workspace-section-title">
+                {candidate_heading}
             </div>
-            <table class="ar-table">
-                {accepted_header}
-                <tbody>
-                    {_accepted_match_rows(
-                        accepted_matches,
-                        action_base=action_base,
-                        return_to=return_to,
-                        can_operate_matches=can_operate_matches,
-                    )}
-                </tbody>
-            </table>
-        </section>
-        <section class="workspace-card" style="margin-bottom:18px;">
-            <div class="workspace-section-title">Revision de candidatos</div>
+            <div class="workspace-section-subtitle">
+                Revisa señales, cuenta bancaria y razón antes de aceptar. La evidencia
+                candidata y la revisión manual no cuentan como cobro.
+            </div>
             <table class="ar-table">
                 {prematch_header}
                 <tbody>
@@ -889,11 +910,38 @@ def render_ar_matching_workbench_html(
             </table>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">
-            <div class="workspace-section-title">Entradas bancarias sin AR</div>
+            <div class="workspace-section-title">
+                {accepted_heading}
+            </div>
+            <div class="workspace-section-subtitle">
+                Autoridad AR dedicada. Si la evidencia aceptada resulta incorrecta,
+                la reversión requiere una razón y conserva la auditoría del match.
+            </div>
+            <table class="ar-table">
+                {accepted_header}
+                <tbody>
+                    {_accepted_match_rows(
+                        accepted_matches,
+                        action_base=action_base,
+                        return_to=return_to,
+                        can_operate_matches=can_operate_matches,
+                    )}
+                </tbody>
+            </table>
+        </section>
+        <section class="workspace-card" style="margin-bottom:18px;">
+            <div class="workspace-section-title">
+                {unmatched_heading}
+            </div>
+            <div class="workspace-section-subtitle">
+                Estas entradas no tienen un item AR candidato en el alcance actual;
+                no se aceptan automáticamente.
+            </div>
             <table class="ar-table">
                 {bank_header}
                 <tbody>{_unmatched_bank_rows(unmatched_bank_inflows)}</tbody>
             </table>
+        </section>
         </section>
     """
 
@@ -1139,10 +1187,11 @@ def render_ar_read_model_html(
         "<th>Detalle</th>"
         "</tr></thead>"
     )
+    accounting_href = _accounting_cxc_href(base_url)
 
     return f"""
         <section class="workspace-card ar-warning" style="margin-bottom:18px;">
-            <div class="workspace-section-title">Cuentas por Cobrar</div>
+            <div class="workspace-section-title">Workbench CxC: facturación y cobranza</div>
             <div class="workspace-section-subtitle">
                 Esta vista separa ingreso presupuestado, CFDI emitido, ingreso
                 reconocido y cobranza comprobada. Un CFDI vinculado no prueba
@@ -1151,7 +1200,7 @@ def render_ar_read_model_html(
             <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
                 <a class="button secondary" href="{escape(export_url)}">Descargar Excel CxC</a>
                 <a class="button secondary" href="{escape(prepoliza_export_url)}">Descargar prepólizas CxC</a>
-                <a class="button secondary" href="/admin/contabilidad/cuentas-por-cobrar">Vista contable</a>
+                <a class="button secondary" href="{escape(accounting_href)}">Vista contable: CFDI y pólizas</a>
             </div>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">

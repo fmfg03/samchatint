@@ -5,13 +5,16 @@ It is not a client portal: access is derived from active organizational
 positions and an assigned portfolio scope.
 """
 
-from datetime import date
-from html import escape
-import json
-from typing import Optional
+import secrets
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Literal, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.routing import APIRoute
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +23,21 @@ from devnous.gastos.services.access_control_service import (
     explicit_tool_decision,
     is_superadmin_role,
 )
+from samchat.client_executive.conversation import (
+    MAX_RECEIPT_BYTES,
+    ContextError,
+    analysis_receipt,
+    answer_snapshot,
+    context_receipt,
+    load_analysis,
+    load_context,
+    save_turn,
+    sign_analysis,
+    sign_context,
+)
+from samchat.client_executive.home import TZ, build_home, resolve_scope
+from samchat.client_executive.home_ui import render_home
+from samchat.client_executive.reports import build_report, render_published_report
 from samchat.client_executive.service import (
     ClientExecutiveAccessError,
     authorized_direction_portfolio_ids,
@@ -27,11 +45,53 @@ from samchat.client_executive.service import (
     build_client_executive_summary,
 )
 from samchat.client_executive.ui import render_direction_dashboard
+from samchat.executive.exporter import (
+    generate_direction_report_pdf,
+    generate_direction_report_xlsx,
+)
 
 from .dependencies import get_current_empleado, get_db_session
 
+# Two receipts plus JSON string escaping and bounded tokens/questions. Count the
+# actual stream as well as Content-Length, before FastAPI parses any request JSON.
+MAX_DIRECTION_BODY_BYTES = 4 * MAX_RECEIPT_BYTES + 262144
 
-router = APIRouter(tags=["direction-executive"])
+
+class DirectionReceiptRoute(APIRoute):
+    def get_route_handler(self):
+        original = super().get_route_handler()
+
+        async def bounded(request: Request):
+            if request.method == "POST":
+                length = request.headers.get("content-length")
+                if length is not None:
+                    try:
+                        declared = int(length)
+                    except ValueError:
+                        raise HTTPException(
+                            400, "Tamaño de solicitud no válido."
+                        ) from None
+                    if declared < 0:
+                        raise HTTPException(400, "Tamaño de solicitud no válido.")
+                    if declared > MAX_DIRECTION_BODY_BYTES:
+                        raise HTTPException(
+                            413, "El contexto excede el tamaño admitido."
+                        )
+                chunks, size = [], 0
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > MAX_DIRECTION_BODY_BYTES:
+                        raise HTTPException(
+                            413, "El contexto excede el tamaño admitido."
+                        )
+                    chunks.append(chunk)
+                request._body = b"".join(chunks)
+            return await original(request)
+
+        return bounded
+
+
+router = APIRouter(tags=["direction-executive"], route_class=DirectionReceiptRoute)
 DIRECTION_EXECUTIVE_TOOL = "direccion.tableros_ejecutivos"
 
 
@@ -45,6 +105,7 @@ async def _assigned_direction_portfolios(
     *,
     action_key: str = "ver",
     require_explicit_action: bool = False,
+    existence_only: bool = False,
 ) -> list[str]:
     """Authorize an active internal identity without role-based fallback.
 
@@ -79,8 +140,11 @@ async def _assigned_direction_portfolios(
         session,
         str(getattr(current_empleado, "id", "")),
         is_superadmin=is_superadmin,
+        **({"limit": 1} if existence_only else {}),
     )
-    if not portfolio_ids:
+    if not portfolio_ids and not (
+        is_superadmin and action_key == "ver" and not require_explicit_action
+    ):
         raise HTTPException(
             status_code=403,
             detail="An active Direction position with assigned scope is required.",
@@ -181,17 +245,8 @@ async def direction_published_reports(
     )
     reports = (
         "".join(
-            "<article><h2>{}</h2><p>{}</p><pre>{}</pre><small>Corte: {}</small></article>".format(
-                escape(str(row.label)),
-                escape(
-                    str((row.summary or {}).get("message") or "Reporte de Dirección")
-                ),
-                escape(
-                    json.dumps(
-                        row.snapshot or {}, ensure_ascii=False, sort_keys=True, indent=2
-                    )
-                ),
-                escape(str(row.generated_at)),
+            render_published_report(
+                row.label, row.summary or {}, row.snapshot or {}, str(row.generated_at)
             )
             for row in rows
         )
@@ -219,6 +274,284 @@ async def direction_executive_tournament_dashboard(
                 include_operational_detail=True,
             )
         )
+    )
+
+
+class DirectionScenarioRequest(BaseModel):
+    kind: Literal["expense_reduction", "collection_acceleration", "payment_delay"]
+    percent: Optional[Decimal] = Field(
+        default=None, ge=0, le=100, max_digits=5, decimal_places=2
+    )
+    days: Optional[int] = Field(default=None, ge=0, le=365, strict=True)
+    basis: Literal["observed_expense", "future_expense"] = "observed_expense"
+    tournament_id: Optional[str] = Field(default=None, max_length=36)
+    concept_id: Optional[str] = Field(default=None, max_length=36)
+
+
+class DirectionReportRequest(BaseModel):
+    context_token: str = Field(min_length=1, max_length=100000)
+    context_receipt: Optional[str] = Field(default=None, max_length=MAX_RECEIPT_BYTES)
+    analysis_token: Optional[str] = Field(default=None, max_length=100000)
+    analysis_receipt: Optional[str] = Field(default=None, max_length=MAX_RECEIPT_BYTES)
+
+
+class DirectionReportCellRequest(BaseModel):
+    report: Literal["budget", "cashflow"]
+    row: Optional[str] = Field(default=None, max_length=80)
+    column: str = Field(min_length=1, max_length=40)
+    period: Optional[str] = Field(default=None, pattern="^[0-5]$")
+
+
+class DirectionQueryRequest(BaseModel):
+    context_token: str = Field(min_length=1, max_length=100000)
+    context_receipt: Optional[str] = Field(default=None, max_length=MAX_RECEIPT_BYTES)
+    metric_id: str = Field(min_length=1, max_length=40)
+    question: str = Field(min_length=1, max_length=2000)
+    conversation_id: Optional[str] = Field(default=None, max_length=36)
+    scenario: Optional[DirectionScenarioRequest] = None
+    analysis_token: Optional[str] = Field(default=None, max_length=100000)
+    analysis_receipt: Optional[str] = Field(default=None, max_length=MAX_RECEIPT_BYTES)
+    report_cell: Optional[DirectionReportCellRequest] = None
+
+
+def _selection(value: str) -> Optional[str]:
+    if not value:
+        return None
+    try:
+        return str(UUID(value))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail="Selector de alcance no válido."
+        ) from exc
+
+
+async def _direction_source_access(session, employee) -> dict[str, bool]:
+    """A specific source denial still wins over Direction cross-domain visibility."""
+    result = {}
+    for key, tool in (("budget", "admin.presupuestos"), ("finance", "admin.finanzas")):
+        try:
+            result[key] = (
+                await explicit_tool_decision(session, employee, tool, "ver")
+                is not False
+            )
+        except AccessControlLookupError:
+            result[key] = False
+    return result
+
+
+@router.get("/direccion/inicio", response_class=HTMLResponse)
+async def direction_home(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado=Depends(get_current_empleado),
+    edition_year: Optional[int] = Query(None, ge=2000, le=2100),
+    portfolio_id: str = Query("", max_length=36),
+    tournament_id: str = Query("", max_length=36),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    tournament_ids: Optional[list[str]] = Query(None, max_length=200),
+):
+    await _assigned_direction_portfolios(session, current_empleado)
+    access = await _direction_source_access(session, current_empleado)
+    try:
+        snapshot, scope = await build_home(
+            session,
+            actor=str(current_empleado.id),
+            superadmin=_is_superadmin(current_empleado),
+            year=edition_year or datetime.now(TZ).year,
+            portfolio_id=_selection(portfolio_id),
+            tournament_id=_selection(tournament_id),
+            tournament_ids=(
+                [_selection(tid) for tid in tournament_ids] if tournament_ids else None
+            ),
+            start=date_from,
+            end=date_to,
+            source_access=access,
+        )
+        token = sign_context(snapshot, str(current_empleado.id))
+    except ClientExecutiveAccessError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ContextError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    csrf = request.session.setdefault(
+        "direction_context_csrf", secrets.token_urlsafe(32)
+    )
+    return HTMLResponse(
+        render_home(
+            snapshot,
+            scope,
+            token=token,
+            csrf=csrf,
+            receipt=context_receipt(snapshot, str(current_empleado.id), token),
+        ),
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+async def _verified_direction_context(request, payload, session, employee) -> dict:
+    await _assigned_direction_portfolios(session, employee)
+    expected = str(request.session.get("direction_context_csrf") or "")
+    submitted = request.headers.get("X-Direction-CSRF", "")
+    if not expected or not secrets.compare_digest(expected, submitted):
+        raise HTTPException(
+            status_code=403, detail="La consulta no pertenece a esta sesión."
+        )
+    try:
+        snapshot = load_context(
+            payload.context_token, str(employee.id), payload.context_receipt
+        )
+        selected_scope = snapshot["scope"]
+        current = await resolve_scope(
+            session,
+            actor=str(employee.id),
+            superadmin=_is_superadmin(employee),
+            portfolio_id=selected_scope["portfolio_id"],
+            tournament_id=selected_scope["tournament_id"],
+            tournament_ids=(
+                None
+                if selected_scope["tournament_id"]
+                else selected_scope.get("tournament_ids")
+            ),
+        )
+        if (
+            sorted(snapshot["tournament_ids"])
+            != sorted(t["id"] for t in current["selected"])
+            or sorted(selected_scope["portfolio_ids"])
+            != sorted(current["portfolio_ids"])
+            or snapshot["source_access"]
+            != await _direction_source_access(session, employee)
+        ):
+            raise ContextError(
+                "El alcance o los permisos cambiaron; actualiza el tablero."
+            )
+        return snapshot
+    except ClientExecutiveAccessError as exc:
+        raise HTTPException(
+            status_code=403, detail="El alcance ya no está autorizado."
+        ) from exc
+    except ContextError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/direccion/tableros/asistente/consulta", response_class=JSONResponse)
+async def direction_context_query(
+    request: Request,
+    payload: DirectionQueryRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado=Depends(get_current_empleado),
+):
+    snapshot = await _verified_direction_context(
+        request, payload, session, current_empleado
+    )
+    try:
+        previous = (
+            load_analysis(
+                payload.analysis_token,
+                snapshot["snapshot_id"],
+                str(current_empleado.id),
+                payload.analysis_receipt,
+            )
+            if payload.analysis_token
+            else None
+        )
+        answer = answer_snapshot(
+            snapshot,
+            payload.metric_id,
+            payload.question,
+            scenario=(
+                payload.scenario.model_dump(mode="json", exclude_none=True)
+                if payload.scenario
+                else None
+            ),
+            previous=previous,
+            report_cell=(
+                payload.report_cell.model_dump(exclude_none=True)
+                if payload.report_cell
+                else None
+            ),
+        )
+        answer_token = sign_analysis(
+            answer, snapshot["snapshot_id"], str(current_empleado.id)
+        )
+        answer_receipt = analysis_receipt(
+            answer, snapshot["snapshot_id"], str(current_empleado.id), answer_token
+        )
+        answer["analysis_token"] = answer_token
+        answer["analysis_receipt"] = answer_receipt
+        answer["report_ready"] = True
+        answer["conversation_id"] = await save_turn(
+            session,
+            actor=str(current_empleado.id),
+            snapshot=snapshot,
+            metric_id=payload.metric_id,
+            question=payload.question,
+            answer=answer,
+            conversation_id=payload.conversation_id,
+        )
+    except ClientExecutiveAccessError as exc:
+        raise HTTPException(
+            status_code=403, detail="El alcance de consulta ya no está autorizado."
+        ) from exc
+    except ContextError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return JSONResponse(answer, headers={"Cache-Control": "no-store"})
+
+
+@router.post("/direccion/reportes/exportar/{output_format}")
+async def direction_export_report(
+    output_format: Literal["pdf", "xlsx"],
+    request: Request,
+    payload: DirectionReportRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado=Depends(get_current_empleado),
+):
+    snapshot = await _verified_direction_context(
+        request, payload, session, current_empleado
+    )
+    try:
+        analysis = (
+            load_analysis(
+                payload.analysis_token,
+                snapshot["snapshot_id"],
+                str(current_empleado.id),
+                payload.analysis_receipt,
+            )
+            if payload.analysis_token
+            else None
+        )
+        report = build_report(snapshot, analysis)
+        from starlette.concurrency import run_in_threadpool
+
+        generator = (
+            generate_direction_report_pdf
+            if output_format == "pdf"
+            else generate_direction_report_xlsx
+        )
+        content = await run_in_threadpool(generator, report)
+    except ContextError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ImportError, RuntimeError) as exc:
+        raise HTTPException(
+            status_code=503, detail="El generador de reportes no está disponible."
+        ) from exc
+    media = (
+        "application/pdf"
+        if output_format == "pdf"
+        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    filename = f"consejo-{snapshot['snapshot_id'][:12]}.{output_format}"
+    return Response(
+        content,
+        media_type=media,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "X-Direction-Snapshot": snapshot["snapshot_id"],
+            "X-Direction-Report": report["report_id"],
+        },
     )
 
 

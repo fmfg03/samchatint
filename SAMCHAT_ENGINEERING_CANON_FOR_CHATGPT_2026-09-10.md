@@ -211,6 +211,68 @@ Repository status at this baseline:
 Do not describe the safety invariant as business-closed until the historical
 reconciliation, affected-reference verification, and Finance UAT are evidenced.
 
+#### 8.2.1 One COI policy per expense report
+
+For COI export, the canonical grouping key is the owning `INFORME`, not the
+individual `ExpenseReport` row. All active expenses owned by one `INFORME`
+share one policy header and one `FIN_PARTIDAS` closure while preserving each
+expense's movement lines, tax splits, and CFDI block.
+
+The document, preview, monthly batch, consolidated workbook, and ZIP paths must
+use the same grouping contract. A per-expense download must resolve and redirect
+to the owning `INFORME` when one exists. Standalone third-party requests remain
+ungrouped unless their owning workflow defines a separate document policy.
+
+An `INFORME` export fails closed when any active expense is not COI-ready.
+Expense dates in different accounting months do not by themselves block a
+normal report. The failure must not
+emit a partial policy or update any expense to `contabilizado`. Successful batch
+status updates apply to all included report expenses in one transaction.
+
+Amendment date: 2026-10-05. Reason: explicit human approval to remove the
+cross-month restriction and address PR #458 review findings. Monthly COI and
+Finance discovery use the same canonical policy period: `Documento.aprobado_en`
+for normal reports, and the immutable initial `AmexAccountingCut.accounting_date`
+for company-AMEX reports. Both include all active items under one complete
+policy, even when expense dates differ from the discovery period. Missing
+approval dates or AMEX cuts stay visible as blockers in expense-period discovery
+and never authorize a partial or fallback export. AMEX exports must use
+`cut_expense_cfdis`, preserving existing cut-creation and evidence controls.
+Evidence: shared predicates in `expense_coi_export_service.py`, route integration,
+SQL-backed period-selection tests and frozen-cut regression tests in
+`tests/unit/gastos/test_coi_exportable_status_ui.py`. These are approved source
+changes under PR review; deployment and authenticated UAT remain unproven.
+
+
+### Proposed 2026-10-06 amendment: partial paid-advance comprobaciones
+
+Requires explicit human PR review. Reason: Francisco requests applicant-confirmed
+motives, approver comments, an open original report until zero, and incremental
+accounting without duplicate recognition. This proposal does not establish
+production or business acceptance.
+
+For an open, unapproved, non-AMEX report with an actually paid advance and its
+existing debtor posting, the applicant may explicitly submit the newly captured
+expenses as a child `INFORME`. The original report remains an open case container;
+it must never be approved or exported again in partial mode. Each child owns
+only its explicitly assigned expenses and retains its confirmed applicant motive.
+The authorized approver must read that motive and record comments. Budget-control
+and accounting-readiness gates still apply. Each approved child has its own
+idempotent debtor recognition and one atomic COI policy in its approval month.
+Previously approved expenses cannot be reassigned or mutated; corrections require
+accounting reversal rather than overwriting recognized evidence.
+
+Actual, evidenced advance returns reduce the same collaborator debtor balance.
+Repeated submissions reuse the original result; additional returns require new
+submission identities. The original closes only when all children are approved,
+no active expenses remain unassigned, and the persisted debtor auxiliary is zero.
+Ordinary full reimbursement and company-AMEX immutable-cut rules remain intact.
+
+Evidence: `docs/roadmap/partial-advance-comprobaciones.md`, scoped implementation,
+SQLite-backed workflow/ledger tests and isolated PostgreSQL/WASM migration tests.
+No production migration, deployment, authenticated UAT, or historical mutation
+has been performed.
+
 ### 8.3 Payment Run
 
 Canonical states visible to Payment Run are:
@@ -371,3 +433,58 @@ SamChat is a multi-surface repository centered on the `copa_telmex_dashboard.py`
 ## 17. Final rule
 
 When a clean product narrative conflicts with code, deployed behavior, or business evidence, preserve the conflict and state it explicitly.
+
+## 18. Direction report scope amendment
+
+Date: 2026-10-02. Proposed for explicit human review in the report redesign draft
+PR, implementing Francisco's explicit 18:27 UTC authorization for SUPERADMIN.
+
+For read-only Direction surfaces, SUPERADMIN may resolve all active rows of the
+current installation's local `tournaments` catalog without manufacturing portfolio
+assignments. The present local schema has no cross-organization tournament
+directory; this exception must never become a global external-catalog fallback.
+If the installation becomes multi-tenant, this read needs an explicit tenant
+predicate before it may be reused. Position/cartera rules for other profiles,
+explicit source/action denials, publication and financial write authority remain.
+
+One, several or all authorized tournament UUIDs define the signed context. Every
+ID is validated before source reads and revalidated for Sam and PDF/XLSX. Changing
+the resolved all-selection invalidates an old context. Documentary facts are read
+independently of budget versions via the budgets-owned fiscal-base helper and the
+gastos-owned payable-amount resolver, using a set-scoped read per source and
+identity deduplication. Missing amount, currency, attribution, shared allocation,
+date and truncation coverage are source-specific; no budget artifact fallback
+supplies factual values. No DDL or financial state writes are introduced.
+
+Evidence level: isolated implementation and synthetic verification, pending draft
+PR review. Production reconciliation, deployment and business UAT are not implied.
+
+## 19. Copa Telmex registration PostgreSQL candidate amendment
+
+Date: 2026-10-05
+
+Reason: human-approved first delivery of registration read-source consolidation; preserve the distinction between local candidate, production activation, and canonical intake. The final diff and this amendment were explicitly approved in the conversation.
+
+El candidato de primera entrega de inscripción incorpora `copa_telmex_tournament_editions` mediante migración explícita, y una proyección compartida de solo lectura en `registration_read_model.py`. La resolución exige identidad exacta y edición inequívoca; fuente fallida, ámbito ausente, inactivo o ambiguo producen estados explícitos. Para ediciones configuradas, la lectura precede al enrutamiento heredado y no tiene fallback silencioso al roster Supabase. SOUL admite exclusión de inscripción antes de consultar equipos, jugadores, responsables y registros, manteniendo otros dominios. La proyección ejecutiva no expone datos personales individuales. La migración no se aplica en startup. El reconciliador del piloto es local y no concede aprobación, elegibilidad ni efectos de escritura en bases.
+
+Evidence: `docs/roadmap/ctt-postgres-registration-first-delivery.md` and its scoped test and review receipts. This is an isolated-worktree candidate; merge, deployment, data application, authenticated UAT, and business acceptance remain separate.
+
+## 20. Copa Telmex governed batch-admission candidate amendment
+
+Date: 2026-10-06
+
+The candidate adds owner-migrated batch, document-binding, and team-staff tables.
+Runtime `create_all` excludes all three. Manifest validation recomputes immutable
+source, payload, page, and staff-evidence identities before persistence. Batch and
+session UUIDs are deterministic; atomic insert plus batch-row locking serializes
+concurrent retries. Rollback refuses destructive schema removal after admitted
+documents or staff records exist. The authenticated endpoint renders only declared
+PDF pages and writes registration-review drafts with `human_reviewed=false` and
+`canonical_import_ready=false`. The existing team commit path remains blocked for
+staff-bearing drafts because no current Zaubern receipt authorizes ordered staff
+slots.
+
+Evidence: `docs/roadmap/ctt-pilot-batch-admission.md`, focused unit and regression
+tests, and isolated PostgreSQL migration/constraint/rollback tests. This remains
+repository evidence under review, not deployment, data admission, UAT, or
+business acceptance.

@@ -57,10 +57,29 @@ class ExpenseCFDI:
     cuenta_contable_nombre: Optional[str] = None
     allows_missing_cfdi: bool = False
     missing_cfdi_warning: Optional[str] = None
+    poliza_group_key: Optional[str] = None
+    poliza_reference: Optional[str] = None
+    poliza_description: Optional[str] = None
+    poliza_document_id: Optional[str] = None
+    poliza_operation_reference: Optional[str] = None
+    poliza_party_name: Optional[str] = None
+    poliza_context_description: Optional[str] = None
+    posting_movements: Optional[List[Dict[str, Any]]] = None
 
 
 CoiCell = Union[str, int, float]
 CoiRow = List[CoiCell]
+
+
+@dataclass
+class CoiPolicyGroup:
+    """Ordered expenses that must be emitted under one COI policy header."""
+
+    key: str
+    number: str
+    reference: str
+    description: str
+    expenses: List[ExpenseCFDI] = field(default_factory=list)
 
 
 def plain_amount_value(amount: float) -> CoiCell:
@@ -160,6 +179,8 @@ def _expense_base(
 
 
 def _expense_movements(expense: ExpenseCFDI) -> List[Dict[str, Any]]:
+    if expense.posting_movements is not None:
+        return [dict(movement) for movement in expense.posting_movements]
     desc = _expense_description(expense)
     retention_lines = _active_amount_lines(list(expense.retenciones or []))
     local_tax_lines = _active_amount_lines(list(expense.impuestos_locales or []))
@@ -280,6 +301,74 @@ def build_coi_poliza_preview(expenses: List[ExpenseCFDI]) -> List[Dict[str, Any]
     return preview
 
 
+def group_coi_policies(expenses: List[ExpenseCFDI]) -> List[CoiPolicyGroup]:
+    """Group report expenses while preserving legacy per-expense behavior."""
+    groups: List[CoiPolicyGroup] = []
+    by_key: Dict[str, CoiPolicyGroup] = {}
+    for index, expense in enumerate(expenses, start=1):
+        explicit_key = (expense.poliza_group_key or "").strip()
+        key = explicit_key or f"expense:{index}"
+        group = by_key.get(key)
+        if group is None:
+            group = CoiPolicyGroup(
+                key=key,
+                number=str(len(groups) + 1),
+                reference=(expense.poliza_reference or "").strip()
+                or str(len(groups) + 1),
+                description=(expense.poliza_description or "").strip()
+                or _expense_description(expense),
+            )
+            groups.append(group)
+            by_key[key] = group
+        group.expenses.append(expense)
+    return groups
+
+
+def _coi_policy_xlsx_description(group: CoiPolicyGroup) -> str:
+    """Prefix one COI policy description with its document metadata."""
+    metadata_by_document: Dict[str, tuple[str, str, str]] = {}
+    has_metadata_free_policy = False
+    for index, expense in enumerate(group.expenses, start=1):
+        values = (
+            " ".join((expense.poliza_operation_reference or "").split()),
+            " ".join((expense.poliza_party_name or "").split()),
+            " ".join((expense.poliza_context_description or "").split()),
+        )
+        document_id = " ".join((expense.poliza_document_id or "").split())
+        if not document_id and not any(values):
+            has_metadata_free_policy = True
+            continue
+        key = document_id or f"metadata:{index}:{values!r}"
+        metadata_by_document.setdefault(key, values)
+
+    if not metadata_by_document:
+        return group.description
+    if has_metadata_free_policy or len(metadata_by_document) > 1:
+        metadata_parts = ["Múltiples documentos"]
+    else:
+        operation_reference, party_name, context_description = next(
+            iter(metadata_by_document.values())
+        )
+        metadata_parts = [
+            f"Operaciones: {operation_reference}" if operation_reference else "",
+            f"Beneficiario: {party_name}" if party_name else "",
+            f"Contexto: {context_description}" if context_description else "",
+        ]
+    parts = [
+        " ".join(value.split())
+        for value in [*metadata_parts, group.description]
+        if value and value.strip()
+    ]
+    return " / ".join(parts)
+
+
+def _safe_cell_text(value: Any) -> Any:
+    """Prevent spreadsheet programs from evaluating untrusted text as formulas."""
+    if not isinstance(value, str):
+        return value
+    return f"'{value}" if value.startswith(("=", "+", "-", "@")) else value
+
+
 def _movement_row(movement: Dict[str, Any]) -> CoiRow:
     return [
         "",
@@ -319,20 +408,31 @@ def build_coi_poliza_rows(expenses: List[ExpenseCFDI]) -> List[CoiRow]:
         ["", "", "", "", "", "", "", "", ""],
         ["|||", "", "", "", "", "", "", "", ""],
     ]
-    for n, expense in enumerate(expenses, start=1):
-        desc = _expense_description(expense)
-        movements = _expense_movements(expense)
-        rows.append(["Eg", str(n), desc, str(len(movements)), "", "", "", "", ""])
-
-        if movements:
-            rows.append(_movement_row(movements[0]))
-
-        if expense.cfdi_uuid:
-            rows.extend(_cfdi_block_rows(expense))
-
-        for movement in movements[1:]:
-            rows.append(_movement_row(movement))
-
+    for group in group_coi_policies(expenses):
+        grouped_movements = [
+            (expense, _expense_movements(expense)) for expense in group.expenses
+        ]
+        movement_count = sum(len(movements) for _, movements in grouped_movements)
+        rows.append(
+            [
+                "Eg",
+                group.number,
+                group.description,
+                str(movement_count),
+                "",
+                "",
+                "",
+                "",
+                "",
+            ]
+        )
+        for expense, movements in grouped_movements:
+            if movements:
+                rows.append(_movement_row(movements[0]))
+            if expense.cfdi_uuid:
+                rows.extend(_cfdi_block_rows(expense))
+            for movement in movements[1:]:
+                rows.append(_movement_row(movement))
         rows.append(["", "FIN_PARTIDAS", "", "", "", "", "", "", ""])
     return rows
 
@@ -507,6 +607,10 @@ def generate_coi_poliza_xlsx(
     wb = Workbook()
     ws = wb.active
     ws.title = "Poliza COI"
+    groups = group_coi_policies(expenses)
+    policy_header_rows = [row for row in rows if row[0] == "Eg"]
+    for row, group in zip(policy_header_rows, groups, strict=True):
+        row[2] = _safe_cell_text(_coi_policy_xlsx_description(group))
     for row in rows:
         ws.append(row[:COI_COLUMNS])
     _style_coi_import_sheet(ws)
@@ -516,6 +620,7 @@ def generate_coi_poliza_xlsx(
     total_haber = round(sum(item["totals"]["haber"] for item in preview), 2)
     for row in [
         ["Concepto", "Valor"],
+        ["Polizas", len(group_coi_policies(expenses))],
         ["Partidas", len(expenses)],
         ["Renglones COI", len(rows)],
         ["Debe", total_debe],
@@ -547,7 +652,7 @@ def generate_coi_poliza_xlsx(
     if lote_manifest_rows:
         manifest = wb.create_sheet("Manifest")
         for row in lote_manifest_rows:
-            manifest.append(row)
+            manifest.append([_safe_cell_text(value) for value in row])
         _style_review_sheet(manifest)
 
     buffer = io.BytesIO()
@@ -560,7 +665,7 @@ def generate_coi_poliza_zip(
     *,
     filename_prefix: str = "Poliza_COI",
 ) -> bytes:
-    """Generate a ZIP with one COI workbook per expense/poliza."""
+    """Generate a ZIP with one COI workbook per grouped policy."""
     output = io.BytesIO()
     used_names: set[str] = set()
 
@@ -569,13 +674,15 @@ def generate_coi_poliza_zip(
         mode="w",
         compression=zipfile.ZIP_DEFLATED,
     ) as archive:
-        for index, expense in enumerate(expenses, start=1):
-            xlsx_bytes = generate_coi_poliza_xlsx([expense])
+        for index, group in enumerate(group_coi_policies(expenses), start=1):
+            xlsx_bytes = generate_coi_poliza_xlsx(group.expenses)
+            first_expense = group.expenses[0]
             reference = _safe_export_filename(
-                expense.export_reference
-                or expense.folio
-                or expense.cfdi_uuid
-                or expense.concepto,
+                (group.reference if first_expense.poliza_group_key else "")
+                or first_expense.export_reference
+                or first_expense.folio
+                or first_expense.cfdi_uuid
+                or first_expense.concepto,
                 fallback=f"poliza_{index:03d}",
             )
             filename = f"{filename_prefix}_{reference}.xlsx"
