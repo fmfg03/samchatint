@@ -132,3 +132,36 @@ def test_monthly_export_does_not_infer_retention_without_xml_retenciones():
 
     assert export.detail_rows[0].iva_retenido == Decimal("0")
     assert export.summary_rows[0].amounts["iva_retenido"] == Decimal("0")
+
+
+def test_invalid_shared_application_is_not_prorated_and_warns():
+    cfdi = SimpleNamespace(
+        cfdi_uuid="SHARED-INVALID",
+        emisor_rfc="AAA010101AAA",
+        emisor_nombre="Proveedor",
+        receptor_rfc="BBB010101BBB",
+        descripcion_concepto_principal="Servicio",
+        subtotal=Decimal("100"),
+        total=Decimal("116"),
+        total_impuestos_trasladados=Decimal("16"),
+        impuestos_detalle={"traslados": [], "retenciones": []},
+    )
+    expense = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="O-SHARED-INVALID",
+        fecha=date(2026, 9, 1),
+        gasto_cantidad=Decimal("200"),
+        propina_no_deducible=Decimal("0"),
+        iva=Decimal("0"),
+        concepto="Servicio",
+        archivo_nombre="",
+        link_xml="",
+        cuenta_contable_base="",
+        cfdi_report=cfdi,
+        cfdi_compartido_confirmado=True,
+    )
+
+    export = build_diot_export([expense])
+
+    assert export.detail_rows[0].total_cfdi == Decimal("116.00")
+    assert "no se prorrateó" in export.detail_rows[0].warnings[0]
