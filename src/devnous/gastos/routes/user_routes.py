@@ -72,6 +72,7 @@ from ..services.diot_exporter import (
     create_diot_excel,
     generate_diot_txt,
 )
+from ..services.monthly_diot_service import build_monthly_diot_scope
 from ..services.cfdi_expense_link_service import (
     ExpenseCFDIDuplicateError,
     is_cfdi_uuid_prefix_candidate,
@@ -2268,6 +2269,7 @@ def _contabilidad_subnav(active: str) -> str:
         ("/admin/contabilidad/estado", "Estado mes", "estado"),
         ("/admin/contabilidad/historica", "Histórica", "historica"),
         ("/admin/contabilidad/coi", "COI", "coi"),
+        ("/admin/contabilidad/diot", "DIOT", "diot"),
         ("/admin/contabilidad/ingresos", "Ingresos", "ingresos"),
         ("/admin/contabilidad/cuentas-por-cobrar", "CxC", "cxc"),
         ("/admin/contabilidad/cuentas-por-pagar", "CxP", "cxp"),
@@ -35329,6 +35331,219 @@ async def preview_coi_poliza_cuenta(
     return RedirectResponse(
         url=f"/documentos/{informe_or_response.id}/preview-coi",
         status_code=303,
+    )
+
+
+@router.get("/admin/contabilidad/diot", response_class=HTMLResponse)
+async def contabilidad_diot_mensual_view(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+) -> str:
+    now = datetime.utcnow()
+    selected_year = year or now.year
+    selected_month = month or now.month
+    error_msg = request.query_params.get("error_msg", "")
+    try:
+        scope = await build_monthly_diot_scope(
+            session, year=selected_year, month=selected_month
+        )
+    except ValueError as exc:
+        scope = await build_monthly_diot_scope(
+            session, year=now.year, month=now.month
+        )
+        selected_year = now.year
+        selected_month = now.month
+        error_msg = str(exc)
+
+    export = build_diot_export(
+        scope.eligible_expenses,
+        effective_payment_dates=scope.effective_payment_dates,
+    )
+    base_16 = sum(
+        (row.amounts.get("base_16", Decimal("0")) for row in export.summary_rows),
+        Decimal("0"),
+    )
+    iva = sum(
+        (row.amounts.get("iva_acreditable_16", Decimal("0")) for row in export.summary_rows),
+        Decimal("0"),
+    )
+    iva_retenido = sum(
+        (row.amounts.get("iva_retenido", Decimal("0")) for row in export.summary_rows),
+        Decimal("0"),
+    )
+    eligible_rows = "".join(
+        f"""
+        <tr>
+            <td>{scope.effective_payment_dates[str(expense.id)].isoformat()}</td>
+            <td>{escape(expense.numero_referencia or str(expense.id))}</td>
+            <td>{escape(getattr(expense.cfdi_report, 'cfdi_uuid', '') or '-')}</td>
+            <td>{escape(getattr(expense.cfdi_report, 'emisor_rfc', '') or '-')}</td>
+            <td>{format_currency(expense.gasto_cantidad, currency_for(expense))}</td>
+            <td>{escape(scope.payment_date_sources.get(str(expense.id), '-'))}</td>
+        </tr>
+        """
+        for expense in scope.eligible_expenses[:500]
+    )
+    blocker_rows = "".join(
+        f"""
+        <tr><td>{issue.effective_payment_date.isoformat() if issue.effective_payment_date else '-'}</td>
+        <td>{escape(issue.reference)}</td><td>{escape(issue.code)}</td>
+        <td>{escape(issue.message)}</td><td>{escape(issue.cfdi_uuid or '-')}</td></tr>
+        """
+        for issue in scope.blockers[:500]
+    )
+    undated_rows = "".join(
+        f"""
+        <tr><td>{escape(issue.reference)}</td><td>{escape(issue.code)}</td>
+        <td>{escape(issue.message)}</td><td>{escape(issue.cfdi_uuid or '-')}</td></tr>
+        """
+        for issue in scope.undated[:500]
+    )
+    query = urlencode({"year": selected_year, "month": selected_month})
+    txt_button = (
+        f'<a class="button" href="/admin/contabilidad/diot/export.txt?{query}">Descargar DIOT SAT (.txt)</a>'
+        if scope.can_export_txt
+        else '<button class="button" disabled>TXT bloqueado</button>'
+    )
+    return f"""
+    <!DOCTYPE html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>DIOT mensual</title>
+    <style>
+    body {{ font-family:Arial,sans-serif;background:#f6f8fb;margin:0;padding:20px;color:#111827; }}
+    .container {{ max-width:1540px;margin:0 auto; }}
+    .card {{ background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin-bottom:16px; }}
+    .grid {{ display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px; }}
+    .metric {{ padding:14px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb; }}
+    .metric strong {{ display:block;font-size:24px;margin-top:6px; }}
+    .toolbar {{ display:flex;gap:10px;flex-wrap:wrap;align-items:end; }}
+    input {{ width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;box-sizing:border-box; }}
+    table {{ width:100%;border-collapse:collapse; }}
+    th,td {{ padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:13px;vertical-align:top; }}
+    th {{ background:#f3f4f6; }}
+    .button {{ display:inline-block;padding:10px 14px;border-radius:8px;text-decoration:none;background:#111827;color:#fff;border:none;cursor:pointer; }}
+    .button.secondary {{ background:#e5e7eb;color:#111827; }}
+    .button:disabled {{ background:#9ca3af;cursor:not-allowed; }}
+    .muted {{ color:#6b7280;font-size:13px; }}
+    .error {{ background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:10px;padding:12px 14px; }}
+    .warning {{ background:#fffbeb;color:#92400e;border:1px solid #fde68a;border-radius:10px;padding:12px 14px; }}
+    </style></head>
+    <body><div class="container">{render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("diot")}
+        <div class="card">
+            <h1 style="margin:0 0 8px 0;">DIOT mensual</h1>
+            <p class="muted">Consolidado por fecha efectiva de pago. El sistema no asigna fechas faltantes ni inventa retenciones.</p>
+            {f'<div class="error"><strong>Error:</strong> {escape(error_msg)}</div>' if error_msg else ''}
+            <form method="GET" action="/admin/contabilidad/diot" class="toolbar" style="margin-top:14px;">
+                <div><label>Año</label><input type="number" name="year" min="2000" max="2100" value="{selected_year}" required></div>
+                <div><label>Mes</label><input type="number" name="month" min="1" max="12" value="{selected_month}" required></div>
+                <div><button class="button secondary" type="submit">Generar vista previa</button></div>
+                <div><a class="button secondary" href="/admin/contabilidad/diot/export.xlsx?{query}">Descargar auditoría Excel</a></div>
+                <div>{txt_button}</div>
+            </form>
+        </div>
+        <div class="card"><div class="grid">
+            <div class="metric">Movimientos elegibles<strong>{len(scope.eligible_expenses)}</strong></div>
+            <div class="metric">Bloqueos del periodo<strong>{len(scope.blockers)}</strong></div>
+            <div class="metric">Sin fecha efectiva<strong>{len(scope.undated)}</strong></div>
+            <div class="metric">Base 16%<strong>{format_currency(base_16)}</strong></div>
+            <div class="metric">IVA acreditable<strong>{format_currency(iva)}</strong></div>
+            <div class="metric">IVA retenido<strong>{format_currency(iva_retenido)}</strong></div>
+        </div></div>
+        {f'<div class="warning"><strong>TXT bloqueado:</strong> corrige los {len(scope.blockers)} movimiento(s) del periodo antes de generar el archivo SAT.</div>' if scope.blockers else ''}
+        <div class="card"><h2>Movimientos elegibles</h2><table>
+            <thead><tr><th>Pago efectivo</th><th>Referencia</th><th>UUID</th><th>RFC</th><th>Importe</th><th>Fuente fecha</th></tr></thead>
+            <tbody>{eligible_rows or '<tr><td colspan="6" class="muted">No hay movimientos elegibles para el periodo.</td></tr>'}</tbody>
+        </table></div>
+        <div class="card"><h2>Bloqueos del periodo</h2><table>
+            <thead><tr><th>Pago efectivo</th><th>Referencia</th><th>Código</th><th>Detalle</th><th>UUID</th></tr></thead>
+            <tbody>{blocker_rows or '<tr><td colspan="5" class="muted">Sin bloqueos del periodo.</td></tr>'}</tbody>
+        </table></div>
+        <div class="card"><h2>Movimientos sin fecha efectiva</h2><p class="muted">No se asignan a ningún mes hasta corregir su vínculo de pago.</p><table>
+            <thead><tr><th>Referencia</th><th>Código</th><th>Detalle</th><th>UUID</th></tr></thead>
+            <tbody>{undated_rows or '<tr><td colspan="4" class="muted">Sin movimientos pendientes de fecha.</td></tr>'}</tbody>
+        </table></div>
+    </div></body></html>
+    """
+
+
+@router.get("/admin/contabilidad/diot/export.txt", response_model=None)
+async def exportar_diot_mensual_txt(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: int = Query(...),
+    month: int = Query(...),
+) -> Union[Response, RedirectResponse]:
+    redirect = f"/admin/contabilidad/diot?{urlencode({'year': year, 'month': month})}"
+    try:
+        scope = await build_monthly_diot_scope(session, year=year, month=month)
+    except ValueError as exc:
+        return RedirectResponse(
+            url=redirect + "&error_msg=" + quote(str(exc)), status_code=303
+        )
+    if scope.blockers:
+        return RedirectResponse(
+            url=redirect
+            + "&error_msg="
+            + quote("El TXT está bloqueado por movimientos fiscales pendientes."),
+            status_code=303,
+        )
+    if not scope.eligible_expenses:
+        return RedirectResponse(
+            url=redirect + "&error_msg=" + quote("No hay movimientos elegibles."),
+            status_code=303,
+        )
+    export = build_diot_export(
+        scope.eligible_expenses,
+        effective_payment_dates=scope.effective_payment_dates,
+    )
+    return Response(
+        content=generate_diot_txt(export),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="DIOT_{year}_{month:02d}.txt"'
+            )
+        },
+    )
+
+
+@router.get("/admin/contabilidad/diot/export.xlsx", response_model=None)
+async def exportar_diot_mensual_excel(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: int = Query(...),
+    month: int = Query(...),
+) -> Union[Response, RedirectResponse]:
+    redirect = f"/admin/contabilidad/diot?{urlencode({'year': year, 'month': month})}"
+    try:
+        scope = await build_monthly_diot_scope(session, year=year, month=month)
+    except ValueError as exc:
+        return RedirectResponse(
+            url=redirect + "&error_msg=" + quote(str(exc)), status_code=303
+        )
+    export = build_diot_export(
+        scope.eligible_expenses,
+        effective_payment_dates=scope.effective_payment_dates,
+    )
+    content = create_diot_excel(
+        export,
+        audit_issues={
+            "Bloqueos": [issue.as_row() for issue in scope.blockers],
+            "Sin fecha efectiva": [issue.as_row() for issue in scope.undated],
+        },
+    )
+    return Response(
+        content=content,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="DIOT_{year}_{month:02d}.xlsx"'
+            )
+        },
     )
 
 
