@@ -585,6 +585,7 @@ def _parse_from_text(text: str) -> Dict[str, Any]:
 
     return {
         "emisor_rfc": _find_emisor_rfc(text),
+        "receptor_rfc": _find_receptor_rfc(text),
         "emisor_nombre": _find_emisor_nombre(text),
         "subtotal": amounts["subtotal"],
         "descuento": amounts["descuento"],

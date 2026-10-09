@@ -7,10 +7,10 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import CFDIReport, Documento, Empleado, ExpenseReport
+from ..models import Aprobacion, CFDIReport, Documento, Empleado, ExpenseReport
 from .cfdi_expense_link_service import (
     find_cfdi_report_by_fiscal_uuid,
     normalize_cfdi_uuid_to_canonical,
@@ -240,6 +240,24 @@ def _material_conflicts(existing: CFDIReport, parsed: Dict[str, Any]) -> List[st
     return conflicts
 
 
+def validate_cfdi_material_identity(
+    existing: Any, parsed: Dict[str, Any], *, xml_evidence: bool = True
+) -> None:
+    """Reject contradictory fiscal evidence using the canonical identity fields."""
+    # A text PDF cannot establish signatures or the XML issue timestamp.
+    compared = (
+        parsed
+        if xml_evidence
+        else {
+            key: parsed.get(key)
+            for key in ("subtotal", "total", "moneda", "emisor_rfc", "receptor_rfc")
+        }
+    )
+    conflicts = _material_conflicts(existing, compared)
+    if conflicts:
+        raise CFDIConflictError(parsed["cfdi_uuid"], conflicts)
+
+
 def _apply_parsed_data(
     report: CFDIReport, parsed: Dict[str, Any], *, overwrite: bool
 ) -> bool:
@@ -272,6 +290,52 @@ _CFDI_RESERVING_DOCUMENT_STATES = {
     "control_presupuestal", "enviado", "aprobado", "en_proceso_pago",
     "pagado", "cerrado", "reembolsado", "aplicado", "liquidado",
 }
+
+
+async def lock_cfdi_identity(session: AsyncSession, fiscal_uuid: str) -> None:
+    """Serialize evidence and canonical intake by fiscal identity on PostgreSQL."""
+    if session.get_bind().dialect.name == "postgresql":
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+            {"key": f"cfdi-evidence:{fiscal_uuid}"},
+        )
+
+
+async def find_blocking_cfdi_evidence(
+    session: AsyncSession,
+    fiscal_uuid: str,
+    *,
+    exclude_documento_id: Optional[Any] = None,
+    exclude_documento_ids: Optional[List[Any]] = None,
+) -> Optional[CFDIUsageConflict]:
+    """Late evidence reserves its UUID without changing accounting or fiscal links."""
+    fiscal_uuid = normalize_cfdi_uuid_to_canonical(fiscal_uuid)
+    conditions = [
+        Aprobacion.tipo_entidad == "documento",
+        Aprobacion.accion == "adjuntar_factura",
+        Aprobacion.comentario == fiscal_uuid,
+        Documento.estado.in_(_CFDI_RESERVING_DOCUMENT_STATES),
+        Documento.cfdi_compartido_confirmado.is_(False),
+    ]
+    if exclude_documento_id is not None:
+        conditions.append(Documento.id != exclude_documento_id)
+    if exclude_documento_ids:
+        conditions.append(Documento.id.not_in(exclude_documento_ids))
+    result = await session.execute(
+        select(
+            Documento.numero_referencia,
+            Documento.empleado_id,
+            Empleado.nombre,
+            Documento.creado_en,
+            Documento.estado,
+        )
+        .join(Aprobacion, Aprobacion.entidad_id == Documento.id)
+        .join(Empleado, Empleado.id == Documento.empleado_id)
+        .where(*conditions)
+        .limit(1)
+    )
+    row = result.first()
+    return CFDIUsageConflict(*row) if row is not None else None
 
 
 async def find_blocking_cfdi_usage(
@@ -312,7 +376,14 @@ async def find_blocking_cfdi_usage(
         ).limit(1)
     )
     row = expense_result.first()
-    return CFDIUsageConflict(*row) if row is not None else None
+    if row is not None:
+        return CFDIUsageConflict(*row)
+    report = await session.get(CFDIReport, report_id)
+    if report is None:
+        return None
+    return await find_blocking_cfdi_evidence(
+        session, report.cfdi_uuid, exclude_documento_id=exclude_documento_id
+    )
 
 
 async def has_existing_cfdi_usage(
@@ -346,6 +417,20 @@ async def _ingest_cfdi_parsed(
     except ValueError as exc:
         raise CFDIIngestionError("El CFDI contiene un UUID inválido") from exc
     parsed["cfdi_uuid"] = canonical_uuid
+
+    await lock_cfdi_identity(session, canonical_uuid)
+    if entity is not None and not allow_shared:
+        exclude_ids = (
+            [entity.id] if isinstance(entity, Documento) else [
+                getattr(entity, key, None) for key in
+                ("documento_id", "solicitud_documento_id", "informe_documento_id")
+            ]
+        )
+        if await find_blocking_cfdi_evidence(
+            session, canonical_uuid,
+            exclude_documento_ids=[value for value in exclude_ids if value is not None],
+        ):
+            raise CFDIDuplicateLinkError(canonical_uuid)
 
     report = await find_cfdi_report_by_fiscal_uuid(session, canonical_uuid)
     warnings: List[str] = []

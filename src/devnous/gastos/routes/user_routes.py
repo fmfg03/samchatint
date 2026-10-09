@@ -11601,7 +11601,10 @@ def _can_add_solicitud_adjuntos(
     finance_roles = {"finanzas", "admin", "superadmin", "super_admin"}
     materiality_states = {
         "borrador",
+        "control_presupuestal",
+        "enviado",
         "aprobado",
+        "en_proceso_pago",
         "pagado",
         "cerrado",
         "reembolsado",
@@ -11623,6 +11626,8 @@ def _can_remove_solicitud_adjunto(
     solicitud_cancelada: bool = False,
 ) -> bool:
     categoria_norm = (categoria or "supporting").strip().lower()
+    if categoria_norm in {"cfdi_xml_evidence", "cfdi_pdf_evidence"}:
+        return False
     if getattr(documento, "supplier_advance_id", None) and categoria_norm in {
         "cfdi_xml",
         "cfdi_pdf",
@@ -11634,7 +11639,8 @@ def _can_remove_solicitud_adjunto(
             empleado,
             solicitud_cancelada=solicitud_cancelada,
         )
-    return _can_add_solicitud_adjuntos(
+    # Appending evidence must never grant deletion after authorization advances.
+    return _can_edit_solicitud_terceros(
         documento,
         empleado,
         solicitud_cancelada=solicitud_cancelada,
@@ -38235,9 +38241,10 @@ async def agregar_documento_adjuntos(
         DocumentoPaymentValidationError,
         register_document_payment,
     )
+    actor_id = current_empleado.id
 
     doc_result = await session.execute(
-        select(Documento).where(Documento.id == documento_id)
+        select(Documento).where(Documento.id == documento_id).with_for_update()
     )
     documento = doc_result.scalar_one_or_none()
     if not documento:
@@ -38330,7 +38337,7 @@ async def agregar_documento_adjuntos(
             await register_document_payment(
                 session,
                 documento_id=documento.id,
-                actor_id=current_empleado.id,
+                actor_id=actor_id,
                 actor=current_empleado,
             )
             payment_registered = True
@@ -38339,6 +38346,9 @@ async def agregar_documento_adjuntos(
                 session,
                 documento=documento,
                 attachments=uploads,
+                evidence_only=documento.estado not in {"borrador", "control_presupuestal"}
+                or bool(getattr(documento, "budget_concept_id", None)),
+                actor_id=actor_id,
             )
     except SolicitudValidationError as exc:
         await session.rollback()
@@ -38374,7 +38384,7 @@ async def agregar_documento_adjuntos(
             "Unexpected error adding solicitud attachment",
             extra={
                 "documento_id": str(documento_id),
-                "empleado_id": str(current_empleado.id),
+                "empleado_id": str(actor_id),
                 "categoria": categoria_norm,
                 "upload_count": len(uploads),
             },
@@ -38392,6 +38402,11 @@ async def agregar_documento_adjuntos(
         )
 
     success_detail = f"{count} archivo(s) adjuntado(s) exitosamente."
+    if categoria_norm in {"cfdi_xml", "cfdi_pdf"} and (
+        documento.estado not in {"borrador", "control_presupuestal"}
+        or bool(getattr(documento, "budget_concept_id", None))
+    ):
+        success_detail += " Factura conservada como evidencia; revisión contable pendiente."
     if categoria_norm == "comprobante_pago" and payment_registered:
         success_detail = (
             f"{count} comprobante(s) de pago adjuntado(s) y solicitud marcada como pagada."
@@ -39946,6 +39961,7 @@ async def ver_documento(
                     <input type="file" name="archivos" id="adjunto_archivos" multiple required
                            accept=".pdf,.xml,.jpg,.jpeg,.png,.gif,.webp,.txt,.csv,.doc,.docx,.xls,.xlsx,application/pdf,application/xml,text/xml,image/*,text/plain,text/csv,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
                     <small>Puede seleccionar uno o varios archivos.</small>
+                    <small>Después de la clasificación o autorización, la factura se conserva como evidencia pendiente de revisión contable. Adjuntarla no modifica el gasto, la póliza ni el pago. En anticipos utilice Comprobar anticipo.</small>
                 </div>
                 <button type="submit" class="button primary">Adjuntar archivos</button>
             </form>
