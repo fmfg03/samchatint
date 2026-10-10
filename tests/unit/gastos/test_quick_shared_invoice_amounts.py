@@ -296,6 +296,13 @@ async def _capture_with_supplement(
 ):
     from devnous.gastos.routes import user_routes
 
+    # This fixture isolates shared fiscal amounts; real mapping is covered by
+    # test_finance_budget_tax_regressions using actual ExpenseReport creation.
+    monkeypatch.setattr(
+        user_routes, "apply_budget_concept_cuenta_mapping",
+        AsyncMock(return_value=False),
+    )
+
     primary_uuid = str(uuid4()).upper()
     supplement_uuid = str(uuid4()).upper()
     fiscal = {

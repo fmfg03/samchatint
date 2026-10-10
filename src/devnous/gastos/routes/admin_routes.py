@@ -174,6 +174,7 @@ from ..services.payment_run_service import (
     list_payment_run_closures,
     list_payment_run_items,
     parse_payment_run_date,
+    prepare_payment_run_confirmation_date,
     can_confirm_payment_run_payment,
     require_payment_run_access,
     require_payment_run_manager,
@@ -4325,6 +4326,43 @@ async def finance_training_cfdi_csv_download(
     )
 
 
+async def _expense_operational_references(
+    session: AsyncSession, expenses: list[ExpenseReport]
+) -> dict[Any, str | None]:
+    """Read existing owning-document references for an authorized expense set."""
+    document_ids = {
+        document_id
+        for expense in expenses
+        for document_id in (
+            getattr(expense, "informe_documento_id", None),
+            getattr(expense, "documento_id", None),
+            getattr(expense, "solicitud_documento_id", None),
+        )
+        if document_id
+    }
+    if not document_ids:
+        return {}
+    with session.no_autoflush:
+        result = await session.execute(
+            select(Documento.id, Documento.referencia_operaciones).where(
+                Documento.id.in_(document_ids)
+            )
+        )
+        return dict(result.all())
+
+
+def _expense_operational_reference(
+    expense: ExpenseReport, references: dict[Any, str | None]
+) -> str:
+    """Prefer the informe, including its legacy link, then the solicitud."""
+    return str(
+        references.get(getattr(expense, "informe_documento_id", None))
+        or references.get(getattr(expense, "documento_id", None))
+        or references.get(getattr(expense, "solicitud_documento_id", None))
+        or "—"
+    )
+
+
 @router.get("/admin/gastos/expenses", response_class=HTMLResponse)
 async def admin_expenses(
     request: Request,
@@ -4402,6 +4440,8 @@ async def admin_expenses(
             result = await session.execute(query)
             expenses = result.scalars().all()
 
+        operational_references = await _expense_operational_references(session, expenses)
+
         # Fetch all tournaments for project name resolution
         tournament_map = {}
         with session.no_autoflush:
@@ -4476,6 +4516,9 @@ async def admin_expenses(
         export_rows = []
         rows_html = ""
         for idx, expense in enumerate(expenses):
+            operational_reference = _expense_operational_reference(
+                expense, operational_references
+            )
             # Get CFDI from either path (UUID-based takes priority)
             cfdi = None
             if (
@@ -4541,6 +4584,7 @@ async def admin_expenses(
                 {
                     "id": str(expense.id),
                     "numero_referencia": expense.numero_referencia or "",
+                    "referencia_operaciones": operational_reference or "",
                     "nombre_enviador": expense.nombre_enviador or "",
                     "departamento": expense.departamento or "",
                     "proyecto": proyecto_display or "",
@@ -4601,6 +4645,7 @@ async def admin_expenses(
             rows_html += f"""
             <tr data-row-index="{idx}" data-nombre-enviador="{nombre_enviador}" data-departamento="{departamento}" data-proyecto="{proyecto_attr}" data-fase-torneo="{fase_torneo}" data-concepto="{concepto_attr}" data-estado-cfdi="{cfdi_status_plain}" data-est-reembolso="{est_reembolso}" data-fecha="{fecha_val}">
                 <td>{format_value(expense.numero_referencia)}</td>
+                <td>{html_escape(str(operational_reference or "—"))}</td>
                 <td>{format_value(expense.nombre_enviador)}</td>
                 <td>{format_value(expense.departamento)}</td>
                 <td>{format_value(proyecto_display)}</td>
@@ -4788,11 +4833,11 @@ async def admin_expenses(
                     if (!isNaN(idx) && idx >= 0 && idx < allData.length) indices.push(idx);
                 }}
                 var rowsToExport = indices.length ? indices.map(function(i) {{ return allData[i]; }}) : allData;
-                var headers = ["ID","Numero Referencia","Nombre Enviador","Departamento","Proyecto","Fase Torneo","Método Pago","Últimos 4 Dígitos","Gasto Cantidad","Concepto","Sub-Cuenta","Tipo Gasto","Uso CFDI","Cuenta Bancaria Base","Cuenta Contable Codigo","Cuenta Contable Nombre","Telegram User ID","Estado Factura","Estado Reembolso","Nova Request ID","Link PDF","Link XML","Mensaje Error","CFDI Fecha","CFDI Emisor RFC","CFDI Receptor RFC","CFDI Total","CFDI UUID","CFDI Tipo Cambio","CFDI Emisor Nombre","CFDI Descripcion Concepto","CFDI Serie","CFDI Folio","CFDI Subtotal","CFDI Descuento","CFDI Moneda","CFDI Traslados (IVA)","CFDI Retenciones","CFDI Fecha Timbrado","CFDI Total Impuestos","CFDI UUID (Manual)","CFDI Vinculado","Created At","Updated At"];
+                var headers = ["ID","Numero Referencia","Referencia Operaciones","Nombre Enviador","Departamento","Proyecto","Fase Torneo","Método Pago","Últimos 4 Dígitos","Gasto Cantidad","Concepto","Sub-Cuenta","Tipo Gasto","Uso CFDI","Cuenta Bancaria Base","Cuenta Contable Codigo","Cuenta Contable Nombre","Telegram User ID","Estado Factura","Estado Reembolso","Nova Request ID","Link PDF","Link XML","Mensaje Error","CFDI Fecha","CFDI Emisor RFC","CFDI Receptor RFC","CFDI Total","CFDI UUID","CFDI Tipo Cambio","CFDI Emisor Nombre","CFDI Descripcion Concepto","CFDI Serie","CFDI Folio","CFDI Subtotal","CFDI Descuento","CFDI Moneda","CFDI Traslados (IVA)","CFDI Retenciones","CFDI Fecha Timbrado","CFDI Total Impuestos","CFDI UUID (Manual)","CFDI Vinculado","Created At","Updated At"];
                 var csvLines = [headers.join(',')];
                 for (var i = 0; i < rowsToExport.length; i++) {{
                     var row = rowsToExport[i];
-                    var cells = [escapeCsv(row.id), escapeCsv(row.numero_referencia), escapeCsv(row.nombre_enviador), escapeCsv(row.departamento), escapeCsv(row.proyecto), escapeCsv(row.fase_torneo), escapeCsv(row.metodo_pago), escapeCsv(row.ultimos_4_digitos), row.gasto_cantidad, escapeCsv(row.concepto), escapeCsv(row.sub_cuenta), escapeCsv(row.tipo_gasto), escapeCsv(row.cfdi_use), escapeCsv(row.cuenta_contable_base), escapeCsv(row.cuenta_codigo), escapeCsv(row.cuenta_nombre), row.telegram_user_id, escapeCsv(row.estado_factura), escapeCsv(row.estado_reembolso), escapeCsv(row.nova_request_id), escapeCsv(row.link_pdf), escapeCsv(row.link_xml), escapeCsv(row.mensaje_error), escapeCsv(row.cfdi_fecha), escapeCsv(row.cfdi_emisor_rfc), escapeCsv(row.cfdi_receptor_rfc), row.cfdi_total, escapeCsv(row.cfdi_uuid), row.cfdi_tipo_cambio, escapeCsv(row.cfdi_emisor_nombre), escapeCsv(row.cfdi_descripcion_concepto), escapeCsv(row.cfdi_serie), escapeCsv(row.cfdi_folio), row.cfdi_subtotal, row.cfdi_descuento, escapeCsv(row.cfdi_moneda), escapeCsv(row.cfdi_traslados), escapeCsv(row.cfdi_retenciones), escapeCsv(row.cfdi_fecha_timbrado), row.cfdi_total_impuestos, escapeCsv(row.cfdi_uuid_manual), escapeCsv(row.cfdi_vinculado), escapeCsv(row.created_at), escapeCsv(row.updated_at)];
+                    var cells = [escapeCsv(row.id), escapeCsv(row.numero_referencia), escapeCsv(row.referencia_operaciones), escapeCsv(row.nombre_enviador), escapeCsv(row.departamento), escapeCsv(row.proyecto), escapeCsv(row.fase_torneo), escapeCsv(row.metodo_pago), escapeCsv(row.ultimos_4_digitos), row.gasto_cantidad, escapeCsv(row.concepto), escapeCsv(row.sub_cuenta), escapeCsv(row.tipo_gasto), escapeCsv(row.cfdi_use), escapeCsv(row.cuenta_contable_base), escapeCsv(row.cuenta_codigo), escapeCsv(row.cuenta_nombre), row.telegram_user_id, escapeCsv(row.estado_factura), escapeCsv(row.estado_reembolso), escapeCsv(row.nova_request_id), escapeCsv(row.link_pdf), escapeCsv(row.link_xml), escapeCsv(row.mensaje_error), escapeCsv(row.cfdi_fecha), escapeCsv(row.cfdi_emisor_rfc), escapeCsv(row.cfdi_receptor_rfc), row.cfdi_total, escapeCsv(row.cfdi_uuid), row.cfdi_tipo_cambio, escapeCsv(row.cfdi_emisor_nombre), escapeCsv(row.cfdi_descripcion_concepto), escapeCsv(row.cfdi_serie), escapeCsv(row.cfdi_folio), row.cfdi_subtotal, row.cfdi_descuento, escapeCsv(row.cfdi_moneda), escapeCsv(row.cfdi_traslados), escapeCsv(row.cfdi_retenciones), escapeCsv(row.cfdi_fecha_timbrado), row.cfdi_total_impuestos, escapeCsv(row.cfdi_uuid_manual), escapeCsv(row.cfdi_vinculado), escapeCsv(row.created_at), escapeCsv(row.updated_at)];
                     csvLines.push(cells.join(','));
                 }}
                 var csvContent = '\\uFEFF' + csvLines.join('\\r\\n');
@@ -4919,6 +4964,7 @@ async def admin_expenses(
                 <thead>
                     <tr>
                         <th>Referencia</th>
+                        <th>Referencia Operaciones</th>
                         <th>Nombre Enviador</th>
                         <th>Departamento</th>
                         <th>Proyecto</th>
@@ -7061,6 +7107,7 @@ async def admin_finance_platform(
         f"""
         <tr>
             <td>{escape(str(item.get("numero_referencia") or item.get("id") or "-"))}</td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td>{escape(str(item.get("tipo") or "-"))}</td>
             <td>{escape(str(item.get("beneficiario_nombre") or item.get("proveedor_nombre") or "-"))}</td>
             <td>${float(item.get("monto_total") or item.get("monto_solicitado") or 0):,.2f}</td>
@@ -7074,6 +7121,7 @@ async def admin_finance_platform(
         <tr>
             <td><input type="checkbox" name="expense_ids" value="{escape(str(item.get("id") or ""))}"></td>
             <td>{escape(str(item.get("numero_referencia") or item.get("id") or "-"))}</td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td>{escape(str(item.get("concepto") or "-"))}</td>
             <td>${float(item.get("gasto_cantidad") or 0):,.2f}</td>
             <td><select name="cuenta_contable_id_{escape(str(item.get("id") or ""))}">{_account_options(item.get("cuenta_contable_id"))}</select></td>
@@ -7113,6 +7161,7 @@ async def admin_finance_platform(
         <tr>
             <td><input type="checkbox" name="target_keys" value="{escape(str(item.get("entity_type") or ""))}:{escape(str(item.get("id") or ""))}"></td>
             <td>{escape(str(item.get("numero_referencia") or item.get("id") or "-"))}</td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td>{escape("Documento" if item.get("entity_type") == "documento" else "Gasto")}</td>
             <td>{escape(str(item.get("estado") or item.get("estado_reembolso") or "-"))}</td>
             <td>${float(item.get("monto_total") or item.get("monto_solicitado") or item.get("gasto_cantidad") or 0):,.2f}</td>
@@ -7126,6 +7175,7 @@ async def admin_finance_platform(
         f"""
         <tr>
             <td>{escape(str(item.get("numero_referencia") or item.get("id") or "-"))}</td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td>{escape(str(item.get("concepto") or "-"))}</td>
             <td>{escape(str(item.get("fecha") or "-"))[:10]}</td>
             <td>{escape(str(item.get("cfdi_fecha") or "-"))[:10]}</td>
@@ -7290,8 +7340,8 @@ async def admin_finance_platform(
                         <a class="button secondary" href="/admin/finanzas/payment-history">Historial de pagos</a>
                     </div>
                     <div class="table-shell" style="margin-top:16px;"><table class="finance-table">
-                        <thead><tr><th>Referencia</th><th>Tipo</th><th>Beneficiario</th><th>Monto</th><th>Fecha</th></tr></thead>
-                        <tbody>{payable_rows or '<tr><td colspan="5">Sin pagos pendientes.</td></tr>'}</tbody>
+                        <thead><tr><th>Referencia</th><th>Referencia Operaciones</th><th>Tipo</th><th>Beneficiario</th><th>Monto</th><th>Fecha</th></tr></thead>
+                        <tbody>{payable_rows or '<tr><td colspan="6">Sin pagos pendientes.</td></tr>'}</tbody>
                     </table></div>
                 </div>
                 <div class="workspace-card" id="coi-pendiente">
@@ -7302,8 +7352,8 @@ async def admin_finance_platform(
                         <input type="hidden" name="year" value="{current_year}">
                         <input type="hidden" name="month" value="{current_month}">
                         <div class="table-shell"><table class="finance-table">
-                            <thead><tr><th></th><th>Gasto</th><th>Concepto</th><th>Monto</th><th>Cuenta</th><th>Contracuenta</th><th>Cuenta IVA</th><th>Fiscal</th></tr></thead>
-                            <tbody>{pending_coi_rows or '<tr><td colspan="8">Sin gastos pendientes de clasificación COI.</td></tr>'}</tbody>
+                            <thead><tr><th></th><th>Gasto</th><th>Referencia Operaciones</th><th>Concepto</th><th>Monto</th><th>Cuenta</th><th>Contracuenta</th><th>Cuenta IVA</th><th>Fiscal</th></tr></thead>
+                            <tbody>{pending_coi_rows or '<tr><td colspan="9">Sin gastos pendientes de clasificación COI.</td></tr>'}</tbody>
                         </table></div>
                         <button class="button" type="submit" style="margin-top:12px;" {'disabled' if not pending_coi_expenses or not account_rows else ''}>Guardar clasificación COI</button>
                     </form>
@@ -7324,16 +7374,16 @@ async def admin_finance_platform(
                         <input type="hidden" name="year" value="{current_year}">
                         <input type="hidden" name="month" value="{current_month}">
                         <div class="table-shell"><table class="finance-table">
-                            <thead><tr><th></th><th>Referencia</th><th>Tipo</th><th>Estado</th><th>Monto</th><th>Persona/proveedor</th><th>UUID CFDI</th></tr></thead>
-                            <tbody>{blocker_rows or '<tr><td colspan="7">Sin bloqueos fiscales visibles.</td></tr>'}</tbody>
+                            <thead><tr><th></th><th>Referencia</th><th>Referencia Operaciones</th><th>Tipo</th><th>Estado</th><th>Monto</th><th>Persona/proveedor</th><th>UUID CFDI</th></tr></thead>
+                            <tbody>{blocker_rows or '<tr><td colspan="8">Sin bloqueos fiscales visibles.</td></tr>'}</tbody>
                         </table></div>
                         <button class="button" type="submit" style="margin-top:12px;" {'disabled' if not tax_blockers else ''}>Amarrar CFDI para DIOT</button>
                     </form>
                     <div style="margin-top:18px;">
                         <div class="workspace-section-subtitle">Warnings cuando el comprobante pertenece a otro mes que el gasto.</div>
                         <div class="table-shell" style="margin-top:12px;"><table class="finance-table">
-                            <thead><tr><th>Gasto</th><th>Concepto</th><th>Fecha gasto</th><th>Fecha CFDI</th><th>Warning</th></tr></thead>
-                            <tbody>{cross_month_rows or '<tr><td colspan="5">Sin comprobantes cruzados entre meses.</td></tr>'}</tbody>
+                            <thead><tr><th>Gasto</th><th>Referencia Operaciones</th><th>Concepto</th><th>Fecha gasto</th><th>Fecha CFDI</th><th>Warning</th></tr></thead>
+                            <tbody>{cross_month_rows or '<tr><td colspan="6">Sin comprobantes cruzados entre meses.</td></tr>'}</tbody>
                         </table></div>
                     </div>
                 </div>
@@ -9981,6 +10031,10 @@ def _render_payment_run_items(
                 f'data-reference="{referencia}" value="{documento_id}">'
             )
         if row.get("can_upload_payment_proof") and can_confirm_payment:
+            confirmation_date = row.get("confirmation_date")
+            confirmation_value = (
+                confirmation_date.isoformat() if confirmation_date else ""
+            )
             proof_action = (
                 f"/prestamos/{documento_id}/comprobante-pago"
                 if entity_type == "prestamo"
@@ -9992,9 +10046,18 @@ def _render_payment_run_items(
                     '<label style="font-size:12px;color:#334155;">'
                     'Fecha efectiva de pago'
                     '<input type="date" name="fecha_pago_efectiva" '
+                    f'value="{escape(confirmation_value)}" '
+                    f'data-payment-date-document="{documento_id}" '
                     'data-payment-proof-effective-date required>'
                     '</label>'
+                    '<small>Precargada con la fecha del corte; '
+                    'Contabilidad puede ajustarla al confirmar.</small>'
                 )
+                if row.get("cutoff_date_missing"):
+                    effective_date_html += (
+                        '<small role="alert">Sin fecha de corte vinculada; '
+                        'captura la fecha efectiva del pago.</small>'
+                    )
             form_attributes = (
                 f'data-payment-proof-form data-documento-id="{documento_id}"'
                 if entity_type == "documento"
@@ -10403,6 +10466,10 @@ async def admin_finance_payment_run(
                             event.preventDefault(); singleReview.textContent += ' Captura el motivo de resolución antes de confirmar.';
                         }}
                     }}
+                    function defaultPaymentDate(documentId) {{
+                        var input = document.querySelector('[data-payment-date-document="' + documentId + '"]');
+                        return input ? input.value : '';
+                    }}
                     function refresh() {{
                         var selectedRows = selected();
                         var selectedOptions = selectedRows.map(function (input) {{ return {{ value: input.value, label: input.getAttribute('data-reference') || input.value }}; }});
@@ -10417,7 +10484,7 @@ async def admin_finance_payment_run(
                                 var row = document.createElement('label'); row.style.cssText = 'display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr);gap:10px;align-items:center;font-size:13px;color:#334155;';
                                 row.setAttribute('data-payment-proof-document-id', option.value);
                                 var name = document.createElement('span'); name.textContent = 'Fecha efectiva: ' + option.label;
-                                var input = document.createElement('input'); input.type = 'date'; input.name = 'effective_payment_dates'; input.required = true;
+                                var input = document.createElement('input'); input.type = 'date'; input.name = 'effective_payment_dates'; input.required = true; input.value = defaultPaymentDate(option.value);
                                 var reason = document.createElement('input'); reason.name = 'payment_proof_resolution_reasons'; reason.dataset.paymentProofResolutionReason = 'true'; reason.placeholder = 'Motivo si se resuelve un conflicto';
                                 var review = document.createElement('small'); review.dataset.paymentProofReview = 'true'; review.style.gridColumn = '1 / -1';
                                 row.appendChild(name); row.appendChild(input); row.appendChild(reason); row.appendChild(review); mapping.appendChild(row);
@@ -10435,8 +10502,9 @@ async def admin_finance_payment_run(
                             var reason = document.createElement('input'); reason.name = 'payment_proof_resolution_reasons'; reason.dataset.paymentProofResolutionReason = 'true'; reason.placeholder = 'Motivo si se resuelve un conflicto';
                             var review = document.createElement('small'); review.dataset.paymentProofReview = 'true'; review.style.gridColumn = '1 / -1';
                             selectedOptions.forEach(function (option) {{ var item = document.createElement('option'); item.value = option.value; item.textContent = option.label; select.appendChild(item); }});
-                            select.addEventListener('change', function () {{ reviewProof(select.value, file, dateInput, review); }});
+                            select.addEventListener('change', function () {{ dateInput.value = defaultPaymentDate(select.value); reviewProof(select.value, file, dateInput, review); }});
                             row.appendChild(name); row.appendChild(select); row.appendChild(dateInput); row.appendChild(reason); row.appendChild(review); mapping.appendChild(row);
+                            dateInput.value = defaultPaymentDate(select.value);
                             reviewProof(select.value, file, dateInput, review);
                         }});
                     }}
@@ -10819,8 +10887,15 @@ async def admin_finance_payment_run_upload_payment_proof(
         )
 
     try:
+        selected_date = await prepare_payment_run_confirmation_date(
+            session, documento=documento, actor=current_empleado,
+            fecha_pago_efectiva=(
+                fecha_pago_efectiva if isinstance(fecha_pago_efectiva, str) else None
+            ),
+            request=request,
+        )
         effective_payment_date = _parse_effective_payment_dates(
-            [fecha_pago_efectiva] if fecha_pago_efectiva else [], expected_count=1
+            [selected_date.isoformat()], expected_count=1
         )[0]
         raw = await comprobante_pago.read()
         content_type = (comprobante_pago.content_type or "").split(";", 1)[0].strip().lower()
@@ -10896,7 +10971,7 @@ async def admin_finance_payment_run_upload_payment_proof(
             anchor="comprobantes-pendientes",
             vista="comprobantes",
         )
-    except SolicitudValidationError as exc:
+    except (SolicitudValidationError, PaymentRunValidationError) as exc:
         await session.rollback()
         return _payment_run_redirect(
             error_msg=str(exc), anchor="comprobantes-pendientes", vista="comprobantes"
@@ -11299,6 +11374,14 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
                 )
             documentos[documento_id] = documento
 
+        for (documento_id, _), effective_payment_date in zip(
+            prepared, parsed_effective_dates
+        ):
+            await prepare_payment_run_confirmation_date(
+                session, documento=documentos[documento_id], actor=current_empleado,
+                fecha_pago_efectiva=effective_payment_date.isoformat(), request=request,
+            )
+
         paid_references: list[tuple[UUIDType, str]] = []
         for (documento_id, attachment), effective_payment_date, raw_reason in zip(
             prepared, parsed_effective_dates, resolution_reasons
@@ -11392,13 +11475,13 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
             anchor="comprobantes-pendientes",
             vista="comprobantes",
         )
-    except SolicitudValidationError as exc:
+    except (SolicitudValidationError, PaymentRunValidationError) as exc:
         await session.rollback()
         logger.info(
             "Bulk payment proof form rejected",
             extra={
                 "actor_id": str(current_empleado.id),
-                "validation_code": exc.code,
+                "validation_code": getattr(exc, "code", "invalid_payment_date"),
                 "selected_count": len(selected_document_ids or []),
                 "mapping_count": len(proof_document_ids or []),
                 "upload_count": len(comprobantes_pago or []),
@@ -11510,6 +11593,7 @@ async def admin_finance_payment_run_closure_detail(
         f"""
         <tr>
             <td>{escape(str(item.get("numero_referencia") or item.get("documento_id") or "-"))}</td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td>{escape(str(item.get("fecha_pago") or "-"))}</td>
             <td>{_payment_run_money(item.get("monto"), str(item.get("currency") or "MXN"))}</td>
             <td>{escape(str(item.get("estado_documento") or "-"))}</td>
@@ -11555,8 +11639,8 @@ async def admin_finance_payment_run_closure_detail(
                 <div class="workspace-section-title">Solicitudes incluidas</div>
                 <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
                     <table class="payment-table">
-                        <thead><tr><th>Solicitud</th><th>Fecha pago</th><th>Monto</th><th>Estado al corte</th><th>Pago actual</th></tr></thead>
-                        <tbody>{rows or '<tr><td colspan="5">Sin items.</td></tr>'}</tbody>
+                        <thead><tr><th>Solicitud</th><th>Referencia Operaciones</th><th>Fecha pago</th><th>Monto</th><th>Estado al corte</th><th>Pago actual</th></tr></thead>
+                        <tbody>{rows or '<tr><td colspan="6">Sin items.</td></tr>'}</tbody>
                     </table>
                 </div>
             </section>
@@ -17368,6 +17452,7 @@ async def admin_presupuestos_legacy(
         f"""
         <tr>
             <td><a href="/admin/presupuestos?{drill_base_query}{'&' if drill_base_query else ''}drill_tournament={quote(str(active_tournament.get('tournament_id') or active_tournament.get('tournament_code') or ''))}&drill_document={quote(str(item.get('documento_id') or ''))}" style="color:#0f172a;text-decoration:none;">{escape(str(item.get("numero_referencia") or "-"))}</a></td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td>{escape(str(item.get("estado") or "-"))}</td>
             <td>{escape(str(item.get("proveedor_nombre") or "-"))}</td>
             <td>{escape(str(item.get("concepto_pago") or "-"))}</td>
@@ -18089,6 +18174,7 @@ async def admin_presupuestos_legacy(
                     <thead>
                         <tr>
                             <th>Referencia</th>
+                            <th>Referencia Operaciones</th>
                             <th>Estado</th>
                             <th>Proveedor</th>
                             <th>Concepto</th>
@@ -18100,7 +18186,7 @@ async def admin_presupuestos_legacy(
                         </tr>
                     </thead>
                     <tbody>
-                        {commitment_rows if commitment_rows else '<tr><td colspan="8">Sin compromisos visibles para el torneo seleccionado.</td></tr>'}
+                        {commitment_rows if commitment_rows else '<tr><td colspan="10">Sin compromisos visibles para el torneo seleccionado.</td></tr>'}
                     </tbody>
                 </table>
             </section>
@@ -25614,6 +25700,10 @@ async def cfdi_matching_control_room(
             linked_count = len(linked_expenses)
             unlinked_cfdi_count = len(unlinked_cfdis)
 
+        operational_references = await _expense_operational_references(
+            session, list(pending_expenses) + list(linked_expenses)
+        )
+
         # Build pending expenses table rows
         pending_rows = ""
         for expense in pending_expenses:
@@ -25628,6 +25718,7 @@ async def cfdi_matching_control_room(
             pending_rows += f"""
             <tr>
                 <td>{format_value(expense.numero_referencia)}</td>
+                <td>{escape(_expense_operational_reference(expense, operational_references))}</td>
                 <td>{fecha_str}</td>
                 <td>{format_value(empleado_name)}</td>
                 <td>{format_value(project_name)}<br><small>{expense_origin}</small></td>
@@ -25665,6 +25756,7 @@ async def cfdi_matching_control_room(
             linked_rows += f"""
             <tr>
                 <td>{format_value(expense.numero_referencia)}</td>
+                <td>{escape(_expense_operational_reference(expense, operational_references))}</td>
                 <td>{fecha_str}</td>
                 <td>{format_value(empleado_name)}</td>
                 <td>{format_value(project_name)}<br><small>{expense_origin}</small></td>
@@ -25855,6 +25947,7 @@ async def cfdi_matching_control_room(
                             <thead>
                                 <tr>
                                     <th>Referencia</th>
+                                    <th>Referencia Operaciones</th>
                                     <th>Fecha</th>
                                     <th>Empleado</th>
                                     <th>Proyecto / origen</th>
@@ -25889,6 +25982,7 @@ async def cfdi_matching_control_room(
                             <thead>
                                 <tr>
                                     <th>Referencia</th>
+                                    <th>Referencia Operaciones</th>
                                     <th>Fecha</th>
                                     <th>Empleado</th>
                                     <th>Proyecto / origen</th>
@@ -26072,6 +26166,7 @@ async def gastos_sin_cuenta_contable(
         document_type=selected_document_type,
         issue_type=selected_issue,
     )
+    operational_references = await _expense_operational_references(session, gastos)
     visible_expense_ids = {gasto.id for gasto in gastos}
     if focused_expense_id not in visible_expense_ids:
         focused_expense_id = None
@@ -26562,6 +26657,7 @@ async def gastos_sin_cuenta_contable(
                 <span class="cleanup-origin">{document_origin_safe}</span><br>
                 <span class="muted-mini">{documento_ref_safe}</span>
             </td>
+            <td>{escape(_expense_operational_reference(gasto, operational_references))}</td>
             <td>{fecha_str}</td>
             <td>{empleado_safe}</td>
             <td>{beneficiary_safe}</td>
@@ -26578,7 +26674,7 @@ async def gastos_sin_cuenta_contable(
         </tr>
         <tr id="{detail_id}" class="cleanup-detail-row"
             style="display:{detail_display};">
-            <td colspan="11">
+            <td colspan="12">
                 <div class="cleanup-detail-panel">
                     <div class="cleanup-detail-head">
                         <div>
@@ -26757,7 +26853,7 @@ async def gastos_sin_cuenta_contable(
         else "No hay gastos pendientes de preparación COI"
     )
     empty_cleanup_row = (
-        '<tr><td colspan="11" style="text-align: center; padding: 40px;">'
+        '<tr><td colspan="12" style="text-align: center; padding: 40px;">'
         f"{empty_cleanup_message}</td></tr>"
     )
 
@@ -27282,6 +27378,7 @@ async def gastos_sin_cuenta_contable(
                             <thead>
                                 <tr>
                                     <th>Referencia</th>
+                                    <th>Referencia Operaciones</th>
                                     <th>Fecha</th>
                                     <th>Responsable</th>
                                     <th>Beneficiario</th>

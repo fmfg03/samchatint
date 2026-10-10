@@ -14,6 +14,17 @@ from devnous.gastos.services import documento_payment_service, payment_run_servi
 from devnous.gastos.services.payment_proof_review_service import PaymentProofReview
 
 
+@pytest.fixture(autouse=True)
+def isolate_confirmation_date_audit(monkeypatch):
+    """These tests isolate proof review; real date/audit tests live separately."""
+    async def prepare(_session, *, fecha_pago_efectiva=None, **kwargs):
+        return date.fromisoformat(fecha_pago_efectiva or "2026-09-22")
+
+    monkeypatch.setattr(
+        admin_routes, "prepare_payment_run_confirmation_date", prepare
+    )
+
+
 class _PaymentProofUpload:
     def __init__(self, filename: str, content: bytes) -> None:
         self.filename = filename
@@ -461,6 +472,9 @@ async def test_payment_run_single_proof_rolls_back_validation_failures(
     monkeypatch, failure
 ) -> None:
     document_id = uuid4()
+    monkeypatch.setattr(
+        admin_routes, "prepare_payment_run_confirmation_date", AsyncMock()
+    )
     session = AsyncMock()
     session.get = AsyncMock(
         return_value=SimpleNamespace(id=document_id, estado="en_proceso_pago")
@@ -847,6 +861,9 @@ async def test_payment_run_bulk_proof_upload_commits_one_explicitly_mapped_batch
     monkeypatch,
 ) -> None:
     actor_id = uuid4()
+    monkeypatch.setattr(
+        admin_routes, "prepare_payment_run_confirmation_date", AsyncMock()
+    )
     first_id = uuid4()
     second_id = uuid4()
     first_document = SimpleNamespace(id=first_id, estado="en_proceso_pago")
@@ -882,7 +899,7 @@ async def test_payment_run_bulk_proof_upload_commits_one_explicitly_mapped_batch
     )
 
     response = await admin_routes.admin_finance_payment_run_upload_payment_proofs_bulk(
-        request=SimpleNamespace(),
+        request=SimpleNamespace(form=AsyncMock(return_value={})),
         session=session,
         current_empleado=SimpleNamespace(id=actor_id),
         selected_document_ids=[first_id, second_id],

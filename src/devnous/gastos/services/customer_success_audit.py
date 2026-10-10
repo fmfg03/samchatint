@@ -141,6 +141,7 @@ async def record_customer_success_audit_event(
     summary: Optional[str] = None,
     metadata: Optional[dict[str, Any]] = None,
     commit: bool = False,
+    strict: bool = False,
 ) -> None:
     normalized_action = _truncate(action, 120)
     if not normalized_action:
@@ -194,6 +195,8 @@ async def record_customer_success_audit_event(
             await session.rollback()
         except Exception:
             logger.exception("Failed to rollback audit event failure")
+        if strict:
+            raise
 
 
 def _parse_date_start(value: Optional[str]) -> Optional[datetime]:

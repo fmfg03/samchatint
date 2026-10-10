@@ -15478,6 +15478,7 @@ async def panel_operaciones_console(
         f"""
         <tr>
             <td><a href="/panel/operaciones-console?tournament_id={quote(str(selected_tournament['id']))}&drill_document={quote(str(item.get('documento_id') or ''))}" style="color:#0f172a;text-decoration:none;font-weight:700;">{escape(str(item.get("numero_referencia") or "-"))}</a></td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td><span class="ops-pill">{escape(str(item.get("estado") or "-"))}</span></td>
             <td>{escape(str(item.get("proveedor_nombre") or "-"))}</td>
             <td>{escape(str(item.get("concepto_pago") or "-"))}</td>
@@ -16030,6 +16031,7 @@ async def panel_operaciones_console(
                             <thead>
                                 <tr>
                                     <th>Documento</th>
+                                    <th>Referencia Operaciones</th>
                                     <th>Estado</th>
                                     <th>Proveedor</th>
                                     <th>Concepto</th>
@@ -16039,7 +16041,7 @@ async def panel_operaciones_console(
                                 </tr>
                             </thead>
                             <tbody>
-                                {commitment_rows or '<tr><td colspan="7">Sin compromisos visibles para el torneo seleccionado.</td></tr>'}
+                                {commitment_rows or '<tr><td colspan="8">Sin compromisos visibles para el torneo seleccionado.</td></tr>'}
                             </tbody>
                         </table>
                     </div>
@@ -20196,6 +20198,7 @@ async def crear_gasto(
                     informe_doc = informe_res.scalar_one_or_none()
                     if informe_doc:
                         expense.informe_documento_id = informe_doc.id
+                        await apply_budget_concept_cuenta_mapping(session, expense)
             except (ValueError, TypeError):
                 pass  # ignore invalid UUID; expense remains unassigned
 
@@ -23419,6 +23422,7 @@ async def contabilidad_cash_flow_view(
         )
         return (
             f"<tr><td>{escape(document.numero_referencia or '—')}</td>"
+            f"<td>{escape(str(document.referencia_operaciones or '—'))}</td>"
             f"<td>{escape(document.estado or '—')}</td>"
             f"<td>{payment_date}</td>"
             f"<td>{escape(_doc_party(document))}</td>"
@@ -23599,7 +23603,7 @@ async def contabilidad_cash_flow_view(
         </div>
         <div class="card">
             <h2 id="compromisos" style="margin:0 0 12px 0;">Compromisos próximos</h2>
-            <table><thead><tr><th>Documento</th><th>Estado</th><th>Fecha pago</th><th>Beneficiario</th><th>Monto</th><th>Proyecto</th></tr></thead><tbody>{upcoming_rows or '<tr><td colspan="6" class="muted">Sin solicitudes enviadas/aprobadas en horizonte de 30 días.</td></tr>'}</tbody></table>
+            <table><thead><tr><th>Documento</th><th>Referencia Operaciones</th><th>Estado</th><th>Fecha pago</th><th>Beneficiario</th><th>Monto</th><th>Proyecto</th></tr></thead><tbody>{upcoming_rows or '<tr><td colspan="7" class="muted">Sin solicitudes enviadas/aprobadas en horizonte de 30 días.</td></tr>'}</tbody></table>
         </div>
         <div class="card">
             <h2 style="margin:0 0 12px 0;">Cobros esperados / CxC</h2>
@@ -32811,6 +32815,7 @@ async def documentos_todos(
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
+            <td data-sort-value="{escape(referencia_operaciones_sort)}">{escape(row_values["referencia_operaciones"])}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{escape(row_values["tipo_documento"])}</td>
             <td>{escape(row_values["tipo_solicitud"])}</td>
@@ -32822,7 +32827,6 @@ async def documentos_todos(
             <td>{escape(row_values["aprobador"])}</td>
             <td>{escape(row_values["concepto"])}</td>
             <td>{escape(row_values["referencia_pago"])}</td>
-            <td data-sort-value="{escape(referencia_operaciones_sort)}">{escape(row_values["referencia_operaciones"])}</td>
             <td data-sort-value="{escape(monto_solicitado_sort)}">{row_values["monto_solicitado"]}</td>
             <td data-sort-value="{escape(monto_total_sort)}">{row_values["monto_total"]}</td>
             <td data-sort-value="{escape(monto_presupuestal_sort)}">{row_values["monto_presupuestal"]}<br><small>{escape(row_values["asignacion_presupuestal"])}</small></td>
@@ -33004,10 +33008,11 @@ async def documentos_todos(
                     </div>
             {f'''
             <div class="table-shell">
-                <table data-sortable-table data-default-sort-index="10" data-default-sort-dir="desc">
+                <table data-sortable-table data-default-sort-index="11" data-default-sort-dir="desc">
                     <thead>
                         <tr>
                             <th data-sort-key="numero_referencia" data-sort-type="text">Número de Referencia</th>
+                            <th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia operaciones</th>
                             <th data-sort-key="id_interno" data-sort-type="text">ID Interno</th>
                             <th data-sort-key="tipo" data-sort-type="text">Tipo</th>
                             <th data-sort-key="tipo_solicitud" data-sort-type="text">Tipo solicitud</th>
@@ -33019,7 +33024,6 @@ async def documentos_todos(
                             <th data-sort-key="aprobador" data-sort-type="text">Aprobador</th>
                             <th data-sort-key="concepto" data-sort-type="text">Concepto</th>
                             <th data-sort-key="referencia_pago" data-sort-type="text">Referencia pago</th>
-                            <th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia operaciones</th>
                             <th data-sort-key="monto_solicitado" data-sort-type="money">Monto solicitado</th>
                             <th data-sort-key="monto_total" data-sort-type="money">Monto total</th>
                             <th data-sort-key="monto_presupuestal" data-sort-type="money">Monto que afecta presupuesto</th>
@@ -36850,6 +36854,7 @@ async def documentos_pendientes_pago(
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
+            <td>{escape(str(documento.referencia_operaciones or "—"))}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{empleado_nombre}</td>
             <td>{documento.tipo}</td>
@@ -36891,6 +36896,7 @@ async def documentos_pendientes_pago(
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
+            <td>{escape(str(documento.referencia_operaciones or "—"))}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{empleado_nombre}</td>
             <td>{documento.tipo}</td>
@@ -36994,6 +37000,7 @@ async def documentos_pendientes_pago(
                             <thead>
                                 <tr>
                                     <th>Número de referencia</th>
+                                    <th>Referencia Operaciones</th>
                                     <th>ID interno</th>
                                     <th>Empleado</th>
                                     <th>Tipo</th>
@@ -43738,7 +43745,8 @@ def _quick_expense_values(
             descuento_amount,
             impuestos_net,
         ) + propina_amount
-        iva_amount = max(impuestos_net, Decimal("0"))
+        # A net fiscal amount does not identify IVA without a tax breakdown.
+        iva_amount = None
 
     if not concepto_final:
         raise ValueError("Descripción del gasto es requerida")
@@ -43995,7 +44003,7 @@ async def crear_gasto_rapido_en_informe(
             tipo_gasto="manual",
             departamento=(owner.departamento if owner else None) or "Operaciones",
             fase_torneo=(cuenta.fase or "").strip() or "No Aplica",
-            iva=float(values["iva"]),
+            iva=float(values["iva"]) if values["iva"] is not None else None,
             origen="informe_quick_entry",
             skip_initial_tocino=True,
             categorias=list(getattr(cuenta, "categorias", None) or []),
@@ -44015,6 +44023,7 @@ async def crear_gasto_rapido_en_informe(
         expense.cuenta_gastos_id = cuenta.id
         expense.referencia_base = cuenta.referencia_base
         expense.informe_documento_id = informe_doc.id
+        await apply_budget_concept_cuenta_mapping(session, expense)
 
         if resolved_cfdi is not None:
             ingestion = await ingest_cfdi_from_upload(
@@ -44159,7 +44168,11 @@ async def crear_gasto_rapido_en_informe(
                 tipo_gasto="manual",
                 departamento=(owner.departamento if owner else None) or "Operaciones",
                 fase_torneo=(cuenta.fase or "").strip() or "No Aplica",
-                iva=float(supplement_values["iva"]),
+                iva=(
+                    float(supplement_values["iva"])
+                    if supplement_values["iva"] is not None
+                    else None
+                ),
                 origen="informe_quick_entry",
                 skip_initial_tocino=True,
                 categorias=list(getattr(cuenta, "categorias", None) or []),
@@ -44175,6 +44188,7 @@ async def crear_gasto_rapido_en_informe(
             supplement_expense.cuenta_gastos_id = cuenta.id
             supplement_expense.referencia_base = cuenta.referencia_base
             supplement_expense.informe_documento_id = informe_doc.id
+            await apply_budget_concept_cuenta_mapping(session, supplement_expense)
 
             if supplement_cfdi is not None:
                 ingestion = await ingest_cfdi_from_upload(
@@ -44935,6 +44949,7 @@ async def cuenta_de_gastos_detail(
         solicitudes_section_rows += (
             f"<tr><td><a href=\"/documentos/{d.id}\" style=\"color: #4CAF50;\">"
             f"{escape(d.numero_referencia)}</a></td>"
+            f"<td>{escape(str(d.referencia_operaciones or '—'))}</td>"
             f"<td>{_documento_human_status_badge(d.estado)}</td>"
             f"<td>{format_currency(d.monto_solicitado, currency_for(d))}</td>"
             f"<td>{escape(currency_for(d))}</td>"
@@ -44958,8 +44973,8 @@ async def cuenta_de_gastos_detail(
                 {nueva_solicitud_btn_html}
                 <div class="table-shell">
                 <table>
-                    <thead><tr><th>Referencia</th><th>Estado</th><th>Monto</th><th>Moneda</th><th>Fecha</th><th>Archivos</th><th>Acción</th></tr></thead>
-                    <tbody>{solicitudes_section_rows if solicitudes_section_rows else '<tr><td colspan="7" style="text-align: center; color: #666;">No hay solicitudes de transferencia vinculadas a este informe.</td></tr>'}</tbody>
+                    <thead><tr><th>Referencia</th><th>Referencia Operaciones</th><th>Estado</th><th>Monto</th><th>Moneda</th><th>Fecha</th><th>Archivos</th><th>Acción</th></tr></thead>
+                    <tbody>{solicitudes_section_rows if solicitudes_section_rows else '<tr><td colspan="8" style="text-align: center; color: #666;">No hay solicitudes de transferencia vinculadas a este informe.</td></tr>'}</tbody>
                 </table>
                 </div>
             </div>'''
@@ -45224,7 +45239,7 @@ async def cuenta_de_gastos_detail(
                                         </td>
                                         <td><input type="number" min="0" step="0.01" name="subtotal" id="quick-subtotal" required></td>
                                         <td><input type="number" min="0" step="0.01" name="descuento" id="quick-descuento" value="0" aria-label="Descuento aplicado"></td>
-                                        <td><input type="number" step="0.01" name="impuestos_y_retenciones" id="quick-impuestos-y-retenciones" value="0" required></td>
+                                        <td><input type="number" step="0.01" name="impuestos_y_retenciones" id="quick-impuestos-y-retenciones" value="0" required><small>Sin XML, este neto no identifica IVA ni retenciones; Contabilidad debe revisar el desglose.</small></td>
                                         <td class="quick-tip-col" hidden><input type="number" min="0" step="0.01" name="propina_no_deducible" id="quick-propina" value="0" aria-label="Propina no deducible"></td>
                                         <td><input type="text" id="quick-total" value="0.00" readonly></td>
                                         <td><input type="text" value="{escape(currency_for(cuenta))}" readonly></td>

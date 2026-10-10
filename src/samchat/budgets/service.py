@@ -1229,6 +1229,7 @@ async def list_budget_tournament_commitments(
                 SELECT
                     CAST(d.id AS text) AS documento_id,
                     d.numero_referencia,
+                    d.referencia_operaciones,
                     d.estado,
                     d.concepto_pago,
                     COALESCE(NULLIF(TRIM(bc_doc.concept_name), ''), NULL) AS budget_concept_name,
@@ -1293,6 +1294,7 @@ async def list_budget_tournament_commitments(
         {
             "documento_id": _safe_str(row.get("documento_id")) or None,
             "numero_referencia": _safe_str(row.get("numero_referencia")) or None,
+            "referencia_operaciones": _safe_str(row.get("referencia_operaciones")) or None,
             "estado": _safe_str(row.get("estado")) or None,
             "concepto_pago": _safe_str(row.get("concepto_pago")) or None,
             "budget_concept_name": _safe_str(row.get("budget_concept_name")) or None,
