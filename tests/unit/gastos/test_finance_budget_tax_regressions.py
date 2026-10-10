@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 
+from devnous.gastos.models import BudgetConcept, Documento, ExpenseReport
 from devnous.gastos.routes import user_routes
 from devnous.gastos.services import budget_concept_account_service as mapping
 from devnous.gastos.services import expense_accounting_service as accounting
@@ -323,3 +324,71 @@ async def test_quick_route_maps_after_informe_ownership_link(
     assert created[0].gasto_cantidad == 112
     if supplement:
         assert created[1].gasto_cantidad == 56
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("loaded", [False, True])
+async def test_owning_informe_partida_wins_over_conflicting_legacy_link(
+    monkeypatch, loaded
+):
+    owner_concept = BudgetConcept(id=uuid4(), cuenta_contable_id=uuid4())
+    legacy_concept = BudgetConcept(id=uuid4(), cuenta_contable_id=uuid4())
+    owner = Documento(id=uuid4(), budget_concept_id=owner_concept.id)
+    legacy = Documento(id=uuid4(), budget_concept_id=legacy_concept.id)
+    expense = ExpenseReport(
+        id=uuid4(), budget_concept_id=None, cuenta_contable_id=None,
+        informe_documento_id=owner.id, documento_id=legacy.id,
+    )
+    queries = []
+
+    async def execute(statement):
+        queries.append(statement)
+        bound = statement.compile().params
+        if "SELECT documentos.budget_concept_id" in str(statement):
+            # Only the canonical owner may be consulted, never the stale link.
+            assert owner.id in bound.values()
+            value = owner_concept.id
+        else:
+            assert owner_concept.id in bound.values()
+            value = owner_concept
+        return SimpleNamespace(scalar_one_or_none=lambda: value)
+
+    session = SimpleNamespace(execute=AsyncMock(side_effect=execute))
+    if loaded:
+        owner.budget_concept = owner_concept
+        legacy.budget_concept = legacy_concept
+        expense.budget_concept = None
+        expense.informe_documento = owner
+        expense.documento = legacy
+        assert mapping.resolve_effective_budget_concept(expense) is owner_concept
+    validator = AsyncMock(return_value=str(owner_concept.cuenta_contable_id))
+    monkeypatch.setattr(mapping, "validate_active_cuenta_contable_id", validator)
+    assert await mapping.apply_budget_concept_cuenta_mapping(session, expense)
+    assert expense.budget_concept_id == owner_concept.id
+    assert expense.cuenta_contable_id == owner_concept.cuenta_contable_id
+    validator.assert_awaited_once_with(
+        session, str(owner_concept.cuenta_contable_id)
+    )
+    assert len(queries) == (0 if loaded else 2)
+    # Existing assignments are preserved even when the owner has another mapping.
+    explicit_id = uuid4()
+    expense.cuenta_contable_id = explicit_id
+    session.execute.reset_mock()
+    assert not await mapping.apply_budget_concept_cuenta_mapping(session, expense)
+    assert expense.cuenta_contable_id == explicit_id
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_absent_informe_preserves_generic_before_solicitud_fallback():
+    generic = SimpleNamespace(id=uuid4(), cuenta_contable_id=uuid4())
+    solicitud = SimpleNamespace(id=uuid4(), cuenta_contable_id=uuid4())
+    expense = SimpleNamespace(
+        budget_concept=None, budget_concept_id=None, informe_documento=None,
+        documento=SimpleNamespace(budget_concept=generic),
+        solicitud_documento=SimpleNamespace(budget_concept=solicitud),
+    )
+    session = SimpleNamespace(execute=AsyncMock())
+    assert mapping.resolve_effective_budget_concept(expense) is generic
+    assert await mapping.load_effective_budget_concept(session, expense) is generic
+    session.execute.assert_not_awaited()

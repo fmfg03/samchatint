@@ -391,7 +391,9 @@ async def prepare_payment_run_confirmation_date(
             "after_fecha_pago_efectiva": selected_date.isoformat(),
             "cutoff_date": cutoff_date.isoformat() if cutoff_date else None,
             "closure_id": str(cutoff["closure_id"]) if cutoff else None,
-            "date_source": "accounting" if fecha_pago_efectiva else "cutoff",
+            "date_source": (
+                "cutoff" if selected_date == cutoff_date else "accounting"
+            ),
         },
     )
     return selected_date

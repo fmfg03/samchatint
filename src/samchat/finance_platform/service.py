@@ -151,6 +151,7 @@ async def build_finance_source_snapshot(
         select(ExpenseReport)
         .options(
             selectinload(ExpenseReport.empleado),
+            selectinload(ExpenseReport.documento),
             selectinload(ExpenseReport.solicitud_documento),
             selectinload(ExpenseReport.informe_documento).selectinload(
                 Documento.budget_concept
@@ -334,6 +335,9 @@ def _serialize_expense(expense: Any) -> dict[str, Any]:
         "numero_referencia": getattr(expense, "numero_referencia", None),
         "referencia_operaciones": (
             getattr(informe, "referencia_operaciones", None)
+            or getattr(
+                getattr(expense, "documento", None), "referencia_operaciones", None
+            )
             or getattr(getattr(expense, "solicitud_documento", None), "referencia_operaciones", None)
         ),
         "concepto": getattr(expense, "concepto", None),

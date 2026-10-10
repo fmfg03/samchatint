@@ -36,14 +36,14 @@ class CleanupAccountingDisplay:
 def resolve_effective_budget_concept(
     expense: ExpenseReport,
 ) -> Optional[BudgetConcept]:
-    """Return the expense partida, falling back to linked documento records."""
+    """Return the expense partida, preferring its owning Informe on fallback."""
 
     budget_concept = getattr(expense, "budget_concept", None)
     if budget_concept:
         return budget_concept
     for doc in (
-        getattr(expense, "documento", None),
         getattr(expense, "informe_documento", None),
+        getattr(expense, "documento", None),
         getattr(expense, "solicitud_documento", None),
     ):
         concept = getattr(doc, "budget_concept", None)
@@ -84,7 +84,7 @@ async def load_effective_budget_concept(
     *,
     budget_concept_id: Optional[UUID] = None,
 ) -> Optional[BudgetConcept]:
-    """Resolve the partida without implicit async relationship loads."""
+    """Resolve the partida from its owner without implicit async loads."""
 
     concept_id = budget_concept_id or getattr(expense, "budget_concept_id", None)
     loaded = vars(expense).get("budget_concept")
@@ -92,8 +92,8 @@ async def load_effective_budget_concept(
         return loaded
     if not concept_id:
         for relation, field in (
-            ("documento", "documento_id"),
             ("informe_documento", "informe_documento_id"),
+            ("documento", "documento_id"),
             ("solicitud_documento", "solicitud_documento_id"),
         ):
             document = vars(expense).get(relation)

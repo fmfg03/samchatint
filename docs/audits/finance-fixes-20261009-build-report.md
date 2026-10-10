@@ -239,3 +239,22 @@ This is compatibility verification, not DIOT implementation or acceptance by us.
 After this integration, the 29-file finance suite again passed **422 tests**,
 and all nine regenerated-inventory tests passed. Independent read-only review
 confirms DIOT services, tests, canon and register exactly match current main.
+
+## PR review corrections
+
+The integration head passed remote CI (4539 unit tests, integration, browser,
+security, policy and 95% reported changed-code coverage), but three unresolved
+review conversations correctly prevented merge. Their validated findings are
+fixed within approved scope: catalog inheritance now prefers the owning INFORME
+over a contradictory legacy document; Operations lineage includes valid legacy
+`ExpenseReport.documento_id` in batched boards/CSV and eager finance projection;
+unchanged submitted cutoff defaults retain `date_source=cutoff` in audit.
+Explicit accounts/partidas and existing fallback order remain preserved.
+
+Focused review verification: 68 accounting tests plus eight subtests passed;
+41 reference/date/readiness tests passed. ORM fixtures cover contradictory
+loaded and ID-only links; actual board/CSV tests cover legacy-only ownership.
+These overlap the acceptance suite. Inventories are regenerated and CI will run
+again on the reviewed fix before merge; no controls or baselines are bypassed.
+Final review-correction acceptance: **427 passed**, 42 inherited warnings;
+inventory **9 passed**. Independent read-only review found no unresolved findings.

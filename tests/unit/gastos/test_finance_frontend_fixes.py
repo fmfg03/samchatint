@@ -53,6 +53,9 @@ def test_finance_projection_preserves_real_document_and_expense_references():
     expense = SimpleNamespace(informe_documento=SimpleNamespace(referencia_operaciones="041"), solicitud_documento=SimpleNamespace(referencia_operaciones="042"))
     assert _serialize_expense(expense)["referencia_operaciones"] == "041"
     expense.informe_documento = None
+    expense.documento = SimpleNamespace(referencia_operaciones="043")
+    assert _serialize_expense(expense)["referencia_operaciones"] == "043"
+    expense.documento = None
     assert _serialize_expense(expense)["referencia_operaciones"] == "042"
     expense.solicitud_documento = None
     assert _serialize_expense(expense)["referencia_operaciones"] is None
@@ -67,18 +70,23 @@ async def test_reference_lookup_is_batched_and_does_not_query_unlinked_expenses(
     session = SimpleNamespace(no_autoflush=nullcontext(), execute=AsyncMock())
     assert await _expense_operational_references(session, [SimpleNamespace()]) == {}
     session.execute.assert_not_called()
-    session.execute.return_value = SimpleNamespace(all=lambda: [("informe", "041"), ("solicitud", "042")])
-    expense = SimpleNamespace(informe_documento_id="informe", solicitud_documento_id="solicitud")
+    session.execute.return_value = SimpleNamespace(all=lambda: [("informe", "041"), ("solicitud", "042"), ("legacy", "043")])
+    expense = SimpleNamespace(informe_documento_id="informe", documento_id="legacy", solicitud_documento_id="solicitud")
     references = await _expense_operational_references(session, [expense, expense])
     session.execute.assert_awaited_once()
     statement = session.execute.call_args.args[0]
-    assert set(statement.compile().params["id_1"]) == {"informe", "solicitud"}
+    assert set(statement.compile().params["id_1"]) == {"informe", "solicitud", "legacy"}
     assert _expense_operational_reference(expense, references) == "041"
+    expense.informe_documento_id = None
+    assert _expense_operational_reference(expense, references) == "043"
+    expense.documento_id = None
+    assert _expense_operational_reference(expense, references) == "042"
     assert _expense_operational_reference(SimpleNamespace(), references) == "—"
 
 
 @pytest.mark.asyncio
-async def test_expense_board_and_client_csv_include_actual_reference(monkeypatch):
+@pytest.mark.parametrize("link_field", ["informe_documento_id", "documento_id"])
+async def test_expense_board_and_client_csv_include_actual_reference(monkeypatch, link_field):
     from contextlib import nullcontext
     from datetime import datetime
     import inspect
@@ -91,7 +99,7 @@ async def test_expense_board_and_client_csv_include_actual_reference(monkeypatch
 
     informe_id = uuid4()
     expense = ExpenseReport(
-        id=uuid4(), informe_documento_id=informe_id,
+        id=uuid4(), **{link_field: informe_id},
         numero_referencia="G-TEST", gasto_cantidad=100,
         created_at=datetime(2026, 10, 9), updated_at=datetime(2026, 10, 9),
     )

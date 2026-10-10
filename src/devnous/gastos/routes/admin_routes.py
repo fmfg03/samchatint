@@ -4335,6 +4335,7 @@ async def _expense_operational_references(
         for expense in expenses
         for document_id in (
             getattr(expense, "informe_documento_id", None),
+            getattr(expense, "documento_id", None),
             getattr(expense, "solicitud_documento_id", None),
         )
         if document_id
@@ -4353,9 +4354,10 @@ async def _expense_operational_references(
 def _expense_operational_reference(
     expense: ExpenseReport, references: dict[Any, str | None]
 ) -> str:
-    """Prefer the informe's real reference, then the linked solicitud's."""
+    """Prefer the informe, including its legacy link, then the solicitud."""
     return str(
         references.get(getattr(expense, "informe_documento_id", None))
+        or references.get(getattr(expense, "documento_id", None))
         or references.get(getattr(expense, "solicitud_documento_id", None))
         or "—"
     )

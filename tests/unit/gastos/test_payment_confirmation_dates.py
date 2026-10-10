@@ -42,7 +42,7 @@ def _session(cutoff):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("override", [None, "2026-10-07"])
+@pytest.mark.parametrize("override", [None, "2026-10-08", "2026-10-07"])
 async def test_accounting_confirmation_uses_cutoff_or_override_with_audit(monkeypatch, override):
     cutoff = {"closure_id": uuid4(), "run_date": date(2026, 10, 8)}
     session = _session(cutoff)
@@ -55,7 +55,7 @@ async def test_accounting_confirmation_uses_cutoff_or_override_with_audit(monkey
         session, documento=document, actor=actor, fecha_pago_efectiva=override,
     )
 
-    assert selected == date(2026, 10, 7 if override else 8)
+    assert selected == date(2026, 10, 7 if override == "2026-10-07" else 8)
     assert document.fecha_pago_efectiva == selected
     assert document.fecha_pago == date(2026, 10, 1)
     assert document.estado == "en_proceso_pago"
@@ -63,7 +63,9 @@ async def test_accounting_confirmation_uses_cutoff_or_override_with_audit(monkey
     metadata = audit.await_args.kwargs["metadata"]
     assert metadata["before_fecha_pago_efectiva"] is None
     assert metadata["after_fecha_pago_efectiva"] == selected.isoformat()
-    assert metadata["date_source"] == ("accounting" if override else "cutoff")
+    assert metadata["date_source"] == (
+        "accounting" if override == "2026-10-07" else "cutoff"
+    )
     assert audit.await_args.kwargs["actor_empleado_id"] == actor.id
     assert audit.await_args.kwargs["strict"] is True
     session.commit.assert_not_awaited()
