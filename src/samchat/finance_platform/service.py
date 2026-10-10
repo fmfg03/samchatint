@@ -151,6 +151,8 @@ async def build_finance_source_snapshot(
         select(ExpenseReport)
         .options(
             selectinload(ExpenseReport.empleado),
+            selectinload(ExpenseReport.documento),
+            selectinload(ExpenseReport.solicitud_documento),
             selectinload(ExpenseReport.informe_documento).selectinload(
                 Documento.budget_concept
             ),
@@ -298,6 +300,7 @@ def _serialize_document(document: Any) -> dict[str, Any]:
         "id": str(getattr(document, "id", "")),
         "tipo": getattr(document, "tipo", None),
         "numero_referencia": getattr(document, "numero_referencia", None),
+        "referencia_operaciones": getattr(document, "referencia_operaciones", None),
         "estado": getattr(document, "estado", None),
         "monto_total": _optional_float(getattr(document, "monto_total", None)),
         "monto_solicitado": _optional_float(
@@ -330,6 +333,13 @@ def _serialize_expense(expense: Any) -> dict[str, Any]:
         "entity_type": "expense",
         "id": str(getattr(expense, "id", "")),
         "numero_referencia": getattr(expense, "numero_referencia", None),
+        "referencia_operaciones": (
+            getattr(informe, "referencia_operaciones", None)
+            or getattr(
+                getattr(expense, "documento", None), "referencia_operaciones", None
+            )
+            or getattr(getattr(expense, "solicitud_documento", None), "referencia_operaciones", None)
+        ),
         "concepto": getattr(expense, "concepto", None),
         "proyecto": getattr(expense, "proyecto", None),
         "estado_reembolso": getattr(expense, "estado_reembolso", None),

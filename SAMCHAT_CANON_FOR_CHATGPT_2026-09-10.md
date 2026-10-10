@@ -198,6 +198,29 @@ that groups XLSX, CSV, ZIP, document, and batch exports by `INFORME` and adds
 focused regression coverage. Merge, deployment, authenticated Finance UAT, and
 business acceptance remain separate evidence.
 
+### 9.2 Monthly DIOT by effective payment date
+
+Amendment date: 2026-10-09. This canon diff received explicit human approval.
+The monthly DIOT period is determined by `Documento.fecha_pago_efectiva`, never
+by the expense capture date or an invented fallback. A direct paid-document
+relationship has priority. A single paid date on the same `CuentaDeGastos` may
+resolve the period; missing or multiple possible dates remain visible outside
+the monthly result until their linkage is corrected.
+
+The accounting UI provides a period preview, an audit workbook, and the SAT TXT.
+The TXT fails closed when a paid movement in the selected period lacks required
+fiscal evidence or has an unconfirmed shared CFDI. Cancelled expenses and items
+marked for COI reversal are excluded. Confirmed shared CFDIs are allocated in
+proportion to the evidenced amount applied to each expense. IVA withholding is
+read only from CFDI XML tax detail; it is never inferred from supplier type,
+association status, expense totals, or accounting labels. The existing
+per-report DIOT downloads remain available.
+
+Evidence: isolated worktree based on `7d857ad326a`, focused unit and route
+tests, and a production-data classification executed inside an explicit
+read-only transaction. This is not a SAT submission, data correction, merge,
+deployment, authenticated Finance UAT, or business acceptance.
+
 ## 10. Current closure gates
 
 A finance capability is not “done” until it passes a real UAT path showing:

@@ -72,6 +72,7 @@ from ..services.diot_exporter import (
     create_diot_excel,
     generate_diot_txt,
 )
+from ..services.monthly_diot_service import build_monthly_diot_scope
 from ..services.cfdi_expense_link_service import (
     ExpenseCFDIDuplicateError,
     is_cfdi_uuid_prefix_candidate,
@@ -2268,6 +2269,7 @@ def _contabilidad_subnav(active: str) -> str:
         ("/admin/contabilidad/estado", "Estado mes", "estado"),
         ("/admin/contabilidad/historica", "Histórica", "historica"),
         ("/admin/contabilidad/coi", "COI", "coi"),
+        ("/admin/contabilidad/diot", "DIOT", "diot"),
         ("/admin/contabilidad/ingresos", "Ingresos", "ingresos"),
         ("/admin/contabilidad/cuentas-por-cobrar", "CxC", "cxc"),
         ("/admin/contabilidad/cuentas-por-pagar", "CxP", "cxp"),
@@ -15482,6 +15484,7 @@ async def panel_operaciones_console(
         f"""
         <tr>
             <td><a href="/panel/operaciones-console?tournament_id={quote(str(selected_tournament['id']))}&drill_document={quote(str(item.get('documento_id') or ''))}" style="color:#0f172a;text-decoration:none;font-weight:700;">{escape(str(item.get("numero_referencia") or "-"))}</a></td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td><span class="ops-pill">{escape(str(item.get("estado") or "-"))}</span></td>
             <td>{escape(str(item.get("proveedor_nombre") or "-"))}</td>
             <td>{escape(str(item.get("concepto_pago") or "-"))}</td>
@@ -16034,6 +16037,7 @@ async def panel_operaciones_console(
                             <thead>
                                 <tr>
                                     <th>Documento</th>
+                                    <th>Referencia Operaciones</th>
                                     <th>Estado</th>
                                     <th>Proveedor</th>
                                     <th>Concepto</th>
@@ -16043,7 +16047,7 @@ async def panel_operaciones_console(
                                 </tr>
                             </thead>
                             <tbody>
-                                {commitment_rows or '<tr><td colspan="7">Sin compromisos visibles para el torneo seleccionado.</td></tr>'}
+                                {commitment_rows or '<tr><td colspan="8">Sin compromisos visibles para el torneo seleccionado.</td></tr>'}
                             </tbody>
                         </table>
                     </div>
@@ -20200,6 +20204,7 @@ async def crear_gasto(
                     informe_doc = informe_res.scalar_one_or_none()
                     if informe_doc:
                         expense.informe_documento_id = informe_doc.id
+                        await apply_budget_concept_cuenta_mapping(session, expense)
             except (ValueError, TypeError):
                 pass  # ignore invalid UUID; expense remains unassigned
 
@@ -23423,6 +23428,7 @@ async def contabilidad_cash_flow_view(
         )
         return (
             f"<tr><td>{escape(document.numero_referencia or '—')}</td>"
+            f"<td>{escape(str(document.referencia_operaciones or '—'))}</td>"
             f"<td>{escape(document.estado or '—')}</td>"
             f"<td>{payment_date}</td>"
             f"<td>{escape(_doc_party(document))}</td>"
@@ -23603,7 +23609,7 @@ async def contabilidad_cash_flow_view(
         </div>
         <div class="card">
             <h2 id="compromisos" style="margin:0 0 12px 0;">Compromisos próximos</h2>
-            <table><thead><tr><th>Documento</th><th>Estado</th><th>Fecha pago</th><th>Beneficiario</th><th>Monto</th><th>Proyecto</th></tr></thead><tbody>{upcoming_rows or '<tr><td colspan="6" class="muted">Sin solicitudes enviadas/aprobadas en horizonte de 30 días.</td></tr>'}</tbody></table>
+            <table><thead><tr><th>Documento</th><th>Referencia Operaciones</th><th>Estado</th><th>Fecha pago</th><th>Beneficiario</th><th>Monto</th><th>Proyecto</th></tr></thead><tbody>{upcoming_rows or '<tr><td colspan="7" class="muted">Sin solicitudes enviadas/aprobadas en horizonte de 30 días.</td></tr>'}</tbody></table>
         </div>
         <div class="card">
             <h2 style="margin:0 0 12px 0;">Cobros esperados / CxC</h2>
@@ -32815,6 +32821,7 @@ async def documentos_todos(
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
+            <td data-sort-value="{escape(referencia_operaciones_sort)}">{escape(row_values["referencia_operaciones"])}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{escape(row_values["tipo_documento"])}</td>
             <td>{escape(row_values["tipo_solicitud"])}</td>
@@ -32826,7 +32833,6 @@ async def documentos_todos(
             <td>{escape(row_values["aprobador"])}</td>
             <td>{escape(row_values["concepto"])}</td>
             <td>{escape(row_values["referencia_pago"])}</td>
-            <td data-sort-value="{escape(referencia_operaciones_sort)}">{escape(row_values["referencia_operaciones"])}</td>
             <td data-sort-value="{escape(monto_solicitado_sort)}">{row_values["monto_solicitado"]}</td>
             <td data-sort-value="{escape(monto_total_sort)}">{row_values["monto_total"]}</td>
             <td data-sort-value="{escape(monto_presupuestal_sort)}">{row_values["monto_presupuestal"]}<br><small>{escape(row_values["asignacion_presupuestal"])}</small></td>
@@ -33008,10 +33014,11 @@ async def documentos_todos(
                     </div>
             {f'''
             <div class="table-shell">
-                <table data-sortable-table data-default-sort-index="10" data-default-sort-dir="desc">
+                <table data-sortable-table data-default-sort-index="11" data-default-sort-dir="desc">
                     <thead>
                         <tr>
                             <th data-sort-key="numero_referencia" data-sort-type="text">Número de Referencia</th>
+                            <th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia operaciones</th>
                             <th data-sort-key="id_interno" data-sort-type="text">ID Interno</th>
                             <th data-sort-key="tipo" data-sort-type="text">Tipo</th>
                             <th data-sort-key="tipo_solicitud" data-sort-type="text">Tipo solicitud</th>
@@ -33023,7 +33030,6 @@ async def documentos_todos(
                             <th data-sort-key="aprobador" data-sort-type="text">Aprobador</th>
                             <th data-sort-key="concepto" data-sort-type="text">Concepto</th>
                             <th data-sort-key="referencia_pago" data-sort-type="text">Referencia pago</th>
-                            <th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia operaciones</th>
                             <th data-sort-key="monto_solicitado" data-sort-type="money">Monto solicitado</th>
                             <th data-sort-key="monto_total" data-sort-type="money">Monto total</th>
                             <th data-sort-key="monto_presupuestal" data-sort-type="money">Monto que afecta presupuesto</th>
@@ -35338,6 +35344,222 @@ async def preview_coi_poliza_cuenta(
     )
 
 
+@router.get("/admin/contabilidad/diot", response_class=HTMLResponse)
+async def contabilidad_diot_mensual_view(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+) -> str:
+    now = datetime.utcnow()
+    selected_year = year or now.year
+    selected_month = month or now.month
+    error_msg = request.query_params.get("error_msg", "")
+    try:
+        scope = await build_monthly_diot_scope(
+            session, year=selected_year, month=selected_month
+        )
+    except ValueError as exc:
+        scope = await build_monthly_diot_scope(
+            session, year=now.year, month=now.month
+        )
+        selected_year = now.year
+        selected_month = now.month
+        error_msg = str(exc)
+
+    export = build_diot_export(
+        scope.eligible_expenses,
+        effective_payment_dates=scope.effective_payment_dates,
+        shared_cfdi_confirmations=scope.shared_cfdi_confirmations,
+    )
+    base_16 = sum(
+        (row.amounts.get("base_16", Decimal("0")) for row in export.summary_rows),
+        Decimal("0"),
+    )
+    iva = sum(
+        (row.amounts.get("iva_acreditable_16", Decimal("0")) for row in export.summary_rows),
+        Decimal("0"),
+    )
+    iva_retenido = sum(
+        (row.amounts.get("iva_retenido", Decimal("0")) for row in export.summary_rows),
+        Decimal("0"),
+    )
+    eligible_rows = "".join(
+        f"""
+        <tr>
+            <td>{scope.effective_payment_dates[str(expense.id)].isoformat()}</td>
+            <td>{escape(expense.numero_referencia or str(expense.id))}</td>
+            <td>{escape(getattr(expense.cfdi_report, 'cfdi_uuid', '') or '-')}</td>
+            <td>{escape(getattr(expense.cfdi_report, 'emisor_rfc', '') or '-')}</td>
+            <td>{format_currency(expense.gasto_cantidad, currency_for(expense))}</td>
+            <td>{escape(scope.payment_date_sources.get(str(expense.id), '-'))}</td>
+        </tr>
+        """
+        for expense in scope.eligible_expenses[:500]
+    )
+    blocker_rows = "".join(
+        f"""
+        <tr><td>{issue.effective_payment_date.isoformat() if issue.effective_payment_date else '-'}</td>
+        <td>{escape(issue.reference)}</td><td>{escape(issue.code)}</td>
+        <td>{escape(issue.message)}</td><td>{escape(issue.cfdi_uuid or '-')}</td></tr>
+        """
+        for issue in scope.blockers[:500]
+    )
+    undated_rows = "".join(
+        f"""
+        <tr><td>{escape(issue.reference)}</td><td>{escape(issue.code)}</td>
+        <td>{escape(issue.message)}</td><td>{escape(issue.cfdi_uuid or '-')}</td></tr>
+        """
+        for issue in scope.undated[:500]
+    )
+    query = urlencode({"year": selected_year, "month": selected_month})
+    txt_button = (
+        f'<a class="button" href="/admin/contabilidad/diot/export.txt?{query}">Descargar DIOT SAT (.txt)</a>'
+        if scope.can_export_txt
+        else '<button class="button" disabled>TXT bloqueado</button>'
+    )
+    return f"""
+    <!DOCTYPE html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>DIOT mensual</title>
+    <style>
+    body {{ font-family:Arial,sans-serif;background:#f6f8fb;margin:0;padding:20px;color:#111827; }}
+    .container {{ max-width:1540px;margin:0 auto; }}
+    .card {{ background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin-bottom:16px; }}
+    .grid {{ display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px; }}
+    .metric {{ padding:14px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb; }}
+    .metric strong {{ display:block;font-size:24px;margin-top:6px; }}
+    .toolbar {{ display:flex;gap:10px;flex-wrap:wrap;align-items:end; }}
+    input {{ width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;box-sizing:border-box; }}
+    table {{ width:100%;border-collapse:collapse; }}
+    th,td {{ padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:13px;vertical-align:top; }}
+    th {{ background:#f3f4f6; }}
+    .button {{ display:inline-block;padding:10px 14px;border-radius:8px;text-decoration:none;background:#111827;color:#fff;border:none;cursor:pointer; }}
+    .button.secondary {{ background:#e5e7eb;color:#111827; }}
+    .button:disabled {{ background:#9ca3af;cursor:not-allowed; }}
+    .muted {{ color:#6b7280;font-size:13px; }}
+    .error {{ background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:10px;padding:12px 14px; }}
+    .warning {{ background:#fffbeb;color:#92400e;border:1px solid #fde68a;border-radius:10px;padding:12px 14px; }}
+    </style></head>
+    <body><div class="container">{render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("diot")}
+        <div class="card">
+            <h1 style="margin:0 0 8px 0;">DIOT mensual</h1>
+            <p class="muted">Consolidado por fecha efectiva de pago. El sistema no asigna fechas faltantes ni inventa retenciones.</p>
+            {f'<div class="error"><strong>Error:</strong> {escape(error_msg)}</div>' if error_msg else ''}
+            <form method="GET" action="/admin/contabilidad/diot" class="toolbar" style="margin-top:14px;">
+                <div><label>Año</label><input type="number" name="year" min="2000" max="2100" value="{selected_year}" required></div>
+                <div><label>Mes</label><input type="number" name="month" min="1" max="12" value="{selected_month}" required></div>
+                <div><button class="button secondary" type="submit">Generar vista previa</button></div>
+                <div><a class="button secondary" href="/admin/contabilidad/diot/export.xlsx?{query}">Descargar auditoría Excel</a></div>
+                <div>{txt_button}</div>
+            </form>
+        </div>
+        <div class="card"><div class="grid">
+            <div class="metric">Movimientos elegibles<strong>{len(scope.eligible_expenses)}</strong></div>
+            <div class="metric">Bloqueos del periodo<strong>{len(scope.blockers)}</strong></div>
+            <div class="metric">Sin fecha efectiva<strong>{len(scope.undated)}</strong></div>
+            <div class="metric">Base 16%<strong>{format_currency(base_16)}</strong></div>
+            <div class="metric">IVA acreditable<strong>{format_currency(iva)}</strong></div>
+            <div class="metric">IVA retenido<strong>{format_currency(iva_retenido)}</strong></div>
+        </div></div>
+        {f'<div class="warning"><strong>TXT bloqueado:</strong> corrige los {len(scope.blockers)} movimiento(s) del periodo antes de generar el archivo SAT.</div>' if scope.blockers else ''}
+        <div class="card"><h2>Movimientos elegibles</h2><table>
+            <thead><tr><th>Pago efectivo</th><th>Referencia</th><th>UUID</th><th>RFC</th><th>Importe</th><th>Fuente fecha</th></tr></thead>
+            <tbody>{eligible_rows or '<tr><td colspan="6" class="muted">No hay movimientos elegibles para el periodo.</td></tr>'}</tbody>
+        </table></div>
+        <div class="card"><h2>Bloqueos del periodo</h2><table>
+            <thead><tr><th>Pago efectivo</th><th>Referencia</th><th>Código</th><th>Detalle</th><th>UUID</th></tr></thead>
+            <tbody>{blocker_rows or '<tr><td colspan="5" class="muted">Sin bloqueos del periodo.</td></tr>'}</tbody>
+        </table></div>
+        <div class="card"><h2>Movimientos sin fecha efectiva</h2><p class="muted">No se asignan a ningún mes hasta corregir su vínculo de pago.</p><table>
+            <thead><tr><th>Referencia</th><th>Código</th><th>Detalle</th><th>UUID</th></tr></thead>
+            <tbody>{undated_rows or '<tr><td colspan="4" class="muted">Sin movimientos pendientes de fecha.</td></tr>'}</tbody>
+        </table></div>
+    </div></body></html>
+    """
+
+
+@router.get("/admin/contabilidad/diot/export.txt", response_model=None)
+async def exportar_diot_mensual_txt(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: int = Query(...),
+    month: int = Query(...),
+) -> Union[Response, RedirectResponse]:
+    redirect = f"/admin/contabilidad/diot?{urlencode({'year': year, 'month': month})}"
+    try:
+        scope = await build_monthly_diot_scope(session, year=year, month=month)
+    except ValueError as exc:
+        return RedirectResponse(
+            url=redirect + "&error_msg=" + quote(str(exc)), status_code=303
+        )
+    if scope.blockers:
+        return RedirectResponse(
+            url=redirect
+            + "&error_msg="
+            + quote("El TXT está bloqueado por movimientos fiscales pendientes."),
+            status_code=303,
+        )
+    if not scope.eligible_expenses:
+        return RedirectResponse(
+            url=redirect + "&error_msg=" + quote("No hay movimientos elegibles."),
+            status_code=303,
+        )
+    export = build_diot_export(
+        scope.eligible_expenses,
+        effective_payment_dates=scope.effective_payment_dates,
+        shared_cfdi_confirmations=scope.shared_cfdi_confirmations,
+    )
+    return Response(
+        content=generate_diot_txt(export),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="DIOT_{year}_{month:02d}.txt"'
+            )
+        },
+    )
+
+
+@router.get("/admin/contabilidad/diot/export.xlsx", response_model=None)
+async def exportar_diot_mensual_excel(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: int = Query(...),
+    month: int = Query(...),
+) -> Union[Response, RedirectResponse]:
+    redirect = f"/admin/contabilidad/diot?{urlencode({'year': year, 'month': month})}"
+    try:
+        scope = await build_monthly_diot_scope(session, year=year, month=month)
+    except ValueError as exc:
+        return RedirectResponse(
+            url=redirect + "&error_msg=" + quote(str(exc)), status_code=303
+        )
+    export = build_diot_export(
+        scope.eligible_expenses,
+        effective_payment_dates=scope.effective_payment_dates,
+        shared_cfdi_confirmations=scope.shared_cfdi_confirmations,
+    )
+    content = create_diot_excel(
+        export,
+        audit_issues={
+            "Bloqueos": [issue.as_row() for issue in scope.blockers],
+            "Sin fecha efectiva": [issue.as_row() for issue in scope.undated],
+        },
+    )
+    return Response(
+        content=content,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="DIOT_{year}_{month:02d}.xlsx"'
+            )
+        },
+    )
+
+
 @router.get("/informes-de-gastos/{cuenta_id}/exportar-diot.xlsx", response_model=None)
 async def exportar_diot_excel_cuenta(
     cuenta_id: UUIDType,
@@ -36638,6 +36860,7 @@ async def documentos_pendientes_pago(
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
+            <td>{escape(str(documento.referencia_operaciones or "—"))}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{empleado_nombre}</td>
             <td>{documento.tipo}</td>
@@ -36679,6 +36902,7 @@ async def documentos_pendientes_pago(
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
+            <td>{escape(str(documento.referencia_operaciones or "—"))}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{empleado_nombre}</td>
             <td>{documento.tipo}</td>
@@ -36782,6 +37006,7 @@ async def documentos_pendientes_pago(
                             <thead>
                                 <tr>
                                     <th>Número de referencia</th>
+                                    <th>Referencia Operaciones</th>
                                     <th>ID interno</th>
                                     <th>Empleado</th>
                                     <th>Tipo</th>
@@ -43536,7 +43761,8 @@ def _quick_expense_values(
             descuento_amount,
             impuestos_net,
         ) + propina_amount
-        iva_amount = max(impuestos_net, Decimal("0"))
+        # A net fiscal amount does not identify IVA without a tax breakdown.
+        iva_amount = None
 
     if not concepto_final:
         raise ValueError("Descripción del gasto es requerida")
@@ -43793,7 +44019,7 @@ async def crear_gasto_rapido_en_informe(
             tipo_gasto="manual",
             departamento=(owner.departamento if owner else None) or "Operaciones",
             fase_torneo=(cuenta.fase or "").strip() or "No Aplica",
-            iva=float(values["iva"]),
+            iva=float(values["iva"]) if values["iva"] is not None else None,
             origen="informe_quick_entry",
             skip_initial_tocino=True,
             categorias=list(getattr(cuenta, "categorias", None) or []),
@@ -43813,6 +44039,7 @@ async def crear_gasto_rapido_en_informe(
         expense.cuenta_gastos_id = cuenta.id
         expense.referencia_base = cuenta.referencia_base
         expense.informe_documento_id = informe_doc.id
+        await apply_budget_concept_cuenta_mapping(session, expense)
 
         if resolved_cfdi is not None:
             ingestion = await ingest_cfdi_from_upload(
@@ -43957,7 +44184,11 @@ async def crear_gasto_rapido_en_informe(
                 tipo_gasto="manual",
                 departamento=(owner.departamento if owner else None) or "Operaciones",
                 fase_torneo=(cuenta.fase or "").strip() or "No Aplica",
-                iva=float(supplement_values["iva"]),
+                iva=(
+                    float(supplement_values["iva"])
+                    if supplement_values["iva"] is not None
+                    else None
+                ),
                 origen="informe_quick_entry",
                 skip_initial_tocino=True,
                 categorias=list(getattr(cuenta, "categorias", None) or []),
@@ -43973,6 +44204,7 @@ async def crear_gasto_rapido_en_informe(
             supplement_expense.cuenta_gastos_id = cuenta.id
             supplement_expense.referencia_base = cuenta.referencia_base
             supplement_expense.informe_documento_id = informe_doc.id
+            await apply_budget_concept_cuenta_mapping(session, supplement_expense)
 
             if supplement_cfdi is not None:
                 ingestion = await ingest_cfdi_from_upload(
@@ -44733,6 +44965,7 @@ async def cuenta_de_gastos_detail(
         solicitudes_section_rows += (
             f"<tr><td><a href=\"/documentos/{d.id}\" style=\"color: #4CAF50;\">"
             f"{escape(d.numero_referencia)}</a></td>"
+            f"<td>{escape(str(d.referencia_operaciones or '—'))}</td>"
             f"<td>{_documento_human_status_badge(d.estado)}</td>"
             f"<td>{format_currency(d.monto_solicitado, currency_for(d))}</td>"
             f"<td>{escape(currency_for(d))}</td>"
@@ -44756,8 +44989,8 @@ async def cuenta_de_gastos_detail(
                 {nueva_solicitud_btn_html}
                 <div class="table-shell">
                 <table>
-                    <thead><tr><th>Referencia</th><th>Estado</th><th>Monto</th><th>Moneda</th><th>Fecha</th><th>Archivos</th><th>Acción</th></tr></thead>
-                    <tbody>{solicitudes_section_rows if solicitudes_section_rows else '<tr><td colspan="7" style="text-align: center; color: #666;">No hay solicitudes de transferencia vinculadas a este informe.</td></tr>'}</tbody>
+                    <thead><tr><th>Referencia</th><th>Referencia Operaciones</th><th>Estado</th><th>Monto</th><th>Moneda</th><th>Fecha</th><th>Archivos</th><th>Acción</th></tr></thead>
+                    <tbody>{solicitudes_section_rows if solicitudes_section_rows else '<tr><td colspan="8" style="text-align: center; color: #666;">No hay solicitudes de transferencia vinculadas a este informe.</td></tr>'}</tbody>
                 </table>
                 </div>
             </div>'''
@@ -45022,7 +45255,7 @@ async def cuenta_de_gastos_detail(
                                         </td>
                                         <td><input type="number" min="0" step="0.01" name="subtotal" id="quick-subtotal" required></td>
                                         <td><input type="number" min="0" step="0.01" name="descuento" id="quick-descuento" value="0" aria-label="Descuento aplicado"></td>
-                                        <td><input type="number" step="0.01" name="impuestos_y_retenciones" id="quick-impuestos-y-retenciones" value="0" required></td>
+                                        <td><input type="number" step="0.01" name="impuestos_y_retenciones" id="quick-impuestos-y-retenciones" value="0" required><small>Sin XML, este neto no identifica IVA ni retenciones; Contabilidad debe revisar el desglose.</small></td>
                                         <td class="quick-tip-col" hidden><input type="number" min="0" step="0.01" name="propina_no_deducible" id="quick-propina" value="0" aria-label="Propina no deducible"></td>
                                         <td><input type="text" id="quick-total" value="0.00" readonly></td>
                                         <td><input type="text" value="{escape(currency_for(cuenta))}" readonly></td>
