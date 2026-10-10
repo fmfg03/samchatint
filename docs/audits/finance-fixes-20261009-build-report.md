@@ -227,3 +227,15 @@ while preserving duplicate rejection/rollback assertions; dedicated catalog
 mapping tests remain real. The table assertion verifies Operations and eight
 columns. Both affected modules passed locally: **157 passed**. Application
 sources, guards, failure baselines and inventory are unchanged by this follow-up.
+
+Concurrent main advanced to `514b6542e90c1eaae5c26351bc9ee18e9d0f86e8`
+through the other assistant's DIOT PR #473. This prevented new PR CI because the
+generated inventories conflicted. Integration preserves those reviewed canon
+amendments and DIOT source unchanged; user routes merge without source conflicts.
+Only generated inventory conflicts are regenerated (579 routes, 44 actions,
+no parse gaps). All three current canon hashes match the upstream register.
+DIOT compatibility plus the two corrected fixture modules: **184 passed**.
+This is compatibility verification, not DIOT implementation or acceptance by us.
+After this integration, the 29-file finance suite again passed **422 tests**,
+and all nine regenerated-inventory tests passed. Independent read-only review
+confirms DIOT services, tests, canon and register exactly match current main.
