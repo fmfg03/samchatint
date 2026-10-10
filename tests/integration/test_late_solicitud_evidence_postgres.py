@@ -9,9 +9,11 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import ForeignKeyConstraint, MetaData, func, select, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from devnous.gastos import models
+from devnous.gastos.schema_guard import SCHEMA_PATCHES
 from devnous.gastos.services.cfdi_ingestion_service import (
     CFDIDuplicateLinkError,
     ingest_cfdi_from_upload,
@@ -74,6 +76,19 @@ async def pg():
                         element.parent.foreign_keys.discard(element)
         async with engine.begin() as connection:
             await connection.run_sync(copied.create_all)
+            # Reproduce the deployed legacy CHECK, rather than relying only on
+            # ORM metadata (which does not contain this owner-managed constraint).
+            await connection.execute(
+                text(
+                    "ALTER TABLE aprobaciones ADD CONSTRAINT aprobaciones_accion_check "
+                    "CHECK (accion IN ('enviar', 'aprobar', 'confirmar_cfdi_compartido'))"
+                )
+            )
+            audit_patch = dict(SCHEMA_PATCHES)[
+                "aprobaciones_accion_check_workflow_actions"
+            ]
+            await connection.execute(text(audit_patch))
+            await connection.execute(text(audit_patch))
         factory = async_sessionmaker(engine, expire_on_commit=False)
         actor, provider, first, second = [uuid4() for _ in range(4)]
         async with factory.begin() as session:
@@ -244,3 +259,33 @@ async def test_concurrent_invoice_is_idempotent_or_reserved(pg, mode):
         )
         for model in (models.CFDIReport, models.ExpenseReport, models.AccountingPoliza):
             assert await session.scalar(select(func.count()).select_from(model)) == 0
+
+
+async def test_owner_migration_matches_guard_and_rejects_unknown_actions(pg):
+    from pathlib import Path
+
+    patch = dict(SCHEMA_PATCHES)["aprobaciones_accion_check_workflow_actions"]
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "database/migrations/20261010_late_support_audit_actions.sql"
+    ).read_text(encoding="utf8")
+    assert patch.strip() in migration
+    async with pg.factory() as session:
+        definition = await session.scalar(
+            text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='aprobaciones'::regclass AND conname='aprobaciones_accion_check'"
+            )
+        )
+        assert "adjuntar_soporte" in definition and "adjuntar_factura" in definition
+        with pytest.raises(IntegrityError) as error:
+            async with session.begin_nested():
+                session.add(
+                    models.Aprobacion(
+                        tipo_entidad="documento",
+                        entidad_id=pg.first,
+                        aprobador_id=pg.actor,
+                        accion="unknown_action",
+                    )
+                )
+                await session.flush()
+        assert "aprobaciones_accion_check" in str(error.value)

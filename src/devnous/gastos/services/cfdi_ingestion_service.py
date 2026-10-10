@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
@@ -251,6 +252,8 @@ def validate_cfdi_material_identity(
         else {
             key: parsed.get(key)
             for key in ("subtotal", "total", "moneda", "emisor_rfc", "receptor_rfc")
+            if key in parsed.get("_pdf_explicit_fields", parsed)
+            and key in getattr(existing, "_pdf_explicit_fields", parsed)
         }
     )
     conflicts = _material_conflicts(existing, compared)
@@ -315,7 +318,6 @@ async def find_blocking_cfdi_evidence(
         Aprobacion.accion == "adjuntar_factura",
         Aprobacion.comentario == fiscal_uuid,
         Documento.estado.in_(_CFDI_RESERVING_DOCUMENT_STATES),
-        Documento.cfdi_compartido_confirmado.is_(False),
     ]
     if exclude_documento_id is not None:
         conditions.append(Documento.id != exclude_documento_id)
@@ -336,6 +338,123 @@ async def find_blocking_cfdi_evidence(
     )
     row = result.first()
     return CFDIUsageConflict(*row) if row is not None else None
+
+
+async def validate_cfdi_evidence_link(
+    session: AsyncSession,
+    fiscal_uuid: str,
+    entity: CFDIEntity,
+    *,
+    cfdi_report: Optional[CFDIReport] = None,
+    incoming_total: Any = None,
+) -> bool:
+    """Guard accounting links to a UUID reserved only as late evidence.
+
+    Returns whether an active evidence reservation required shared allocation.
+    Caller flags cannot substitute for a confirmation already stored in the DB.
+    """
+    from .documento_service import validate_shared_cfdi_payment_amount
+
+    fiscal_uuid = normalize_cfdi_uuid_to_canonical(fiscal_uuid)
+    is_document = isinstance(entity, Documento)
+    model = Documento if is_document else ExpenseReport
+    related_ids = (
+        [entity.id]
+        if is_document
+        else [
+            value
+            for value in (
+                getattr(entity, "documento_id", None),
+                getattr(entity, "solicitud_documento_id", None),
+                getattr(entity, "informe_documento_id", None),
+            )
+            if value is not None
+        ]
+    )
+    with session.no_autoflush:
+        stored_columns = [model.cfdi_report_id, model.cfdi_compartido_confirmado]
+        if not is_document:
+            stored_columns.extend(
+                [
+                    model.documento_id,
+                    model.solicitud_documento_id,
+                    model.informe_documento_id,
+                ]
+            )
+        stored = (
+            await session.execute(
+                select(*stored_columns).where(model.id == entity.id).with_for_update()
+            )
+        ).first()
+        if stored is not None and not is_document:
+            related_ids = list(
+                set(related_ids + [value for value in stored[2:] if value])
+            )
+        if related_ids:
+            await session.execute(
+                select(Documento.id)
+                .where(Documento.id.in_(related_ids))
+                .order_by(Documento.id)
+                .with_for_update()
+            )
+        await lock_cfdi_identity(session, fiscal_uuid)
+        owners = (
+            (
+                await session.execute(
+                    select(Aprobacion.entidad_id).where(
+                        Aprobacion.tipo_entidad == "documento",
+                        Aprobacion.accion == "adjuntar_factura",
+                        or_(
+                            Aprobacion.comentario == fiscal_uuid,
+                            Aprobacion.entidad_id.in_(related_ids),
+                        ),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        report = cfdi_report or await find_cfdi_report_by_fiscal_uuid(
+            session, fiscal_uuid
+        )
+        if (
+            stored is not None
+            and stored[0] is not None
+            and report is not None
+            and report.id is not None
+            and stored[0] == report.id
+        ):
+            # Enriching an already recognized link does not promote late
+            # evidence. Preserve that persisted link and its existing approval.
+            return bool(owners)
+        if set(related_ids).intersection(owners):
+            raise CFDIDuplicateLinkError(fiscal_uuid)
+        if not await find_blocking_cfdi_evidence(session, fiscal_uuid):
+            return False
+        if (
+            stored is None
+            or stored[1] is not True
+            or not getattr(entity, "cfdi_compartido_confirmado", False)
+        ):
+            raise CFDIDuplicateLinkError(fiscal_uuid)
+        if report is None:
+            # Validate before constructing/adding a new canonical report, so a
+            # caught rejection cannot leave a partial report for caller commit.
+            report = SimpleNamespace(
+                cfdi_uuid=fiscal_uuid, total=incoming_total, id=None
+            )
+        await validate_shared_cfdi_payment_amount(
+            session,
+            cfdi_report=report,
+            requested_amount=(
+                entity.monto_solicitado
+                if is_document
+                else entity.gasto_cantidad - (entity.propina_no_deducible or 0)
+            ),
+            exclude_documento_id=entity.id if is_document else None,
+            exclude_expense_id=entity.id if not is_document else None,
+        )
+        return True
 
 
 async def find_blocking_cfdi_usage(
@@ -418,19 +537,12 @@ async def _ingest_cfdi_parsed(
         raise CFDIIngestionError("El CFDI contiene un UUID inválido") from exc
     parsed["cfdi_uuid"] = canonical_uuid
 
-    await lock_cfdi_identity(session, canonical_uuid)
-    if entity is not None and not allow_shared:
-        exclude_ids = (
-            [entity.id] if isinstance(entity, Documento) else [
-                getattr(entity, key, None) for key in
-                ("documento_id", "solicitud_documento_id", "informe_documento_id")
-            ]
+    if entity is None:
+        await lock_cfdi_identity(session, canonical_uuid)
+    else:
+        await validate_cfdi_evidence_link(
+            session, canonical_uuid, entity, incoming_total=parsed.get("total")
         )
-        if await find_blocking_cfdi_evidence(
-            session, canonical_uuid,
-            exclude_documento_ids=[value for value in exclude_ids if value is not None],
-        ):
-            raise CFDIDuplicateLinkError(canonical_uuid)
 
     report = await find_cfdi_report_by_fiscal_uuid(session, canonical_uuid)
     warnings: List[str] = []

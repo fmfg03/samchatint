@@ -619,3 +619,140 @@ async def test_text_pdf_requires_xml_and_matches_receiver(case):
         )
         == 1
     )
+
+
+def text_invoice_pdf(fiscal_uuid, fields):
+    from reportlab.pdfgen.canvas import Canvas
+
+    stream = BytesIO()
+    canvas = Canvas(stream)
+    lines = [f"Folio fiscal: {fiscal_uuid}"] + [
+        f"{label}: {value}" for label, value in fields.items()
+    ]
+    for index, line in enumerate(lines):
+        canvas.drawString(72, 750 - index * 20, line)
+    canvas.save()
+    return service.SolicitudTercerosAttachment(
+        stream.getvalue(), "text.pdf", "application/pdf", "cfdi_pdf"
+    )
+
+
+@pytest.mark.parametrize(
+    "missing", ["RFC Emisor", "RFC Receptor", "Subtotal", "Total", "Moneda", "all"]
+)
+@pytest.mark.parametrize("same_batch", [False, True])
+async def test_text_pdf_missing_fields_use_authoritative_xml(case, missing, same_batch):
+    doc = await regular(case)
+    doc.currency = "USD"
+    await case.session.commit()
+    fiscal_uuid = str(uuid4()).upper()
+    xml = xml_attachment(uuid=fiscal_uuid, currency="USD")
+    fields = {
+        "RFC Emisor": "AAA010101AAA",
+        "RFC Receptor": "BBB010101BBB",
+        "Moneda": "USD",
+        "Subtotal": "1000.00",
+        "Total": "1000.00",
+    }
+    fields = (
+        {} if missing == "all" else {k: v for k, v in fields.items() if k != missing}
+    )
+    pdf = text_invoice_pdf(fiscal_uuid, fields)
+    if not same_batch:
+        await service.add_solicitud_documento_adjuntos(
+            case.session, documento=doc, attachments=[xml], actor_id=case.owner.id
+        )
+    assert await service.add_solicitud_documento_adjuntos(
+        case.session,
+        documento=doc,
+        attachments=[xml, pdf] if same_batch else [pdf],
+        actor_id=case.owner.id,
+    ) == (2 if same_batch else 1)
+    assert len(await rows(case, Adjunto)) == 2
+    assert not await rows(case, CFDIReport)
+    assert not await rows(case, AccountingPoliza)
+    assert not await rows(case, ExpenseReport)
+    assert (
+        await service.add_solicitud_documento_adjuntos(
+            case.session, documento=doc, attachments=[xml, pdf], actor_id=case.owner.id
+        )
+        == 0
+    )
+
+
+@pytest.mark.parametrize(
+    "label,value",
+    [
+        ("RFC Emisor", "CCC010101CCC"),
+        ("RFC Receptor", "CCC010101CCC"),
+        ("Moneda", "USD"),
+        ("Subtotal", "999.00"),
+        ("Total", "999.00"),
+    ],
+)
+async def test_text_pdf_explicit_contradictions_preserve_xml(case, label, value):
+    doc = await regular(case)
+    fiscal_uuid = str(uuid4()).upper()
+    await service.add_solicitud_documento_adjuntos(
+        case.session,
+        documento=doc,
+        attachments=[xml_attachment(uuid=fiscal_uuid)],
+        actor_id=case.owner.id,
+    )
+    with pytest.raises(service.SolicitudValidationError) as exc:
+        await service.add_solicitud_documento_adjuntos(
+            case.session,
+            documento=doc,
+            attachments=[text_invoice_pdf(fiscal_uuid, {label: value})],
+            actor_id=case.owner.id,
+        )
+    assert exc.value.code == "invoice_pair_mismatch"
+    assert len(await rows(case, Adjunto)) == 1
+    assert not await rows(case, CFDIReport)
+
+
+@pytest.mark.parametrize("mode", ["late", "canonical"])
+async def test_unconfirmed_caller_cannot_reuse_shared_late_reservation(case, mode):
+    doc = await regular(case)
+    doc.monto_solicitado = 400
+    doc.cfdi_compartido_confirmado = True
+    await case.session.commit()
+    xml = xml_attachment()
+    await service.add_solicitud_documento_adjuntos(
+        case.session, documento=doc, attachments=[xml], actor_id=case.owner.id
+    )
+    other = Documento(
+        id=uuid4(),
+        empleado_id=case.outsider.id,
+        tipo="SOLICITUD",
+        numero_referencia="S-NOT-CONFIRMED",
+        proveedor_cliente_id=case.provider.id,
+        estado="aprobado",
+        monto_solicitado=1000,
+        currency="MXN",
+        cfdi_compartido_confirmado=False,
+    )
+    case.session.add(other)
+    await case.session.commit()
+    if mode == "late":
+        with pytest.raises(service.SolicitudValidationError) as exc:
+            await service.add_solicitud_documento_adjuntos(
+                case.session,
+                documento=other,
+                attachments=[xml],
+                actor_id=case.outsider.id,
+            )
+        assert exc.value.code == "duplicate_cfdi"
+    else:
+        with pytest.raises(CFDIDuplicateLinkError):
+            await ingest_cfdi_from_upload(
+                case.session,
+                xml_bytes=xml.raw_bytes,
+                source="user_upload",
+                entity=other,
+                require_shared_confirmation=True,
+            )
+    assert len(await rows(case, Adjunto)) == 1
+    assert not await rows(case, CFDIReport)
+    assert not await rows(case, ExpenseReport)
+    assert not await rows(case, AccountingPoliza)

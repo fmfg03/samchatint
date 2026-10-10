@@ -583,9 +583,23 @@ def _parse_from_text(text: str) -> Dict[str, Any]:
             }
         )
 
+    issuer = _find_emisor_rfc(text)
+    receiver = _find_receptor_rfc(text)
+    explicit_fields = [
+        key
+        for key, present in (
+            ("emisor_rfc", bool(issuer)),
+            ("receptor_rfc", bool(receiver)),
+            ("moneda", moneda_match is not None),
+            ("subtotal", subtotal is not None),
+            ("total", total is not None),
+        )
+        if present
+    ]
     return {
-        "emisor_rfc": _find_emisor_rfc(text),
-        "receptor_rfc": _find_receptor_rfc(text),
+        "_pdf_explicit_fields": explicit_fields,
+        "emisor_rfc": issuer,
+        "receptor_rfc": receiver,
         "emisor_nombre": _find_emisor_nombre(text),
         "subtotal": amounts["subtotal"],
         "descuento": amounts["descuento"],

@@ -874,11 +874,16 @@ async def create_solicitud_terceros_document(
 
     cfdi_report_id = None
     if payload.cfdi_uuid_manual:
+        await lock_cfdi_identity(session, payload.cfdi_uuid_manual)
         matched = await find_cfdi_report_by_fiscal_uuid(
             session, payload.cfdi_uuid_manual
         )
         if matched is not None:
             conflict = await find_blocking_cfdi_usage(session, matched.id)
+            if conflict is None:
+                conflict = await find_blocking_cfdi_evidence(
+                    session, payload.cfdi_uuid_manual
+                )
             if conflict is not None:
                 if not payload.cfdi_compartido_confirmado:
                     message = (
@@ -1126,7 +1131,7 @@ async def _validate_late_invoice_evidence(
             ) from exc
         await lock_cfdi_identity(session, fiscal_uuid)
         invoice_kind = data.get("tipo_de_comprobante")
-        if category == "cfdi_pdf" and not invoice_kind:
+        if category == "cfdi_pdf" and not resolved.xml_text:
             # Text-only PDF extraction cannot establish invoice type. Its XML
             # counterpart must already exist, or be supplied in this batch.
             xml_candidates = [item[0] for item in fiscal if item[3] == "cfdi_xml"]
@@ -1153,7 +1158,21 @@ async def _validate_late_invoice_evidence(
                     )
                     == fiscal_uuid
                 ):
-                    invoice_kind = xml_resolved.parsed.get("tipo_de_comprobante")
+                    try:
+                        validate_cfdi_material_identity(
+                            SimpleNamespace(**xml_resolved.parsed),
+                            data,
+                            xml_evidence=False,
+                        )
+                    except CFDIConflictError as exc:
+                        raise SolicitudValidationError(
+                            "invoice_pair_mismatch",
+                            "El PDF contradice los datos fiscales de su XML.",
+                        ) from exc
+                    # Text PDF defaults/derived values are not fiscal evidence.
+                    # The matched XML supplies all mandatory missing fields.
+                    data = {**xml_resolved.parsed, "_xml_evidence": False}
+                    invoice_kind = data.get("tipo_de_comprobante")
                     break
             if not invoice_kind:
                 raise SolicitudValidationError(
@@ -1333,8 +1352,13 @@ async def _validate_late_invoice_evidence(
                 "invoice_immutable",
                 "La evidencia fiscal anterior contiene datos diferentes; requiere revisión contable.",
             ) from exc
+        previous_uuid = normalize_cfdi_uuid_to_canonical(data.get("cfdi_uuid"))
+        if not resolved.xml_text and previous_uuid == identities[0][0]:
+            # Explicit PDF fields were compared above; inferred parser defaults
+            # cannot establish a different fiscal identity on a later retry.
+            continue
         identity = (
-            normalize_cfdi_uuid_to_canonical(data.get("cfdi_uuid")),
+            previous_uuid,
             str(data.get("emisor_rfc") or "").strip().upper(),
             str(data.get("receptor_rfc") or "").strip().upper(),
             _cfdi_money(data.get("total"), field="total"),
@@ -1530,6 +1554,14 @@ async def update_solicitud_terceros_document(
 
     Rejected solicitudes return to borrador when saved so the owner can re-send.
     """
+    # Match support upload's document -> UUID order and validate current state
+    # while holding the document lock, before assigning any fiscal link.
+    locked_id = await session.scalar(
+        select(Documento.id).where(Documento.id == documento.id).with_for_update()
+    )
+    if locked_id is None:
+        raise SolicitudValidationError("invalid_documento", "Solicitud no encontrada.")
+    await session.refresh(documento, ["estado", "budget_concept_id", "cfdi_report_id"])
     if getattr(documento, "supplier_advance_id", None):
         raise SolicitudValidationError(
             "advance_invoice_immutable",
@@ -1664,10 +1696,43 @@ async def update_solicitud_terceros_document(
         )
 
     if payload.cfdi_uuid_manual:
+        await lock_cfdi_identity(session, payload.cfdi_uuid_manual)
         matched_cfdi = await find_cfdi_report_by_fiscal_uuid(
             session, payload.cfdi_uuid_manual
         )
         if matched_cfdi is not None:
+            if documento.cfdi_report_id != matched_cfdi.id:
+                owns_evidence = await session.scalar(
+                    select(Aprobacion.id)
+                    .where(
+                        Aprobacion.tipo_entidad == "documento",
+                        Aprobacion.entidad_id == documento.id,
+                        Aprobacion.accion == "adjuntar_factura",
+                    )
+                    .limit(1)
+                )
+                if owns_evidence:
+                    raise SolicitudValidationError(
+                        "duplicate_cfdi",
+                        "La evidencia posterior requiere revisión contable "
+                        "antes de vincularla.",
+                    )
+                reservation = await find_blocking_cfdi_evidence(
+                    session, payload.cfdi_uuid_manual
+                )
+                if reservation:
+                    if not payload.cfdi_compartido_confirmado:
+                        raise SolicitudValidationError(
+                            "duplicate_cfdi",
+                            "El UUID tiene evidencia reservada; "
+                            "confirme una factura compartida.",
+                        )
+                    await validate_shared_cfdi_payment_amount(
+                        session,
+                        cfdi_report=matched_cfdi,
+                        requested_amount=payload.monto_solicitado,
+                        exclude_documento_id=documento.id,
+                    )
             documento.cfdi_report_id = matched_cfdi.id
         documento.cfdi_uuid_manual = payload.cfdi_uuid_manual
 

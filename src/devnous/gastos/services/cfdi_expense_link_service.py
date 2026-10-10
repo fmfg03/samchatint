@@ -13,6 +13,7 @@ from uuid import UUID
 
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import lazyload
 
 from ..models import Aprobacion, CFDIReport, Documento, ExpenseReport
 
@@ -85,10 +86,17 @@ async def find_cfdi_report_by_fiscal_uuid(
 ) -> Optional[CFDIReport]:
     """Lookup CFDI by fiscal cfdi_uuid; case- and trim-insensitive."""
     canon = normalize_cfdi_uuid_to_canonical(fiscal_uuid)
+    # A fiscal-only ingestion may have added its report in this transaction.
+    # Evidence guards suppress autoflush so pending caller confirmation flags
+    # cannot become "persisted" merely through this lookup.
+    for pending in getattr(session, "new", ()):
+        if (
+            isinstance(pending, CFDIReport)
+            and str(pending.cfdi_uuid or "").strip().upper() == canon
+        ):
+            return pending
     result = await session.execute(
-        select(CFDIReport).where(
-            func.upper(func.trim(CFDIReport.cfdi_uuid)) == canon
-        )
+        select(CFDIReport).where(func.upper(func.trim(CFDIReport.cfdi_uuid)) == canon)
     )
     return result.scalar_one_or_none()
 
@@ -206,23 +214,37 @@ async def link_expense_to_cfdi_if_manual_uuid_set(
         if clear_report_if_no_match:
             expense.cfdi_report_id = None
         return False
+    canon = None
     try:
         canon = normalize_cfdi_uuid_to_canonical(str(raw))
     except ValueError:
         try:
-            report = await find_cfdi_report_by_fiscal_uuid_or_prefix(session, str(raw))
+            with session.no_autoflush:
+                report = await find_cfdi_report_by_fiscal_uuid_or_prefix(
+                    session, str(raw)
+                )
         except ValueError:
             logger.warning(
                 "Invalid cfdi_uuid_manual on expense %s; skipping link", expense.id
             )
             return False
     else:
-        expense.cfdi_uuid_manual = canon
-        report = await find_cfdi_report_by_fiscal_uuid(session, canon)
+        with session.no_autoflush:
+            report = await find_cfdi_report_by_fiscal_uuid(session, canon)
+    protected_evidence = False
     if report:
+        from .cfdi_ingestion_service import validate_cfdi_evidence_link
+
+        protected_evidence = await validate_cfdi_evidence_link(
+            session, report.cfdi_uuid, expense, cfdi_report=report
+        )
+        if report.id is None:
+            await session.flush([report])
         expense.cfdi_uuid_manual = normalize_cfdi_uuid_to_canonical(report.cfdi_uuid)
         expense.cfdi_report_id = report.id
-    if require_unique:
+    elif canon is not None:
+        expense.cfdi_uuid_manual = canon
+    if require_unique and not protected_evidence:
         await _enforce_expense_cfdi_uniqueness(
             session,
             expense=expense,
@@ -243,8 +265,7 @@ async def bulk_link_pending_expenses_to_cfdi_reports(session: AsyncSession) -> i
     Link all expenses that have manual fiscal UUID and no cfdi_report_id yet.
     Commit is the caller's responsibility.
     """
-    result = await session.execute(BULK_LINK_EXPENSES_TO_CFDI_REPORTS_SQL)
-    return int(result.rowcount or 0)
+    return await _bulk_link_pending_with_evidence_guard(session, ExpenseReport)
 
 
 async def bulk_link_pending_documentos_to_cfdi_reports(session: AsyncSession) -> int:
@@ -252,8 +273,128 @@ async def bulk_link_pending_documentos_to_cfdi_reports(session: AsyncSession) ->
     Link all documentos (typically SOLICITUD a terceros) that have a manual fiscal UUID
     and no cfdi_report_id yet. Commit is the caller's responsibility.
     """
-    result = await session.execute(BULK_LINK_DOCUMENTOS_TO_CFDI_REPORTS_SQL)
-    return int(result.rowcount or 0)
+    return await _bulk_link_pending_with_evidence_guard(session, Documento)
+
+
+async def _bulk_link_pending_with_evidence_guard(session: AsyncSession, model) -> int:
+    # Local imports preserve the canonical owners without an ingestion/link cycle.
+    from .cfdi_ingestion_service import find_blocking_cfdi_evidence, lock_cfdi_identity
+    from .documento_service import (
+        SolicitudValidationError,
+        validate_shared_cfdi_payment_amount,
+    )
+
+    candidates = (
+        (
+            await session.execute(
+                select(model.id)
+                .join(
+                    CFDIReport,
+                    func.upper(func.trim(model.cfdi_uuid_manual))
+                    == func.upper(func.trim(CFDIReport.cfdi_uuid)),
+                )
+                .where(model.cfdi_report_id.is_(None))
+                .order_by(func.upper(func.trim(model.cfdi_uuid_manual)), model.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    linked = 0
+    # Bulk callers may catch an error and commit; roll back this whole operation
+    # on unexpected failure rather than retaining a partially guarded batch.
+    async with session.begin_nested():
+        for identifier in candidates:
+            candidate = (
+                await session.execute(
+                    select(model)
+                    .options(lazyload("*"))
+                    .where(model.id == identifier)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).scalar_one_or_none()
+            if candidate is None or candidate.cfdi_report_id is not None:
+                continue
+            try:
+                fiscal_uuid = normalize_cfdi_uuid_to_canonical(
+                    candidate.cfdi_uuid_manual
+                )
+            except ValueError:
+                continue
+            related_ids = (
+                [candidate.id]
+                if model is Documento
+                else [
+                    value
+                    for value in (
+                        candidate.documento_id,
+                        candidate.solicitud_documento_id,
+                        candidate.informe_documento_id,
+                    )
+                    if value is not None
+                ]
+            )
+            # Document upload locks its document before its UUID. Follow that
+            # order for related expenses, then UUID before shared-balance lock.
+            if model is ExpenseReport and related_ids:
+                await session.execute(
+                    select(Documento.id)
+                    .where(Documento.id.in_(related_ids))
+                    .order_by(Documento.id)
+                    .with_for_update()
+                )
+            await lock_cfdi_identity(session, fiscal_uuid)
+            owners = (
+                (
+                    await session.execute(
+                        select(Aprobacion.entidad_id).where(
+                            Aprobacion.tipo_entidad == "documento",
+                            Aprobacion.accion == "adjuntar_factura",
+                            or_(
+                                Aprobacion.comentario == fiscal_uuid,
+                                Aprobacion.entidad_id.in_(related_ids),
+                            ),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            # Historical evidence owners remain evidence owners even after
+            # their reservation stops consuming the invoice balance.
+            if set(related_ids).intersection(owners):
+                continue
+            report = await find_cfdi_report_by_fiscal_uuid(session, fiscal_uuid)
+            if report is None:
+                continue
+            reservation = await find_blocking_cfdi_evidence(session, fiscal_uuid)
+            if reservation:
+                if not candidate.cfdi_compartido_confirmado:
+                    continue
+                try:
+                    await validate_shared_cfdi_payment_amount(
+                        session,
+                        cfdi_report=report,
+                        requested_amount=(
+                            candidate.monto_solicitado
+                            if model is Documento
+                            else candidate.gasto_cantidad
+                            - (candidate.propina_no_deducible or 0)
+                        ),
+                        exclude_documento_id=(
+                            candidate.id if model is Documento else None
+                        ),
+                        exclude_expense_id=(
+                            candidate.id if model is ExpenseReport else None
+                        ),
+                    )
+                except SolicitudValidationError:
+                    continue
+            candidate.cfdi_report_id = report.id
+            await session.flush()  # Subsequent candidates must see this allocation.
+            linked += 1
+    return linked
 
 
 async def link_documento_to_cfdi_if_manual_uuid_set(
@@ -275,11 +416,18 @@ async def link_documento_to_cfdi_if_manual_uuid_set(
             "Invalid cfdi_uuid_manual on documento %s; skipping link", documento.id
         )
         return False
-    documento.cfdi_uuid_manual = canon
-    report = await find_cfdi_report_by_fiscal_uuid(session, canon)
+    with session.no_autoflush:
+        report = await find_cfdi_report_by_fiscal_uuid(session, canon)
     if report:
+        from .cfdi_ingestion_service import validate_cfdi_evidence_link
+
+        await validate_cfdi_evidence_link(session, canon, documento, cfdi_report=report)
+        if report.id is None:
+            await session.flush([report])
+        documento.cfdi_uuid_manual = canon
         documento.cfdi_report_id = report.id
         return True
+    documento.cfdi_uuid_manual = canon
     if clear_report_if_no_match:
         documento.cfdi_report_id = None
     return False

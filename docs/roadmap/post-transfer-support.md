@@ -115,3 +115,41 @@ auditoría; no degradarlos a CFDI canónico ni borrarlos para facilitar un rollb
 **Canon unchanged**: se corrige acceso a evidencia y se preservan autoridad,
 identidad, idempotencia y separación entre documentos/pagos/contabilidad. No se
 modifica ninguna regla de reconocimiento contable ni se declara cierre de UAT.
+
+## Hallazgos de revisión y coordinación de release
+
+El guard de auditoría y la migración owner-run
+`database/migrations/20261010_late_support_audit_actions.sql` amplían únicamente
+el CHECK existente con `adjuntar_soporte` y `adjuntar_factura`. La migración debe
+aplicarla el dueño antes de liberar el código; este trabajo no ejecuta DDL en
+producción. Las pruebas PostgreSQL reproducen el CHECK legado y aplican el guard
+idempotentemente, en lugar de asumir que la metadata ORM representa el esquema.
+Un rollback posterior debe conservar estas acciones y registros ya escritos.
+
+Una reserva compartida también bloquea un nuevo consumidor no confirmado. Los
+linkers masivos de SAT consultan la reserva dentro del lock del UUID, mantienen
+la evidencia del dueño y sus gastos relacionados sin promoción automática y
+permiten otros consumidores sólo con confirmación preexistente y saldo suficiente.
+Un savepoint evita vínculos parciales si falla un candidato y el caller captura
+el error. Esto no regulariza contabilidad ni cambia confirmaciones o importes.
+
+La ingesta SAT directa y los linkers individuales aplican la misma protección
+antes de crear un reporte o asignar un vínculo. `allow_shared=True` no reemplaza
+la confirmación persistida: se consulta bajo lock y sin autoflush, para no aceptar
+un flag pendiente como aprobación. Un vínculo canónico previamente persistido
+al mismo reporte conserva su enriquecimiento habitual sin una nueva aprobación;
+la importación fiscal sin consumidor sigue disponible y no promueve evidencia.
+Crear o editar una solicitud con UUID manual consulta también la reserva antes
+de asignar un reporte fiscal, aun sin archivos nuevos. La edición bloquea y
+actualiza el estado documental antes de validar y conserva el orden de locks
+documento antes de UUID. La confirmación explícita del formulario conserva su
+contrato de saldo; los dueños históricos no se promueven mediante una edición.
+
+En PDF de texto se distingue dato extraído de default/inferencia. El XML del
+mismo UUID aporta los campos obligatorios ausentes; todo dato explícito del PDF
+se compara. Repetir XML/PDF sin moneda o total impreso no sustituye archivos ni
+crea falsa contradicción. Las regresiones cubren ausencias, contradicciones,
+reserva compartida/no compartida, CHECK, saldo, repetición, fallos y locks reales.
+
+**Canon unchanged**: estos ajustes cierran omisiones de implementación dentro
+de las mismas reglas de identidad, auditoría, reserva y reconocimiento contable.
