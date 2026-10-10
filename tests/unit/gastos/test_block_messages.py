@@ -1,6 +1,7 @@
 """Acceptance checks for evidence-backed expense blockers and safe presentation."""
 
 import asyncio
+from contextlib import nullcontext
 from decimal import Decimal
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
@@ -268,6 +269,7 @@ def test_actual_quick_capture_rolls_back_and_preserves_the_blocking_record(monke
 
         def __init__(self):
             self.results = iter([cuenta, document, None, None, duplicate_id])
+            self.no_autoflush = nullcontext()
 
         async def execute(self, statement, params=None):
             return Result(next(self.results))
