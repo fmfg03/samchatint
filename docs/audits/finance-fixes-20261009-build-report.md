@@ -186,7 +186,8 @@ Current validation supersedes the original candidate counts above:
   gate authority; this local calculation is not a CI receipt.
 - Full production/test `compileall`, diff hygiene, PR workflow contract,
   runtime packaging, registration-surface and accepted-regression checks passed.
-- Route inventory regenerated: **1338 routes, 44 canonical actions, no parse
+- Route inventory regenerated after resolving the index: **576 routes,
+  44 canonical actions, no parse
   gaps**; all nine inventory tests passed. Generated files are included in scope.
 - Scoped lint reports **413 diagnostics both on current main and candidate**;
   none on changed lines. Whole-file lint is not green. Black/isort/mypy remain
@@ -202,3 +203,19 @@ artifacts additionally include `docs/private-plugin/route-inventory.json` and
 
 Authenticated Finance UAT, real persistence/reconciliation and physical-device
 acceptance remain pending. DIOT and production deployment remain excluded.
+
+## CI correction (2026-10-10)
+
+The initial PR run passed integration, policy and security but failed unit
+inventory reproducibility, one budget projection expectation and one existing
+browser fixture. The first generated inventory accidentally scanned duplicate
+unmerged index entries; regeneration after commit fixes the artifact without
+changing discovery rules. The budget expectation now verifies the Operations
+reference returned by the approved projection. Browser fixtures adapt to the
+new date helper while retaining payment/actor assertions. No gate, baseline,
+application permission or production state is weakened to resolve these failures.
+
+Correction verification: budget-service/inventory **49 passed**; critical browser
+journeys/payment-date acceptance **25 passed**, including effective-date and
+unchanged scheduled-date assertions with the real helper. Python compilation
+and diff hygiene passed. CI is rerun on the corrected commit before merge.
