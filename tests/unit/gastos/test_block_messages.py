@@ -284,8 +284,15 @@ def test_actual_quick_capture_rolls_back_and_preserves_the_blocking_record(monke
     async def provisional_expense(**kwargs):
         return expense
 
+    async def no_account_mapping(_session, _expense):
+        # This fixture isolates duplicate-CFDI rollback, not catalog assignment.
+        return False
+
     monkeypatch.setattr(user_routes, "_ensure_expense_tip_schema", no_schema_change)
     monkeypatch.setattr(user_routes, "create_expense_from_data", provisional_expense)
+    monkeypatch.setattr(
+        user_routes, "apply_budget_concept_cuenta_mapping", no_account_mapping
+    )
     kwargs = {
         name: None
         for name, parameter in signature(

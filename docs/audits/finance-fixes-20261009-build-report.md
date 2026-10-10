@@ -219,3 +219,11 @@ Correction verification: budget-service/inventory **49 passed**; critical browse
 journeys/payment-date acceptance **25 passed**, including effective-date and
 unchanged scheduled-date assertions with the real helper. Python compilation
 and diff hygiene passed. CI is rerun on the corrected commit before merge.
+
+The next complete unit run reached **4510 passed, 2 failed**: a duplicate-CFDI
+rollback fixture lacked the new mapping seam, and a document-table source
+assertion retained the old seven-column count. The fixture now isolates mapping
+while preserving duplicate rejection/rollback assertions; dedicated catalog
+mapping tests remain real. The table assertion verifies Operations and eight
+columns. Both affected modules passed locally: **157 passed**. Application
+sources, guards, failure baselines and inventory are unchanged by this follow-up.
