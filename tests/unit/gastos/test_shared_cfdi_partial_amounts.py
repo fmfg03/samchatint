@@ -235,13 +235,21 @@ class _CreationResult:
     def scalar_one_or_none(self):
         return self.value
 
+    def first(self):
+        return self.value
+
 
 class _CreationSession:
     def __init__(self, values):
         self.values = iter(values)
         self.added = []
 
-    async def execute(self, *_args, **_kwargs):
+    def get_bind(self):
+        return SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+
+    async def execute(self, statement, **_kwargs):
+        if "aprobaciones" in str(statement):
+            return _CreationResult(None)
         return _CreationResult(next(self.values))
 
     def add(self, value):
@@ -258,11 +266,27 @@ class _CreationSession:
 
 
 class _UpdateSession:
-    def __init__(self, report, proveedor, empleado):
+    def __init__(self, report, proveedor, empleado, *, document):
         self.report = report
+        self.document = document
+        self.refreshed_attributes = None
         self.results = iter([proveedor, empleado])
 
-    async def execute(self, *_args, **_kwargs):
+    def get_bind(self):
+        return SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+
+    async def scalar(self, statement):
+        column = list(statement.selected_columns)[0]
+        if column.table.name == "documentos":
+            assert statement._for_update_arg is not None
+            assert statement.whereclause.right.value == self.document.id
+            return self.document.id
+        assert column.table.name == "aprobaciones"
+        return None
+
+    async def execute(self, statement, **_kwargs):
+        if "aprobaciones" in str(statement):
+            return _CreationResult(None)
         return _CreationResult(next(self.results))
 
     async def get(self, _model, _id):
@@ -271,8 +295,10 @@ class _UpdateSession:
     async def commit(self):
         return None
 
-    async def refresh(self, _value):
-        return None
+    async def refresh(self, value, attributes=None):
+        assert value is self.document
+        if attributes is not None:
+            self.refreshed_attributes = attributes
 
 
 def _shared_payload(*, confirmed: bool) -> SolicitudTercerosPayload:
@@ -353,8 +379,11 @@ async def test_editing_linked_shared_cfdi_revalidates_new_amount(monkeypatch) ->
         documento_service, "validate_shared_cfdi_payment_amount", fake_validate
     )
 
+    session = _UpdateSession(
+        report, SimpleNamespace(), SimpleNamespace(), document=document
+    )
     updated = await documento_service.update_solicitud_terceros_document(
-        _UpdateSession(report, SimpleNamespace(), SimpleNamespace()),
+        session,
         documento=document,
         payload=SolicitudTercerosPayload(
             empleado_id=empleado_id,
@@ -369,6 +398,7 @@ async def test_editing_linked_shared_cfdi_revalidates_new_amount(monkeypatch) ->
 
     assert updated.monto_solicitado == 102312.00
     assert calls == [(report, 102312.00, document.id)]
+    assert session.refreshed_attributes == ["estado", "budget_concept_id", "cfdi_report_id"]
 
 
 @pytest.mark.asyncio
@@ -383,8 +413,11 @@ async def test_editing_reused_cfdi_persists_its_canonical_link(monkeypatch) -> N
         documento_service, "find_cfdi_report_by_fiscal_uuid", AsyncMock(return_value=report)
     )
 
+    session = _UpdateSession(
+        report, SimpleNamespace(), SimpleNamespace(), document=document
+    )
     updated = await documento_service.update_solicitud_terceros_document(
-        _UpdateSession(report, SimpleNamespace(), SimpleNamespace()), documento=document,
+        session, documento=document,
         payload=SolicitudTercerosPayload(
             empleado_id=empleado_id, monto_solicitado=100.00, proveedor_cliente_id=uuid4(),
             torneo_id=None, proyecto_otro="Nacional Morelos", concepto_pago="Pago",
@@ -394,6 +427,7 @@ async def test_editing_reused_cfdi_persists_its_canonical_link(monkeypatch) -> N
 
     assert updated.cfdi_report_id == report.id
     assert updated.cfdi_uuid_manual == "ABCD1234-1111-2222-3333-444444444444"
+    assert session.refreshed_attributes == ["estado", "budget_concept_id", "cfdi_report_id"]
 
 
 @pytest.mark.asyncio

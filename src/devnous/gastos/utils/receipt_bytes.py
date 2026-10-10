@@ -445,6 +445,8 @@ def _documento_categoria_title(cat: str) -> str:
     titles = {
         "cfdi_pdf": "CFDI PDF",
         "cfdi_xml": "CFDI XML",
+        "cfdi_xml_evidence": "Factura posterior XML (revisión contable pendiente)",
+        "cfdi_pdf_evidence": "Factura posterior PDF (revisión contable pendiente)",
         "supporting": "Materialidades",
         "comprobante_pago": "Comprobante de Pago",
     }
@@ -476,20 +478,32 @@ def _documento_meta_sort_key(m: DocumentoAdjuntoMeta) -> Tuple[int, Any]:
 
 def _label_for_documento_meta(m: DocumentoAdjuntoMeta, index: int) -> str:
     cat = (
-        derive_adjunto_category(
-            categoria=m.categoria,
-            mime_type=m.mime_type,
-            tipo_archivo=m.tipo_archivo,
-            nombre_archivo=m.nombre_archivo,
+        (
+            derive_adjunto_category(
+                categoria=m.categoria,
+                mime_type=m.mime_type,
+                tipo_archivo=m.tipo_archivo,
+                nombre_archivo=m.nombre_archivo,
+            )
+            or ""
         )
-        or ""
-    ).strip().lower()
+        .strip()
+        .lower()
+    )
     if cat == "cfdi_pdf":
         return "PDF"
     if cat == "cfdi_xml":
         return "XML"
+    if cat in {"cfdi_xml_evidence", "cfdi_pdf_evidence"}:
+        return (
+            "Factura posterior "
+            + ("XML" if cat == "cfdi_xml_evidence" else "PDF")
+            + " (revisión contable pendiente)"
+        )
     if cat == "comprobante_pago":
-        return "Comprobante pago (sustituido)" if m.activo is False else "Comprobante pago"
+        return (
+            "Comprobante pago (sustituido)" if m.activo is False else "Comprobante pago"
+        )
     if cat == "supporting" and m.nombre_archivo:
         return _truncated_attachment_label(m.nombre_archivo)
     mime = (m.mime_type or m.tipo_archivo or "").lower()

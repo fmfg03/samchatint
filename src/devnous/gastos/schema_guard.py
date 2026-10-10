@@ -1996,7 +1996,9 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
                    OR position('eliminar_comprobante_no_deducible' in current_def) = 0
                    OR position('confirmar_cfdi_compartido' in current_def) = 0
                    OR position('regularizar_aprobacion_reembolso' in current_def) = 0
-                   OR position('liberar_cfdi_duplicado' in current_def) = 0 THEN
+                   OR position('liberar_cfdi_duplicado' in current_def) = 0
+                   OR position('adjuntar_soporte' in current_def) = 0
+                   OR position('adjuntar_factura' in current_def) = 0 THEN
                     ALTER TABLE aprobaciones DROP CONSTRAINT aprobaciones_accion_check;
                     ALTER TABLE aprobaciones
                         ADD CONSTRAINT aprobaciones_accion_check
@@ -2025,7 +2027,9 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
                                     'eliminar_comprobante_no_deducible'::text,
                                     'confirmar_cfdi_compartido'::text,
                                     'regularizar_aprobacion_reembolso'::text,
-                                    'liberar_cfdi_duplicado'::text
+                                    'liberar_cfdi_duplicado'::text,
+                                    'adjuntar_soporte'::text,
+                                    'adjuntar_factura'::text
                                 ]
                             )
                         );
