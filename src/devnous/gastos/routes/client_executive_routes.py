@@ -183,6 +183,7 @@ async def _dashboard_payload(
     include_operational_detail: bool = False,
 ) -> dict:
     await _assigned_direction_portfolios(session, current_empleado)
+    source_access = await _direction_source_access(session, current_empleado)
     try:
         return await build_client_dashboard(
             session,
@@ -191,6 +192,11 @@ async def _dashboard_payload(
             tournament_id=tournament_id,
             is_superadmin=_is_superadmin(current_empleado),
             include_operational_detail=include_operational_detail,
+            **(
+                {"accounting_access": False}
+                if not (source_access["finance"] and source_access["budget"])
+                else {}
+            ),
         )
     except ClientExecutiveAccessError as exc:
         raise HTTPException(status_code=403, detail=str(exc))

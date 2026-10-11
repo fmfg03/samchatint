@@ -16,7 +16,10 @@ from devnous.copa_telmex.registration_read_model import (
 )
 
 from samchat.budgets.service import budget_alias_candidates, build_budget_snapshot
-from samchat.client_executive.accounting_bridge import build_tournament_accounting
+from samchat.client_executive.accounting_bridge import (
+    build_tournament_accounting,
+    unavailable as unavailable_accounting,
+)
 from samchat.sports_platform import build_director_general_entity_dossier
 from samchat.tournaments_v2.services import build_tournament_soul_snapshot
 from samchat.tournaments_v2.supabase_client import TournamentsV2Error
@@ -889,6 +892,7 @@ async def build_client_dashboard(
     tournament_id: Optional[str] = None,
     is_superadmin: bool = False,
     include_operational_detail: bool = False,
+    accounting_access: bool = True,
 ) -> dict[str, Any]:
     """Build a Direction portfolio or one authorized tournament executive view."""
     tournaments = await _authorized_tournaments(
@@ -915,17 +919,25 @@ async def build_client_dashboard(
             edition_year=edition_year,
         )
         card = _executive_card(tournament, snapshot)
-        if snapshot.get("source") == "budget_db":
+        if "source" in snapshot and accounting_access:
             card["accounting"] = await build_tournament_accounting(
                 session,
                 tournament_id=tournament["id"],
                 edition_year=edition_year,
-                budget_version_id=(snapshot.get("version") or {}).get("id"),
+                budget_version_id=(
+                    (snapshot.get("version") or {}).get("id")
+                    if snapshot.get("source") == "budget_db"
+                    else None
+                ),
             )
             card["accounting_previous_year"] = await build_tournament_accounting(
                 session,
                 tournament_id=tournament["id"],
                 edition_year=edition_year - 1,
+            )
+        elif "source" in snapshot:
+            card["accounting"] = unavailable_accounting(
+                "La lectura contable está denegada para esta identidad."
             )
         if include_operational_detail:
             registration = await dispatch_registration_snapshot(
@@ -993,12 +1005,16 @@ async def build_portfolio_dashboard(
             edition_year=edition_year,
         )
         card = _executive_card(tournament, snapshot)
-        if snapshot.get("source") == "budget_db":
+        if "source" in snapshot:
             card["accounting"] = await build_tournament_accounting(
                 session,
                 tournament_id=tournament["id"],
                 edition_year=edition_year,
-                budget_version_id=(snapshot.get("version") or {}).get("id"),
+                budget_version_id=(
+                    (snapshot.get("version") or {}).get("id")
+                    if snapshot.get("source") == "budget_db"
+                    else None
+                ),
             )
             card["accounting_previous_year"] = await build_tournament_accounting(
                 session,

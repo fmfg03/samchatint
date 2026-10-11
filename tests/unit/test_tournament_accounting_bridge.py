@@ -457,3 +457,70 @@ async def test_dashboard_wires_exact_authorized_tournament_and_historical_editio
     )
     assert reader.call_args_list[0].kwargs["tournament_id"] == "allowed"
     assert reader.call_args_list[1].kwargs["edition_year"] == 2025
+
+
+@pytest.mark.asyncio
+async def test_accounting_facts_remain_available_without_approved_budget(monkeypatch):
+    from samchat.client_executive import service
+
+    monkeypatch.setattr(
+        service,
+        "_authorized_tournaments",
+        AsyncMock(return_value=[{"id": "allowed", "name": "Torneo", "slug": ""}]),
+    )
+    monkeypatch.setattr(
+        service,
+        "_build_direction_budget_snapshot",
+        AsyncMock(
+            return_value={
+                "source": "budget_scope_unavailable",
+                "version": {"id": "draft"},
+            }
+        ),
+    )
+    reader = AsyncMock(return_value={"source_status": "partial", "expense": "24"})
+    monkeypatch.setattr(service, "build_tournament_accounting", reader)
+    result = await service.build_client_dashboard(
+        object(), empleado_id="a", edition_year=2026
+    )
+    assert result["cards"][0]["budget"] is None
+    assert result["cards"][0]["accounting"]["expense"] == "24"
+    assert reader.call_args_list[0].kwargs["budget_version_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_finance_denial_blocks_accounting_queries_in_legacy_direction_board(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    from devnous.gastos.routes import client_executive_routes as routes
+    from samchat.client_executive import service
+
+    actor = SimpleNamespace(id="a", rol="coordinador", activo=True)
+    monkeypatch.setattr(
+        routes, "authorized_direction_portfolio_ids", AsyncMock(return_value=["p"])
+    )
+
+    async def decision(_session, _actor, tool, action):
+        return False if tool == "admin.finanzas" else None
+
+    monkeypatch.setattr(routes, "explicit_tool_decision", decision)
+    monkeypatch.setattr(
+        service,
+        "_authorized_tournaments",
+        AsyncMock(return_value=[{"id": "allowed", "name": "Torneo", "slug": ""}]),
+    )
+    monkeypatch.setattr(
+        service,
+        "_build_direction_budget_snapshot",
+        AsyncMock(
+            return_value={"source": "budget_db", "summary": {"budget_total": 100}}
+        ),
+    )
+    reader = AsyncMock(side_effect=AssertionError("Finance source is denied"))
+    monkeypatch.setattr(service, "build_tournament_accounting", reader)
+    result = await routes._dashboard_payload(object(), actor, 2026)
+    assert result["cards"][0]["budget"] == 100
+    assert result["cards"][0]["accounting"]["source_status"] == "unavailable"
+    reader.assert_not_awaited()

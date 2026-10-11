@@ -156,7 +156,7 @@ def register_tournament_budget_upload_routes(
             require_budget_access(current_empleado, "line_update")
             require_budget_access(current_empleado, "create")
         payload = await archivo_presupuesto.read(MAX_UPLOAD_BYTES + 1)
-        args = {
+        args: dict[str, Any] = {
             "tournament_id": str(tournament_id),
             "version_id": str(version_id),
             "edition_year": edition_year,
