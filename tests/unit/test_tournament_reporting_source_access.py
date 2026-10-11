@@ -127,7 +127,7 @@ async def test_management_route_respects_current_source_access(monkeypatch, allo
             ]
         },
     )
-    session = SimpleNamespace(execute=AsyncMock(side_effect=[[row], []]))
+    session = SimpleNamespace(execute=AsyncMock(side_effect=[[row], [], []]))
     response = await routes.direction_report_management(
         session=session, current_empleado=SimpleNamespace(id="actor")
     )
