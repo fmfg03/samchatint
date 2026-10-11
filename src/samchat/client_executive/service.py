@@ -16,6 +16,10 @@ from devnous.copa_telmex.registration_read_model import (
 )
 
 from samchat.budgets.service import budget_alias_candidates, build_budget_snapshot
+from samchat.client_executive.accounting_bridge import (
+    build_tournament_accounting,
+    unavailable as unavailable_accounting,
+)
 from samchat.sports_platform import build_director_general_entity_dossier
 from samchat.tournaments_v2.services import build_tournament_soul_snapshot
 from samchat.tournaments_v2.supabase_client import TournamentsV2Error
@@ -888,6 +892,7 @@ async def build_client_dashboard(
     tournament_id: Optional[str] = None,
     is_superadmin: bool = False,
     include_operational_detail: bool = False,
+    accounting_access: bool = True,
 ) -> dict[str, Any]:
     """Build a Direction portfolio or one authorized tournament executive view."""
     tournaments = await _authorized_tournaments(
@@ -914,6 +919,26 @@ async def build_client_dashboard(
             edition_year=edition_year,
         )
         card = _executive_card(tournament, snapshot)
+        if "source" in snapshot and accounting_access:
+            card["accounting"] = await build_tournament_accounting(
+                session,
+                tournament_id=tournament["id"],
+                edition_year=edition_year,
+                budget_version_id=(
+                    (snapshot.get("version") or {}).get("id")
+                    if snapshot.get("source") == "budget_db"
+                    else None
+                ),
+            )
+            card["accounting_previous_year"] = await build_tournament_accounting(
+                session,
+                tournament_id=tournament["id"],
+                edition_year=edition_year - 1,
+            )
+        elif "source" in snapshot:
+            card["accounting"] = unavailable_accounting(
+                "La lectura contable está denegada para esta identidad."
+            )
         if include_operational_detail:
             registration = await dispatch_registration_snapshot(
                 session,
@@ -941,7 +966,7 @@ async def build_client_dashboard(
             "operations": "tournament_soul_snapshot",
             "registration": "postgres_registration_for_configured_editions",
             "budget": "samchat.budgets.service.build_budget_snapshot",
-            "entity_finance": "pending_finance_entity_bridge",
+            "entity_finance": "evidenced_historical_accounting_bridge",
             "writes": False,
         },
         "unavailable_metrics": ["cashflow", "accounts_receivable", "payments"],
@@ -949,11 +974,16 @@ async def build_client_dashboard(
 
 
 async def build_portfolio_dashboard(
-    session: Any, *, portfolio_id: str, edition_year: int
+    session: Any,
+    *,
+    portfolio_id: str,
+    edition_year: int,
+    accounting_access: bool = True,
 ) -> dict[str, Any]:
     """Build a CEO view for one configured portfolio, never a global fallback."""
     result = await session.execute(
-        text("""
+        text(
+            """
             SELECT t.id::text AS id, t.name, NULL::text AS slug
             FROM client_executive_portfolio_tournaments assignment
             JOIN client_executive_portfolios portfolio
@@ -961,7 +991,8 @@ async def build_portfolio_dashboard(
             JOIN tournaments t ON t.id = assignment.tournament_id AND t.active = TRUE
             WHERE assignment.portfolio_id = :portfolio_id AND assignment.active = TRUE
             ORDER BY t.name ASC
-            """),
+            """
+        ),
         {"portfolio_id": str(portfolio_id)},
     )
     tournaments = [
@@ -979,7 +1010,28 @@ async def build_portfolio_dashboard(
             tournament=tournament,
             edition_year=edition_year,
         )
-        cards.append(_executive_card(tournament, snapshot))
+        card = _executive_card(tournament, snapshot)
+        if "source" in snapshot and accounting_access:
+            card["accounting"] = await build_tournament_accounting(
+                session,
+                tournament_id=tournament["id"],
+                edition_year=edition_year,
+                budget_version_id=(
+                    (snapshot.get("version") or {}).get("id")
+                    if snapshot.get("source") == "budget_db"
+                    else None
+                ),
+            )
+            card["accounting_previous_year"] = await build_tournament_accounting(
+                session,
+                tournament_id=tournament["id"],
+                edition_year=edition_year - 1,
+            )
+        elif "source" in snapshot:
+            card["accounting"] = unavailable_accounting(
+                "La lectura contable está denegada para esta identidad."
+            )
+        cards.append(card)
     return {
         "edition_year": edition_year,
         "scope": "portfolio",

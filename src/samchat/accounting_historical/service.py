@@ -1881,7 +1881,7 @@ async def import_historical_accounting_pilot(
                     :fiscal_month, :period_key, :company_code, :company_label, :policy_id_natural, :line_number,
                     :account_code_raw, :account_code_canonical, :account_name_raw,
                     :account_name_canonical, :debit_amount, :credit_amount, :line_concept,
-                    NULL, NULL, NULL, NOW()
+                    NULL, :cost_center_raw, :project_raw, NOW()
                 )
                 """
             ),
@@ -1904,6 +1904,8 @@ async def import_historical_accounting_pilot(
                 "debit_amount": _safe_decimal(row.get("debe")),
                 "credit_amount": _safe_decimal(row.get("haber")),
                 "line_concept": _safe_str(row.get("concept")),
+                "cost_center_raw": row.get("cost_center_raw") or None,
+                "project_raw": row.get("project_raw") or None,
             },
         )
 

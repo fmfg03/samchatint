@@ -3349,8 +3349,10 @@ async def create_budget_concept(
     commit: bool = True,
     concept_key: Optional[str] = None,
     extra_metadata: Optional[dict[str, Any]] = None,
+    ensure_schema: bool = True,
 ) -> dict[str, Any]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     tournament = await _resolve_tournament_for_budget_concept(
         session,
         tournament_id=tournament_id,
@@ -5674,6 +5676,8 @@ async def create_budget_line(
     observations: Optional[str] = None,
     commit: bool = True,
     ensure_schema: bool = True,
+    extra_metadata: Optional[dict[str, Any]] = None,
+    tournament_id: Optional[str] = None,
 ) -> dict[str, Any]:
     if ensure_schema:
         await ensure_budget_schema(session)
@@ -5685,16 +5689,31 @@ async def create_budget_line(
 
     clean_direction = normalize_budget_line_direction(line_direction)
     clean_concept = _safe_str(concept_name)
-    concept = await resolve_budget_concept(
-        session,
-        budget_concept_id=budget_concept_id,
-        tournament_code=tournament_code,
-        budget_direction=clean_direction,
-    )
+    if tournament_id:
+        concept = await get_budget_concept(
+            session, concept_id=_safe_str(budget_concept_id), ensure_schema=False
+        )
+        if concept is not None and (
+            not concept.get("active")
+            or normalize_budget_line_direction(concept.get("budget_direction"))
+            != clean_direction
+        ):
+            concept = None
+    else:
+        concept = await resolve_budget_concept(
+            session,
+            budget_concept_id=budget_concept_id,
+            tournament_code=tournament_code,
+            budget_direction=clean_direction,
+        )
     if concept is not None:
         clean_concept = _safe_str(concept.get("concept_name"))
         tournament_code = _safe_str(concept.get("tournament_code")) or tournament_code
         tournament_name = _safe_str(concept.get("tournament_name")) or tournament_name
+    if tournament_id and (
+        concept is None or str(concept.get("tournament_id")) != str(tournament_id)
+    ):
+        raise ValueError("Budget concept does not belong to the exact tournament")
     if not clean_concept:
         raise ValueError("Budget line concept is required")
     amount = _safe_decimal(budget_amount)
@@ -5735,12 +5754,25 @@ async def create_budget_line(
             "owner_name": _safe_str(owner_name) or None,
             "criteria_note": _safe_str(criteria_note) or None,
             "observations": _safe_str(observations) or None,
-            "metadata": json.dumps({"created_from": "ui_manual"}, ensure_ascii=False),
+            "metadata": json.dumps(
+                {"created_from": "ui_manual", **(extra_metadata or {})},
+                ensure_ascii=False,
+            ),
         },
     )
-    await _link_budget_lines_to_tournaments(
-        session, budget_version_id=version_id, line_ids=[line_id]
-    )
+    if tournament_id:
+        await session.execute(
+            text(
+                "UPDATE budget_lines SET tournament_id = :tournament_id "
+                "WHERE id = :line_id"
+            ),
+            {"tournament_id": tournament_id, "line_id": line_id},
+        )
+    else:
+        await _link_budget_lines_to_tournaments(
+            session, budget_version_id=version_id, line_ids=[line_id]
+        )
+
     await _audit_budget_event(
         session,
         budget_version_id=version_id,
@@ -5763,7 +5795,11 @@ async def create_budget_line(
     else:
         await session.flush()
     lines = await list_budget_lines(
-        session, version_id=version_id, limit=500, ensure_schema=False
+        session,
+        version_id=version_id,
+        tournament_id=tournament_id,
+        limit=5000,
+        ensure_schema=False,
     )
     for line in lines:
         if line["id"] == line_id:
@@ -6029,8 +6065,12 @@ async def update_budget_line(
     actor_empleado_id: Optional[str] = None,
     updates: dict[str, Any],
     commit: bool = True,
+    ensure_schema: bool = True,
+    extra_metadata: Optional[dict[str, Any]] = None,
+    tournament_id: Optional[str] = None,
 ) -> dict[str, Any]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     current = (
         (
             await session.execute(
@@ -6038,6 +6078,7 @@ async def update_budget_line(
                     """
                 SELECT
                     l.id,
+                    l.tournament_id,
                     l.budget_version_id,
                     l.budget_concept_id,
                     l.tournament_code,
@@ -6069,6 +6110,8 @@ async def update_budget_line(
     )
     if not current:
         raise ValueError("Budget line not found")
+    if tournament_id and str(current.get("tournament_id")) != str(tournament_id):
+        raise ValueError("Budget line does not belong to the exact tournament")
     if not _editable_version_status(current.get("version_status")):
         raise ValueError("Only draft or reforecast versions allow line edits")
 
@@ -6140,6 +6183,10 @@ async def update_budget_line(
         or _safe_str(current["observations"])
         or None,
         "variance_amount": variance_amount,
+        "metadata": json.dumps(
+            {**(current.get("metadata") or {}), **(extra_metadata or {})},
+            ensure_ascii=False,
+        ),
     }
     await session.execute(
         text(
@@ -6155,6 +6202,7 @@ async def update_budget_line(
                 criteria_note = :criteria_note,
                 observations = :observations,
                 variance_amount = :variance_amount,
+                metadata = CAST(:metadata AS jsonb),
                 updated_at = NOW()
             WHERE id = :line_id
             """
@@ -6195,7 +6243,8 @@ async def update_budget_line(
     lines = await list_budget_lines(
         session,
         version_id=_safe_str(current["budget_version_id"]),
-        limit=500,
+        tournament_id=tournament_id,
+        limit=5000 if tournament_id else 500,
         ensure_schema=False,
     )
     for line in lines:
