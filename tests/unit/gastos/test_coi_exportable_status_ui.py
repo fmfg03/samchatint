@@ -3,6 +3,7 @@ import io
 import zipfile
 from datetime import datetime
 from html import unescape
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -204,12 +205,81 @@ def test_coi_blocked_report_has_no_selectable_partial_policy():
     assert 'name="selected_documento_id"' not in html
     assert "Bloqueada: O-1: falta cuenta contable" in html
     assert "Atender en Limpieza contable" in html
+    assert 'class="button secondary cleanup-action-link"' in html
     assert (
         "/admin/gastos/sin-cuenta-contable?period=2026-08"
         "&document_type=informe&q=I-123456"
         f"&focus_expense_id={expense_id}&document_id={documento_id}"
         f"#row-{expense_id}"
     ) in readable
+
+
+def test_coi_cleanup_action_has_hover_and_keyboard_focus_styles():
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def contabilidad_coi_view")
+    end = source.index('@router.get("/admin/contabilidad/coi/{poliza_id}"', start)
+    coi_page = source[start:end]
+
+    assert ".cleanup-action-link:hover" in coi_page
+    assert ".cleanup-action-link:focus-visible" in coi_page
+    assert "transform:translateY(-1px)" in coi_page
+
+
+@pytest.mark.asyncio
+async def test_coi_batch_manifest_carries_document_metadata(monkeypatch):
+    document = SimpleNamespace(
+        id=uuid4(),
+        tipo="SOLICITUD",
+        numero_referencia="S-26000001",
+        referencia_operaciones="106",
+        proveedor_cliente=SimpleNamespace(nombre="Proveedor Ejemplo SA de CV"),
+        beneficiario_empleado=None,
+        beneficiario_proveedor_cliente=None,
+        empleado=None,
+        torneo=SimpleNamespace(name="Copa Telmex"),
+        proyecto_otro=None,
+        cuenta_gastos=None,
+    )
+    expense = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="O-26000001",
+    )
+    expense_cfdi = ExpenseCFDI(
+        fecha=datetime(2026, 10, 1),
+        total=116,
+        iva_amount=16,
+        subtotal_amount=100,
+        concepto="Hospedaje",
+        cuenta_contable="5000",
+        cuenta_contrapartida="2000",
+    )
+
+    async def build(*_args, **_kwargs):
+        return expense_cfdi
+
+    monkeypatch.setattr(user_routes, "build_expense_cfdi_for_export", build)
+    _, manifest, _, _ = await user_routes._collect_coi_lote_expense_cfdis(
+        SimpleNamespace(),
+        [
+            {
+                "documento": document,
+                "tipo_lote": "SOLICITUD_TERCEROS",
+                "expenses": [expense],
+            }
+        ],
+    )
+
+    assert manifest[0][5:8] == [
+        "referencia_operaciones",
+        "beneficiario_razon_social",
+        "descripcion_contexto",
+    ]
+    assert manifest[1][5:8] == [
+        "106",
+        "Proveedor Ejemplo SA de CV",
+        "Copa Telmex",
+    ]
+    assert expense_cfdi.poliza_operation_reference == "106"
 
 
 def test_coi_blocked_report_without_cleanup_issue_has_no_misleading_action():
@@ -1514,9 +1584,11 @@ async def test_coi_loaders_eagerly_load_all_beneficiary_fallbacks(kind):
         ("beneficiario_proveedor_cliente",),
         ("proveedor_cliente",),
         ("empleado",),
+        ("torneo",),
         ("cuenta_gastos", "beneficiario_empleado"),
         ("cuenta_gastos", "beneficiario_proveedor_cliente"),
         ("cuenta_gastos", "empleado"),
+        ("cuenta_gastos", "torneo"),
     }
     sql = str(
         session.statement.compile(

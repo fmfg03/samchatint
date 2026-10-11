@@ -16,6 +16,8 @@ CTT_OWNER_MIGRATION_TABLES = frozenset(
     {
         "copa_telmex_registration_batches",
         "copa_telmex_registration_batch_documents",
+        "copa_telmex_registration_batch_uploads",
+        "copa_telmex_registration_batch_upload_files",
         "copa_telmex_team_staff",
     }
 )

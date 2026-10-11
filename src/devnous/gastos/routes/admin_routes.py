@@ -83,8 +83,13 @@ from ..services.coi_poliza_exporter import (
 from ..services.expense_coi_export_service import (
     assess_expense_coi_cleanup_ready,
     build_expense_cfdi_for_export,
+    coi_document_loader_options,
     group_expense_cfdis_for_document,
     expense_coi_batch_period_condition,
+)
+from ..services.documento_semantics import (
+    effective_account_beneficiary,
+    effective_document_beneficiary_name,
 )
 from ..services.import_coi_service import import_coi_workbook
 from ..services.import_proveedores_service import (
@@ -169,6 +174,7 @@ from ..services.payment_run_service import (
     list_payment_run_closures,
     list_payment_run_items,
     parse_payment_run_date,
+    prepare_payment_run_confirmation_date,
     can_confirm_payment_run_payment,
     require_payment_run_access,
     require_payment_run_manager,
@@ -1191,11 +1197,16 @@ def render_admin_navigation(
     impersonator_id = getattr(current_empleado, "impersonator_empleado_id", None)
     identity_link_html = ""
     if is_superadmin or impersonator_id:
-        identity_link_html = """
+        identity_link_label = (
+            "Cambiar identidad (facultad del superadmin)"
+            if impersonator_id
+            else "Cambiar identidad"
+        )
+        identity_link_html = f"""
                 <a
                     href="/admin/identidad"
                     style="text-decoration:none;padding:10px 14px;border-radius:14px;border:1px solid #f59e0b;background:#fffbeb;color:#78350f;font-size:13px;font-weight:700;"
-                >Cambiar identidad</a>
+                >{identity_link_label}</a>
         """
     impersonation_html = ""
     if impersonator_id:
@@ -3402,6 +3413,39 @@ def _cleanup_document_origin(expense: ExpenseReport) -> Tuple[str, str]:
     return "Documento vinculado sin tipo", reference
 
 
+def _cleanup_beneficiary_name(expense: ExpenseReport) -> str:
+    """Show the canonical beneficiary while failing closed on conflicting links."""
+    documents = [
+        document
+        for document in (
+            getattr(expense, "informe_documento", None),
+            getattr(expense, "solicitud_documento", None),
+            getattr(expense, "documento", None),
+        )
+        if document is not None
+    ]
+    unique_documents = {
+        str(getattr(document, "id", None) or id(document)): document
+        for document in documents
+    }
+    document_types = {
+        str(getattr(document, "tipo", "") or "").strip().upper()
+        for document in documents
+    }
+    if len(unique_documents) > 1 or len(document_types) > 1:
+        return "Beneficiario por revisar"
+    if unique_documents:
+        return effective_document_beneficiary_name(
+            next(iter(unique_documents.values())),
+            fallback="Sin beneficiario identificado",
+        )
+    beneficiary = effective_account_beneficiary(
+        getattr(expense, "cuenta_gastos", None)
+    )
+    beneficiary_name = str(getattr(beneficiary, "nombre", None) or "").strip()
+    return beneficiary_name or "Sin beneficiario identificado"
+
+
 @router.get("/admin/gastos", response_class=HTMLResponse)
 async def admin_dashboard(
     request: Request,
@@ -4282,6 +4326,43 @@ async def finance_training_cfdi_csv_download(
     )
 
 
+async def _expense_operational_references(
+    session: AsyncSession, expenses: list[ExpenseReport]
+) -> dict[Any, str | None]:
+    """Read existing owning-document references for an authorized expense set."""
+    document_ids = {
+        document_id
+        for expense in expenses
+        for document_id in (
+            getattr(expense, "informe_documento_id", None),
+            getattr(expense, "documento_id", None),
+            getattr(expense, "solicitud_documento_id", None),
+        )
+        if document_id
+    }
+    if not document_ids:
+        return {}
+    with session.no_autoflush:
+        result = await session.execute(
+            select(Documento.id, Documento.referencia_operaciones).where(
+                Documento.id.in_(document_ids)
+            )
+        )
+        return dict(result.all())
+
+
+def _expense_operational_reference(
+    expense: ExpenseReport, references: dict[Any, str | None]
+) -> str:
+    """Prefer the informe, including its legacy link, then the solicitud."""
+    return str(
+        references.get(getattr(expense, "informe_documento_id", None))
+        or references.get(getattr(expense, "documento_id", None))
+        or references.get(getattr(expense, "solicitud_documento_id", None))
+        or "—"
+    )
+
+
 @router.get("/admin/gastos/expenses", response_class=HTMLResponse)
 async def admin_expenses(
     request: Request,
@@ -4359,6 +4440,8 @@ async def admin_expenses(
             result = await session.execute(query)
             expenses = result.scalars().all()
 
+        operational_references = await _expense_operational_references(session, expenses)
+
         # Fetch all tournaments for project name resolution
         tournament_map = {}
         with session.no_autoflush:
@@ -4433,6 +4516,9 @@ async def admin_expenses(
         export_rows = []
         rows_html = ""
         for idx, expense in enumerate(expenses):
+            operational_reference = _expense_operational_reference(
+                expense, operational_references
+            )
             # Get CFDI from either path (UUID-based takes priority)
             cfdi = None
             if (
@@ -4498,6 +4584,7 @@ async def admin_expenses(
                 {
                     "id": str(expense.id),
                     "numero_referencia": expense.numero_referencia or "",
+                    "referencia_operaciones": operational_reference or "",
                     "nombre_enviador": expense.nombre_enviador or "",
                     "departamento": expense.departamento or "",
                     "proyecto": proyecto_display or "",
@@ -4558,6 +4645,7 @@ async def admin_expenses(
             rows_html += f"""
             <tr data-row-index="{idx}" data-nombre-enviador="{nombre_enviador}" data-departamento="{departamento}" data-proyecto="{proyecto_attr}" data-fase-torneo="{fase_torneo}" data-concepto="{concepto_attr}" data-estado-cfdi="{cfdi_status_plain}" data-est-reembolso="{est_reembolso}" data-fecha="{fecha_val}">
                 <td>{format_value(expense.numero_referencia)}</td>
+                <td>{html_escape(str(operational_reference or "—"))}</td>
                 <td>{format_value(expense.nombre_enviador)}</td>
                 <td>{format_value(expense.departamento)}</td>
                 <td>{format_value(proyecto_display)}</td>
@@ -4745,11 +4833,11 @@ async def admin_expenses(
                     if (!isNaN(idx) && idx >= 0 && idx < allData.length) indices.push(idx);
                 }}
                 var rowsToExport = indices.length ? indices.map(function(i) {{ return allData[i]; }}) : allData;
-                var headers = ["ID","Numero Referencia","Nombre Enviador","Departamento","Proyecto","Fase Torneo","Método Pago","Últimos 4 Dígitos","Gasto Cantidad","Concepto","Sub-Cuenta","Tipo Gasto","Uso CFDI","Cuenta Bancaria Base","Cuenta Contable Codigo","Cuenta Contable Nombre","Telegram User ID","Estado Factura","Estado Reembolso","Nova Request ID","Link PDF","Link XML","Mensaje Error","CFDI Fecha","CFDI Emisor RFC","CFDI Receptor RFC","CFDI Total","CFDI UUID","CFDI Tipo Cambio","CFDI Emisor Nombre","CFDI Descripcion Concepto","CFDI Serie","CFDI Folio","CFDI Subtotal","CFDI Descuento","CFDI Moneda","CFDI Traslados (IVA)","CFDI Retenciones","CFDI Fecha Timbrado","CFDI Total Impuestos","CFDI UUID (Manual)","CFDI Vinculado","Created At","Updated At"];
+                var headers = ["ID","Numero Referencia","Referencia Operaciones","Nombre Enviador","Departamento","Proyecto","Fase Torneo","Método Pago","Últimos 4 Dígitos","Gasto Cantidad","Concepto","Sub-Cuenta","Tipo Gasto","Uso CFDI","Cuenta Bancaria Base","Cuenta Contable Codigo","Cuenta Contable Nombre","Telegram User ID","Estado Factura","Estado Reembolso","Nova Request ID","Link PDF","Link XML","Mensaje Error","CFDI Fecha","CFDI Emisor RFC","CFDI Receptor RFC","CFDI Total","CFDI UUID","CFDI Tipo Cambio","CFDI Emisor Nombre","CFDI Descripcion Concepto","CFDI Serie","CFDI Folio","CFDI Subtotal","CFDI Descuento","CFDI Moneda","CFDI Traslados (IVA)","CFDI Retenciones","CFDI Fecha Timbrado","CFDI Total Impuestos","CFDI UUID (Manual)","CFDI Vinculado","Created At","Updated At"];
                 var csvLines = [headers.join(',')];
                 for (var i = 0; i < rowsToExport.length; i++) {{
                     var row = rowsToExport[i];
-                    var cells = [escapeCsv(row.id), escapeCsv(row.numero_referencia), escapeCsv(row.nombre_enviador), escapeCsv(row.departamento), escapeCsv(row.proyecto), escapeCsv(row.fase_torneo), escapeCsv(row.metodo_pago), escapeCsv(row.ultimos_4_digitos), row.gasto_cantidad, escapeCsv(row.concepto), escapeCsv(row.sub_cuenta), escapeCsv(row.tipo_gasto), escapeCsv(row.cfdi_use), escapeCsv(row.cuenta_contable_base), escapeCsv(row.cuenta_codigo), escapeCsv(row.cuenta_nombre), row.telegram_user_id, escapeCsv(row.estado_factura), escapeCsv(row.estado_reembolso), escapeCsv(row.nova_request_id), escapeCsv(row.link_pdf), escapeCsv(row.link_xml), escapeCsv(row.mensaje_error), escapeCsv(row.cfdi_fecha), escapeCsv(row.cfdi_emisor_rfc), escapeCsv(row.cfdi_receptor_rfc), row.cfdi_total, escapeCsv(row.cfdi_uuid), row.cfdi_tipo_cambio, escapeCsv(row.cfdi_emisor_nombre), escapeCsv(row.cfdi_descripcion_concepto), escapeCsv(row.cfdi_serie), escapeCsv(row.cfdi_folio), row.cfdi_subtotal, row.cfdi_descuento, escapeCsv(row.cfdi_moneda), escapeCsv(row.cfdi_traslados), escapeCsv(row.cfdi_retenciones), escapeCsv(row.cfdi_fecha_timbrado), row.cfdi_total_impuestos, escapeCsv(row.cfdi_uuid_manual), escapeCsv(row.cfdi_vinculado), escapeCsv(row.created_at), escapeCsv(row.updated_at)];
+                    var cells = [escapeCsv(row.id), escapeCsv(row.numero_referencia), escapeCsv(row.referencia_operaciones), escapeCsv(row.nombre_enviador), escapeCsv(row.departamento), escapeCsv(row.proyecto), escapeCsv(row.fase_torneo), escapeCsv(row.metodo_pago), escapeCsv(row.ultimos_4_digitos), row.gasto_cantidad, escapeCsv(row.concepto), escapeCsv(row.sub_cuenta), escapeCsv(row.tipo_gasto), escapeCsv(row.cfdi_use), escapeCsv(row.cuenta_contable_base), escapeCsv(row.cuenta_codigo), escapeCsv(row.cuenta_nombre), row.telegram_user_id, escapeCsv(row.estado_factura), escapeCsv(row.estado_reembolso), escapeCsv(row.nova_request_id), escapeCsv(row.link_pdf), escapeCsv(row.link_xml), escapeCsv(row.mensaje_error), escapeCsv(row.cfdi_fecha), escapeCsv(row.cfdi_emisor_rfc), escapeCsv(row.cfdi_receptor_rfc), row.cfdi_total, escapeCsv(row.cfdi_uuid), row.cfdi_tipo_cambio, escapeCsv(row.cfdi_emisor_nombre), escapeCsv(row.cfdi_descripcion_concepto), escapeCsv(row.cfdi_serie), escapeCsv(row.cfdi_folio), row.cfdi_subtotal, row.cfdi_descuento, escapeCsv(row.cfdi_moneda), escapeCsv(row.cfdi_traslados), escapeCsv(row.cfdi_retenciones), escapeCsv(row.cfdi_fecha_timbrado), row.cfdi_total_impuestos, escapeCsv(row.cfdi_uuid_manual), escapeCsv(row.cfdi_vinculado), escapeCsv(row.created_at), escapeCsv(row.updated_at)];
                     csvLines.push(cells.join(','));
                 }}
                 var csvContent = '\\uFEFF' + csvLines.join('\\r\\n');
@@ -4876,6 +4964,7 @@ async def admin_expenses(
                 <thead>
                     <tr>
                         <th>Referencia</th>
+                        <th>Referencia Operaciones</th>
                         <th>Nombre Enviador</th>
                         <th>Departamento</th>
                         <th>Proyecto</th>
@@ -7018,6 +7107,7 @@ async def admin_finance_platform(
         f"""
         <tr>
             <td>{escape(str(item.get("numero_referencia") or item.get("id") or "-"))}</td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td>{escape(str(item.get("tipo") or "-"))}</td>
             <td>{escape(str(item.get("beneficiario_nombre") or item.get("proveedor_nombre") or "-"))}</td>
             <td>${float(item.get("monto_total") or item.get("monto_solicitado") or 0):,.2f}</td>
@@ -7031,6 +7121,7 @@ async def admin_finance_platform(
         <tr>
             <td><input type="checkbox" name="expense_ids" value="{escape(str(item.get("id") or ""))}"></td>
             <td>{escape(str(item.get("numero_referencia") or item.get("id") or "-"))}</td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td>{escape(str(item.get("concepto") or "-"))}</td>
             <td>${float(item.get("gasto_cantidad") or 0):,.2f}</td>
             <td><select name="cuenta_contable_id_{escape(str(item.get("id") or ""))}">{_account_options(item.get("cuenta_contable_id"))}</select></td>
@@ -7070,6 +7161,7 @@ async def admin_finance_platform(
         <tr>
             <td><input type="checkbox" name="target_keys" value="{escape(str(item.get("entity_type") or ""))}:{escape(str(item.get("id") or ""))}"></td>
             <td>{escape(str(item.get("numero_referencia") or item.get("id") or "-"))}</td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td>{escape("Documento" if item.get("entity_type") == "documento" else "Gasto")}</td>
             <td>{escape(str(item.get("estado") or item.get("estado_reembolso") or "-"))}</td>
             <td>${float(item.get("monto_total") or item.get("monto_solicitado") or item.get("gasto_cantidad") or 0):,.2f}</td>
@@ -7083,6 +7175,7 @@ async def admin_finance_platform(
         f"""
         <tr>
             <td>{escape(str(item.get("numero_referencia") or item.get("id") or "-"))}</td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td>{escape(str(item.get("concepto") or "-"))}</td>
             <td>{escape(str(item.get("fecha") or "-"))[:10]}</td>
             <td>{escape(str(item.get("cfdi_fecha") or "-"))[:10]}</td>
@@ -7247,8 +7340,8 @@ async def admin_finance_platform(
                         <a class="button secondary" href="/admin/finanzas/payment-history">Historial de pagos</a>
                     </div>
                     <div class="table-shell" style="margin-top:16px;"><table class="finance-table">
-                        <thead><tr><th>Referencia</th><th>Tipo</th><th>Beneficiario</th><th>Monto</th><th>Fecha</th></tr></thead>
-                        <tbody>{payable_rows or '<tr><td colspan="5">Sin pagos pendientes.</td></tr>'}</tbody>
+                        <thead><tr><th>Referencia</th><th>Referencia Operaciones</th><th>Tipo</th><th>Beneficiario</th><th>Monto</th><th>Fecha</th></tr></thead>
+                        <tbody>{payable_rows or '<tr><td colspan="6">Sin pagos pendientes.</td></tr>'}</tbody>
                     </table></div>
                 </div>
                 <div class="workspace-card" id="coi-pendiente">
@@ -7259,8 +7352,8 @@ async def admin_finance_platform(
                         <input type="hidden" name="year" value="{current_year}">
                         <input type="hidden" name="month" value="{current_month}">
                         <div class="table-shell"><table class="finance-table">
-                            <thead><tr><th></th><th>Gasto</th><th>Concepto</th><th>Monto</th><th>Cuenta</th><th>Contracuenta</th><th>Cuenta IVA</th><th>Fiscal</th></tr></thead>
-                            <tbody>{pending_coi_rows or '<tr><td colspan="8">Sin gastos pendientes de clasificación COI.</td></tr>'}</tbody>
+                            <thead><tr><th></th><th>Gasto</th><th>Referencia Operaciones</th><th>Concepto</th><th>Monto</th><th>Cuenta</th><th>Contracuenta</th><th>Cuenta IVA</th><th>Fiscal</th></tr></thead>
+                            <tbody>{pending_coi_rows or '<tr><td colspan="9">Sin gastos pendientes de clasificación COI.</td></tr>'}</tbody>
                         </table></div>
                         <button class="button" type="submit" style="margin-top:12px;" {'disabled' if not pending_coi_expenses or not account_rows else ''}>Guardar clasificación COI</button>
                     </form>
@@ -7281,16 +7374,16 @@ async def admin_finance_platform(
                         <input type="hidden" name="year" value="{current_year}">
                         <input type="hidden" name="month" value="{current_month}">
                         <div class="table-shell"><table class="finance-table">
-                            <thead><tr><th></th><th>Referencia</th><th>Tipo</th><th>Estado</th><th>Monto</th><th>Persona/proveedor</th><th>UUID CFDI</th></tr></thead>
-                            <tbody>{blocker_rows or '<tr><td colspan="7">Sin bloqueos fiscales visibles.</td></tr>'}</tbody>
+                            <thead><tr><th></th><th>Referencia</th><th>Referencia Operaciones</th><th>Tipo</th><th>Estado</th><th>Monto</th><th>Persona/proveedor</th><th>UUID CFDI</th></tr></thead>
+                            <tbody>{blocker_rows or '<tr><td colspan="8">Sin bloqueos fiscales visibles.</td></tr>'}</tbody>
                         </table></div>
                         <button class="button" type="submit" style="margin-top:12px;" {'disabled' if not tax_blockers else ''}>Amarrar CFDI para DIOT</button>
                     </form>
                     <div style="margin-top:18px;">
                         <div class="workspace-section-subtitle">Warnings cuando el comprobante pertenece a otro mes que el gasto.</div>
                         <div class="table-shell" style="margin-top:12px;"><table class="finance-table">
-                            <thead><tr><th>Gasto</th><th>Concepto</th><th>Fecha gasto</th><th>Fecha CFDI</th><th>Warning</th></tr></thead>
-                            <tbody>{cross_month_rows or '<tr><td colspan="5">Sin comprobantes cruzados entre meses.</td></tr>'}</tbody>
+                            <thead><tr><th>Gasto</th><th>Referencia Operaciones</th><th>Concepto</th><th>Fecha gasto</th><th>Fecha CFDI</th><th>Warning</th></tr></thead>
+                            <tbody>{cross_month_rows or '<tr><td colspan="6">Sin comprobantes cruzados entre meses.</td></tr>'}</tbody>
                         </table></div>
                     </div>
                 </div>
@@ -8999,6 +9092,27 @@ async def _build_finance_coi_batch_expenses(
     )
     period_expenses = list(result.scalars().all())
 
+    document_ids = {
+        document_id
+        for expense in period_expenses
+        for document_id in (
+            getattr(expense, "documento_id", None),
+            getattr(expense, "informe_documento_id", None),
+            getattr(expense, "solicitud_documento_id", None),
+        )
+        if document_id is not None
+    }
+    documents_by_id: dict[Any, Documento] = {}
+    if document_ids:
+        document_rows = await session.execute(
+            select(Documento)
+            .options(*coi_document_loader_options())
+            .where(Documento.id.in_(document_ids))
+        )
+        documents_by_id = {
+            document.id: document for document in document_rows.scalars().all()
+        }
+
     cuenta_ids = {
         expense.cuenta_gastos_id
         for expense in period_expenses
@@ -9008,6 +9122,7 @@ async def _build_finance_coi_batch_expenses(
     if cuenta_ids:
         informe_rows = await session.execute(
             select(Documento)
+            .options(*coi_document_loader_options())
             .where(
                 Documento.tipo == "INFORME",
                 Documento.cuenta_gastos_id.in_(cuenta_ids),
@@ -9018,10 +9133,14 @@ async def _build_finance_coi_batch_expenses(
             informe_by_cuenta.setdefault(informe.cuenta_gastos_id, informe)
 
     def informe_for_expense(expense: ExpenseReport) -> Optional[Documento]:
-        direct = getattr(expense, "informe_documento", None)
+        direct = documents_by_id.get(getattr(expense, "informe_documento_id", None))
+        if direct is None:
+            direct = getattr(expense, "informe_documento", None)
         if direct is not None and direct.tipo == "INFORME":
             return direct
-        documento = getattr(expense, "documento", None)
+        documento = documents_by_id.get(getattr(expense, "documento_id", None))
+        if documento is None:
+            documento = getattr(expense, "documento", None)
         if documento is not None and documento.tipo == "INFORME":
             return documento
         return informe_by_cuenta.get(expense.cuenta_gastos_id)
@@ -9089,7 +9208,9 @@ async def _build_finance_coi_batch_expenses(
                     f"El Informe {informe.numero_referencia or informe.id} requiere "
                     "la revisión AMEX y su corte contable antes de exportar."
                 )
-            output.extend(cut_expense_cfdis(cut))
+            output.extend(
+                group_expense_cfdis_for_document(cut_expense_cfdis(cut), informe)
+            )
             grouped_expense_ids.update(expense.id for expense in expenses)
             continue
         if not getattr(informe, "aprobado_en", None):
@@ -9119,7 +9240,13 @@ async def _build_finance_coi_batch_expenses(
         if expense.id in grouped_expense_ids:
             continue
         try:
-            output.append(await build_expense_cfdi_for_export(session, expense))
+            expense_cfdi = await build_expense_cfdi_for_export(session, expense)
+            source_document = documents_by_id.get(
+                getattr(expense, "solicitud_documento_id", None)
+            ) or documents_by_id.get(getattr(expense, "documento_id", None))
+            if source_document is not None:
+                group_expense_cfdis_for_document([expense_cfdi], source_document)
+            output.append(expense_cfdi)
         except ValueError:
             continue
     return period_year, period_month, output
@@ -9416,6 +9543,64 @@ def _payment_proof_conflict_response(
     return HTMLResponse(content=html, status_code=422)
 
 
+_PAYMENT_PROOF_MAX_FILES = 25
+_PAYMENT_PROOF_MAX_BATCH_BYTES = 25 * 1024 * 1024
+_PAYMENT_PROOF_MAX_FILE_BYTES = 15 * 1024 * 1024
+
+
+def _payment_run_bulk_wants_json(request: Request) -> bool:
+    """Return whether the bulk uploader requested an in-panel JSON result."""
+    headers = getattr(request, "headers", {}) or {}
+    return "application/json" in str(headers.get("accept", "")).lower()
+
+
+def _payment_run_bulk_error_response(
+    request: Request,
+    *,
+    code: str,
+    message: str,
+    status_code: int,
+) -> Response:
+    if _payment_run_bulk_wants_json(request):
+        return JSONResponse(
+            status_code=status_code,
+            content={"ok": False, "code": code, "message": message},
+        )
+    return _payment_run_redirect(
+        error_msg=message,
+        anchor="comprobantes-pendientes",
+        vista="comprobantes",
+    )
+
+
+def _payment_run_bulk_conflict_response(
+    request: Request,
+    *,
+    documento: Documento,
+    review: Any,
+    effective_payment_date: date,
+    reasons: tuple[str, ...],
+) -> Response:
+    if _payment_run_bulk_wants_json(request):
+        message = " ".join(str(reason).strip() for reason in reasons if str(reason).strip())
+        return JSONResponse(
+            status_code=422,
+            content={
+                "ok": False,
+                "code": "payment_proof_conflict",
+                "message": message or "El comprobante requiere revisión antes de confirmar el pago.",
+                "reasons": list(reasons),
+            },
+        )
+    return _payment_proof_conflict_response(
+        documento=documento,
+        review=review,
+        effective_payment_date=effective_payment_date,
+        reasons=reasons,
+        bulk=True,
+    )
+
+
 def _build_payment_proof_upload_plan(
     *,
     selected_document_ids: list[UUIDType],
@@ -9440,6 +9625,11 @@ def _build_payment_proof_upload_plan(
         raise SolicitudValidationError(
             "payment_proof_files_required",
             "Selecciona los testigos de pago.",
+        )
+    if len(uploads) > _PAYMENT_PROOF_MAX_FILES:
+        raise SolicitudValidationError(
+            "payment_proof_file_limit",
+            "Puedes cargar como máximo 25 comprobantes por lote.",
         )
     if apply_one_to_all:
         if len(uploads) != 1:
@@ -9841,6 +10031,10 @@ def _render_payment_run_items(
                 f'data-reference="{referencia}" value="{documento_id}">'
             )
         if row.get("can_upload_payment_proof") and can_confirm_payment:
+            confirmation_date = row.get("confirmation_date")
+            confirmation_value = (
+                confirmation_date.isoformat() if confirmation_date else ""
+            )
             proof_action = (
                 f"/prestamos/{documento_id}/comprobante-pago"
                 if entity_type == "prestamo"
@@ -9852,9 +10046,18 @@ def _render_payment_run_items(
                     '<label style="font-size:12px;color:#334155;">'
                     'Fecha efectiva de pago'
                     '<input type="date" name="fecha_pago_efectiva" '
+                    f'value="{escape(confirmation_value)}" '
+                    f'data-payment-date-document="{documento_id}" '
                     'data-payment-proof-effective-date required>'
                     '</label>'
+                    '<small>Precargada con la fecha del corte; '
+                    'Contabilidad puede ajustarla al confirmar.</small>'
                 )
+                if row.get("cutoff_date_missing"):
+                    effective_date_html += (
+                        '<small role="alert">Sin fecha de corte vinculada; '
+                        'captura la fecha efectiva del pago.</small>'
+                    )
             form_attributes = (
                 f'data-payment-proof-form data-documento-id="{documento_id}"'
                 if entity_type == "documento"
@@ -10190,6 +10393,7 @@ async def admin_finance_payment_run(
                     <label style="display:flex;gap:8px;align-items:center;font-size:13px;color:#334155;"><input id="payment-proof-apply-one" type="checkbox" name="apply_one_to_all" value="true"> Aplicar un solo testigo a todas las solicitudes seleccionadas</label>
                     <div id="payment-proof-selected-inputs"></div>
                     <div id="payment-proof-form-error" role="alert" aria-live="polite" style="display:none;color:#b91c1c;font-size:13px;font-weight:700;"></div>
+                    <div id="payment-proof-form-status" role="status" aria-live="polite" style="display:none;color:#166534;font-size:13px;font-weight:700;"></div>
                     <div id="payment-proof-mapping" style="display:grid;gap:8px;"></div>
                     <button class="button secondary" type="submit" onclick="return confirm('Se cargarán los testigos con la asignación mostrada y las solicitudes pasarán a Pagada. ¿Continuar?');">Cargar testigos seleccionados y pagar</button>
                 </form>
@@ -10201,10 +10405,31 @@ async def admin_finance_payment_run(
                     var form = document.getElementById('payment-run-bulk-proof-form');
                     var selectedInputs = document.getElementById('payment-proof-selected-inputs');
                     var formError = document.getElementById('payment-proof-form-error');
+                    var formStatus = document.getElementById('payment-proof-form-status');
+                    var submitButton = form.querySelector('button[type="submit"]');
+                    var acceptedDocumentIds = Object.create(null);
+                    var uncertainDocumentIds = Object.create(null);
                     var uuidPattern = /^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$/i;
-                    function selected() {{ return Array.prototype.slice.call(document.querySelectorAll('[data-payment-proof-selection]:checked')); }}
-                    function showError(message) {{ formError.textContent = message; formError.style.display = 'block'; }}
-                    function clearError() {{ formError.textContent = ''; formError.style.display = 'none'; }}
+                    var maxFiles = 25;
+                    var maxBatchBytes = 25 * 1024 * 1024;
+                    var maxFileBytes = 15 * 1024 * 1024;
+                    function selected() {{
+                        return Array.prototype.slice.call(document.querySelectorAll('[data-payment-proof-selection]:checked')).filter(function (input) {{
+                            return !acceptedDocumentIds[input.value] && !uncertainDocumentIds[input.value];
+                        }});
+                    }}
+                    function showErrors(messages) {{
+                        formError.innerHTML = '';
+                        if (!messages.length) {{ formError.style.display = 'none'; return; }}
+                        var list = document.createElement('ul'); list.style.margin = '0'; list.style.paddingLeft = '20px';
+                        messages.forEach(function (message) {{ var item = document.createElement('li'); item.textContent = message; list.appendChild(item); }});
+                        formError.appendChild(list); formError.style.display = 'block';
+                    }}
+                    function showStatus(message) {{ formStatus.textContent = message || ''; formStatus.style.display = message ? 'block' : 'none'; }}
+                    function setBusy(busy, selectedRows) {{
+                        files.disabled = busy; applyOne.disabled = busy; submitButton.disabled = busy;
+                        selectedRows.forEach(function (checkbox) {{ checkbox.disabled = busy || Boolean(acceptedDocumentIds[checkbox.value]) || Boolean(uncertainDocumentIds[checkbox.value]); }});
+                    }}
                     function reviewProof(documentId, file, dateInput, target) {{
                         target.dataset.reviewStatus = 'checking';
                         target.textContent = 'Validando comprobante...';
@@ -10241,6 +10466,10 @@ async def admin_finance_payment_run(
                             event.preventDefault(); singleReview.textContent += ' Captura el motivo de resolución antes de confirmar.';
                         }}
                     }}
+                    function defaultPaymentDate(documentId) {{
+                        var input = document.querySelector('[data-payment-date-document="' + documentId + '"]');
+                        return input ? input.value : '';
+                    }}
                     function refresh() {{
                         var selectedRows = selected();
                         var selectedOptions = selectedRows.map(function (input) {{ return {{ value: input.value, label: input.getAttribute('data-reference') || input.value }}; }});
@@ -10253,8 +10482,9 @@ async def admin_finance_payment_run(
                             mapping.textContent = uploads[0].name + ' se aplicará a ' + selectedOptions.length + ' solicitud(es) seleccionada(s).';
                             selectedOptions.forEach(function (option) {{
                                 var row = document.createElement('label'); row.style.cssText = 'display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr);gap:10px;align-items:center;font-size:13px;color:#334155;';
+                                row.setAttribute('data-payment-proof-document-id', option.value);
                                 var name = document.createElement('span'); name.textContent = 'Fecha efectiva: ' + option.label;
-                                var input = document.createElement('input'); input.type = 'date'; input.name = 'effective_payment_dates'; input.required = true;
+                                var input = document.createElement('input'); input.type = 'date'; input.name = 'effective_payment_dates'; input.required = true; input.value = defaultPaymentDate(option.value);
                                 var reason = document.createElement('input'); reason.name = 'payment_proof_resolution_reasons'; reason.dataset.paymentProofResolutionReason = 'true'; reason.placeholder = 'Motivo si se resuelve un conflicto';
                                 var review = document.createElement('small'); review.dataset.paymentProofReview = 'true'; review.style.gridColumn = '1 / -1';
                                 row.appendChild(name); row.appendChild(input); row.appendChild(reason); row.appendChild(review); mapping.appendChild(row);
@@ -10265,14 +10495,16 @@ async def admin_finance_payment_run(
                         uploads.forEach(function (file) {{
                             var row = document.createElement('label');
                             row.style.cssText = 'display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,1fr) minmax(160px,1fr);gap:10px;align-items:center;font-size:13px;color:#334155;';
+                            row.setAttribute('data-payment-proof-file', file.name);
                             var name = document.createElement('span'); name.textContent = file.name;
                             var select = document.createElement('select'); select.name = 'proof_document_ids';
                             var dateInput = document.createElement('input'); dateInput.type = 'date'; dateInput.name = 'effective_payment_dates'; dateInput.required = true;
                             var reason = document.createElement('input'); reason.name = 'payment_proof_resolution_reasons'; reason.dataset.paymentProofResolutionReason = 'true'; reason.placeholder = 'Motivo si se resuelve un conflicto';
                             var review = document.createElement('small'); review.dataset.paymentProofReview = 'true'; review.style.gridColumn = '1 / -1';
                             selectedOptions.forEach(function (option) {{ var item = document.createElement('option'); item.value = option.value; item.textContent = option.label; select.appendChild(item); }});
-                            select.addEventListener('change', function () {{ reviewProof(select.value, file, dateInput, review); }});
+                            select.addEventListener('change', function () {{ dateInput.value = defaultPaymentDate(select.value); reviewProof(select.value, file, dateInput, review); }});
                             row.appendChild(name); row.appendChild(select); row.appendChild(dateInput); row.appendChild(reason); row.appendChild(review); mapping.appendChild(row);
+                            dateInput.value = defaultPaymentDate(select.value);
                             reviewProof(select.value, file, dateInput, review);
                         }});
                     }}
@@ -10290,24 +10522,99 @@ async def admin_finance_payment_run(
                         var singleForm = event.target && event.target.closest('[data-payment-proof-form]');
                         if (singleForm) validateSingleProofSubmit(singleForm, event);
                     }});
-                    form.addEventListener('submit', function (event) {{
+                    form.addEventListener('submit', async function (event) {{
+                        event.preventDefault();
                         var selectedRows = selected();
                         var uploads = Array.prototype.slice.call(files.files || []);
                         var mapped = Array.prototype.slice.call(mapping.querySelectorAll('select[name="proof_document_ids"]'));
-                        var effectiveDates = Array.prototype.slice.call(mapping.querySelectorAll('input[name="effective_payment_dates"]'));
-                        clearError(); selectedInputs.innerHTML = '';
-                        if (!selectedRows.length) {{ event.preventDefault(); showError('Selecciona al menos una solicitud antes de cargar el lote.'); return; }}
-                        if (!uploads.length) {{ event.preventDefault(); showError('Selecciona los comprobantes de pago.'); return; }}
-                        if (!applyOne.checked && mapped.length !== uploads.length) {{ event.preventDefault(); showError('Asigna una solicitud a cada comprobante.'); return; }}
-                        if (!applyOne.checked && mapped.some(function (select) {{ return !uuidPattern.test(select.value); }})) {{ event.preventDefault(); showError('Una asignación de comprobante no es válida. Actualiza la página e inténtalo de nuevo.'); return; }}
-                        if (effectiveDates.length !== (applyOne.checked ? selectedRows.length : uploads.length)) {{ event.preventDefault(); showError('Captura una fecha efectiva para cada solicitud.'); return; }}
-                        if (Array.prototype.slice.call(mapping.querySelectorAll('[data-payment-proof-review]')).some(function(review) {{ return review.dataset.reviewStatus === 'checking'; }})) {{ event.preventDefault(); showError('Espera a que termine la validación de cada comprobante.'); return; }}
-                        var unresolvedConflict = Array.prototype.slice.call(mapping.querySelectorAll('[data-payment-proof-review]')).some(function(review) {{ var reason = review.parentElement.querySelector('[data-payment-proof-resolution-reason]'); return review.dataset.reviewStatus === 'conflict' && !(reason && reason.value.trim()); }});
-                        if (unresolvedConflict) {{ event.preventDefault(); showError('Captura el motivo de resolución para cada conflicto detectado.'); return; }}
-                        if (selectedRows.some(function (checkbox) {{ return !uuidPattern.test(checkbox.value); }})) {{ event.preventDefault(); showError('Una solicitud seleccionada no es válida. Actualiza la página e inténtalo de nuevo.'); return; }}
-                        selectedRows.forEach(function (checkbox) {{
-                            var hidden = document.createElement('input'); hidden.type = 'hidden'; hidden.name = 'selected_document_ids'; hidden.value = checkbox.value; selectedInputs.appendChild(hidden); checkbox.disabled = true;
-                        }});
+                        var activeMappingRows = applyOne.checked
+                            ? selectedRows.map(function (checkbox) {{ return mapping.querySelector('[data-payment-proof-document-id="' + checkbox.value + '"]'); }}).filter(Boolean)
+                            : Array.prototype.slice.call(mapping.querySelectorAll('label'));
+                        var effectiveDates = activeMappingRows.map(function (row) {{ return row.querySelector('input[name="effective_payment_dates"]'); }}).filter(Boolean);
+                        var reviews = activeMappingRows.map(function (row) {{ return row.querySelector('[data-payment-proof-review]'); }}).filter(Boolean);
+                        var errors = [];
+                        showErrors([]); showStatus(''); selectedInputs.innerHTML = '';
+                        if (!selectedRows.length) {{ showErrors(['Selecciona al menos una solicitud antes de cargar el lote.']); return; }}
+                        if (!uploads.length) {{ showErrors(['Selecciona los comprobantes de pago.']); return; }}
+                        if (uploads.length > maxFiles) {{ showErrors(['Puedes cargar como máximo 25 comprobantes por lote.']); return; }}
+                        if (uploads.some(function (file) {{ return file.size > maxFileBytes; }})) {{ showErrors(['Cada comprobante debe medir como máximo 15 MiB.']); return; }}
+                        var totalBytes = uploads.reduce(function (total, file) {{ return total + file.size; }}, 0);
+                        if (totalBytes > maxBatchBytes) {{ showErrors(['El lote de comprobantes debe medir como máximo 25 MiB.']); return; }}
+                        if (applyOne.checked && uploads.length !== 1) {{ showErrors(['Para aplicar un comprobante a varias solicitudes selecciona un solo archivo.']); return; }}
+                        if (!applyOne.checked && mapped.length !== uploads.length) {{ showErrors(['Asigna una solicitud a cada comprobante.']); return; }}
+                        if (!applyOne.checked && mapped.some(function (select) {{ return !uuidPattern.test(select.value); }})) {{ showErrors(['Una asignación de comprobante no es válida. Actualiza la página e inténtalo de nuevo.']); return; }}
+                        if (activeMappingRows.length !== (applyOne.checked ? selectedRows.length : uploads.length) || effectiveDates.length !== activeMappingRows.length || effectiveDates.some(function (input) {{ return !input.value; }})) {{ showErrors(['Captura una fecha efectiva para cada solicitud.']); return; }}
+                        if (reviews.some(function (review) {{ return review.dataset.reviewStatus === 'checking'; }})) {{ showErrors(['Espera a que termine la validación de cada comprobante.']); return; }}
+                        var unresolvedConflict = reviews.some(function (review) {{ var reason = review.parentElement.querySelector('[data-payment-proof-resolution-reason]'); return review.dataset.reviewStatus === 'conflict' && !(reason && reason.value.trim()); }});
+                        if (unresolvedConflict) {{ showErrors(['Captura el motivo de resolución para cada conflicto detectado.']); return; }}
+                        if (selectedRows.some(function (checkbox) {{ return !uuidPattern.test(checkbox.value); }})) {{ showErrors(['Una solicitud seleccionada no es válida. Actualiza la página e inténtalo de nuevo.']); return; }}
+                        var selectedById = Object.create(null);
+                        selectedRows.forEach(function (checkbox) {{ selectedById[checkbox.value] = checkbox.getAttribute('data-reference') || checkbox.value; }});
+                        var queue = applyOne.checked
+                            ? [{{
+                                documentIds: selectedRows.map(function (checkbox) {{ return checkbox.value; }}),
+                                references: selectedRows.map(function (checkbox) {{ return selectedById[checkbox.value]; }}),
+                                file: uploads[0],
+                                effectiveDates: selectedRows.map(function (checkbox) {{ return mapping.querySelector('[data-payment-proof-document-id="' + checkbox.value + '"] input[name="effective_payment_dates"]').value; }}),
+                                resolutionReasons: selectedRows.map(function (checkbox) {{ return mapping.querySelector('[data-payment-proof-document-id="' + checkbox.value + '"] [data-payment-proof-resolution-reason]').value; }}),
+                                applyOne: true
+                            }}]
+                            : uploads.map(function (file, index) {{
+                                var row = mapped[index].closest('label');
+                                return {{ documentIds: [mapped[index].value], references: [selectedById[mapped[index].value] || mapped[index].value], file: file, effectiveDates: [row.querySelector('input[name="effective_payment_dates"]').value], resolutionReasons: [row.querySelector('[data-payment-proof-resolution-reason]').value], applyOne: false }};
+                            }});
+                        var seen = Object.create(null);
+                        if (queue.some(function (entry) {{ return entry.documentIds.some(function (documentId) {{ if (seen[documentId]) return true; seen[documentId] = true; return false; }}); }})) {{ showErrors(['No puedes asignar dos comprobantes a la misma solicitud en este lote.']); return; }}
+                        queue = queue.filter(function (entry) {{ return entry.documentIds.every(function (documentId) {{ return !acceptedDocumentIds[documentId] && !uncertainDocumentIds[documentId]; }}); }});
+                        if (!queue.length) {{ showStatus('Todos los comprobantes de esta selección ya fueron aceptados.'); return; }}
+                        setBusy(true, selectedRows);
+                        for (var index = 0; index < queue.length; index += 1) {{
+                            var entry = queue[index];
+                            var entryLabel = entry.references.join(', ');
+                            showStatus('Subiendo ' + (index + 1) + ' de ' + queue.length + ': ' + entryLabel + '.');
+                            var body = new FormData();
+                            entry.documentIds.forEach(function (documentId) {{ body.append('selected_document_ids', documentId); if (!entry.applyOne) body.append('proof_document_ids', documentId); }});
+                            body.append('comprobantes_pago', entry.file, entry.file.name);
+                            entry.effectiveDates.forEach(function (effectiveDate) {{ body.append('effective_payment_dates', effectiveDate); }});
+                            entry.resolutionReasons.forEach(function (resolutionReason) {{ body.append('payment_proof_resolution_reasons', resolutionReason || ''); }});
+                            if (entry.applyOne) body.append('apply_one_to_all', 'true');
+                            var response;
+                            try {{
+                                response = await fetch(form.action, {{ method: 'POST', body: body, credentials: 'same-origin', headers: {{ Accept: 'application/json' }} }});
+                            }} catch (networkError) {{
+                                entry.documentIds.forEach(function (documentId) {{ uncertainDocumentIds[documentId] = true; }});
+                                errors.push(entryLabel + ': la conexión se interrumpió y el resultado es incierto. Recarga la página antes de reintentar.');
+                                break;
+                            }}
+                            var contentType = (response.headers.get('content-type') || '').toLowerCase();
+                            if (contentType.indexOf('application/json') === -1) {{
+                                entry.documentIds.forEach(function (documentId) {{ uncertainDocumentIds[documentId] = true; }});
+                                errors.push(entryLabel + ': el servidor devolvió una respuesta inesperada. Recarga la página antes de reintentar.');
+                                break;
+                            }}
+                            var payload;
+                            try {{ payload = await response.json(); }} catch (parseError) {{
+                                entry.documentIds.forEach(function (documentId) {{ uncertainDocumentIds[documentId] = true; }});
+                                errors.push(entryLabel + ': no se pudo interpretar la respuesta. Recarga la página antes de reintentar.');
+                                break;
+                            }}
+                            if (response.ok && payload.ok) {{
+                                var acceptedIds = Array.isArray(payload.accepted) ? payload.accepted.map(function (item) {{ return item.document_id; }}) : entry.documentIds;
+                                acceptedIds.forEach(function (documentId) {{
+                                    acceptedDocumentIds[documentId] = true;
+                                    var checkbox = document.querySelector('[data-payment-proof-selection][value="' + documentId + '"]');
+                                    var paidRow = checkbox && checkbox.closest('tr');
+                                    if (paidRow) paidRow.remove();
+                                }});
+                            }} else {{
+                                errors.push(entryLabel + ': ' + (payload.message || 'No se pudo cargar el comprobante.'));
+                                if (response.status === 401 || response.status === 403) break;
+                            }}
+                        }}
+                        setBusy(false, selectedRows);
+                        showErrors(errors);
+                        var acceptedTotal = Object.keys(acceptedDocumentIds).length;
+                        showStatus(acceptedTotal + ' comprobante(s) aceptado(s). ' + (errors.length ? 'Corrige los errores y vuelve a enviar; los aceptados no se repetirán.' : 'La carga terminó correctamente.'));
                     }});
                 }})();
                 </script>
@@ -10580,8 +10887,15 @@ async def admin_finance_payment_run_upload_payment_proof(
         )
 
     try:
+        selected_date = await prepare_payment_run_confirmation_date(
+            session, documento=documento, actor=current_empleado,
+            fecha_pago_efectiva=(
+                fecha_pago_efectiva if isinstance(fecha_pago_efectiva, str) else None
+            ),
+            request=request,
+        )
         effective_payment_date = _parse_effective_payment_dates(
-            [fecha_pago_efectiva] if fecha_pago_efectiva else [], expected_count=1
+            [selected_date.isoformat()], expected_count=1
         )[0]
         raw = await comprobante_pago.read()
         content_type = (comprobante_pago.content_type or "").split(";", 1)[0].strip().lower()
@@ -10657,7 +10971,7 @@ async def admin_finance_payment_run_upload_payment_proof(
             anchor="comprobantes-pendientes",
             vista="comprobantes",
         )
-    except SolicitudValidationError as exc:
+    except (SolicitudValidationError, PaymentRunValidationError) as exc:
         await session.rollback()
         return _payment_run_redirect(
             error_msg=str(exc), anchor="comprobantes-pendientes", vista="comprobantes"
@@ -11018,12 +11332,24 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
 
         prepared: list[tuple[UUIDType, SolicitudTercerosAttachment]] = []
         upload_bytes: dict[int, bytes] = {}
+        batch_bytes = 0
         for documento_id, upload in plan:
             upload_key = id(upload)
             raw = upload_bytes.get(upload_key)
             if raw is None:
                 raw = await upload.read()
                 upload_bytes[upload_key] = raw
+                if len(raw) > _PAYMENT_PROOF_MAX_FILE_BYTES:
+                    raise SolicitudValidationError(
+                        "attachment_too_large",
+                        "El comprobante excede el máximo de 15 MiB.",
+                    )
+                batch_bytes += len(raw)
+                if batch_bytes > _PAYMENT_PROOF_MAX_BATCH_BYTES:
+                    raise SolicitudValidationError(
+                        "payment_proof_batch_too_large",
+                        "El lote de comprobantes excede el máximo de 25 MiB.",
+                    )
             content_type = (upload.content_type or "").split(";", 1)[0].strip().lower()
             attachment = SolicitudTercerosAttachment(
                 raw_bytes=raw,
@@ -11048,6 +11374,14 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
                 )
             documentos[documento_id] = documento
 
+        for (documento_id, _), effective_payment_date in zip(
+            prepared, parsed_effective_dates
+        ):
+            await prepare_payment_run_confirmation_date(
+                session, documento=documentos[documento_id], actor=current_empleado,
+                fecha_pago_efectiva=effective_payment_date.isoformat(), request=request,
+            )
+
         paid_references: list[tuple[UUIDType, str]] = []
         for (documento_id, attachment), effective_payment_date, raw_reason in zip(
             prepared, parsed_effective_dates, resolution_reasons
@@ -11066,32 +11400,32 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
             )
             if _payment_proof_review_blocks_confirmation(review):
                 await session.rollback()
-                return _payment_proof_conflict_response(
+                return _payment_run_bulk_conflict_response(
+                    request,
                     documento=documento,
                     review=review,
                     effective_payment_date=effective_payment_date,
                     reasons=review.reasons,
-                    bulk=True,
                 )
             if review.status == "conflict" and not resolution_reason:
                 await session.rollback()
-                return _payment_proof_conflict_response(
+                return _payment_run_bulk_conflict_response(
+                    request,
                     documento=documento,
                     review=review,
                     effective_payment_date=effective_payment_date,
                     reasons=review.reasons,
-                    bulk=True,
                 )
             if review.detected_date and review.detected_date != effective_payment_date:
                 await session.rollback()
-                return _payment_proof_conflict_response(
+                return _payment_run_bulk_conflict_response(
+                    request,
                     documento=documento,
                     review=review,
                     effective_payment_date=effective_payment_date,
                     reasons=(
                         "La fecha detectada en el comprobante no coincide con la fecha efectiva capturada.",
                     ),
-                    bulk=True,
                 )
             await add_solicitud_documento_adjuntos(
                 session,
@@ -11121,33 +11455,72 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
                 documento_id=documento_id,
                 actor_id=current_empleado.id,
             )
+        success_message = (
+            f"{len(paid_references)} solicitud(es) marcada(s) como pagadas "
+            "con su comprobante."
+        )
+        if _payment_run_bulk_wants_json(request):
+            return JSONResponse(
+                content={
+                    "ok": True,
+                    "accepted": [
+                        {"document_id": str(documento_id), "reference": reference}
+                        for documento_id, reference in paid_references
+                    ],
+                    "message": success_message,
+                }
+            )
         return _payment_run_redirect(
-            success_msg=f"{len(paid_references)} solicitud(es) marcada(s) como pagadas con su comprobante.",
+            success_msg=success_message,
             anchor="comprobantes-pendientes",
             vista="comprobantes",
         )
-    except SolicitudValidationError as exc:
+    except (SolicitudValidationError, PaymentRunValidationError) as exc:
         await session.rollback()
         logger.info(
             "Bulk payment proof form rejected",
             extra={
                 "actor_id": str(current_empleado.id),
-                "validation_code": exc.code,
+                "validation_code": getattr(exc, "code", "invalid_payment_date"),
                 "selected_count": len(selected_document_ids or []),
                 "mapping_count": len(proof_document_ids or []),
                 "upload_count": len(comprobantes_pago or []),
             },
         )
-        return _payment_run_redirect(
-            error_msg=str(exc), anchor="comprobantes-pendientes", vista="comprobantes"
+        status_code = (
+            409
+            if exc.code in {"documento_not_found", "invalid_payment_proof_state"}
+            else 400
+        )
+        return _payment_run_bulk_error_response(
+            request,
+            code=exc.code,
+            message=str(exc),
+            status_code=status_code,
+        )
+    except PaymentRunPermissionError as exc:
+        await session.rollback()
+        return _payment_run_bulk_error_response(
+            request,
+            code="payment_run_forbidden",
+            message=exc.message,
+            status_code=403,
         )
     except DocumentoPaymentPermissionError as exc:
         await session.rollback()
-        raise HTTPException(status_code=403, detail=exc.message)
+        return _payment_run_bulk_error_response(
+            request,
+            code=exc.code,
+            message=exc.message,
+            status_code=403,
+        )
     except DocumentoPaymentValidationError as exc:
         await session.rollback()
-        return _payment_run_redirect(
-            error_msg=exc.message, anchor="comprobantes-pendientes", vista="comprobantes"
+        return _payment_run_bulk_error_response(
+            request,
+            code=exc.code,
+            message=exc.message,
+            status_code=409,
         )
     except Exception:
         await session.rollback()
@@ -11155,10 +11528,11 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
             "Unexpected error uploading bulk payment proofs from payment run",
             extra={"actor_id": str(current_empleado.id)},
         )
-        return _payment_run_redirect(
-            error_msg="No se pudo cargar el lote de comprobantes ni marcar los pagos.",
-            anchor="comprobantes-pendientes",
-            vista="comprobantes",
+        return _payment_run_bulk_error_response(
+            request,
+            code="unexpected_payment_proof_upload",
+            message="No se pudo cargar el comprobante ni marcar el pago.",
+            status_code=500,
         )
 
 
@@ -11219,6 +11593,7 @@ async def admin_finance_payment_run_closure_detail(
         f"""
         <tr>
             <td>{escape(str(item.get("numero_referencia") or item.get("documento_id") or "-"))}</td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td>{escape(str(item.get("fecha_pago") or "-"))}</td>
             <td>{_payment_run_money(item.get("monto"), str(item.get("currency") or "MXN"))}</td>
             <td>{escape(str(item.get("estado_documento") or "-"))}</td>
@@ -11264,8 +11639,8 @@ async def admin_finance_payment_run_closure_detail(
                 <div class="workspace-section-title">Solicitudes incluidas</div>
                 <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
                     <table class="payment-table">
-                        <thead><tr><th>Solicitud</th><th>Fecha pago</th><th>Monto</th><th>Estado al corte</th><th>Pago actual</th></tr></thead>
-                        <tbody>{rows or '<tr><td colspan="5">Sin items.</td></tr>'}</tbody>
+                        <thead><tr><th>Solicitud</th><th>Referencia Operaciones</th><th>Fecha pago</th><th>Monto</th><th>Estado al corte</th><th>Pago actual</th></tr></thead>
+                        <tbody>{rows or '<tr><td colspan="6">Sin items.</td></tr>'}</tbody>
                     </table>
                 </div>
             </section>
@@ -17077,6 +17452,7 @@ async def admin_presupuestos_legacy(
         f"""
         <tr>
             <td><a href="/admin/presupuestos?{drill_base_query}{'&' if drill_base_query else ''}drill_tournament={quote(str(active_tournament.get('tournament_id') or active_tournament.get('tournament_code') or ''))}&drill_document={quote(str(item.get('documento_id') or ''))}" style="color:#0f172a;text-decoration:none;">{escape(str(item.get("numero_referencia") or "-"))}</a></td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td>{escape(str(item.get("estado") or "-"))}</td>
             <td>{escape(str(item.get("proveedor_nombre") or "-"))}</td>
             <td>{escape(str(item.get("concepto_pago") or "-"))}</td>
@@ -17798,6 +18174,7 @@ async def admin_presupuestos_legacy(
                     <thead>
                         <tr>
                             <th>Referencia</th>
+                            <th>Referencia Operaciones</th>
                             <th>Estado</th>
                             <th>Proveedor</th>
                             <th>Concepto</th>
@@ -17809,7 +18186,7 @@ async def admin_presupuestos_legacy(
                         </tr>
                     </thead>
                     <tbody>
-                        {commitment_rows if commitment_rows else '<tr><td colspan="8">Sin compromisos visibles para el torneo seleccionado.</td></tr>'}
+                        {commitment_rows if commitment_rows else '<tr><td colspan="10">Sin compromisos visibles para el torneo seleccionado.</td></tr>'}
                     </tbody>
                 </table>
             </section>
@@ -25323,6 +25700,10 @@ async def cfdi_matching_control_room(
             linked_count = len(linked_expenses)
             unlinked_cfdi_count = len(unlinked_cfdis)
 
+        operational_references = await _expense_operational_references(
+            session, list(pending_expenses) + list(linked_expenses)
+        )
+
         # Build pending expenses table rows
         pending_rows = ""
         for expense in pending_expenses:
@@ -25337,6 +25718,7 @@ async def cfdi_matching_control_room(
             pending_rows += f"""
             <tr>
                 <td>{format_value(expense.numero_referencia)}</td>
+                <td>{escape(_expense_operational_reference(expense, operational_references))}</td>
                 <td>{fecha_str}</td>
                 <td>{format_value(empleado_name)}</td>
                 <td>{format_value(project_name)}<br><small>{expense_origin}</small></td>
@@ -25374,6 +25756,7 @@ async def cfdi_matching_control_room(
             linked_rows += f"""
             <tr>
                 <td>{format_value(expense.numero_referencia)}</td>
+                <td>{escape(_expense_operational_reference(expense, operational_references))}</td>
                 <td>{fecha_str}</td>
                 <td>{format_value(empleado_name)}</td>
                 <td>{format_value(project_name)}<br><small>{expense_origin}</small></td>
@@ -25564,6 +25947,7 @@ async def cfdi_matching_control_room(
                             <thead>
                                 <tr>
                                     <th>Referencia</th>
+                                    <th>Referencia Operaciones</th>
                                     <th>Fecha</th>
                                     <th>Empleado</th>
                                     <th>Proyecto / origen</th>
@@ -25598,6 +25982,7 @@ async def cfdi_matching_control_room(
                             <thead>
                                 <tr>
                                     <th>Referencia</th>
+                                    <th>Referencia Operaciones</th>
                                     <th>Fecha</th>
                                     <th>Empleado</th>
                                     <th>Proyecto / origen</th>
@@ -25781,6 +26166,7 @@ async def gastos_sin_cuenta_contable(
         document_type=selected_document_type,
         issue_type=selected_issue,
     )
+    operational_references = await _expense_operational_references(session, gastos)
     visible_expense_ids = {gasto.id for gasto in gastos}
     if focused_expense_id not in visible_expense_ids:
         focused_expense_id = None
@@ -25914,6 +26300,7 @@ async def gastos_sin_cuenta_contable(
         empleado_nombre = gasto.empleado.nombre if gasto.empleado else "N/A"
         fecha_str = gasto.fecha.strftime("%Y-%m-%d") if gasto.fecha else "N/A"
         document_origin_label, documento_ref = _cleanup_document_origin(gasto)
+        beneficiary_safe = escape(_cleanup_beneficiary_name(gasto))
 
         # Escape user data (proyecto: show name when UUID, else as-is)
         referencia_safe = escape(gasto.numero_referencia or "N/A")
@@ -26270,8 +26657,10 @@ async def gastos_sin_cuenta_contable(
                 <span class="cleanup-origin">{document_origin_safe}</span><br>
                 <span class="muted-mini">{documento_ref_safe}</span>
             </td>
+            <td>{escape(_expense_operational_reference(gasto, operational_references))}</td>
             <td>{fecha_str}</td>
             <td>{empleado_safe}</td>
+            <td>{beneficiary_safe}</td>
             <td style="max-width:260px;">{concepto_safe}</td>
             <td style="max-width:240px;">{proyecto_safe}<br><span class="muted-mini">{partida_presupuestal_safe}</span></td>
             <td>${gasto.gasto_cantidad:,.2f}<br><span class="muted-mini">{metodo_pago_safe}</span></td>
@@ -26285,7 +26674,7 @@ async def gastos_sin_cuenta_contable(
         </tr>
         <tr id="{detail_id}" class="cleanup-detail-row"
             style="display:{detail_display};">
-            <td colspan="10">
+            <td colspan="12">
                 <div class="cleanup-detail-panel">
                     <div class="cleanup-detail-head">
                         <div>
@@ -26379,7 +26768,14 @@ async def gastos_sin_cuenta_contable(
         """
 
     bi_context_label = f"año={bi_year_safe or 'n/a'} · ámbito={bi_scope_safe or 'all'}"
+    return_to_document_html = (
+        f'<a href="/documentos/{selected_document_id}" '
+        'class="button cleanup-return-link">Volver al reporte</a>'
+        if selected_document_id
+        else ""
+    )
     hero_actions_html = f"""
+        {return_to_document_html}
         <a href="/admin/gastos{bi_query_suffix}" class="button secondary">Volver a finanzas</a>
         <a href="/admin/gastos/expenses{bi_query_suffix}" class="button secondary">Ver gastos</a>
         <a href="/admin/gastos/sat" class="button secondary">SAT / CFDI</a>
@@ -26457,7 +26853,7 @@ async def gastos_sin_cuenta_contable(
         else "No hay gastos pendientes de preparación COI"
     )
     empty_cleanup_row = (
-        '<tr><td colspan="10" style="text-align: center; padding: 40px;">'
+        '<tr><td colspan="12" style="text-align: center; padding: 40px;">'
         f"{empty_cleanup_message}</td></tr>"
     )
 
@@ -26598,6 +26994,20 @@ async def gastos_sin_cuenta_contable(
             }}
             .cleanup-summary-row td {{
                 vertical-align:middle;
+            }}
+            .cleanup-return-link {{
+                transition:background-color .18s ease, color .18s ease,
+                           box-shadow .18s ease, transform .18s ease;
+            }}
+            .cleanup-return-link:hover {{
+                background:#115e59;
+                color:#fff;
+                box-shadow:0 8px 18px rgba(15,118,110,.24);
+                transform:translateY(-1px);
+            }}
+            .cleanup-return-link:focus-visible {{
+                outline:3px solid rgba(20,184,166,.35);
+                outline-offset:3px;
             }}
             .cleanup-row-focused td {{
                 background:#ecfdf5;
@@ -26920,7 +27330,7 @@ async def gastos_sin_cuenta_contable(
                             <input type="search" name="q" maxlength="200"
                                    value="{escape(selected_q, quote=True)}"
                                    placeholder="Informe, solicitud, gasto,
-                                                responsable, CFDI">
+                                                responsable, beneficiario, CFDI">
                         </label>
                         <label>Origen
                             <select name="document_type">
@@ -26968,8 +27378,10 @@ async def gastos_sin_cuenta_contable(
                             <thead>
                                 <tr>
                                     <th>Referencia</th>
+                                    <th>Referencia Operaciones</th>
                                     <th>Fecha</th>
                                     <th>Responsable</th>
+                                    <th>Beneficiario</th>
                                     <th>Descripción</th>
                                     <th>Proyecto / Concepto</th>
                                     <th>Monto / Metodo</th>

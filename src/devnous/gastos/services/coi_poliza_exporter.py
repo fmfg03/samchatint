@@ -60,6 +60,10 @@ class ExpenseCFDI:
     poliza_group_key: Optional[str] = None
     poliza_reference: Optional[str] = None
     poliza_description: Optional[str] = None
+    poliza_document_id: Optional[str] = None
+    poliza_operation_reference: Optional[str] = None
+    poliza_party_name: Optional[str] = None
+    poliza_context_description: Optional[str] = None
     posting_movements: Optional[List[Dict[str, Any]]] = None
 
 
@@ -320,6 +324,51 @@ def group_coi_policies(expenses: List[ExpenseCFDI]) -> List[CoiPolicyGroup]:
     return groups
 
 
+def _coi_policy_xlsx_description(group: CoiPolicyGroup) -> str:
+    """Prefix one COI policy description with its document metadata."""
+    metadata_by_document: Dict[str, tuple[str, str, str]] = {}
+    has_metadata_free_policy = False
+    for index, expense in enumerate(group.expenses, start=1):
+        values = (
+            " ".join((expense.poliza_operation_reference or "").split()),
+            " ".join((expense.poliza_party_name or "").split()),
+            " ".join((expense.poliza_context_description or "").split()),
+        )
+        document_id = " ".join((expense.poliza_document_id or "").split())
+        if not document_id and not any(values):
+            has_metadata_free_policy = True
+            continue
+        key = document_id or f"metadata:{index}:{values!r}"
+        metadata_by_document.setdefault(key, values)
+
+    if not metadata_by_document:
+        return group.description
+    if has_metadata_free_policy or len(metadata_by_document) > 1:
+        metadata_parts = ["Múltiples documentos"]
+    else:
+        operation_reference, party_name, context_description = next(
+            iter(metadata_by_document.values())
+        )
+        metadata_parts = [
+            f"Operaciones: {operation_reference}" if operation_reference else "",
+            f"Beneficiario: {party_name}" if party_name else "",
+            f"Contexto: {context_description}" if context_description else "",
+        ]
+    parts = [
+        " ".join(value.split())
+        for value in [*metadata_parts, group.description]
+        if value and value.strip()
+    ]
+    return " / ".join(parts)
+
+
+def _safe_cell_text(value: Any) -> Any:
+    """Prevent spreadsheet programs from evaluating untrusted text as formulas."""
+    if not isinstance(value, str):
+        return value
+    return f"'{value}" if value.startswith(("=", "+", "-", "@")) else value
+
+
 def _movement_row(movement: Dict[str, Any]) -> CoiRow:
     return [
         "",
@@ -558,6 +607,10 @@ def generate_coi_poliza_xlsx(
     wb = Workbook()
     ws = wb.active
     ws.title = "Poliza COI"
+    groups = group_coi_policies(expenses)
+    policy_header_rows = [row for row in rows if row[0] == "Eg"]
+    for row, group in zip(policy_header_rows, groups, strict=True):
+        row[2] = _safe_cell_text(_coi_policy_xlsx_description(group))
     for row in rows:
         ws.append(row[:COI_COLUMNS])
     _style_coi_import_sheet(ws)
@@ -599,7 +652,7 @@ def generate_coi_poliza_xlsx(
     if lote_manifest_rows:
         manifest = wb.create_sheet("Manifest")
         for row in lote_manifest_rows:
-            manifest.append(row)
+            manifest.append([_safe_cell_text(value) for value in row])
         _style_review_sheet(manifest)
 
     buffer = io.BytesIO()

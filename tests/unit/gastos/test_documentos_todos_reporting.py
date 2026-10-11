@@ -1292,7 +1292,8 @@ def test_informe_detail_uses_human_status_and_single_back_action():
     assert "escape(d.estado or '-')" not in solicitudes_section
     assert "Revisar solicitud" in solicitudes_section
     assert '<th>Acción</th>' in detail
-    assert 'colspan="7"' in detail
+    assert '<th>Referencia Operaciones</th>' in detail
+    assert 'colspan="8"' in detail
     assert (
         "Estas solicitudes son salidas de efectivo vinculadas al informe; "
         "afectan el saldo cuando Finanzas registra el pago."

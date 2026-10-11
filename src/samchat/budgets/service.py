@@ -899,6 +899,7 @@ def budget_document_effect_snapshot(
         state in _BUDGET_NON_IMPACT_DOCUMENT_STATES
         or state not in allowed
         or is_derived_reimbursement
+        or bool(getattr(documento, "is_supplier_advance", False))
     ):
         return {
             "amount": Decimal("0"),
@@ -930,6 +931,10 @@ def budget_document_effect_snapshot(
                 if getattr(documento, "monto_solicitado", None) is not None
                 else getattr(documento, "monto_total", None)
             )
+            if getattr(documento, "supplier_advance_id", None):
+                applied = _budget_decimal_amount(
+                    getattr(documento, "supplier_invoice_total", None)
+                )
             if fiscal_total > 0:
                 amount *= min(applied / fiscal_total, Decimal("1"))
         else:
@@ -996,6 +1001,7 @@ def _budget_document_base_amount_sql(document_alias: str = "d", cfdi_alias: str 
     return f"""
         ROUND(CAST(GREATEST(
             CASE
+                WHEN {document}.is_supplier_advance THEN 0
                 WHEN {cfdi}.subtotal IS NOT NULL THEN (
                     GREATEST(COALESCE({cfdi}.subtotal, 0) - COALESCE({cfdi}.descuento, 0), 0)
                     * CASE
@@ -1003,6 +1009,7 @@ def _budget_document_base_amount_sql(document_alias: str = "d", cfdi_alias: str 
                         THEN LEAST(
                             GREATEST(
                                 COALESCE(
+                                    {document}.supplier_invoice_total,
                                     {document}.monto_solicitado,
                                     {document}.monto_total,
                                     0
@@ -1014,7 +1021,7 @@ def _budget_document_base_amount_sql(document_alias: str = "d", cfdi_alias: str 
                         ELSE 1
                     END
                 )
-                ELSE COALESCE({document}.monto_solicitado, {document}.monto_total, 0)
+                ELSE COALESCE({document}.supplier_invoice_total, COALESCE({document}.monto_solicitado, {document}.monto_total, 0))
             END, 0
         ) AS NUMERIC), 2)
     """
@@ -1222,6 +1229,7 @@ async def list_budget_tournament_commitments(
                 SELECT
                     CAST(d.id AS text) AS documento_id,
                     d.numero_referencia,
+                    d.referencia_operaciones,
                     d.estado,
                     d.concepto_pago,
                     COALESCE(NULLIF(TRIM(bc_doc.concept_name), ''), NULL) AS budget_concept_name,
@@ -1286,6 +1294,7 @@ async def list_budget_tournament_commitments(
         {
             "documento_id": _safe_str(row.get("documento_id")) or None,
             "numero_referencia": _safe_str(row.get("numero_referencia")) or None,
+            "referencia_operaciones": _safe_str(row.get("referencia_operaciones")) or None,
             "estado": _safe_str(row.get("estado")) or None,
             "concepto_pago": _safe_str(row.get("concepto_pago")) or None,
             "budget_concept_name": _safe_str(row.get("budget_concept_name")) or None,

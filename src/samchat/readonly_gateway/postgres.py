@@ -384,7 +384,11 @@ class PostgresCanonicalAdapter:
                 "EXISTS (SELECT 1 FROM aprobaciones prior WHERE prior.tipo_entidad='documento' AND prior.entidad_id=d.id AND prior.accion='aprobar') AS recorded_approval,"
                 "(d.tipo='SOLICITUD' AND d.cuenta_gastos_id IS NOT NULL AND COALESCE(d.concepto_pago,'') LIKE 'Reembolso de saldo a favor%') AS employee_reimbursement,"
                 "EXISTS (SELECT 1 FROM documentos informe WHERE informe.cuenta_gastos_id=d.cuenta_gastos_id AND informe.tipo='INFORME' AND informe.estado='aprobado') AS linked_informe_approved,"
-                f"({predicate}) AS actor_can_decide FROM documentos d WHERE {scope} AND d.id=%(id)s::uuid",
+                # False route authority alone cannot exclude legacy-role authority.
+                f"CASE WHEN ({predicate}) THEN TRUE "
+                "WHEN NULLIF(BTRIM(d.referencia_operaciones),'') IS NOT NULL "
+                "THEN FALSE ELSE NULL END AS actor_can_decide "
+                f"FROM documentos d WHERE {scope} AND d.id=%(id)s::uuid",
                 args,
             )
 
@@ -393,11 +397,16 @@ class PostgresCanonicalAdapter:
             raise ReadError("NOT_FOUND_OR_NOT_VISIBLE")
         actor_can_decide = rows[0].pop("actor_can_decide")
         authority = {
-            "resolution": "resolved",
+            "resolution": "unresolved" if actor_can_decide is None else "resolved",
             "actor_can_decide": actor_can_decide,
             "approver_aliases": [],
             "policy_versions": [self.binding.owner_version],
-            "gaps": ["effective_approver_alias_list_not_projected"],
+            "gaps": ["effective_approver_alias_list_not_projected"]
+            + (
+                ["legacy_approval_authority_not_projected"]
+                if actor_can_decide is None
+                else []
+            ),
         }
         document = {
             **rows[0],

@@ -269,12 +269,8 @@ class Gateway:
                 "observed_at_utc": self.clock().isoformat(),
                 "source_kind": self.sources.source_kind,
                 "reviewed_commit": self.admission.source_commit,
-                "deployed_commit": (
-                    self.admission.source_commit
-                    if self.admission.mode == "production"
-                    and self.sources.source_kind == "reviewed_manifest"
-                    else None
-                ),
+                # A reviewed manifest proves admitted source bytes, not runtime.
+                "deployed_commit": None,
                 "schema_fingerprint": self.admission.schema_fingerprint,
                 "policy_version": self.admission.policy_version,
                 "scope_binding_id": hashlib.sha256(

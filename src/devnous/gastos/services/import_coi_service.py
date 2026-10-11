@@ -105,6 +105,25 @@ def _parse_coi_date(value: Any) -> Optional[datetime]:
 def _extract_beneficiario_y_concepto(description: str) -> tuple[Optional[str], str]:
     text = str(description or "").strip()
     parts = [part.strip() for part in text.split(" / ") if part.strip()]
+    metadata: Dict[str, str] = {}
+    trailing_start = 0
+    for index, part in enumerate(parts):
+        label, separator, value = part.partition(":")
+        normalized_label = label.strip().casefold()
+        if not separator or normalized_label not in {
+            "operaciones",
+            "beneficiario",
+            "contexto",
+        }:
+            break
+        metadata[normalized_label] = value.strip()
+        trailing_start = index + 1
+    if metadata:
+        trailing = " / ".join(parts[trailing_start:]).strip() or text
+        return metadata.get("beneficiario") or None, trailing
+    if parts and parts[0].casefold() == "múltiples documentos":
+        trailing = " / ".join(parts[1:]).strip() or text
+        return None, trailing
     beneficiario = parts[2] if len(parts) >= 3 else None
     trailing = parts[3] if len(parts) >= 4 else text
     trailing = re.sub(r"^\d+\.-\s*", "", trailing).strip()

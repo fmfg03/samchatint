@@ -56,6 +56,73 @@ def bridge_fixture_bytes(directory):
 
 
 class ServiceTests(unittest.TestCase):
+    def test_provision_rejects_changed_inputs_before_any_effect(self):
+        root = Path(__file__).resolve().parents[3]
+        spec = importlib.util.spec_from_file_location(
+            "provision_service_access",
+            root / "scripts/readonly_gateway/provision_service_access.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        names = ("delegation-fmfg.proposed.json", "activation-fmfg.proposed.json")
+        with tempfile.TemporaryDirectory() as directory:
+            proposal_root = Path(directory)
+            folder = proposal_root / "deployment/readonly_gateway"
+            folder.mkdir(parents=True)
+            originals = {
+                name: (root / "deployment/readonly_gateway" / name).read_bytes()
+                for name in names
+            }
+            receipt = json.dumps(
+                {
+                    "artifacts": {
+                        "files": {
+                            "deployment/readonly_gateway/"
+                            + name: {
+                                "sha256": hashlib.sha256(raw).hexdigest(),
+                                "bytes": len(raw),
+                            }
+                            for name, raw in originals.items()
+                        }
+                    }
+                }
+            ).encode()
+            receipt_path = proposal_root / "receipt.json"
+            receipt_path.write_bytes(receipt)
+            arguments = [
+                "provision",
+                "--approved-receipt-sha256",
+                hashlib.sha256(receipt).hexdigest(),
+            ]
+            with patch.object(module, "ROOT", proposal_root), patch.object(
+                module, "RECEIPT", receipt_path
+            ), patch.object(module.os, "getuid", return_value=0), patch.object(
+                module.subprocess, "run"
+            ) as run, patch.object(
+                module, "install_file"
+            ) as install, patch.object(
+                module.secrets, "token_hex"
+            ) as generate, patch.object(
+                sys, "argv", arguments
+            ):
+                for changed in names:
+                    for name, raw in originals.items():
+                        (folder / name).write_bytes(raw)
+                    (folder / changed).write_bytes(originals[changed] + b" ")
+                    with self.assertRaisesRegex(SystemExit, "APPROVED_INPUT_INTEGRITY"):
+                        module.main()
+                    run.assert_not_called()
+                    install.assert_not_called()
+                    generate.assert_not_called()
+                for name, raw in originals.items():
+                    (folder / name).write_bytes(raw)
+                delegation, config = module.approved_inputs(receipt)
+                self.assertEqual(delegation, originals[names[0]])
+                self.assertEqual(config, json.loads(originals[names[1]]))
+                # Snapshot is retained even if checkout content changes afterward.
+                (folder / names[0]).write_bytes(b"changed after validation")
+                self.assertEqual(delegation, originals[names[0]])
+
     def test_type_target_matches_declared_project_minimum(self):
         import tomllib
 

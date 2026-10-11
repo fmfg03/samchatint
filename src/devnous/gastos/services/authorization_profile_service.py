@@ -353,7 +353,13 @@ def infer_document_authorization_inputs(documento: object) -> dict[str, Any]:
         for attr in ("concepto_pago", "notas", "numero_referencia")
     ).lower()
 
-    if not has_invoice:
+    if bool(getattr(documento, "is_supplier_advance", False)) or getattr(
+        documento, "supplier_advance_id", None
+    ):
+        # Supplier payments retain the supplier thresholds and approver profiles;
+        # neither missing initial CFDI nor free-form text changes their type.
+        erogation_type = "supplier_transfer"
+    elif not has_invoice:
         erogation_type = "no_deductible"
     elif bool(getattr(documento, "pago_urgente", False)):
         erogation_type = "urgent_exception"

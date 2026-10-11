@@ -1,6 +1,6 @@
 # SamChat readonly: preparación fmfg, revisión 2026-10-11
 
-Estado: candidato aislado, sin commit, despliegue ni acceso productivo. Sustituye
+Estado: candidato aislado publicado en PR #476; sin despliegue ni activación productiva. Sustituye
 las afirmaciones de estado del documento de 2026-10-08; el paquete anterior se conserva.
 Base del worktree: 2cb5397769fa1f7532ec495a68a19cbc4a6778c7.
 Fuente activa inspeccionada: 514b6542e90c1eaae5c26351bc9ee18e9d0f86e8.
@@ -16,10 +16,10 @@ Actor resuelto por coincidencia única de correo en empleados:
 b8816679-ad77-4590-83d5-50ffce335854; activo, superadmin, Dirección.
 La sesión canónica usa empleado_id = empleados.id. No se pidió su contraseña.
 
-Autorización vigente: inspección no secreta por accesos existentes, adaptación
-y pruebas aisladas, propuesta de configuración y recibo. No incluye creación de
-roles/credenciales/vistas, cambio de ACL, instalación, reinicio o canary productivo.
-Los permisos y arquitectura de instalación siguen propuestos para aprobación.
+Autorización vigente: correcciones, commit, push, PR, merge y activación conforme
+al recibo exacto y sus puertas obligatorias. La aprobación no prueba ejecución:
+roles, credenciales, instalación, reinicios y canary productivo siguen pendientes.
+No se autoriza ampliar alcance, permisos ni eludir una denegación.
 
 ## Especificación del candidato
 
@@ -207,7 +207,9 @@ commit, tamaños y hashes no secretos. Ningún dato de negocio se empaqueta.
 Se conservan comprobaciones14+5 herramientas y study exclusivo documents.
 
 La reproducción local en namespaces no equivale a una ejecución de GitHub.
-No hay push, PR, commit, instalación, roles nuevos ni activación productiva.
+Publicación verificada: commit bd7d43edacb81ae10a7509f93531ea7c63fd9323,
+rama feat/samchat-readonly-fmfg-20261011 y PR #476. Sin instalación,
+roles nuevos ni activación productiva.
 
 ## Entrega y canon
 
@@ -219,4 +221,20 @@ con revisión de drift y verificación metadata-only previa al montaje del puent
 CI/herramientas pendientes requieren entorno autorizado antes de promoción.
 
 Canon unchanged: ninguna capacidad/autoridad de negocio o runtime activa cambia.
-No se tocaron otros candidatos ni se publicaron cambios.
+No se tocaron otros candidatos. La publicación del candidato no activa producción.
+
+## Continuación de PR #476
+
+Main integrado: 974f560766520f5a2370ade5c799d00c1f4f708d. Canons humanos
+verificados contra su registro; sin ediciones. El inventario combinado añade
+únicamente veinte fuentes readonly a main (423→443), manteniendo sus rutas,
+acciones, perfiles y matriz. Los resultados anteriores conservan su baseline
+histórico y no sustituyen las validaciones de este árbol combinado.
+
+La revisión corrige la provisión para comprobar hashes y tamaños de los dos
+JSON contra el recibo aprobado antes de cambiar credenciales o archivos, usando
+los mismos bytes verificados al instalarlos. Un manifest de fuentes revisadas
+no demuestra despliegue: deployed_commit permanece null. Cuando el predicado
+de ruta no resuelve la autoridad legacy, se devuelve autoridad no resuelta con
+una brecha explícita; no se inventa una denegación ni elegibilidad para aprobar.
+No se añaden columnas, lecturas, permisos, roles ni herramientas.

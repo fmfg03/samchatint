@@ -159,6 +159,40 @@ class LiveInformeNativeTests(unittest.TestCase):
             ),
         )
 
+    def test_legacy_authority_is_unresolved_without_new_permission_reads(self) -> None:
+        from samchat.readonly_gateway.diagnosis import diagnose
+
+        self.admin(
+            "UPDATE documentos SET referencia_operaciones=NULL "
+            "WHERE id='" + FIRST + "'; "
+            "DELETE FROM documento_authorization_routes WHERE documento_id='"
+            + FIRST
+            + "'"
+        )
+        try:
+            document, authority = self.backend.observation(self.actor, FIRST)
+            self.assertEqual(authority["resolution"], "unresolved")
+            self.assertIsNone(authority["actor_can_decide"])
+            self.assertIn("legacy_approval_authority_not_projected", authority["gaps"])
+            observations = diagnose(document, authority)["observations"]
+            self.assertIn("authority_unresolved", observations)
+            self.assertNotIn("actor_is_observer_not_approver", observations)
+        finally:
+            self.admin(
+                "UPDATE documentos SET referencia_operaciones='RO-001' "
+                "WHERE id='" + FIRST + "'"
+            )
+
+    def test_reviewed_sources_do_not_claim_verified_deployment(self) -> None:
+        result = self.gateway.call(
+            "samchat.document_status", {"document_id": FIRST}, self.actor
+        )
+        self.assertEqual(result["source_kind"], "reviewed_manifest")
+        self.assertEqual(
+            result["reviewed_commit"], self.gateway.admission.source_commit
+        )
+        self.assertIsNone(result["deployed_commit"])
+
     def test_native_unix_bridge_durable_audit_and_peer_denial(self) -> None:
         with tempfile.TemporaryDirectory(prefix="samchat-ro-bridge-") as directory:
             path = Path(directory) / "readonly.sock"

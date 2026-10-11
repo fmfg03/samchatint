@@ -844,6 +844,10 @@ def test_isolated_payment_proof_marks_paid_with_actor_and_cleanup_is_row_scoped(
         )
     ).to_be_visible()
     expect(page.get_by_text("gasto generado: G-MUT-PAY", exact=False)).to_be_visible()
+    expect(page.get_by_text("fecha efectiva: 2026-09-22", exact=False)).to_be_visible()
+    expect(
+        page.get_by_text("fecha programada conservada: 2026-09-21", exact=False)
+    ).to_be_visible()
 
     _mutation_home(page, browser_server)
     page.get_by_role("button", name="Corregir cuentas de la fila", exact=True).click()

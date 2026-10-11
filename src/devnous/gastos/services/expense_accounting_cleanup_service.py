@@ -200,6 +200,15 @@ def cleanup_expense_matches_filters(
                 *beneficiary_names,
             ]
         )
+    account = getattr(expense, "cuenta_gastos", None)
+    haystack.extend(
+        getattr(getattr(account, relationship, None), "nombre", None)
+        for relationship in (
+            "beneficiario_empleado",
+            "beneficiario_proveedor_cliente",
+            "empleado",
+        )
+    )
     return any(token in _normalize_cleanup_search(value) for value in haystack)
 
 

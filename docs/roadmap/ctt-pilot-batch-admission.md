@@ -92,6 +92,42 @@ reprocess query the batch-binding table to enforce the immutable staff blocker.
 The previous release remains compatible with the additive tables during this
 migration-first window.
 
+## Resumable staged-upload amendment
+
+Date: 2026-10-07
+
+The first authenticated pilot attempt proved that the seven exact PDFs total
+133,003,456 bytes, above the 100 MB request-body limit on the public route.
+No batch, binding, or batch review-session row was written by that attempt.
+
+The approved correction keeps one immutable manifest and one governed batch,
+but transports each PDF in its own request. Each source remains limited to 64
+MB and is streamed to a private persistent staging root instead of being held
+in memory. PostgreSQL binds the staging envelope and expected file hashes to
+the authenticated actor. The browser then advances admission one dossier per
+request, so reloads and network failures resume through the existing
+deterministic batch, document, and review-session identities.
+
+The operator UI owns the multipart sequence and renders upload and admission
+progress. API failures remain structured JSON for clients, while the page
+extracts the bounded `detail.message` and displays it in an accessible inline
+alert; the operator is never navigated to a raw JSON response.
+
+Before activating this amendment:
+
+1. create `/srv/samchat/data/private/ctt_batch_uploads` with mode `0700`;
+2. apply `20261007_copa_telmex_staged_batch_uploads.sql` as the database owner;
+3. verify runtime grants and the new required schema objects;
+4. verify `/readyz` reports both schema and batch-staging health;
+5. run authenticated upload, interruption/resume, inline-error, and `11/11`
+   operator acceptance.
+
+Rollback to the previous release leaves the additive staging tables and private
+files inert. The schema rollback refuses to drop non-empty staging tables.
+Pilot expansion remains blocked until the 11 admitted drafts, zero committed
+teams, zero eligibility grants, exact source bindings, and staff governance
+blocker are verified.
+
 ## Verification in the isolated candidate
 
 - focused admission, template, incident, operational-surface, and schema-policy
@@ -110,3 +146,8 @@ review-only admission path, while actual admission remains pending until the
 deployed endpoint is invoked. Product and Engineering canon amendments and
 their refreshed register hashes therefore require explicit human review in the
 same PR.
+
+The staged-upload amendment changes transport, progress, and recovery only. It
+does not change the manifest, draft authority, team/eligibility boundary, or
+staff-governance blocker. Canon unchanged for this corrective amendment; the
+actual pilot admission remains a separate runtime and UAT fact.

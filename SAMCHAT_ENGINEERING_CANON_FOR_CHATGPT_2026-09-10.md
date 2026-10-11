@@ -243,6 +243,27 @@ SQL-backed period-selection tests and frozen-cut regression tests in
 `tests/unit/gastos/test_coi_exportable_status_ui.py`. These are approved source
 changes under PR review; deployment and authenticated UAT remain unproven.
 
+#### 8.2.2 Monthly DIOT read contract
+
+Amendment date: 2026-10-09. This canon diff received explicit human approval.
+The connected monthly DIOT read owner is `monthly_diot_service.py`; the existing
+`diot_exporter.py` remains the fiscal-row and TXT/XLSX renderer. Period
+resolution uses `Documento.fecha_pago_efectiva` from a direct paid-document link
+first, then only a unique paid `SOLICITUD` date on the same `CuentaDeGastos`.
+Missing or ambiguous dates must not be guessed.
+
+The monthly TXT route fails closed on in-period fiscal blockers. The audit XLSX
+remains available and carries separate blocker and undated queues. Active,
+non-reversal expenses are the only candidates. Reused CFDIs require complete
+shared-invoice confirmation and a valid aggregate application; confirmed shares
+are prorated by applied fiscal amount. IVA withholding comes exclusively from
+the CFDI XML `retenciones` detail. No new persistence path, migration, background
+job, SAT submission, or financial write is introduced.
+
+Evidence: isolated worktree based on `7d857ad326a`, focused tests, route import
+verification, and read-only production classification. Merge, deployment,
+authenticated Finance UAT, and business acceptance remain unproven.
+
 
 ### Proposed 2026-10-06 amendment: partial paid-advance comprobaciones
 

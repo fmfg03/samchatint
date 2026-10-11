@@ -32,16 +32,42 @@ def install_file(path: Path, data: bytes, mode: int, gid: int) -> None:
         os.close(descriptor)
 
 
+def approved_inputs(receipt_bytes: bytes) -> tuple[bytes, dict]:
+    """Load exact receipt-bound bytes before any credential or file mutation."""
+    try:
+        receipt = json.loads(receipt_bytes)
+        files = receipt["artifacts"]["files"]
+        inputs = {}
+        for name in ("delegation-fmfg.proposed.json", "activation-fmfg.proposed.json"):
+            relative = "deployment/readonly_gateway/" + name
+            raw = (ROOT / relative).read_bytes()
+            expected = files[relative]
+            if (
+                hashlib.sha256(raw).hexdigest() != expected["sha256"]
+                or len(raw) != expected["bytes"]
+            ):
+                raise ValueError("Receipt-bound input mismatch")
+            inputs[name] = raw
+        config = json.loads(inputs["activation-fmfg.proposed.json"])
+        if not isinstance(config, dict):
+            raise ValueError("Invalid activation config")
+        return inputs["delegation-fmfg.proposed.json"], config
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise SystemExit("APPROVED_INPUT_INTEGRITY_REQUIRED") from exc
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--approved-receipt-sha256", required=True)
     arguments = parser.parse_args()
+    receipt_bytes = RECEIPT.read_bytes()
     if (
         os.getuid() != 0
-        or hashlib.sha256(RECEIPT.read_bytes()).hexdigest()
+        or hashlib.sha256(receipt_bytes).hexdigest()
         != arguments.approved_receipt_sha256
     ):
         raise SystemExit("OWNER_APPROVAL_REQUIRED")
+    delegation, config = approved_inputs(receipt_bytes)
     if any(
         (DIRECTORY / name).exists()
         for name in (
@@ -85,14 +111,6 @@ def main() -> None:
     if result.returncode:
         raise SystemExit("SERVICE_CREDENTIAL_PROVISION_FAILED")
     install_file(DIRECTORY / "database-password", password.encode(), 0o600, 0)
-    delegation = (
-        ROOT / "deployment/readonly_gateway/delegation-fmfg.proposed.json"
-    ).read_bytes()
-    config = json.loads(
-        (
-            ROOT / "deployment/readonly_gateway/activation-fmfg.proposed.json"
-        ).read_bytes()
-    )
     config["activation_authorized"] = True
     config["approved_proposal_sha256"] = arguments.approved_receipt_sha256
     config["delegation_sha256"] = hashlib.sha256(delegation).hexdigest()

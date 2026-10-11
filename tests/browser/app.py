@@ -913,6 +913,7 @@ class _MutationFixture:
                 cuenta_gastos_id=None,
                 gasto_generado_id=None,
                 fecha_pago=None,
+                fecha_pago_efectiva=None,
                 metodo_pago="TRANSFERENCIA",
                 concepto_pago="Hospedaje regional",
                 pagado_en=None,
@@ -930,6 +931,7 @@ class _MutationFixture:
             ),
             self.payment_id: document(self.payment_id, "S-MUT-PAY", "aprobado"),
         }
+        self.documentos[self.payment_id].fecha_pago = datetime(2026, 9, 21).date()
         self.cleanup_expense = SimpleNamespace(
             id=self.cleanup_id,
             cuenta_contable_id=None,
@@ -1333,7 +1335,9 @@ async def mutation_proof(
         (
             f"Actor: {MUTATIONS.accounting.nombre}; evidencia persistida: "
             f"{stored['filename']} ({len(stored['bytes'])} bytes); "
-            f"gasto generado: {MUTATIONS.generated_expense.numero_referencia}"
+            f"gasto generado: {MUTATIONS.generated_expense.numero_referencia}; "
+            f"fecha efectiva: {document.fecha_pago_efectiva}; "
+            f"fecha programada conservada: {document.fecha_pago}"
         ),
     )
 
