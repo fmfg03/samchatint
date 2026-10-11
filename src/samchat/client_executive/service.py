@@ -974,11 +974,16 @@ async def build_client_dashboard(
 
 
 async def build_portfolio_dashboard(
-    session: Any, *, portfolio_id: str, edition_year: int
+    session: Any,
+    *,
+    portfolio_id: str,
+    edition_year: int,
+    accounting_access: bool = True,
 ) -> dict[str, Any]:
     """Build a CEO view for one configured portfolio, never a global fallback."""
     result = await session.execute(
-        text("""
+        text(
+            """
             SELECT t.id::text AS id, t.name, NULL::text AS slug
             FROM client_executive_portfolio_tournaments assignment
             JOIN client_executive_portfolios portfolio
@@ -986,7 +991,8 @@ async def build_portfolio_dashboard(
             JOIN tournaments t ON t.id = assignment.tournament_id AND t.active = TRUE
             WHERE assignment.portfolio_id = :portfolio_id AND assignment.active = TRUE
             ORDER BY t.name ASC
-            """),
+            """
+        ),
         {"portfolio_id": str(portfolio_id)},
     )
     tournaments = [
@@ -1005,7 +1011,7 @@ async def build_portfolio_dashboard(
             edition_year=edition_year,
         )
         card = _executive_card(tournament, snapshot)
-        if "source" in snapshot:
+        if "source" in snapshot and accounting_access:
             card["accounting"] = await build_tournament_accounting(
                 session,
                 tournament_id=tournament["id"],
@@ -1020,6 +1026,10 @@ async def build_portfolio_dashboard(
                 session,
                 tournament_id=tournament["id"],
                 edition_year=edition_year - 1,
+            )
+        elif "source" in snapshot:
+            card["accounting"] = unavailable_accounting(
+                "La lectura contable está denegada para esta identidad."
             )
         cards.append(card)
     return {

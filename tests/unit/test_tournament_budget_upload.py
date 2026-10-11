@@ -514,3 +514,32 @@ async def test_missing_apply_authority_receipt_does_not_start_writes(
             confirmed=confirmed,
         )
     session.execute.assert_not_awaited()
+
+
+@pytest.mark.parametrize("phase", ["estatal", " ESTATAL ", "Estátal"])
+def test_legacy_phase_variants_block_duplicate_creation(phase):
+    line = {
+        "id": "legacy",
+        "tournament_id": "t",
+        "budget_version_id": "v",
+        "concept_name": "Pelotas",
+        "phase": phase,
+        "budget_amount": 10,
+    }
+    p = plan(parsed([["Estatal", "Pelotas", 10]]), lines=[line])
+    assert p["counts"] == {"conflict": 1}
+
+
+def test_inactive_catalog_identity_blocks_preview_without_reactivation():
+    data = parsed([["Estatal", "Pelotas", 10]])
+    concept = {
+        "id": "inactive",
+        "tournament_id": "t",
+        "active": False,
+        "concept_key": data["rows"][0]["concept_key"],
+        "concept_name": "Pelotas",
+    }
+    p = plan(data, concepts=[concept])
+    assert p["counts"] == {"conflict": 1}
+    assert p["operations"][0]["inactive_concept_ids"] == ["inactive"]
+    assert any("inactiva" in b for b in p["blockers"])

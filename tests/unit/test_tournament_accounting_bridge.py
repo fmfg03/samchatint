@@ -68,8 +68,8 @@ class Session:
             return Result(self.concepts)
         if "to_regclass" in sql:
             return Result(scalar=self.ready)
-        if "SELECT EXISTS" in sql:
-            return Result(scalar=self.shared)
+        if "SELECT bc.metadata" in sql:
+            return Result([{"metadata": {}}] if self.shared else [])
         if (
             "historical_trial_balance_rows" in sql
             or "historical_policy_lines pl" in sql
@@ -524,3 +524,94 @@ async def test_finance_denial_blocks_accounting_queries_in_legacy_direction_boar
     assert result["cards"][0]["budget"] == 100
     assert result["cards"][0]["accounting"]["source_status"] == "unavailable"
     reader.assert_not_awaited()
+
+
+def yearly_concept():
+    c = concept()
+    binding = c["metadata"].pop("historical_accounting_binding")
+    c["metadata"]["historical_accounting_bindings"] = {
+        str(year): {**binding, "fiscal_year": year, "evidence_ref": f"review-{year}"}
+        for year in (2025, 2026)
+    }
+    return c
+
+
+@pytest.mark.asyncio
+async def test_same_identity_supports_selected_and_previous_year():
+    class YearSession(Session):
+        async def execute(self, sql, params=None):
+            if "FROM historical_trial_balance_rows" in str(sql):
+                self.calls.append((str(sql), params))
+                assert params["year"] in (2025, 2026)
+                return Result(
+                    [
+                        {
+                            "fiscal_month": 1,
+                            "debits": params["year"],
+                            "credits": 0,
+                            "closing_balance": params["year"],
+                        }
+                    ]
+                )
+            return await super().execute(sql, params)
+
+    session = YearSession(concepts=[yearly_concept()])
+    for year in (2026, 2025):
+        result = await bridge.build_tournament_accounting(
+            session, tournament_id="t", edition_year=year
+        )
+        assert result["expense"] == str(year)
+        assert result["accounts"][0]["evidence_ref"] == f"review-{year}"
+        assert result["income"] is None
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("approved", False),
+        ("evidence_ref", ""),
+        ("company_code", ""),
+        ("fiscal_year", 2025),
+    ],
+)
+def test_each_yearly_entry_requires_its_own_evidence(field, value):
+    c = yearly_concept()
+    c["metadata"]["historical_accounting_bindings"]["2026"][field] = value
+    assert not bridge._bindings([c], tournament_id="t", edition_year=2026)[0]
+    assert bridge._bindings([c], tournament_id="t", edition_year=2025)[0]
+
+
+@pytest.mark.parametrize(
+    "metadata,shared",
+    [
+        ({"historical_accounting_bindings": {"2025": {"company_code": "01"}}}, False),
+        ({"historical_accounting_bindings": {"2026": {"company_code": "01"}}}, True),
+        ({"historical_accounting_bindings": {"2026": {"company_code": "02"}}}, False),
+        ({"historical_accounting_bindings": {"2026": {}}}, True),
+        ({"historical_accounting_bindings": []}, True),
+        ({"historical_accounting_binding": {"fiscal_year": 2025}}, True),
+        ({}, True),
+    ],
+)
+@pytest.mark.asyncio
+async def test_shared_account_selection_uses_year_and_preserves_legacy_fail_closed(
+    metadata, shared
+):
+    class SharedSession(Session):
+        async def execute(self, sql, params=None):
+            if "SELECT bc.metadata" in str(sql):
+                assert "bc.tournament_id IS DISTINCT FROM :tournament_id" in str(sql)
+                assert params["account"] == "5300-001"
+                return Result([{"metadata": metadata}])
+            return await super().execute(sql, params)
+
+    result = await bridge.build_tournament_accounting(
+        SharedSession(concepts=[yearly_concept()]), tournament_id="t", edition_year=2026
+    )
+    assert result["expense"] == (None if shared else "24")
+
+
+def test_explicit_yearly_map_does_not_fallback_to_legacy():
+    c = concept()
+    c["metadata"]["historical_accounting_bindings"] = {"2025": {}}
+    assert not bridge._bindings([c], tournament_id="t", edition_year=2026)[0]

@@ -32,6 +32,30 @@ def unavailable(reason: str) -> dict[str, Any]:
     }
 
 
+def _binding_for_year(metadata: dict[str, Any], year: int) -> dict[str, Any]:
+    """Select an explicit yearly binding; legacy remains compatible."""
+    if "historical_accounting_bindings" in metadata:
+        yearly = metadata["historical_accounting_bindings"]
+        binding = yearly.get(str(year)) if isinstance(yearly, dict) else None
+    else:
+        binding = metadata.get("historical_accounting_binding")
+    return binding if isinstance(binding, dict) else {}
+
+
+def _shares_account(metadata: Any, *, year: int, company: str) -> bool:
+    """Unknown legacy scope blocks exclusivity; yearly maps select one period."""
+    if not isinstance(metadata, dict):
+        return True
+    if "historical_accounting_bindings" in metadata:
+        yearly = metadata["historical_accounting_bindings"]
+        if not isinstance(yearly, dict):
+            return True
+        if str(year) not in yearly:
+            return False
+    binding = _binding_for_year(metadata, year)
+    return not binding.get("company_code") or binding["company_code"] == company
+
+
 def _bindings(
     concepts: list[dict[str, Any]], *, tournament_id: str, edition_year: int
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -45,9 +69,7 @@ def _bindings(
         metadata = concept.get("metadata") or {}
         if not isinstance(metadata, dict):
             metadata = {}
-        binding = metadata.get("historical_accounting_binding") or {}
-        if not isinstance(binding, dict):
-            binding = {}
+        binding = _binding_for_year(metadata, edition_year)
         code = str(concept.get("account_code") or "")
         mode = binding.get("attribution")
         kind = binding.get("metric_kind")
@@ -183,24 +205,29 @@ async def build_tournament_accounting(
         exclusive = binding["attribution"] == "exclusive_account"
         if exclusive:
             # A binding elsewhere prevents claiming the whole account as exclusive.
-            shared = (
-                await session.execute(
-                    text(
-                        """
-                SELECT EXISTS (
-                    SELECT 1 FROM budget_concepts bc
-                    JOIN cuentas_contables cc ON cc.id = bc.cuenta_contable_id
-                    WHERE bc.active = TRUE
-                      AND bc.tournament_id IS DISTINCT FROM :tournament_id
-                      AND cc.codigo = :account
-                      AND COALESCE(bc.metadata->'historical_accounting_binding'
-                          ->>'company_code', :company) = :company
-                )
+            other_concepts = (
+                (
+                    await session.execute(
+                        text(
+                            """
+                SELECT bc.metadata
+                FROM budget_concepts bc
+                JOIN cuentas_contables cc ON cc.id = bc.cuenta_contable_id
+                WHERE bc.active = TRUE
+                  AND bc.tournament_id IS DISTINCT FROM :tournament_id
+                  AND cc.codigo = :account
             """
-                    ),
-                    {**params, "tournament_id": tournament_id},
+                        ),
+                        {**params, "tournament_id": tournament_id},
+                    )
                 )
-            ).scalar_one()
+                .mappings()
+                .all()
+            )
+            shared = any(
+                _shares_account(row.get("metadata"), year=edition_year, company=company)
+                for row in other_concepts
+            )
             if shared:
                 gaps.append(
                     "Cuenta compartida: falta separación por proyecto "

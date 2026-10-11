@@ -35,6 +35,23 @@ def _money(value: Any) -> Decimal:
     return amount
 
 
+def _concept_matches_upload_row(concept: dict[str, Any], row: dict[str, Any]) -> bool:
+    """Match exact keys or evidenced normalized phase and concept names."""
+    if concept.get("concept_key") == row["concept_key"]:
+        return True
+    metadata = concept.get("metadata") or {}
+    labels = (metadata.get("applicable_phase_labels") or []) + (
+        metadata.get("applicable_subproject_labels") or []
+    )
+    return service._normalize_budget_key(
+        concept.get("concept_name") or ""
+    ) == service._normalize_budget_key(row["concept_name"]) and any(
+        service._normalize_budget_key(label)
+        == service._normalize_budget_key(row["phase"])
+        for label in labels
+    )
+
+
 def parse_tournament_budget(
     *, file_bytes: bytes, filename: str, edition_year: int
 ) -> dict[str, Any]:
@@ -197,24 +214,14 @@ def build_upload_plan(
             by_concept[str(line.get("budget_concept_id"))].append(line)
     operations = []
     for row in parsed["rows"]:
-        matches = []
-        for concept in scoped_catalog:
-            metadata = concept.get("metadata") or {}
-            labels = (metadata.get("applicable_phase_labels") or []) + (
-                metadata.get("applicable_subproject_labels") or []
-            )
-            scope_match = any(
-                service._normalize_budget_key(label)
-                == service._normalize_budget_key(row["phase"])
-                for label in labels
-            )
-            same_name = service._normalize_budget_key(
-                concept.get("concept_name") or ""
-            ) == service._normalize_budget_key(row["concept_name"])
-            if concept["concept_key"] == row["concept_key"] or (
-                same_name and scope_match
-            ):
-                matches.append(concept)
+        matches = [c for c in scoped_catalog if _concept_matches_upload_row(c, row)]
+        inactive_matches = [
+            c
+            for c in concepts
+            if str(c.get("tournament_id")) == tournament_id
+            and c.get("active") is False
+            and _concept_matches_upload_row(c, row)
+        ]
         op = {
             **row,
             "action": "create",
@@ -225,7 +232,13 @@ def build_upload_plan(
             "before_upload_source": None,
             "had_upload_source": False,
         }
-        if len(matches) > 1:
+        if inactive_matches:
+            op["action"] = "conflict"
+            op["inactive_concept_ids"] = [str(c["id"]) for c in inactive_matches]
+            blockers.append(
+                f"Fila {row['row']}: identidad inactiva; requiere conciliación."
+            )
+        elif len(matches) > 1:
             op["action"] = "conflict"
         elif matches:
             op["concept_id"] = str(matches[0]["id"])
@@ -267,7 +280,8 @@ def build_upload_plan(
             == service._normalize_budget_key(row["concept_name"])
             and (
                 not existing_line.get("phase")
-                or existing_line.get("phase") == row["phase"]
+                or service._normalize_budget_key(existing_line.get("phase") or "")
+                == service._normalize_budget_key(row["phase"])
             )
             for existing_line in lines
         ):
@@ -343,7 +357,7 @@ async def preview_tournament_upload(
         session, version_id=version_id, ensure_schema=False
     )
     concepts = await service.list_budget_concepts(
-        session, tournament_id=tournament_id, limit=5000
+        session, tournament_id=tournament_id, active_only=False, limit=5000
     )
     # Include legacy code/name rows as blockers; never silently bypass their amounts.
     code = service._derive_budget_tournament_code(
