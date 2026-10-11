@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""Agentius executor v0.1: one explicit demo project; no arbitrary shell."""
+import argparse, fcntl, hashlib, json, os, re, socket, sqlite3, stat, subprocess, sys, tempfile, threading, time, uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+try:
+ from .work_tools import WorkClient, TOOLS as WORK_TOOLS
+except ImportError:
+ from work_tools import WorkClient, TOOLS as WORK_TOOLS
+
+VERSION = '0.3.0-prepared'
+PROTOCOLS = ('2025-03-26', '2025-06-18', '2025-11-25', '2026-07-28')
+MAX_BYTES = 65536
+TOOLS = {
+ 'server_info': ({}, [], 'Describe the executor and its scope.'),
+ 'list_projects': ({}, [], 'List explicitly registered projects.'),
+ 'read_file': ({'project': {'type':'string'}, 'path': {'type':'string'}}, ['project','path'], 'Read explicitly allowed demo or ISH recovery files, at most 65536 bytes, and return SHA256.'),
+ 'write_file': ({'project': {'type':'string'}, 'path': {'type':'string'}, 'content': {'type':'string'}, 'expected_sha256': {'type':'string'}}, ['project','path','content','expected_sha256'], 'Replace context.md atomically only if SHA256 matches.'),
+ 'run_task': ({'project': {'type':'string'}, 'task': {'type':'string'}}, ['project','task'], 'Run the registered test task asynchronously; no caller commands.'),
+ 'job_status': ({'job_id': {'type':'string'}}, ['job_id'], 'Read persisted job status and bounded output.'),
+}
+
+def sha(data): return hashlib.sha256(data).hexdigest()
+
+ISH_PROJECT = 'samchat-ish-recovery'
+ISH_COMMIT = 'ba5f7db772836275b1b5f448544543ec014a0ef2'
+MANIFEST_SHA256 = 'e80e49702994de80ecb93d430328103c06799624d86eeae3764c9f681b449fe1'
+ISH_ROOT = Path('/srv/samchat/recovery/2026-10-01-fixes/ish/checkout')
+ISH_FILES = (
+ 'README.md',
+ 'docs/ish-budget-classification-local-evidence.md',
+ 'requirements-runtime.txt', 'requirements.txt',
+ 'src/devnous/gastos/routes/user_routes.py',
+ 'src/devnous/gastos/services/cfdi_autofill.py',
+ 'src/devnous/gastos/services/cfdi_pdf_reader.py',
+ 'tests/unit/gastos/test_cfdi_quick_expense_totals.py',
+ 'tests/unit/gastos/test_ish_budget_classification.py',
+ 'tests/unit/gastos/test_ish_cfdi_upload_paths.py',
+)
+
+def bounded_read(absolute_path, limit):
+ parts = Path(absolute_path).parts
+ if not Path(absolute_path).is_absolute(): raise ValueError('absolute path required')
+ fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+ try:
+  for part in parts[1:-1]:
+   if part in ('', '.', '..'): raise ValueError('invalid path')
+   next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+   os.close(fd); fd = next_fd
+  file_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=fd)
+  try:
+   info = os.fstat(file_fd)
+   if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1: raise ValueError('regular single-link file required')
+   if info.st_size > limit: raise ValueError('file too large')
+   with os.fdopen(file_fd, 'rb', closefd=False) as stream: data = stream.read(limit + 1)
+   if len(data) > limit: raise ValueError('file too large')
+   return data
+  finally: os.close(file_fd)
+ finally: os.close(fd)
+
+def load_manifest():
+ data = bounded_read(Path(__file__).absolute().with_name('ish-manifest.json'), 32768)
+ if sha(data) != MANIFEST_SHA256: raise ValueError('manifest integrity mismatch')
+ manifest = json.loads(data.decode('utf-8'))
+ if not isinstance(manifest, dict) or set(manifest) != {'root','commit','files'}: raise ValueError('invalid manifest')
+ if manifest['root'] != str(ISH_ROOT) or manifest['commit'] != ISH_COMMIT: raise ValueError('manifest scope mismatch')
+ files = manifest['files']
+ if not isinstance(files, dict) or set(files) != set(ISH_FILES): raise ValueError('manifest paths mismatch')
+ for item in files.values():
+  if not isinstance(item, dict) or set(item) != {'sha256','bytes'}: raise ValueError('invalid file record')
+  if not isinstance(item['sha256'],str) or not re.fullmatch('[0-9a-f]{64}',item['sha256']): raise ValueError('invalid hash')
+  if type(item['bytes']) is not int or item['bytes'] < 0: raise ValueError('invalid size')
+ return files
+
+ISH_MANIFEST = load_manifest()
+
+def read_ish_file(path):
+ # Exact membership also denies absolute paths, traversal, secrets and data.
+ if path not in ISH_FILES: raise ValueError('path not allowed')
+ expected = ISH_MANIFEST[path]
+ if expected['bytes'] > MAX_BYTES: raise ValueError('file too large')
+ data = bounded_read(ISH_ROOT / path, MAX_BYTES)
+ if len(data) != expected['bytes'] or sha(data) != expected['sha256']: raise ValueError('file integrity mismatch')
+ return {'project':ISH_PROJECT,'path':path,'commit':ISH_COMMIT,'content':data.decode('utf-8'),'sha256':sha(data)}
+
+class Executor:
+ def __init__(self, state, work_client=None):
+  self.work_client = work_client
+  self.tools = dict(TOOLS)
+  if work_client is not None: self.tools.update(WORK_TOOLS)
+  self.state = Path(state).resolve()
+  self.project = self.state / 'projects' / 'executor-demo'
+  if not self.project.is_dir() or self.project.is_symlink(): raise ValueError('demo project missing or symlink')
+  self.lock = threading.RLock()
+  self.db = sqlite3.connect(self.state / 'jobs.sqlite3', check_same_thread=False)
+  self.db.execute('CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, status TEXT, started REAL, ended REAL, exit_code INTEGER, output TEXT)')
+  self.db.execute("UPDATE jobs SET status='interrupted', ended=? WHERE status IN ('queued','running')", (time.time(),))
+  self.db.commit()
+  self.active = False
+ def file(self, project, path, write=False):
+  if project != 'executor-demo': raise ValueError('project not registered')
+  allowed = ('context.md',) if write else ('AGENTS.md','context.md')
+  if path not in allowed: raise ValueError('path not allowed')
+  p = self.project / path
+  if p.is_symlink() or p.resolve().parent != self.project.resolve(): raise ValueError('symlink forbidden')
+  return p
+ def call(self, name, args):
+  if name in WORK_TOOLS:
+   if self.work_client is None: raise ValueError('work tools disabled')
+   return self.work_client.call(name,args)
+  if not isinstance(name,str) or name not in TOOLS: raise ValueError('unknown tool')
+  props, required, _ = TOOLS[name]
+  if not isinstance(args, dict) or set(args) - set(props) or any(k not in args for k in required): raise ValueError('invalid arguments')
+  if any(not isinstance(v,str) for v in args.values()): raise ValueError('arguments must be strings')
+  if name == 'server_info':
+   return {'name':'agentius-executor','version':VERSION,'available_tools':list(self.tools),'scope':'executor-demo; samchat-ish-recovery read-only explicit files'+('; samchat-dev approved isolated work' if self.work_client else ''),'hostname':socket.gethostname(),'protocol_versions':list(PROTOCOLS)}
+  if name == 'list_projects':
+   projects=[{'id':'executor-demo','read_files':['AGENTS.md','context.md'],'write_files':['context.md'],'tasks':['test']},{'id':ISH_PROJECT,'root':str(ISH_ROOT),'commit':ISH_COMMIT,'read_files':[p for p in ISH_FILES if ISH_MANIFEST[p]['bytes']<=MAX_BYTES],'blocked_large_files':[p for p in ISH_FILES if ISH_MANIFEST[p]['bytes']>MAX_BYTES],'max_file_bytes':MAX_BYTES,'write_files':[],'tasks':[]}]
+   if self.work_client:
+    source = self.work_client.call('checkout_info', {'project':'samchat-dev'})
+    scope = 'persistent Git checkout; exact approved files and checks' if source.get('source_mode') == 'persistent-checkout' else 'immutable locally published source; exact approved files and checks'
+    projects.append({'id':'samchat-dev','operations':list(WORK_TOOLS),'scope':scope,'read_files':[],'write_files':[],'tasks':[], **source})
+   return {'projects':projects}
+  if name == 'read_file':
+   if args['project'] == ISH_PROJECT: return read_ish_file(args['path'])
+   if args['project'] == 'samchat-dev' and self.work_client:
+    return self.work_client.call('checkout_read', args)
+   with self.lock:
+    data = self.file(**args).read_bytes()
+    if len(data)>MAX_BYTES: raise ValueError('file too large')
+    return {'project':args['project'],'path':args['path'],'content':data.decode('utf-8'),'sha256':sha(data)}
+  if name == 'write_file':
+   p = self.file(args['project'], args['path'], True)
+   data = args['content'].encode('utf-8')
+   if len(data)>MAX_BYTES or not re.fullmatch('[0-9a-f]{64}',args['expected_sha256']): raise ValueError('invalid content or hash')
+   with self.lock, open(self.state / 'write.lock','a') as guard:
+    fcntl.flock(guard, fcntl.LOCK_EX)
+    old = p.read_bytes()
+    if sha(old) != args['expected_sha256']: raise ValueError('HASH_CONFLICT: read current file again')
+    fd, tmp = tempfile.mkstemp(dir=p.parent,prefix='.context-')
+    try:
+     with os.fdopen(fd,'wb') as out: out.write(data); out.flush(); os.fsync(out.fileno())
+     os.replace(tmp,p)
+     dfd=os.open(p.parent,os.O_RDONLY)
+     try: os.fsync(dfd)
+     finally: os.close(dfd)
+    finally:
+     if os.path.exists(tmp): os.unlink(tmp)
+    return {'project':args['project'],'path':args['path'],'previous_sha256':sha(old),'sha256':sha(data),'bytes':len(data)}
+  if name == 'run_task':
+   if args != {'project':'executor-demo','task':'test'}: raise ValueError('task not registered')
+   with self.lock:
+    if self.active: raise ValueError('a job is already running')
+    self.active = True
+    job = str(uuid.uuid4())
+    self.db.execute('INSERT INTO jobs VALUES (?,?,?,?,?,?)',(job,'queued',time.time(),None,None,'')); self.db.commit()
+    threading.Thread(target=self.run, args=(job,), daemon=True).start()
+   return {'job_id':job,'status':'queued'}
+  if name == 'job_status':
+   if not re.fullmatch('[a-f0-9-]{36}',args['job_id']): raise ValueError('invalid job id')
+   with self.lock:
+    row=self.db.execute('SELECT * FROM jobs WHERE id=?',(args['job_id'],)).fetchone()
+   if row is None: raise ValueError('job not found')
+   return dict(zip(('job_id','status','started_at','ended_at','exit_code','output'),row))
+ def run(self, job):
+  with self.lock:
+   self.db.execute("UPDATE jobs SET status='running' WHERE id=?",(job,)); self.db.commit()
+  try:
+   # Trusted task code lives outside the writable project; task environment has no inherited secrets.
+   result=subprocess.run([sys.executable,'-I',str(Path(__file__).with_name('demo_test.py')),str(self.project)], cwd=self.project, env={'PATH':'/usr/bin:/bin','LANG':'C.UTF-8'}, capture_output=True, timeout=30)
+   code=result.returncode; output=(result.stdout+result.stderr)[:MAX_BYTES].decode('utf-8','replace')
+   status='succeeded' if code==0 else 'failed'
+  except subprocess.TimeoutExpired: code=None; output='Task timed out after 30 seconds'; status='timed_out'
+  except Exception: code=None; output='Task could not start'; status='failed'
+  with self.lock:
+   self.db.execute('UPDATE jobs SET status=?,ended=?,exit_code=?,output=? WHERE id=?',(status,time.time(),code,output,job)); self.db.commit(); self.active=False
+
+class Handler(BaseHTTPRequestHandler):
+ def log_message(self,*args): pass
+ def protocol_label(self):
+  value=self.headers.get('MCP-Protocol-Version')
+  if value is None: return 'missing'
+  return value if re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}',value) else 'invalid_format'
+ def diagnostic(self,event,reason=None,status=None):
+  record={'event':event,'protocol_version':self.protocol_label()}
+  if reason is not None: record['reason']=reason
+  if status is not None: record['http_status']=status
+  print(json.dumps(record),file=sys.stderr,flush=True)
+ def reject(self,status,reason):
+  self.diagnostic('mcp_rejected',reason,status)
+  self.send(status,{'jsonrpc':'2.0','id':None,'error':{'code':-32600,'message':reason}})
+ def send(self,status,payload=None):
+  body=json.dumps(payload,ensure_ascii=False).encode() if payload is not None else b''
+  self.send_response(status)
+  if body: self.send_header('Content-Type','application/json')
+  self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
+ def valid(self):
+  self.connection.settimeout(10)
+  if self.headers.get('Origin') is not None:
+   self.send(403); return False
+  if self.headers.get('Host') not in (f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}'):
+   self.send(403); return False
+  return True
+ def do_GET(self):
+  if not self.valid(): return
+  if self.path=='/healthz': self.send(200,{'status':'ready','name':'agentius-executor'})
+  elif self.path=='/mcp': self.send(405)
+  else: self.send(404)
+ def do_DELETE(self): self.send(405)
+ def do_POST(self):
+  if not self.valid(): return
+  if self.path!='/mcp': self.send(404); return
+  self.diagnostic('mcp_request')
+  if self.headers.get('MCP-Protocol-Version','2025-03-26') not in PROTOCOLS: self.reject(400,'unsupported_protocol_version'); return
+  if self.headers.get('Content-Type','').split(';')[0] != 'application/json': self.reject(415,'unsupported_content_type'); return
+  try:
+   length=int(self.headers.get('Content-Length','0'))
+  except ValueError: self.reject(400,'invalid_content_length'); return
+  if self.headers.get('Transfer-Encoding'): self.reject(400,'unsupported_transfer_encoding'); return
+  if not 0<length<MAX_BYTES*2: self.reject(400,'body_length_out_of_range'); return
+  try:
+   req=json.loads(self.rfile.read(length))
+  except TimeoutError: self.reject(400,'body_read_timeout'); return
+  except ValueError: self.reject(400,'invalid_json'); return
+  if not isinstance(req,dict) or req.get('jsonrpc')!='2.0' or not isinstance(req.get('method'),str): self.reject(400,'invalid_jsonrpc_envelope'); return
+  if 'id' not in req: self.send(202); return
+  rid=req['id']; method=req['method']; params=req.get('params',{})
+  if not (rid is None or type(rid) is int or isinstance(rid,str) and len(rid.encode())<=512): self.reject(400,'invalid_request_id'); return
+  if not isinstance(params,dict): self.reject(400,'invalid_params'); return
+  if method=='initialize':
+   version=params.get('protocolVersion')
+   result={'protocolVersion':version if version in PROTOCOLS else PROTOCOLS[-1], 'capabilities':{'tools':{'listChanged':False}},'serverInfo':{'name':'agentius-executor','version':VERSION}}
+  elif method=='ping': result={}
+  elif method=='tools/list':
+   result={'tools':[{'name':n,'description':desc,'inputSchema':{'type':'object','properties':props,'required':required,'additionalProperties':False},'annotations':{'readOnlyHint':n in ('server_info','list_projects','read_file','job_status','work_status','work_list','work_artifact'),'destructiveHint':n in ('write_file','work_cancel'),'openWorldHint':False}} for n,(props,required,desc) in self.server.executor.tools.items()]}
+  elif method=='tools/call':
+   try:
+    data=self.server.executor.call(params.get('name'),params.get('arguments',{}))
+    text_value='Work operation completed; result is in structuredContent.' if params.get('name') in WORK_TOOLS else json.dumps(data,ensure_ascii=False)
+    result={'content':[{'type':'text','text':text_value}],'structuredContent':data,'isError':False}
+    if params.get('name') in WORK_TOOLS and len(json.dumps({'jsonrpc':'2.0','id':rid,'result':result},ensure_ascii=True).encode())>MAX_BYTES:
+     raise ValueError('OUTPUT_LIMIT: Request a smaller artifact or status page')
+   except (ValueError,OSError,UnicodeError) as e:
+    message=str(e) if isinstance(e,ValueError) else 'File operation failed'
+    result={'content':[{'type':'text','text':message}],'isError':True}
+  else:
+   self.send(200,{'jsonrpc':'2.0','id':rid,'error':{'code':-32601,'message':'Method not found'}}); return
+  self.send(200,{'jsonrpc':'2.0','id':rid,'result':result})
+
+def main():
+ p=argparse.ArgumentParser(); p.add_argument('--state',required=True); p.add_argument('--port',type=int,default=42365); p.add_argument('--work-socket'); p.add_argument('--worker-uid',type=int); args=p.parse_args()
+ if bool(args.work_socket) != (args.worker_uid is not None): p.error('--work-socket and --worker-uid must be supplied together')
+ client=WorkClient(args.work_socket,args.worker_uid) if args.work_socket else None
+ server=ThreadingHTTPServer(('127.0.0.1',args.port),Handler); server.executor=Executor(args.state,client); server.serve_forever()
+if __name__=='__main__': main()

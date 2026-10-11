@@ -1,0 +1,34 @@
+-- Run after stopping the readonly gateway and cancelling its sessions.
+BEGIN;
+ALTER ROLE samchat_ro_fmfg NOLOGIN;
+GRANT TEMPORARY ON DATABASE devnous_db TO PUBLIC;
+-- Restore direct ACL state observed before preparation.
+REVOKE TEMPORARY ON DATABASE devnous_db FROM devnous_user;
+REVOKE ALL ON ALL TABLES IN SCHEMA samchat_ro_fmfg_v1 FROM samchat_ro_fmfg;
+REVOKE USAGE ON SCHEMA samchat_ro_fmfg_v1 FROM samchat_ro_fmfg;
+DROP VIEW samchat_ro_fmfg_v1.empleados;
+DROP VIEW samchat_ro_fmfg_v1.authorization_positions;
+DROP VIEW samchat_ro_fmfg_v1.authorization_position_assignments;
+DROP VIEW samchat_ro_fmfg_v1.documento_authorization_routes;
+DROP VIEW samchat_ro_fmfg_v1.reembolsos;
+DROP VIEW samchat_ro_fmfg_v1.anticipos;
+DROP VIEW samchat_ro_fmfg_v1.expense_reports;
+DROP VIEW samchat_ro_fmfg_v1.aprobaciones;
+DROP VIEW samchat_ro_fmfg_v1.documentos;
+DROP VIEW samchat_ro_fmfg_v1.scope_guard;
+DROP SCHEMA samchat_ro_fmfg_v1;
+REVOKE SELECT (id,torneo_id,tipo,estado,numero_referencia,referencia_operaciones,referencia_base,creado_en,enviado_en,currency,monto_total,budget_concept_id,pagado_en,gasto_generado_id,cuenta_gastos_id,concepto_pago,informe_origen_id,motivo_comprobacion_parcial,empleado_id) ON public.documentos FROM samchat_ro_fmfg_owner;
+REVOKE SELECT (id,entidad_id,tipo_entidad,accion,fecha) ON public.aprobaciones FROM samchat_ro_fmfg_owner;
+REVOKE SELECT (id,documento_id,informe_documento_id,cuenta_gastos_id,estado_gasto) ON public.expense_reports FROM samchat_ro_fmfg_owner;
+REVOKE SELECT (id,documento_id,estado) ON public.anticipos FROM samchat_ro_fmfg_owner;
+REVOKE SELECT (id,documento_id,cuenta_gastos_id,estado,tipo) ON public.reembolsos FROM samchat_ro_fmfg_owner;
+REVOKE SELECT (documento_id,eligible_empleado_ids,eligible_position_keys,requires_operations_reference) ON public.documento_authorization_routes FROM samchat_ro_fmfg_owner;
+REVOKE SELECT (position_key,empleado_id,active) ON public.authorization_position_assignments FROM samchat_ro_fmfg_owner;
+REVOKE SELECT (position_key,active) ON public.authorization_positions FROM samchat_ro_fmfg_owner;
+REVOKE SELECT (id,activo,correo,rol,departamento,actualizado_en) ON public.empleados FROM samchat_ro_fmfg_owner;
+REVOKE SELECT (tool_key,action_key,role_key,area_key,allowed,active,updated_at) ON public.access_control_rules FROM samchat_ro_fmfg_owner;
+REVOKE USAGE ON SCHEMA public FROM samchat_ro_fmfg_owner;
+REVOKE CONNECT ON DATABASE devnous_db FROM samchat_ro_fmfg;
+DROP ROLE samchat_ro_fmfg;
+DROP ROLE samchat_ro_fmfg_owner;
+COMMIT;
