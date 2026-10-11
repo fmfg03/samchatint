@@ -582,6 +582,15 @@ def register_presupuestos_routes(router) -> None:
         render_admin_navigation,
     )
 
+    from .admin_budget_upload_routes import register_tournament_budget_upload_routes
+
+    register_tournament_budget_upload_routes(
+        router,
+        get_db_session=get_db_session,
+        get_current_empleado=get_current_empleado,
+        require_budget_access=_require_budget_access,
+    )
+
     @router.get("/admin/presupuestos", response_class=HTMLResponse)
     async def admin_presupuestos_dashboard(
         session: AsyncSession = Depends(get_db_session),
@@ -1803,6 +1812,22 @@ def register_presupuestos_routes(router) -> None:
             else gastos_section_html
         )
 
+        upload_budget_link = ""
+        if tournament_ctx.get("tournament_id"):
+            upload_url = (
+                "/admin/presupuestos/torneo/"
+                + str(tournament_ctx["tournament_id"])
+                + "/archivo?version_id="
+                + str(selected_version["id"])
+                + "&edition_year="
+                + str(resolved_year)
+            )
+            upload_budget_link = (
+                '<p><a href="'
+                + escape_html(upload_url, quote=True)
+                + '">Revisar archivo de presupuesto</a></p>'
+            )
+
         html = f"""
         <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
         <title>{tournament_ctx.get("tournament_name")} - Presupuestos</title>
@@ -1847,6 +1872,7 @@ def register_presupuestos_routes(router) -> None:
                 phase_filter=selected_phase_filter or None,
                 show_committed=bool(show_committed),
             )}
+            {upload_budget_link}
             {active_budget_section_html}
         </div></body></html>
         """

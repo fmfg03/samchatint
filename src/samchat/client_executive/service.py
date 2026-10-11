@@ -16,6 +16,7 @@ from devnous.copa_telmex.registration_read_model import (
 )
 
 from samchat.budgets.service import budget_alias_candidates, build_budget_snapshot
+from samchat.client_executive.accounting_bridge import build_tournament_accounting
 from samchat.sports_platform import build_director_general_entity_dossier
 from samchat.tournaments_v2.services import build_tournament_soul_snapshot
 from samchat.tournaments_v2.supabase_client import TournamentsV2Error
@@ -914,6 +915,18 @@ async def build_client_dashboard(
             edition_year=edition_year,
         )
         card = _executive_card(tournament, snapshot)
+        if snapshot.get("source") == "budget_db":
+            card["accounting"] = await build_tournament_accounting(
+                session,
+                tournament_id=tournament["id"],
+                edition_year=edition_year,
+                budget_version_id=(snapshot.get("version") or {}).get("id"),
+            )
+            card["accounting_previous_year"] = await build_tournament_accounting(
+                session,
+                tournament_id=tournament["id"],
+                edition_year=edition_year - 1,
+            )
         if include_operational_detail:
             registration = await dispatch_registration_snapshot(
                 session,
@@ -941,7 +954,7 @@ async def build_client_dashboard(
             "operations": "tournament_soul_snapshot",
             "registration": "postgres_registration_for_configured_editions",
             "budget": "samchat.budgets.service.build_budget_snapshot",
-            "entity_finance": "pending_finance_entity_bridge",
+            "entity_finance": "evidenced_historical_accounting_bridge",
             "writes": False,
         },
         "unavailable_metrics": ["cashflow", "accounts_receivable", "payments"],
@@ -979,7 +992,20 @@ async def build_portfolio_dashboard(
             tournament=tournament,
             edition_year=edition_year,
         )
-        cards.append(_executive_card(tournament, snapshot))
+        card = _executive_card(tournament, snapshot)
+        if snapshot.get("source") == "budget_db":
+            card["accounting"] = await build_tournament_accounting(
+                session,
+                tournament_id=tournament["id"],
+                edition_year=edition_year,
+                budget_version_id=(snapshot.get("version") or {}).get("id"),
+            )
+            card["accounting_previous_year"] = await build_tournament_accounting(
+                session,
+                tournament_id=tournament["id"],
+                edition_year=edition_year - 1,
+            )
+        cards.append(card)
     return {
         "edition_year": edition_year,
         "scope": "portfolio",
