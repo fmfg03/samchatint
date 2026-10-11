@@ -1,0 +1,38 @@
+--- a/bridge/executor.py
++++ b/bridge/executor.py
+@@ -233,4 +233,8 @@
+   elif method=='ping': result={}
+   elif method=='tools/list':
+-   result={'tools':[{'name':n,'description':desc,'inputSchema':{'type':'object','properties':props,'required':required,'additionalProperties':False},'annotations':{'readOnlyHint':n in ('server_info','list_projects','read_file','job_status','work_status','work_list','work_artifact'),'destructiveHint':n in ('write_file','work_cancel'),'openWorldHint':False}} for n,(props,required,desc) in self.server.executor.tools.items()]}
++   if hasattr(self.server.executor,'annotated_catalog'):
++    tools=self.server.executor.annotated_catalog()
++   else:
++    tools=[{'name':n,'description':desc,'inputSchema':{'type':'object','properties':props,'required':required,'additionalProperties':False},'annotations':{'readOnlyHint':n in ('server_info','list_projects','read_file','job_status','work_status','work_list','work_artifact'),'destructiveHint':n in ('write_file','work_cancel'),'openWorldHint':False}} for n,(props,required,desc) in self.server.executor.tools.items()]
++   result={'tools':tools}
+   elif method=='tools/call':
+@@ -237,4 +241,7 @@
+   elif method=='tools/call':
+    try:
++    if str(params.get('name','')).startswith('samchat.'):
++     from samchat.readonly_gateway.trusted_tunnel import assert_tunnel_client
++     assert_tunnel_client(self.connection)
+     data=self.server.executor.call(params.get('name'),params.get('arguments',{}))
+     text_value='Work operation completed; result is in structuredContent.' if params.get('name') in WORK_TOOLS else json.dumps(data,ensure_ascii=False)
+@@ -241,2 +248,2 @@
+-    if params.get('name') in WORK_TOOLS and len(json.dumps({'jsonrpc':'2.0','id':rid,'result':result},ensure_ascii=True).encode())>MAX_BYTES:
++    if (params.get('name') in WORK_TOOLS or str(params.get('name','')).startswith('samchat.')) and len(json.dumps({'jsonrpc':'2.0','id':rid,'result':result},ensure_ascii=True).encode())>MAX_BYTES:
+      raise ValueError('OUTPUT_LIMIT: Request a smaller artifact or status page')
+@@ -252,6 +259,11 @@
+ def main():
+- p=argparse.ArgumentParser(); p.add_argument('--state',required=True); p.add_argument('--port',type=int,default=42365); p.add_argument('--work-socket'); p.add_argument('--worker-uid',type=int); args=p.parse_args()
++ p=argparse.ArgumentParser(); p.add_argument('--state',required=True); p.add_argument('--port',type=int,default=42365); p.add_argument('--work-socket'); p.add_argument('--worker-uid',type=int); p.add_argument('--readonly-socket'); args=p.parse_args()
+  if bool(args.work_socket) != (args.worker_uid is not None): p.error('--work-socket and --worker-uid must be supplied together')
+  client=WorkClient(args.work_socket,args.worker_uid) if args.work_socket else None
+- server=ThreadingHTTPServer(('127.0.0.1',args.port),Handler); server.executor=Executor(args.state,client); server.serve_forever()
++ server=ThreadingHTTPServer(('127.0.0.1',args.port),Handler); server.executor=Executor(args.state,client)
++ if args.readonly_socket:
++  from samchat.readonly_gateway.agentius import AgentiusReadSlice
++  from samchat.readonly_gateway.unix_bridge import UnixReportProxy
++  server.executor=AgentiusReadSlice(server.executor,UnixReportProxy(Path(args.readonly_socket),988))
++ server.serve_forever()
+ if __name__=='__main__': main()

@@ -98,6 +98,7 @@ jobs:
           set +e
           python -m pytest tests/unit \
             --ignore=tests/unit/private_plugin \
+            --ignore=tests/unit/readonly_gateway \
             --cov=src \
             --cov=copa_telmex_dashboard \
             --cov-report= \
@@ -118,10 +119,38 @@ jobs:
             echo "Pytest exited $pytest_status; all failures matched the explicit baseline."
           fi
 
-      - name: Combine unit coverage including isolated plugin tests
+      - name: Run isolated readonly PostgreSQL acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          samchat_ro_pg_bin=/usr/lib/postgresql/16/bin
+          test -x "$samchat_ro_pg_bin/initdb"
+          test -x "$samchat_ro_pg_bin/pg_ctl"
+          mkdir -p reports/readonly_gateway
+          samchat_ro_cluster=$(mktemp -d /tmp/samchat-ro-native-ci-XXXXXXXX)
+          cleanup_readonly_cluster() {
+            if [[ -f "$samchat_ro_cluster/data/postmaster.pid" ]]; then
+              "$samchat_ro_pg_bin/pg_ctl" -D "$samchat_ro_cluster/data" -m fast -w stop
+            fi
+          }
+          trap cleanup_readonly_cluster EXIT
+          "$samchat_ro_pg_bin/initdb" -D "$samchat_ro_cluster/data" \
+            -U postgres --encoding=UTF8 --locale=C \
+            --auth-local=trust --auth-host=reject
+          "$samchat_ro_pg_bin/pg_ctl" -D "$samchat_ro_cluster/data" \
+            -l "$samchat_ro_cluster/server.log" \
+            -o "-k $samchat_ro_cluster -c listen_addresses=''" -w start
+          "$samchat_ro_pg_bin/createdb" -h "$samchat_ro_cluster" -U postgres devnous_db
+          export SAMCHAT_TEST_SOCKET="$samchat_ro_cluster"
+          export COVERAGE_FILE=reports/readonly_gateway/unit.coverage
+          python -m coverage run --source=src/samchat/readonly_gateway \
+            scripts/readonly_gateway/run_offline_tests.py --native-informes
+          python -m coverage report --fail-under=85
+
+      - name: Combine unit coverage including isolated slices
         run: |
           mv .coverage .coverage.repository.unit
-          python -m coverage combine .coverage.repository.unit reports/private-plugin/unit.coverage
+          python -m coverage combine .coverage.repository.unit reports/private-plugin/unit.coverage reports/readonly_gateway/unit.coverage
 
       - name: Upload unit-test report
         if: always()

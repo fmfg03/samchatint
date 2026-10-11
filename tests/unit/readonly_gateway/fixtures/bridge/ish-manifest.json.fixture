@@ -1,0 +1,16 @@
+{
+  "root": "/srv/samchat/recovery/2026-10-01-fixes/ish/checkout",
+  "commit": "ba5f7db772836275b1b5f448544543ec014a0ef2",
+  "files": {
+    "README.md": {"sha256": "a919b5e97a895ddeecb90ef3307beeefdb83062ac14e1e94101ee8e27c8547d5", "bytes": 2202},
+    "docs/ish-budget-classification-local-evidence.md": {"sha256": "5616b02888cd55fd6cacc82c4fc45bcad1b3d62a523fc14f4a90cda177756504", "bytes": 7267},
+    "requirements-runtime.txt": {"sha256": "f19d64defe83653a03e471036e9b2cf463ecdbd2d7160e5966605a9f47789cc8", "bytes": 932},
+    "requirements.txt": {"sha256": "7d5dd49338b84c7ba5e6169d637d9eaf1b0f09580317fa8ce9a5396efde7475e", "bytes": 2534},
+    "src/devnous/gastos/routes/user_routes.py": {"sha256": "7e17f5029f50a4a21f3fc19c1908ef83279eb43f2e9d8de25be017acb712226b", "bytes": 2126684},
+    "src/devnous/gastos/services/cfdi_autofill.py": {"sha256": "2c7ac7866cbace29e8d8421959ac798f0f59456aa6bf62ba68951f20b730087c", "bytes": 10692},
+    "src/devnous/gastos/services/cfdi_pdf_reader.py": {"sha256": "7eeb2fe9002a1cbb64802ae314aa3ebd74e182676dd67e15f66401357d351185", "bytes": 19877},
+    "tests/unit/gastos/test_cfdi_quick_expense_totals.py": {"sha256": "cece115283aa3012a3197e66650ff1f49f45a0ff8a530081b776dd1afd0288b3", "bytes": 9256},
+    "tests/unit/gastos/test_ish_budget_classification.py": {"sha256": "5c8cf0dad263919a03e0c0222ada84fc9888556f08604b93f4781980264abfbd", "bytes": 7647},
+    "tests/unit/gastos/test_ish_cfdi_upload_paths.py": {"sha256": "d443ecf402d5bfec1b58aab6c1459e23c4b2ee857ed30562a995c5077cdac607", "bytes": 4488}
+  }
+}
