@@ -243,6 +243,57 @@ SQL-backed period-selection tests and frozen-cut regression tests in
 `tests/unit/gastos/test_coi_exportable_status_ui.py`. These are approved source
 changes under PR review; deployment and authenticated UAT remain unproven.
 
+#### 8.2.2 Monthly DIOT read contract
+
+Amendment date: 2026-10-09. This canon diff received explicit human approval.
+The connected monthly DIOT read owner is `monthly_diot_service.py`; the existing
+`diot_exporter.py` remains the fiscal-row and TXT/XLSX renderer. Period
+resolution uses `Documento.fecha_pago_efectiva` from a direct paid-document link
+first, then only a unique paid `SOLICITUD` date on the same `CuentaDeGastos`.
+Missing or ambiguous dates must not be guessed.
+
+The monthly TXT route fails closed on in-period fiscal blockers. The audit XLSX
+remains available and carries separate blocker and undated queues. Active,
+non-reversal expenses are the only candidates. Reused CFDIs require complete
+shared-invoice confirmation and a valid aggregate application; confirmed shares
+are prorated by applied fiscal amount. IVA withholding comes exclusively from
+the CFDI XML `retenciones` detail. No new persistence path, migration, background
+job, SAT submission, or financial write is introduced.
+
+Evidence: isolated worktree based on `7d857ad326a`, focused tests, route import
+verification, and read-only production classification. Merge, deployment,
+authenticated Finance UAT, and business acceptance remain unproven.
+
+
+### Proposed 2026-10-06 amendment: partial paid-advance comprobaciones
+
+Requires explicit human PR review. Reason: Francisco requests applicant-confirmed
+motives, approver comments, an open original report until zero, and incremental
+accounting without duplicate recognition. This proposal does not establish
+production or business acceptance.
+
+For an open, unapproved, non-AMEX report with an actually paid advance and its
+existing debtor posting, the applicant may explicitly submit the newly captured
+expenses as a child `INFORME`. The original report remains an open case container;
+it must never be approved or exported again in partial mode. Each child owns
+only its explicitly assigned expenses and retains its confirmed applicant motive.
+The authorized approver must read that motive and record comments. Budget-control
+and accounting-readiness gates still apply. Each approved child has its own
+idempotent debtor recognition and one atomic COI policy in its approval month.
+Previously approved expenses cannot be reassigned or mutated; corrections require
+accounting reversal rather than overwriting recognized evidence.
+
+Actual, evidenced advance returns reduce the same collaborator debtor balance.
+Repeated submissions reuse the original result; additional returns require new
+submission identities. The original closes only when all children are approved,
+no active expenses remain unassigned, and the persisted debtor auxiliary is zero.
+Ordinary full reimbursement and company-AMEX immutable-cut rules remain intact.
+
+Evidence: `docs/roadmap/partial-advance-comprobaciones.md`, scoped implementation,
+SQLite-backed workflow/ledger tests and isolated PostgreSQL/WASM migration tests.
+No production migration, deployment, authenticated UAT, or historical mutation
+has been performed.
+
 ### 8.3 Payment Run
 
 Canonical states visible to Payment Run are:
@@ -438,3 +489,23 @@ Reason: human-approved first delivery of registration read-source consolidation;
 El candidato de primera entrega de inscripción incorpora `copa_telmex_tournament_editions` mediante migración explícita, y una proyección compartida de solo lectura en `registration_read_model.py`. La resolución exige identidad exacta y edición inequívoca; fuente fallida, ámbito ausente, inactivo o ambiguo producen estados explícitos. Para ediciones configuradas, la lectura precede al enrutamiento heredado y no tiene fallback silencioso al roster Supabase. SOUL admite exclusión de inscripción antes de consultar equipos, jugadores, responsables y registros, manteniendo otros dominios. La proyección ejecutiva no expone datos personales individuales. La migración no se aplica en startup. El reconciliador del piloto es local y no concede aprobación, elegibilidad ni efectos de escritura en bases.
 
 Evidence: `docs/roadmap/ctt-postgres-registration-first-delivery.md` and its scoped test and review receipts. This is an isolated-worktree candidate; merge, deployment, data application, authenticated UAT, and business acceptance remain separate.
+
+## 20. Copa Telmex governed batch-admission candidate amendment
+
+Date: 2026-10-06
+
+The candidate adds owner-migrated batch, document-binding, and team-staff tables.
+Runtime `create_all` excludes all three. Manifest validation recomputes immutable
+source, payload, page, and staff-evidence identities before persistence. Batch and
+session UUIDs are deterministic; atomic insert plus batch-row locking serializes
+concurrent retries. Rollback refuses destructive schema removal after admitted
+documents or staff records exist. The authenticated endpoint renders only declared
+PDF pages and writes registration-review drafts with `human_reviewed=false` and
+`canonical_import_ready=false`. The existing team commit path remains blocked for
+staff-bearing drafts because no current Zaubern receipt authorizes ordered staff
+slots.
+
+Evidence: `docs/roadmap/ctt-pilot-batch-admission.md`, focused unit and regression
+tests, and isolated PostgreSQL migration/constraint/rollback tests. This remains
+repository evidence under review, not deployment, data admission, UAT, or
+business acceptance.

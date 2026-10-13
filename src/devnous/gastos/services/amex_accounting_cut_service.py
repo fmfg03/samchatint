@@ -42,6 +42,10 @@ from .amex_recognition_service import (
     period_reason,
     signature,
 )
+from .expense_coi_export_service import (
+    coi_document_loader_options,
+    coi_document_metadata,
+)
 
 
 @dataclass(frozen=True)
@@ -74,7 +78,10 @@ async def _actor(session: AsyncSession, actor: Empleado) -> Empleado | None:
 
 async def _informe(session: AsyncSession, informe_id: UUID) -> Documento | None:
     result = await session.execute(
-        select(Documento).where(Documento.id == informe_id).with_for_update()
+        select(Documento)
+        .options(*coi_document_loader_options())
+        .where(Documento.id == informe_id)
+        .with_for_update()
     )
     informe = result.scalar_one_or_none()
     if (
@@ -578,6 +585,8 @@ async def create_amex_accounting_cut(
             snapshot_json={
                 "partidas": partidas,
                 "lines": frozen_journal,
+                "informe_reference": informe.numero_referencia,
+                "coi_metadata": coi_document_metadata(informe),
                 "consumption_ids": [str(i) for i in consumptions],
                 "review_versions": actual_versions,
                 "previous_cut_id": str(previous_cuts[0].id) if previous_cuts else None,

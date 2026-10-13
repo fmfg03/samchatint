@@ -388,6 +388,7 @@ class _BudgetCommitmentsSession:
                 {
                     "documento_id": "doc-1",
                     "numero_referencia": "SOL-0001",
+                    "referencia_operaciones": "Operaciones 336",
                     "estado": "aprobado",
                     "concepto_pago": "Uniformes regionales",
                     "monto_solicitado": 1200.0,
@@ -428,6 +429,7 @@ async def test_list_budget_tournament_commitments_returns_document_rows():
         {
             "documento_id": "doc-1",
             "numero_referencia": "SOL-0001",
+            "referencia_operaciones": "Operaciones 336",
             "estado": "aprobado",
             "concepto_pago": "Uniformes regionales",
             "budget_concept_name": None,

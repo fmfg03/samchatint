@@ -27,7 +27,13 @@ def scalar_result(value):
 @pytest.fixture
 def setup_return(monkeypatch):
     actor = SimpleNamespace(id=uuid4(), rol="empleado", nombre="Solicitante")
-    cuenta = SimpleNamespace(id=uuid4(), empleado_id=actor.id, referencia_base="TEST")
+    cuenta = SimpleNamespace(
+        id=uuid4(),
+        empleado_id=actor.id,
+        referencia_base="TEST",
+        estado="abierta",
+        comprobacion_parcial=False,
+    )
     informe = SimpleNamespace(
         id=uuid4(), tipo="INFORME", estado="borrador", cuenta_gastos_id=cuenta.id
     )
@@ -261,7 +267,8 @@ async def test_report_context_detects_changed_expenses_after_return(
     monkeypatch, gastos, stale
 ):
     session = SimpleNamespace(
-        execute=AsyncMock(side_effect=[scalar_result(gastos), scalar_result(1000)])
+        execute=AsyncMock(side_effect=[scalar_result(gastos), scalar_result(1000)]),
+        get=AsyncMock(return_value=SimpleNamespace(comprobacion_parcial=False)),
     )
     monkeypatch.setattr(
         user_routes,
@@ -343,7 +350,9 @@ async def test_return_form_is_available_before_approval_only_for_pending_surplus
     )
     assert ('enctype="multipart/form-data"' in html) is visible
     if visible:
-        assert 'name="monto" value="200.00"' in html
+        assert 'name="monto"' in html
+        assert 'max="200.00"' in html
+        assert 'name="allow_partial" value="1"' in html
         assert 'name="fecha_pago"' in html
         assert 'name="comprobante"' in html
 

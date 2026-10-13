@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily 30-day readonly audit retention
+
+[Timer]
+OnCalendar=*-*-* 00:05:00 UTC
+Persistent=true
+Unit=samchat-readonly-fmfg-prune.service
+
+[Install]
+WantedBy=timers.target

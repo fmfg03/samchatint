@@ -72,6 +72,7 @@ from ..services.diot_exporter import (
     create_diot_excel,
     generate_diot_txt,
 )
+from ..services.monthly_diot_service import build_monthly_diot_scope
 from ..services.cfdi_expense_link_service import (
     ExpenseCFDIDuplicateError,
     is_cfdi_uuid_prefix_candidate,
@@ -169,6 +170,7 @@ from ..services.budget_concept_account_service import (
     apply_budget_concept_cuenta_mapping,
 )
 from ..services.expense_accounting_service import build_expense_accounting_preview
+from ..services.expense_accounting_cleanup_service import cleanup_issues_match_filter
 from ..services.payment_run_exporter import _safe_cell_text as _safe_spreadsheet_cell_text
 from ..services.employee_debtor_accounting_service import (
     build_cuenta_debtor_auxiliary,
@@ -180,6 +182,8 @@ from ..services.employee_debtor_accounting_service import (
 from ..services.expense_coi_export_service import (
     assess_expense_coi_cleanup_ready,
     build_expense_cfdi_for_export,
+    coi_document_loader_options,
+    coi_document_metadata,
     group_expense_cfdis_for_document,
     informe_coi_period_condition,
     load_expense_for_coi_export,
@@ -266,6 +270,11 @@ from ..services.documento_semantics import (
     effective_document_beneficiary_name,
     is_employee_reimbursement,
     reimbursement_concept_from_cuenta,
+)
+from ..services.partial_advance_service import (
+    PartialAdvanceError,
+    finalize_partial_advance,
+    submit_partial_advance_lot,
 )
 from ..services.cuenta_settlement_service import (
     PREAPPROVAL_INFORME_STATES,
@@ -1448,7 +1457,12 @@ async def _derive_informe_monto_total(
         ExpenseReport.informe_documento_id == documento.id,
     ]
     if documento.cuenta_gastos_id:
-        expense_conditions.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
+        expense_conditions.append(
+            and_(
+                ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id,
+                ExpenseReport.informe_documento_id.is_(None),
+            )
+        )
 
     expenses_result = await session.execute(
         select(ExpenseReport).where(
@@ -2255,6 +2269,7 @@ def _contabilidad_subnav(active: str) -> str:
         ("/admin/contabilidad/estado", "Estado mes", "estado"),
         ("/admin/contabilidad/historica", "Histórica", "historica"),
         ("/admin/contabilidad/coi", "COI", "coi"),
+        ("/admin/contabilidad/diot", "DIOT", "diot"),
         ("/admin/contabilidad/ingresos", "Ingresos", "ingresos"),
         ("/admin/contabilidad/cuentas-por-cobrar", "CxC", "cxc"),
         ("/admin/contabilidad/cuentas-por-pagar", "CxP", "cxp"),
@@ -4417,6 +4432,7 @@ async def _load_coi_lote_informe_documentos(
                 selectinload(Documento.beneficiario_proveedor_cliente),
                 selectinload(Documento.proveedor_cliente),
                 selectinload(Documento.empleado),
+                selectinload(Documento.torneo),
                 selectinload(Documento.cuenta_gastos).selectinload(
                     CuentaDeGastos.beneficiario_empleado
                 ),
@@ -4425,6 +4441,9 @@ async def _load_coi_lote_informe_documentos(
                 ),
                 selectinload(Documento.cuenta_gastos).selectinload(
                     CuentaDeGastos.empleado
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.torneo
                 ),
             )
             .where(
@@ -4480,6 +4499,7 @@ async def _load_coi_lote_terceros_documentos(
                 selectinload(Documento.beneficiario_proveedor_cliente),
                 selectinload(Documento.proveedor_cliente),
                 selectinload(Documento.empleado),
+                selectinload(Documento.torneo),
                 selectinload(Documento.cuenta_gastos).selectinload(
                     CuentaDeGastos.beneficiario_empleado
                 ),
@@ -4488,6 +4508,9 @@ async def _load_coi_lote_terceros_documentos(
                 ),
                 selectinload(Documento.cuenta_gastos).selectinload(
                     CuentaDeGastos.empleado
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.torneo
                 ),
             )
             .where(
@@ -4526,7 +4549,10 @@ async def _load_documento_active_coi_expenses(
         ]
         if documento.cuenta_gastos_id:
             expense_conditions.append(
-                ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id
+                and_(
+                    ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id,
+                    ExpenseReport.informe_documento_id.is_(None),
+                )
             )
         expenses_result = await session.execute(
             select(ExpenseReport)
@@ -4595,15 +4621,72 @@ def _coi_exportable_matches_search(
         effective_document_beneficiary_name(documento, fallback=""),
     ]
     for expense in expenses:
+        cfdi = getattr(expense, "cfdi_report", None)
+        employee = getattr(expense, "empleado", None)
         haystack.extend(
             [
                 expense.numero_referencia or "",
                 expense.concepto or "",
                 expense.proyecto or "",
                 str(expense.id),
+                getattr(expense, "cfdi_uuid_manual", None) or "",
+                getattr(expense, "numero_factura", None) or "",
+                getattr(employee, "nombre", None) or "",
+                getattr(cfdi, "cfdi_uuid", None) or "",
+                getattr(cfdi, "emisor_nombre", None) or "",
+                getattr(cfdi, "emisor_rfc", None) or "",
             ]
         )
     return any(token in _normalize_filter_value(value) for value in haystack)
+
+
+def _normalize_coi_document_type(value: Any) -> str:
+    normalized = str(value or "all").strip().lower()
+    return normalized if normalized in {"all", "informe", "solicitud"} else "all"
+
+
+def _normalize_coi_preparation(value: Any) -> str:
+    normalized = str(value or "all").strip().lower()
+    return normalized if normalized in {"all", "ready", "blocked"} else "all"
+
+
+def _coi_cleanup_actionable_issues(issues: Iterable[Any]) -> List[str]:
+    issue_types = ("main_account", "counterpart", "cfdi", "fiscal")
+    return [
+        str(issue)
+        for issue in issues
+        if any(
+            cleanup_issues_match_filter([issue], issue_type)
+            for issue_type in issue_types
+        )
+    ]
+
+
+def _filter_coi_exportable_lote_rows(
+    rows: List[dict[str, Any]],
+    *,
+    document_type: str = "all",
+    preparation: str = "all",
+) -> List[dict[str, Any]]:
+    selected_document_type = _normalize_coi_document_type(document_type)
+    selected_preparation = _normalize_coi_preparation(preparation)
+    filtered: List[dict[str, Any]] = []
+    for row in rows:
+        row_document_type = (
+            "informe" if row.get("tipo_lote") == "INFORME" else "solicitud"
+        )
+        if (
+            selected_document_type != "all"
+            and row_document_type != selected_document_type
+        ):
+            continue
+        can_export = bool(row.get("can_export"))
+        if selected_preparation == "ready" and not can_export:
+            continue
+        if selected_preparation == "blocked" and can_export:
+            continue
+        filtered.append(row)
+    return filtered
 
 
 async def _load_initial_amex_cut(
@@ -4626,6 +4709,8 @@ async def _build_coi_exportable_lote_rows(
     start_date: date,
     end_date: date,
     search_q: str = "",
+    document_type: str = "all",
+    preparation: str = "all",
 ) -> List[dict[str, Any]]:
     """Document policy rows for COI, with INFORME eligibility evaluated atomically."""
     documento_batches = (
@@ -4656,16 +4741,16 @@ async def _build_coi_exportable_lote_rows(
             if not expenses:
                 continue
             if tipo_lote != "INFORME":
-                ready_expenses = []
-                for expense in expenses:
-                    ready, _ = await assess_expense_coi_cleanup_ready(session, expense)
-                    if ready:
-                        ready_expenses.append(expense)
                 if not _coi_exportable_matches_search(
-                    documento=documento, expenses=ready_expenses, search_q=search_q
+                    documento=documento, expenses=expenses, search_q=search_q
                 ):
                     continue
-                for expense in ready_expenses:
+                for expense in expenses:
+                    ready, issues = await assess_expense_coi_cleanup_ready(
+                        session, expense
+                    )
+                    cleanup_issues = _coi_cleanup_actionable_issues(issues or [])
+                    reference = expense.numero_referencia or str(expense.id)[:8]
                     rows.append(
                         {
                             "tipo_lote": tipo_lote,
@@ -4674,12 +4759,31 @@ async def _build_coi_exportable_lote_rows(
                             "period_label": _coi_lote_documento_period_label(
                                 documento, tipo_lote
                             ),
-                            "can_export": True,
-                            "block_reason": "",
+                            "can_export": ready,
+                            "block_reason": (
+                                ""
+                                if ready
+                                else (
+                                    f"{reference}: "
+                                    f"{'; '.join(issues) or 'preparación COI incompleta'}"
+                                )
+                            ),
+                            "cleanup_blockers": (
+                                [
+                                    {
+                                        "expense_id": expense.id,
+                                        "expense_reference": reference,
+                                        "issues": cleanup_issues,
+                                    }
+                                ]
+                                if cleanup_issues
+                                else []
+                            ),
                         }
                     )
                 continue
             period_label = _coi_lote_documento_period_label(documento, tipo_lote)
+            cleanup_blockers: List[dict[str, Any]] = []
             if any(is_company_amex_expense(expense) for expense in expenses):
                 cut = await _load_initial_amex_cut(session, documento.id)
                 if cut is None:
@@ -4699,8 +4803,20 @@ async def _build_coi_exportable_lote_rows(
                     ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
                     if not ready:
                         reference = expense.numero_referencia or str(expense.id)[:8]
+                        issue_detail = (
+                            "; ".join(issues) or "preparación COI incompleta"
+                        )
+                        cleanup_issues = _coi_cleanup_actionable_issues(issues or [])
+                        if cleanup_issues:
+                            cleanup_blockers.append(
+                                {
+                                    "expense_id": expense.id,
+                                    "expense_reference": reference,
+                                    "issues": cleanup_issues,
+                                }
+                            )
                         block_reasons.append(
-                            f"{reference}: {'; '.join(issues) or 'preparación COI incompleta'}"
+                            f"{reference}: {issue_detail}"
                         )
             if not _coi_exportable_matches_search(
                 documento=documento,
@@ -4716,8 +4832,14 @@ async def _build_coi_exportable_lote_rows(
                     "period_label": period_label,
                     "can_export": not block_reasons,
                     "block_reason": "; ".join(block_reasons),
+                    "cleanup_blockers": cleanup_blockers,
                 }
             )
+    rows = _filter_coi_exportable_lote_rows(
+        rows,
+        document_type=document_type,
+        preparation=preparation,
+    )
     actor_ids = {
         actor_id
         for row in rows
@@ -4865,13 +4987,18 @@ def _render_coi_exportable_lote_rows_html(
     *,
     return_to: str = "/admin/contabilidad/coi",
     readable_workpaper_account_ids: Optional[set[str]] = None,
+    accounting_period: str = "",
+    empty_message: Optional[str] = None,
 ) -> str:
     if not rows:
-        return (
-            '<tr><td colspan="11" class="muted">'
-            "No hay gastos con preparación COI guardada (Listo COI) para este periodo."
-            "</td></tr>"
+        message = escape(
+            empty_message
+            or (
+                "No hay gastos con preparación COI guardada (Listo COI) "
+                "para este periodo."
+            )
         )
+        return f'<tr><td colspan="11" class="muted">{message}</td></tr>'
 
     rendered: List[str] = []
     for row in rows:
@@ -4935,11 +5062,36 @@ def _render_coi_exportable_lote_rows_html(
                 f' <a href="/admin/contabilidad/amex/informes/{documento_id}">'
                 "Revisar partidas y cortes AMEX</a>"
             )
+        cleanup_action = ""
+        cleanup_blockers = [
+            blocker
+            for blocker in (row.get("cleanup_blockers") or [])
+            if blocker.get("expense_id") and blocker.get("issues")
+        ]
+        if not is_amex_report and cleanup_blockers and accounting_period:
+            focus_expense_id = str(cleanup_blockers[0]["expense_id"])
+            cleanup_query = urlencode(
+                {
+                    "period": accounting_period,
+                    "document_type": "informe" if is_report else "solicitud",
+                    "q": str(documento.numero_referencia or ""),
+                    "focus_expense_id": focus_expense_id,
+                    "document_id": documento_id,
+                }
+            )
+            cleanup_action = (
+                ' <a class="button secondary cleanup-action-link" '
+                'style="padding:8px 12px;font-size:12px;" '
+                f'href="/admin/gastos/sin-cuenta-contable?'
+                f'{escape(cleanup_query, quote=True)}'
+                f'#row-{focus_expense_id}">Atender en Limpieza contable</a>'
+            )
         action = (
             coi_action
             if row.get("can_export")
             else (
                 f'<span class="muted">Bloqueada: {block_reason}</span>'
+                + cleanup_action
                 + (
                     f' <a href="/admin/contabilidad/amex/informes/{documento_id}">Revisar AMEX</a>'
                     if is_amex_report
@@ -4994,6 +5146,9 @@ async def _collect_coi_lote_expense_cfdis(
             "tipo_lote",
             "gasto_referencia",
             "documento_referencia",
+            "referencia_operaciones",
+            "beneficiario_razon_social",
+            "descripcion_contexto",
             "partida",
             "status",
             "mensaje",
@@ -5004,18 +5159,24 @@ async def _collect_coi_lote_expense_cfdis(
     for row in exportable_rows:
         documento = row["documento"]
         tipo_lote = row["tipo_lote"]
+        metadata = coi_document_metadata(documento)
         if tipo_lote == "INFORME" and any(
             is_company_amex_expense(expense) for expense in row.get("expenses") or []
         ):
             cut = await _load_initial_amex_cut(session, documento.id)
             if cut is None:
                 raise ValueError("El informe AMEX necesita su corte contable antes de exportar.")
-            expense_cfdis.extend(cut_expense_cfdis(cut))
+            cut_cfdis = group_expense_cfdis_for_document(
+                cut_expense_cfdis(cut), documento
+            )
+            expense_cfdis.extend(cut_cfdis)
             for index, item in enumerate(cut.snapshot_json["partidas"], start=1):
                 exported_ids.add(UUIDType(item["expense_id"]))
                 manifest_rows.append([
                     item["expense_id"], str(documento.id), tipo_lote,
                     item.get("reference") or "", documento.numero_referencia or "",
+                    metadata["operation_reference"], metadata["party_name"],
+                    metadata["context_description"],
                     str(index), "exportado", f"corte:{cut.id}",
                 ])
             continue
@@ -5049,6 +5210,9 @@ async def _collect_coi_lote_expense_cfdis(
                     tipo_lote,
                     expense.numero_referencia or "",
                     documento.numero_referencia or "",
+                    metadata["operation_reference"],
+                    metadata["party_name"],
+                    metadata["context_description"],
                     str(expense_index),
                     "exportado",
                     "",
@@ -5085,7 +5249,10 @@ async def exportar_coi_gastos_lote_xlsx(
     current_empleado: Empleado = require_admin_finanzas(),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
+    tipo: str = Form("all"),
     q: str = Form(""),
+    document_type: str = Form("all"),
+    preparation: str = Form("all"),
     selected_documento_id: Optional[List[UUIDType]] = Form(None),
     confirmed_selection_count: Optional[int] = Form(None),
     selected_gasto_id: Optional[List[UUIDType]] = Form(None),
@@ -5093,6 +5260,12 @@ async def exportar_coi_gastos_lote_xlsx(
     now = datetime.utcnow()
     selected_year = year or now.year
     selected_month = month or now.month
+    selected_tipo = (str(tipo or "all").strip() or "all")
+    if selected_tipo not in {"all", "Eg", "Ig", "Di"}:
+        selected_tipo = "all"
+    selected_q = " ".join(str(q or "").strip().split())[:200]
+    selected_document_type = _normalize_coi_document_type(document_type)
+    selected_preparation = _normalize_coi_preparation(preparation)
     start_dt, end_dt, start_date, end_date = _coi_lote_period_bounds(
         selected_year,
         selected_month,
@@ -5104,12 +5277,24 @@ async def exportar_coi_gastos_lote_xlsx(
         end_dt=end_dt,
         start_date=start_date,
         end_date=end_date,
-        search_q=(q or "").strip(),
+        search_q=selected_q,
+        document_type=selected_document_type,
+        preparation=selected_preparation,
     )
 
-    redirect_params = f"year={selected_year}&month={selected_month}"
-    if (q or "").strip():
-        redirect_params += "&q=" + quote((q or "").strip())
+    redirect_values: dict[str, Any] = {
+        "year": selected_year,
+        "month": selected_month,
+    }
+    if selected_tipo != "all":
+        redirect_values["tipo"] = selected_tipo
+    if selected_q:
+        redirect_values["q"] = selected_q
+    if selected_document_type != "all":
+        redirect_values["document_type"] = selected_document_type
+    if selected_preparation != "all":
+        redirect_values["preparation"] = selected_preparation
+    redirect_params = urlencode(redirect_values)
     selected_ids_list = [
         ("INFORME", str(item)) for item in (selected_documento_id or [])
     ]
@@ -5184,7 +5369,7 @@ async def exportar_coi_gastos_lote_xlsx(
     if exported_count == 0:
         return RedirectResponse(
             url=(
-                f"/admin/contabilidad/coi?year={selected_year}&month={selected_month}"
+                f"/admin/contabilidad/coi?{redirect_params}"
                 "&error_msg="
                 + quote(
                     "Se encontraron gastos en el periodo, pero ninguno pudo generarse a COI."
@@ -5244,7 +5429,9 @@ async def contabilidad_coi_view(
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
     tipo: str = Query("all"),
-    q: str = Query(""),
+    q: str = Query("", max_length=200),
+    document_type: str = Query("all"),
+    preparation: str = Query("all"),
 ) -> str:
     success_msg = request.query_params.get("success_msg", "")
     error_msg = request.query_params.get("error_msg", "")
@@ -5252,7 +5439,9 @@ async def contabilidad_coi_view(
     selected_year = year or now.year
     selected_month = month or now.month
     selected_tipo = (tipo or "all").strip()
-    selected_q = (q or "").strip()
+    selected_q = " ".join(str(q or "").strip().split())[:200]
+    selected_document_type = _normalize_coi_document_type(document_type)
+    selected_preparation = _normalize_coi_preparation(preparation)
 
     start_dt, end_dt, start_date, end_date = _coi_lote_period_bounds(
         selected_year,
@@ -5266,6 +5455,8 @@ async def contabilidad_coi_view(
         start_date=start_date,
         end_date=end_date,
         search_q=selected_q,
+        document_type=selected_document_type,
+        preparation=selected_preparation,
     )
     workpaper_account_ids = await _coi_readable_workpaper_account_ids(
         session, exportable_rows, current_empleado
@@ -5284,12 +5475,25 @@ async def contabilidad_coi_view(
             "month": selected_month,
             "tipo": selected_tipo,
             "q": selected_q,
+            "document_type": selected_document_type,
+            "preparation": selected_preparation,
         }
     )
     exportable_rows_html = _render_coi_exportable_lote_rows_html(
         exportable_rows,
         return_to=return_to,
         readable_workpaper_account_ids=workpaper_account_ids,
+        accounting_period=f"{selected_year}-{selected_month:02d}",
+        empty_message=(
+            "No hay informes o solicitudes que coincidan con los filtros de "
+            "preparación COI."
+            if (
+                selected_q
+                or selected_document_type != "all"
+                or selected_preparation != "all"
+            )
+            else None
+        ),
     )
 
     conditions = []
@@ -5352,6 +5556,24 @@ async def contabilidad_coi_view(
         f'<option value="{escape(value)}" {_selected_attr(selected_tipo, value)}>{escape(label)}</option>'
         for value, label in (("all", "Todos"), ("Eg", "Egresos"), ("Ig", "Ingresos"), ("Di", "Diario"))
     )
+    document_type_options = "".join(
+        f'<option value="{value}" '
+        f'{_selected_attr(selected_document_type, value)}>{label}</option>'
+        for value, label in (
+            ("all", "Informes y solicitudes"),
+            ("informe", "Informes"),
+            ("solicitud", "Solicitudes"),
+        )
+    )
+    preparation_options = "".join(
+        f'<option value="{value}" '
+        f'{_selected_attr(selected_preparation, value)}>{label}</option>'
+        for value, label in (
+            ("all", "Listas y bloqueadas"),
+            ("ready", "Listas para exportar"),
+            ("blocked", "Bloqueadas"),
+        )
+    )
     summary_rows = "".join(
         f"""
         <tr>
@@ -5411,6 +5633,9 @@ async def contabilidad_coi_view(
     th {{ background:#f3f4f6; }}
     .button {{ display:inline-block; padding:10px 14px; border-radius:8px; text-decoration:none; background:#111827; color:#fff; border:none; cursor:pointer; }}
     .button.secondary {{ background:#e5e7eb; color:#111827; }}
+    .cleanup-action-link {{ transition:background-color .18s ease, color .18s ease, box-shadow .18s ease, transform .18s ease; }}
+    .cleanup-action-link:hover {{ background:#0f766e; color:#fff; box-shadow:0 8px 18px rgba(15,118,110,.24); transform:translateY(-1px); }}
+    .cleanup-action-link:focus-visible {{ outline:3px solid rgba(20,184,166,.35); outline-offset:3px; }}
     .muted {{ color:#6b7280; font-size:13px; }}
     .task-journey {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:0 0 16px; }}
     .task-link {{ display:block; border:1px solid #dbe3ee; border-radius:10px; padding:12px; color:#111827; text-decoration:none; background:#f8fafc; }}
@@ -5443,6 +5668,14 @@ async def contabilidad_coi_view(
             <div><label>Mes</label><input type="number" min="1" max="12" name="month" value="{selected_month}"></div>
             <div><label>Tipo póliza</label><select name="tipo">{tipo_options}</select></div>
             <div><label>Búsqueda</label><input type="text" name="q" value="{_html_value(selected_q)}" placeholder="Número, beneficiario, UUID, concepto"></div>
+            <div>
+                <label>Origen de revisión/exportación</label>
+                <select name="document_type">{document_type_options}</select>
+            </div>
+            <div>
+                <label>Preparación</label>
+                <select name="preparation">{preparation_options}</select>
+            </div>
             <div style="display:flex;align-items:end;gap:8px;"><button type="submit" class="button">Filtrar</button><a href="/admin/contabilidad/coi" class="button secondary">Limpiar</a></div>
         </form>
         <div class="summary">
@@ -5458,7 +5691,12 @@ async def contabilidad_coi_view(
             <form id="coi-export-form" method="POST" action="/admin/contabilidad/coi/exportar-gastos-lote.xlsx" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <input type="hidden" name="year" value="{selected_year}">
                 <input type="hidden" name="month" value="{selected_month}">
+                <input type="hidden" name="tipo" value="{_html_value(selected_tipo)}">
                 <input type="hidden" name="q" value="{_html_value(selected_q)}">
+                <input type="hidden" name="document_type"
+                       value="{_html_value(selected_document_type)}">
+                <input type="hidden" name="preparation"
+                       value="{_html_value(selected_preparation)}">
                 <input type="hidden" id="coi-confirmed-selection-count" name="confirmed_selection_count" value="0">
                 <span id="coi-selected-count" class="muted" aria-live="polite">0 seleccionadas</span>
                 <button id="coi-export-selected" type="submit" class="button" disabled>Exportar seleccionadas</button>
@@ -10593,6 +10831,17 @@ def _can_mutate_cuenta_de_gastos(cuenta: CuentaDeGastos, empleado: Empleado) -> 
 async def _ensure_can_mutate_informe_expense(
     session: AsyncSession, expense: ExpenseReport, empleado: Empleado
 ) -> None:
+    if getattr(expense, "informe_documento_id", None):
+        owner = await session.get(Documento, expense.informe_documento_id)
+        if (
+            owner is not None
+            and getattr(owner, "informe_origen_id", None)
+            and owner.estado == "aprobado"
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="El gasto pertenece a una comprobación parcial aprobada; requiere una reversión contable, no edición.",
+            )
     if not expense.cuenta_gastos_id or not _has_read_only_cross_account_informe_access(empleado):
         return
     cuenta = await session.get(CuentaDeGastos, expense.cuenta_gastos_id)
@@ -11335,6 +11584,7 @@ def _can_edit_solicitud_terceros(
 ) -> bool:
     return (
         _is_solicitud_terceros(documento)
+        and not getattr(documento, "supplier_advance_id", None)
         and _is_pre_budget_edit_window(documento)
         and documento.empleado_id == empleado.id
         and not solicitud_cancelada
@@ -11353,7 +11603,10 @@ def _can_add_solicitud_adjuntos(
     finance_roles = {"finanzas", "admin", "superadmin", "super_admin"}
     materiality_states = {
         "borrador",
+        "control_presupuestal",
+        "enviado",
         "aprobado",
+        "en_proceso_pago",
         "pagado",
         "cerrado",
         "reembolsado",
@@ -11375,13 +11628,21 @@ def _can_remove_solicitud_adjunto(
     solicitud_cancelada: bool = False,
 ) -> bool:
     categoria_norm = (categoria or "supporting").strip().lower()
+    if categoria_norm in {"cfdi_xml_evidence", "cfdi_pdf_evidence"}:
+        return False
+    if getattr(documento, "supplier_advance_id", None) and categoria_norm in {
+        "cfdi_xml",
+        "cfdi_pdf",
+    }:
+        return False
     if categoria_norm == "comprobante_pago":
         return _can_finance_add_comprobante_pago(
             documento,
             empleado,
             solicitud_cancelada=solicitud_cancelada,
         )
-    return _can_add_solicitud_adjuntos(
+    # Appending evidence must never grant deletion after authorization advances.
+    return _can_edit_solicitud_terceros(
         documento,
         empleado,
         solicitud_cancelada=solicitud_cancelada,
@@ -11754,12 +12015,14 @@ def _render_debtor_auxiliary_section(
         "pendiente": "Pendiente",
         "sin_subcuenta": "Sin subcuenta de empleado",
         "diferencia_contable": "Diferencia contable",
+        "pendiente_comprobar": "Pendiente de comprobar",
     }
     status_colors = {
         "saldado": ("#dcfce7", "#166534"),
         "pendiente": ("#fef3c7", "#92400e"),
         "sin_subcuenta": ("#fee2e2", "#991b1b"),
         "diferencia_contable": ("#fee2e2", "#991b1b"),
+        "pendiente_comprobar": ("#fef3c7", "#92400e"),
     }
     bg, fg = status_colors.get(status, ("#f1f5f9", "#334155"))
     lines = list(aux.get("lines") or [])
@@ -12511,11 +12774,12 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
     rol = escape(rol_raw)
     role_norm = (rol_raw or "").strip().lower()
     is_superadmin = role_norm in {"superadmin", "super_admin"}
+    impersonator_id = getattr(current_empleado, "impersonator_empleado_id", None)
     impersonator_name = escape(
         str(getattr(current_empleado, "impersonator_nombre", "") or "")
     )
     impersonation_html = ""
-    if getattr(current_empleado, "impersonator_empleado_id", None):
+    if impersonator_id:
         impersonation_html = f"""
         <div
             style="
@@ -12720,8 +12984,8 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
                             font-size:13px;
                             font-weight:600;
                         "
-                    >Cambiar identidad</a>
-                    ''' if is_superadmin or getattr(current_empleado, "impersonator_empleado_id", None) else ''}
+                    >{'Cambiar identidad (facultad del superadmin)' if impersonator_id else 'Cambiar identidad'}</a>
+                    ''' if is_superadmin or impersonator_id else ''}
                 </div>
             </details>
             <a
@@ -15220,6 +15484,7 @@ async def panel_operaciones_console(
         f"""
         <tr>
             <td><a href="/panel/operaciones-console?tournament_id={quote(str(selected_tournament['id']))}&drill_document={quote(str(item.get('documento_id') or ''))}" style="color:#0f172a;text-decoration:none;font-weight:700;">{escape(str(item.get("numero_referencia") or "-"))}</a></td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td><span class="ops-pill">{escape(str(item.get("estado") or "-"))}</span></td>
             <td>{escape(str(item.get("proveedor_nombre") or "-"))}</td>
             <td>{escape(str(item.get("concepto_pago") or "-"))}</td>
@@ -15772,6 +16037,7 @@ async def panel_operaciones_console(
                             <thead>
                                 <tr>
                                     <th>Documento</th>
+                                    <th>Referencia Operaciones</th>
                                     <th>Estado</th>
                                     <th>Proveedor</th>
                                     <th>Concepto</th>
@@ -15781,7 +16047,7 @@ async def panel_operaciones_console(
                                 </tr>
                             </thead>
                             <tbody>
-                                {commitment_rows or '<tr><td colspan="7">Sin compromisos visibles para el torneo seleccionado.</td></tr>'}
+                                {commitment_rows or '<tr><td colspan="8">Sin compromisos visibles para el torneo seleccionado.</td></tr>'}
                             </tbody>
                         </table>
                     </div>
@@ -17702,6 +17968,26 @@ async def gastos_terceros(
     totals_by_currency: Dict[str, Decimal] = {}
     status_counts = Counter()
 
+    supplier_ids = [
+        d.id for d in documentos if getattr(d, "is_supplier_advance", False)
+    ]
+    supplier_applied = {}
+    if supplier_ids:
+        allocations = await session.execute(
+            select(
+                Documento.supplier_advance_id,
+                func.sum(Documento.supplier_advance_applied),
+            )
+            .where(
+                Documento.supplier_advance_id.in_(supplier_ids),
+                Documento.estado.in_(
+                    ["aprobado", "en_proceso_pago", "pagado", "cerrado"]
+                ),
+            )
+            .group_by(Documento.supplier_advance_id)
+        )
+        supplier_applied = dict(allocations.all())
+
     # Build rows HTML
     rows_html = ""
     for doc in documentos:
@@ -17718,7 +18004,11 @@ async def gastos_terceros(
         aprobador_nombre = escape(aprobador_by_doc.get(doc.id, "—"))
         monto_value = float(doc.monto_solicitado or 0)
         doc_currency = currency_for(doc)
-        monto_display = format_currency(monto_value, doc_currency) if doc.monto_solicitado else "—"
+        monto_display = (
+            format_currency(monto_value, doc_currency)
+            if doc.monto_solicitado is not None
+            else "—"
+        )
         fecha_pago_display = format_value(doc.fecha_pago) if doc.fecha_pago else "—"
         fecha_aprobacion_display = (format_value(doc.aprobado_en) if getattr(doc, "aprobado_en", None) else "-")
         concepto_raw = (doc.concepto_pago or "").strip()
@@ -17745,6 +18035,17 @@ async def gastos_terceros(
         concepto_attr = escape(concepto_raw.lower())
         proveedor_attr = escape(proveedor_raw.lower())
         estado_display = _documento_human_status_badge(doc.estado)
+        if getattr(doc, "is_supplier_advance", False):
+            estado_display += "<div>Anticipo a proveedor</div>"
+            if doc.estado == "pagado" and doc.pagado_en:
+                pending = max(
+                    Decimal(str(doc.monto_solicitado or 0))
+                    - Decimal(str(supplier_applied.get(doc.id) or 0)),
+                    Decimal("0"),
+                )
+                estado_display += f'<small>{"Pendiente de comprobar" if pending else "Comprobado"}: {format_currency(pending, doc_currency)}</small>'
+        elif getattr(doc, "supplier_advance_id", None):
+            estado_display += "<small>Comprobación de anticipo</small>"
         totals_by_currency[doc_currency] = totals_by_currency.get(
             doc_currency, Decimal("0")
         ) + Decimal(str(monto_value))
@@ -19903,6 +20204,7 @@ async def crear_gasto(
                     informe_doc = informe_res.scalar_one_or_none()
                     if informe_doc:
                         expense.informe_documento_id = informe_doc.id
+                        await apply_budget_concept_cuenta_mapping(session, expense)
             except (ValueError, TypeError):
                 pass  # ignore invalid UUID; expense remains unassigned
 
@@ -23126,6 +23428,7 @@ async def contabilidad_cash_flow_view(
         )
         return (
             f"<tr><td>{escape(document.numero_referencia or '—')}</td>"
+            f"<td>{escape(str(document.referencia_operaciones or '—'))}</td>"
             f"<td>{escape(document.estado or '—')}</td>"
             f"<td>{payment_date}</td>"
             f"<td>{escape(_doc_party(document))}</td>"
@@ -23306,7 +23609,7 @@ async def contabilidad_cash_flow_view(
         </div>
         <div class="card">
             <h2 id="compromisos" style="margin:0 0 12px 0;">Compromisos próximos</h2>
-            <table><thead><tr><th>Documento</th><th>Estado</th><th>Fecha pago</th><th>Beneficiario</th><th>Monto</th><th>Proyecto</th></tr></thead><tbody>{upcoming_rows or '<tr><td colspan="6" class="muted">Sin solicitudes enviadas/aprobadas en horizonte de 30 días.</td></tr>'}</tbody></table>
+            <table><thead><tr><th>Documento</th><th>Referencia Operaciones</th><th>Estado</th><th>Fecha pago</th><th>Beneficiario</th><th>Monto</th><th>Proyecto</th></tr></thead><tbody>{upcoming_rows or '<tr><td colspan="7" class="muted">Sin solicitudes enviadas/aprobadas en horizonte de 30 días.</td></tr>'}</tbody></table>
         </div>
         <div class="card">
             <h2 style="margin:0 0 12px 0;">Cobros esperados / CxC</h2>
@@ -28622,6 +28925,8 @@ async def editar_gasto(
     if not is_owner and not is_finance_admin:
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
+    await _ensure_can_mutate_informe_expense(session, expense, current_empleado)
+
     # Check if cancelled - always blocked
     if expense.estado_gasto == 'cancelado':
         return RedirectResponse(
@@ -29374,6 +29679,7 @@ async def eliminar_comprobante_no_deducible(
     )
     if not is_owner and not is_finance_admin:
         raise HTTPException(status_code=403, detail="Acceso denegado")
+    await _ensure_can_mutate_informe_expense(session, expense, current_empleado)
     documento = await session.get(Documento, expense.documento_id) if expense.documento_id else None
     is_locked = bool(
         (documento and documento.estado != "borrador")
@@ -31968,6 +32274,10 @@ def _documentos_todos_reporting_type(documento: Documento) -> str:
     doc_type = (getattr(documento, "tipo", None) or "").strip().upper()
     if doc_type == "INFORME":
         return "Informe de gastos"
+    if doc_type == "SOLICITUD" and getattr(documento, "is_supplier_advance", False):
+        return "Anticipo a proveedor"
+    if doc_type == "SOLICITUD" and getattr(documento, "supplier_advance_id", None):
+        return "Comprobación de anticipo a proveedor"
     if doc_type == "SOLICITUD" and is_employee_reimbursement(documento):
         return "Reembolso empleado"
     if doc_type == "SOLICITUD" and getattr(documento, "beneficiario_empleado_id", None):
@@ -32511,6 +32821,7 @@ async def documentos_todos(
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
+            <td data-sort-value="{escape(referencia_operaciones_sort)}">{escape(row_values["referencia_operaciones"])}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{escape(row_values["tipo_documento"])}</td>
             <td>{escape(row_values["tipo_solicitud"])}</td>
@@ -32522,7 +32833,6 @@ async def documentos_todos(
             <td>{escape(row_values["aprobador"])}</td>
             <td>{escape(row_values["concepto"])}</td>
             <td>{escape(row_values["referencia_pago"])}</td>
-            <td data-sort-value="{escape(referencia_operaciones_sort)}">{escape(row_values["referencia_operaciones"])}</td>
             <td data-sort-value="{escape(monto_solicitado_sort)}">{row_values["monto_solicitado"]}</td>
             <td data-sort-value="{escape(monto_total_sort)}">{row_values["monto_total"]}</td>
             <td data-sort-value="{escape(monto_presupuestal_sort)}">{row_values["monto_presupuestal"]}<br><small>{escape(row_values["asignacion_presupuestal"])}</small></td>
@@ -32704,10 +33014,11 @@ async def documentos_todos(
                     </div>
             {f'''
             <div class="table-shell">
-                <table data-sortable-table data-default-sort-index="10" data-default-sort-dir="desc">
+                <table data-sortable-table data-default-sort-index="11" data-default-sort-dir="desc">
                     <thead>
                         <tr>
                             <th data-sort-key="numero_referencia" data-sort-type="text">Número de Referencia</th>
+                            <th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia operaciones</th>
                             <th data-sort-key="id_interno" data-sort-type="text">ID Interno</th>
                             <th data-sort-key="tipo" data-sort-type="text">Tipo</th>
                             <th data-sort-key="tipo_solicitud" data-sort-type="text">Tipo solicitud</th>
@@ -32719,7 +33030,6 @@ async def documentos_todos(
                             <th data-sort-key="aprobador" data-sort-type="text">Aprobador</th>
                             <th data-sort-key="concepto" data-sort-type="text">Concepto</th>
                             <th data-sort-key="referencia_pago" data-sort-type="text">Referencia pago</th>
-                            <th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia operaciones</th>
                             <th data-sort-key="monto_solicitado" data-sort-type="money">Monto solicitado</th>
                             <th data-sort-key="monto_total" data-sort-type="money">Monto total</th>
                             <th data-sort-key="monto_presupuestal" data-sort-type="money">Monto que afecta presupuesto</th>
@@ -34641,7 +34951,9 @@ async def _build_documento_coi_bundle(
 ) -> tuple[Documento, list[ExpenseReport], list[ExpenseCFDI]]:
     # Load documento
     doc_result = await session.execute(
-        select(Documento).where(Documento.id == documento_id)
+        select(Documento)
+        .options(*coi_document_loader_options())
+        .where(Documento.id == documento_id)
     )
     documento = doc_result.scalar_one_or_none()
 
@@ -34666,7 +34978,12 @@ async def _build_documento_coi_bundle(
             ExpenseReport.informe_documento_id == documento_id,
         ]
         if documento.cuenta_gastos_id:
-            expense_conditions.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
+            expense_conditions.append(
+                and_(
+                    ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id,
+                    ExpenseReport.informe_documento_id.is_(None),
+                )
+            )
         expenses_result = await session.execute(
             select(ExpenseReport)
             .options(selectinload(ExpenseReport.cuenta_contable))
@@ -34713,7 +35030,13 @@ async def _build_documento_coi_bundle(
                     detail="Completa la revisión de partidas y el corte contable AMEX antes de exportar.",
                 )
             try:
-                return documento, expenses, cut_expense_cfdis(cut)
+                return (
+                    documento,
+                    expenses,
+                    group_expense_cfdis_for_document(
+                        cut_expense_cfdis(cut), documento
+                    ),
+                )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not getattr(documento, "aprobado_en", None):
@@ -35021,6 +35344,222 @@ async def preview_coi_poliza_cuenta(
     )
 
 
+@router.get("/admin/contabilidad/diot", response_class=HTMLResponse)
+async def contabilidad_diot_mensual_view(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+) -> str:
+    now = datetime.utcnow()
+    selected_year = year or now.year
+    selected_month = month or now.month
+    error_msg = request.query_params.get("error_msg", "")
+    try:
+        scope = await build_monthly_diot_scope(
+            session, year=selected_year, month=selected_month
+        )
+    except ValueError as exc:
+        scope = await build_monthly_diot_scope(
+            session, year=now.year, month=now.month
+        )
+        selected_year = now.year
+        selected_month = now.month
+        error_msg = str(exc)
+
+    export = build_diot_export(
+        scope.eligible_expenses,
+        effective_payment_dates=scope.effective_payment_dates,
+        shared_cfdi_confirmations=scope.shared_cfdi_confirmations,
+    )
+    base_16 = sum(
+        (row.amounts.get("base_16", Decimal("0")) for row in export.summary_rows),
+        Decimal("0"),
+    )
+    iva = sum(
+        (row.amounts.get("iva_acreditable_16", Decimal("0")) for row in export.summary_rows),
+        Decimal("0"),
+    )
+    iva_retenido = sum(
+        (row.amounts.get("iva_retenido", Decimal("0")) for row in export.summary_rows),
+        Decimal("0"),
+    )
+    eligible_rows = "".join(
+        f"""
+        <tr>
+            <td>{scope.effective_payment_dates[str(expense.id)].isoformat()}</td>
+            <td>{escape(expense.numero_referencia or str(expense.id))}</td>
+            <td>{escape(getattr(expense.cfdi_report, 'cfdi_uuid', '') or '-')}</td>
+            <td>{escape(getattr(expense.cfdi_report, 'emisor_rfc', '') or '-')}</td>
+            <td>{format_currency(expense.gasto_cantidad, currency_for(expense))}</td>
+            <td>{escape(scope.payment_date_sources.get(str(expense.id), '-'))}</td>
+        </tr>
+        """
+        for expense in scope.eligible_expenses[:500]
+    )
+    blocker_rows = "".join(
+        f"""
+        <tr><td>{issue.effective_payment_date.isoformat() if issue.effective_payment_date else '-'}</td>
+        <td>{escape(issue.reference)}</td><td>{escape(issue.code)}</td>
+        <td>{escape(issue.message)}</td><td>{escape(issue.cfdi_uuid or '-')}</td></tr>
+        """
+        for issue in scope.blockers[:500]
+    )
+    undated_rows = "".join(
+        f"""
+        <tr><td>{escape(issue.reference)}</td><td>{escape(issue.code)}</td>
+        <td>{escape(issue.message)}</td><td>{escape(issue.cfdi_uuid or '-')}</td></tr>
+        """
+        for issue in scope.undated[:500]
+    )
+    query = urlencode({"year": selected_year, "month": selected_month})
+    txt_button = (
+        f'<a class="button" href="/admin/contabilidad/diot/export.txt?{query}">Descargar DIOT SAT (.txt)</a>'
+        if scope.can_export_txt
+        else '<button class="button" disabled>TXT bloqueado</button>'
+    )
+    return f"""
+    <!DOCTYPE html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>DIOT mensual</title>
+    <style>
+    body {{ font-family:Arial,sans-serif;background:#f6f8fb;margin:0;padding:20px;color:#111827; }}
+    .container {{ max-width:1540px;margin:0 auto; }}
+    .card {{ background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin-bottom:16px; }}
+    .grid {{ display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px; }}
+    .metric {{ padding:14px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb; }}
+    .metric strong {{ display:block;font-size:24px;margin-top:6px; }}
+    .toolbar {{ display:flex;gap:10px;flex-wrap:wrap;align-items:end; }}
+    input {{ width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;box-sizing:border-box; }}
+    table {{ width:100%;border-collapse:collapse; }}
+    th,td {{ padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:13px;vertical-align:top; }}
+    th {{ background:#f3f4f6; }}
+    .button {{ display:inline-block;padding:10px 14px;border-radius:8px;text-decoration:none;background:#111827;color:#fff;border:none;cursor:pointer; }}
+    .button.secondary {{ background:#e5e7eb;color:#111827; }}
+    .button:disabled {{ background:#9ca3af;cursor:not-allowed; }}
+    .muted {{ color:#6b7280;font-size:13px; }}
+    .error {{ background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:10px;padding:12px 14px; }}
+    .warning {{ background:#fffbeb;color:#92400e;border:1px solid #fde68a;border-radius:10px;padding:12px 14px; }}
+    </style></head>
+    <body><div class="container">{render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("diot")}
+        <div class="card">
+            <h1 style="margin:0 0 8px 0;">DIOT mensual</h1>
+            <p class="muted">Consolidado por fecha efectiva de pago. El sistema no asigna fechas faltantes ni inventa retenciones.</p>
+            {f'<div class="error"><strong>Error:</strong> {escape(error_msg)}</div>' if error_msg else ''}
+            <form method="GET" action="/admin/contabilidad/diot" class="toolbar" style="margin-top:14px;">
+                <div><label>Año</label><input type="number" name="year" min="2000" max="2100" value="{selected_year}" required></div>
+                <div><label>Mes</label><input type="number" name="month" min="1" max="12" value="{selected_month}" required></div>
+                <div><button class="button secondary" type="submit">Generar vista previa</button></div>
+                <div><a class="button secondary" href="/admin/contabilidad/diot/export.xlsx?{query}">Descargar auditoría Excel</a></div>
+                <div>{txt_button}</div>
+            </form>
+        </div>
+        <div class="card"><div class="grid">
+            <div class="metric">Movimientos elegibles<strong>{len(scope.eligible_expenses)}</strong></div>
+            <div class="metric">Bloqueos del periodo<strong>{len(scope.blockers)}</strong></div>
+            <div class="metric">Sin fecha efectiva<strong>{len(scope.undated)}</strong></div>
+            <div class="metric">Base 16%<strong>{format_currency(base_16)}</strong></div>
+            <div class="metric">IVA acreditable<strong>{format_currency(iva)}</strong></div>
+            <div class="metric">IVA retenido<strong>{format_currency(iva_retenido)}</strong></div>
+        </div></div>
+        {f'<div class="warning"><strong>TXT bloqueado:</strong> corrige los {len(scope.blockers)} movimiento(s) del periodo antes de generar el archivo SAT.</div>' if scope.blockers else ''}
+        <div class="card"><h2>Movimientos elegibles</h2><table>
+            <thead><tr><th>Pago efectivo</th><th>Referencia</th><th>UUID</th><th>RFC</th><th>Importe</th><th>Fuente fecha</th></tr></thead>
+            <tbody>{eligible_rows or '<tr><td colspan="6" class="muted">No hay movimientos elegibles para el periodo.</td></tr>'}</tbody>
+        </table></div>
+        <div class="card"><h2>Bloqueos del periodo</h2><table>
+            <thead><tr><th>Pago efectivo</th><th>Referencia</th><th>Código</th><th>Detalle</th><th>UUID</th></tr></thead>
+            <tbody>{blocker_rows or '<tr><td colspan="5" class="muted">Sin bloqueos del periodo.</td></tr>'}</tbody>
+        </table></div>
+        <div class="card"><h2>Movimientos sin fecha efectiva</h2><p class="muted">No se asignan a ningún mes hasta corregir su vínculo de pago.</p><table>
+            <thead><tr><th>Referencia</th><th>Código</th><th>Detalle</th><th>UUID</th></tr></thead>
+            <tbody>{undated_rows or '<tr><td colspan="4" class="muted">Sin movimientos pendientes de fecha.</td></tr>'}</tbody>
+        </table></div>
+    </div></body></html>
+    """
+
+
+@router.get("/admin/contabilidad/diot/export.txt", response_model=None)
+async def exportar_diot_mensual_txt(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: int = Query(...),
+    month: int = Query(...),
+) -> Union[Response, RedirectResponse]:
+    redirect = f"/admin/contabilidad/diot?{urlencode({'year': year, 'month': month})}"
+    try:
+        scope = await build_monthly_diot_scope(session, year=year, month=month)
+    except ValueError as exc:
+        return RedirectResponse(
+            url=redirect + "&error_msg=" + quote(str(exc)), status_code=303
+        )
+    if scope.blockers:
+        return RedirectResponse(
+            url=redirect
+            + "&error_msg="
+            + quote("El TXT está bloqueado por movimientos fiscales pendientes."),
+            status_code=303,
+        )
+    if not scope.eligible_expenses:
+        return RedirectResponse(
+            url=redirect + "&error_msg=" + quote("No hay movimientos elegibles."),
+            status_code=303,
+        )
+    export = build_diot_export(
+        scope.eligible_expenses,
+        effective_payment_dates=scope.effective_payment_dates,
+        shared_cfdi_confirmations=scope.shared_cfdi_confirmations,
+    )
+    return Response(
+        content=generate_diot_txt(export),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="DIOT_{year}_{month:02d}.txt"'
+            )
+        },
+    )
+
+
+@router.get("/admin/contabilidad/diot/export.xlsx", response_model=None)
+async def exportar_diot_mensual_excel(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: int = Query(...),
+    month: int = Query(...),
+) -> Union[Response, RedirectResponse]:
+    redirect = f"/admin/contabilidad/diot?{urlencode({'year': year, 'month': month})}"
+    try:
+        scope = await build_monthly_diot_scope(session, year=year, month=month)
+    except ValueError as exc:
+        return RedirectResponse(
+            url=redirect + "&error_msg=" + quote(str(exc)), status_code=303
+        )
+    export = build_diot_export(
+        scope.eligible_expenses,
+        effective_payment_dates=scope.effective_payment_dates,
+        shared_cfdi_confirmations=scope.shared_cfdi_confirmations,
+    )
+    content = create_diot_excel(
+        export,
+        audit_issues={
+            "Bloqueos": [issue.as_row() for issue in scope.blockers],
+            "Sin fecha efectiva": [issue.as_row() for issue in scope.undated],
+        },
+    )
+    return Response(
+        content=content,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="DIOT_{year}_{month:02d}.xlsx"'
+            )
+        },
+    )
+
+
 @router.get("/informes-de-gastos/{cuenta_id}/exportar-diot.xlsx", response_model=None)
 async def exportar_diot_excel_cuenta(
     cuenta_id: UUIDType,
@@ -35188,7 +35727,16 @@ async def exportar_coi_poliza_gasto_excel(
 
     try:
         expense_cfdi = await build_expense_cfdi_for_export(session, expense)
-        xlsx_bytes = generate_coi_poliza_xlsx([expense_cfdi])
+        source_document = (
+            getattr(expense, "solicitud_documento", None)
+            or getattr(expense, "documento", None)
+        )
+        expense_cfdis = [expense_cfdi]
+        if source_document is not None:
+            expense_cfdis = group_expense_cfdis_for_document(
+                expense_cfdis, source_document
+            )
+        xlsx_bytes = generate_coi_poliza_xlsx(expense_cfdis)
     except ValueError as exc:
         return RedirectResponse(
             url=_append_error_params(
@@ -35674,7 +36222,12 @@ async def exportar_informe_gastos(
             ExpenseReport.informe_documento_id == documento_id,
         ]
         if documento.cuenta_gastos_id:
-            expense_conditions.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
+            expense_conditions.append(
+                and_(
+                    ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id,
+                    ExpenseReport.informe_documento_id.is_(None),
+                )
+            )
         expenses_result = await session.execute(
             select(ExpenseReport)
             .where(
@@ -36307,6 +36860,7 @@ async def documentos_pendientes_pago(
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
+            <td>{escape(str(documento.referencia_operaciones or "—"))}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{empleado_nombre}</td>
             <td>{documento.tipo}</td>
@@ -36348,6 +36902,7 @@ async def documentos_pendientes_pago(
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
+            <td>{escape(str(documento.referencia_operaciones or "—"))}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{empleado_nombre}</td>
             <td>{documento.tipo}</td>
@@ -36451,6 +37006,7 @@ async def documentos_pendientes_pago(
                             <thead>
                                 <tr>
                                     <th>Número de referencia</th>
+                                    <th>Referencia Operaciones</th>
                                     <th>ID interno</th>
                                     <th>Empleado</th>
                                     <th>Tipo</th>
@@ -36813,7 +37369,27 @@ async def _render_solicitud_terceros_form(
     # El concepto presupuestal ya no se captura al crear solicitudes.
     # Flujo canonico: usuario captura operacion -> Control Presupuestal asigna.
     budget_concept_row_terceros = ""
+    advance_checked = bool(getattr(edit_documento, "is_supplier_advance", False))
+    advance_due = getattr(edit_documento, "supplier_advance_due_date", None)
+    advance_controls_html = (
+        f'<input type="checkbox" id="is_supplier_advance" checked hidden disabled><div class="notice info"><strong>Anticipo a proveedor</strong> · Comprobación esperada: {escape(str(advance_due or ""))}</div>'
+        if edit_documento and advance_checked
+        else (
+            ""
+            if edit_documento
+            else '<label><input type="checkbox" name="is_supplier_advance" id="is_supplier_advance" value="1"> Anticipo a proveedor</label>'
+            "<p>El anticipo pasa a Aprobación y Programación de Pagos. Después del pago podrás comprobarlo con la factura.</p>"
+            '<label>Fecha esperada de comprobación <input type="date" name="supplier_advance_due_date" id="supplier_advance_due_date"></label>'
+            '<script>document.addEventListener("DOMContentLoaded", function() {'
+            'const flag=document.getElementById("is_supplier_advance"); const due=document.getElementById("supplier_advance_due_date");'
+            'const xml=document.getElementById("archivo_xml"); const pdf=document.getElementById("archivo_pdf");'
+            'function sync(){due.required=flag.checked; due.disabled=!flag.checked; if(xml){xml.disabled=flag.checked;if(flag.checked)xml.value="";}document.querySelectorAll("[name=referencia_factura_compartida],[name=cfdi_compartido_confirmado]").forEach(function(el){el.disabled=flag.checked;if(flag.checked){el.value="";el.checked=false;}});'
+            'if(pdf){const row=pdf.closest(".st-doc-row");const label=row&&row.querySelector(".st-doc-label");if(label)label.textContent=flag.checked?"PDF de soporte:":"CFDI PDF:";}}'
+            'flag.addEventListener("change",sync);sync();});</script>'
+        )
+    )
     support_section_html = f"""
+                    {advance_controls_html}
                     <div class="st-support-section">
                         <h3>Documentación de soporte</h3>
                         <div class="st-doc-row st-support-cfdi-pdf-row">
@@ -37422,6 +37998,8 @@ async def crear_nueva_solicitud_terceros(
     cfdi_compartido_confirmado: Optional[str] = Form(None),
     client_submission_id: Optional[str] = Form(None),
     submit_mode: str = Form("create"),
+    is_supplier_advance: Optional[str] = Form(None),
+    supplier_advance_due_date: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """
     Create a new SOLICITUD a terceros (requires proveedor/cliente).
@@ -37461,7 +38039,7 @@ async def crear_nueva_solicitud_terceros(
                 )
             )
 
-        # Toda solicitud entra primero a Control Presupuestal; la partida se asigna ahi.
+        # La factura se clasifica en Control Presupuestal; el anticipo inicial omite esta etapa.
         budget_concept_id = None
 
         fase_err, fase_final = await _validate_solicitud_terceros_fase(
@@ -37509,16 +38087,20 @@ async def crear_nueva_solicitud_terceros(
             pdf_bytes=pdf_bytes,
             pdf_filename=pdf_filename,
             attachments=attachments,
-            **(
-                {"cfdi_uuid_manual": cfdi_uuid_manual}
-                if cfdi_uuid_manual
-                else {}
-            ),
+            **({"cfdi_uuid_manual": cfdi_uuid_manual} if cfdi_uuid_manual else {}),
             pago_urgente=pago_urgente in ("1", "true", "on", "yes"),
             cfdi_compartido_confirmado=(
                 cfdi_compartido_confirmado in ("1", "true", "on", "yes")
             ),
             client_submission_id=client_submission_id,
+            **(
+                {
+                    "is_supplier_advance": True,
+                    "supplier_advance_due_date": supplier_advance_due_date,
+                }
+                if is_supplier_advance in ("1", "true", "on", "yes")
+                else {}
+            ),
             can_disclose_cfdi_conflict=(
                 (getattr(current_empleado, "rol", None) or "").strip().lower()
                 in {"admin", "superadmin", "super_admin", "finanzas"}
@@ -37767,7 +38349,7 @@ async def editar_solicitud_terceros_post(
             archivos_generales=archivos_generales,
         )
 
-        # Toda solicitud entra primero a Control Presupuestal; la partida se asigna ahi.
+        # La factura se clasifica en Control Presupuestal; el anticipo inicial omite esta etapa.
         budget_concept_id = None
 
         fase_err, fase_final = await _validate_solicitud_terceros_fase(
@@ -37884,9 +38466,10 @@ async def agregar_documento_adjuntos(
         DocumentoPaymentValidationError,
         register_document_payment,
     )
+    actor_id = current_empleado.id
 
     doc_result = await session.execute(
-        select(Documento).where(Documento.id == documento_id)
+        select(Documento).where(Documento.id == documento_id).with_for_update()
     )
     documento = doc_result.scalar_one_or_none()
     if not documento:
@@ -37979,7 +38562,7 @@ async def agregar_documento_adjuntos(
             await register_document_payment(
                 session,
                 documento_id=documento.id,
-                actor_id=current_empleado.id,
+                actor_id=actor_id,
                 actor=current_empleado,
             )
             payment_registered = True
@@ -37988,6 +38571,9 @@ async def agregar_documento_adjuntos(
                 session,
                 documento=documento,
                 attachments=uploads,
+                evidence_only=documento.estado not in {"borrador", "control_presupuestal"}
+                or bool(getattr(documento, "budget_concept_id", None)),
+                actor_id=actor_id,
             )
     except SolicitudValidationError as exc:
         await session.rollback()
@@ -38023,7 +38609,7 @@ async def agregar_documento_adjuntos(
             "Unexpected error adding solicitud attachment",
             extra={
                 "documento_id": str(documento_id),
-                "empleado_id": str(current_empleado.id),
+                "empleado_id": str(actor_id),
                 "categoria": categoria_norm,
                 "upload_count": len(uploads),
             },
@@ -38041,6 +38627,11 @@ async def agregar_documento_adjuntos(
         )
 
     success_detail = f"{count} archivo(s) adjuntado(s) exitosamente."
+    if categoria_norm in {"cfdi_xml", "cfdi_pdf"} and (
+        documento.estado not in {"borrador", "control_presupuestal"}
+        or bool(getattr(documento, "budget_concept_id", None))
+    ):
+        success_detail += " Factura conservada como evidencia; revisión contable pendiente."
     if categoria_norm == "comprobante_pago" and payment_registered:
         success_detail = (
             f"{count} comprobante(s) de pago adjuntado(s) y solicitud marcada como pagada."
@@ -39308,6 +39899,14 @@ async def ver_documento(
     workflow_guidance_html = _render_document_workflow_guidance_html(
         workflow_guidance
     )
+    if getattr(documento, "is_supplier_advance", False) or getattr(
+        documento, "supplier_advance_id", None
+    ):
+        from .supplier_advance_routes import render_supplier_advance_controls
+
+        workflow_guidance_html += await render_supplier_advance_controls(
+            session, documento, current_empleado
+        )
 
     return_links = []
     if can_edit_solicitud_terceros:
@@ -39391,7 +39990,8 @@ async def ver_documento(
                 {f'<div class="meta-card"><span>Aprobado</span><strong>{format_value(documento.aprobado_en)}</strong><small>Momento de aprobación.</small></div>' if documento.aprobado_en else ''}
                 {f'<div class="meta-card"><span>Pagado</span><strong>{format_value(documento.pagado_en)}</strong><small>Momento de pago.</small></div>' if documento.pagado_en else ''}
             </div>
-            {f'<div class="notice info" style="margin-top:16px;"><strong>Notas:</strong> {documento.notas}</div>' if documento.notas else ''}
+            {f'<div class="notice info" style="margin-top:16px;"><strong>Motivo del solicitante para comprobar parcialmente:</strong> {escape(documento.motivo_comprobacion_parcial)}</div>' if documento.informe_origen_id else ''}
+            {f'<div class="notice info" style="margin-top:16px;"><strong>Notas:</strong> {escape(documento.notas)}</div>' if documento.notas else ''}
         </section>
     """
 
@@ -39562,6 +40162,14 @@ async def ver_documento(
             if adjuntos_doc
             else "—"
         )
+        cfdi_attachment_options = (
+            ""
+            if (
+                getattr(documento, "is_supplier_advance", False)
+                or getattr(documento, "supplier_advance_id", None)
+            )
+            else '<option value="cfdi_pdf">CFDI PDF</option><option value="cfdi_xml">CFDI XML</option>'
+        )
         upload_form_html = ""
         if can_add_solicitud_adjuntos:
             upload_form_html = f"""
@@ -39570,8 +40178,7 @@ async def ver_documento(
                     <label for="adjunto_categoria">Tipo de archivo</label>
                     <select name="categoria" id="adjunto_categoria" required>
                         <option value="supporting">Materialidades / soporte</option>
-                        <option value="cfdi_pdf">CFDI PDF</option>
-                        <option value="cfdi_xml">CFDI XML</option>
+                        {cfdi_attachment_options}
                     </select>
                 </div>
                 <div class="form-group">
@@ -39579,6 +40186,7 @@ async def ver_documento(
                     <input type="file" name="archivos" id="adjunto_archivos" multiple required
                            accept=".pdf,.xml,.jpg,.jpeg,.png,.gif,.webp,.txt,.csv,.doc,.docx,.xls,.xlsx,application/pdf,application/xml,text/xml,image/*,text/plain,text/csv,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
                     <small>Puede seleccionar uno o varios archivos.</small>
+                    <small>Después de la clasificación o autorización, la factura se conserva como evidencia pendiente de revisión contable. Adjuntarla no modifica el gasto, la póliza ni el pago. En anticipos utilice Comprobar anticipo.</small>
                 </div>
                 <button type="submit" class="button primary">Adjuntar archivos</button>
             </form>
@@ -39971,9 +40579,10 @@ async def ver_documento(
                         <summary class="button primary">Aprobar</summary>
                         <form method="POST" action="/documentos/{documento_id}/aprobar" class="form-section" style="margin-top: 10px;">
                             {f'<input type="hidden" name="next" value="{return_url}">' if return_url else ''}
+                            {f'<div class="notice info"><strong>Motivo del solicitante:</strong> {escape(documento.motivo_comprobacion_parcial)}</div>' if documento.informe_origen_id else ''}
                             <div class="form-group">
-                                <label for="comentario_aprobar">Comentario (opcional)</label>
-                                <textarea name="comentario" id="comentario_aprobar"></textarea>
+                                <label for="comentario_aprobar">{'Comentarios sobre el motivo y la comprobación (obligatorios)' if documento.informe_origen_id else 'Comentario (opcional)'}</label>
+                                <textarea name="comentario" id="comentario_aprobar" {'required' if documento.informe_origen_id else ''}></textarea>
                             </div>
                             <button type="submit" class="button primary">Confirmar aprobación</button>
                         </form>
@@ -40704,6 +41313,8 @@ def _can_edit_cuenta_before_budget_assignment(
     informe_doc: Optional[Documento],
 ) -> bool:
     """Allow edits after close only while linked INFORME waits for Control Presupuestal."""
+    if getattr(cuenta, "comprobacion_parcial", False):
+        return False
     if (getattr(cuenta, "estado", None) or "").strip().lower() == "abierta":
         return True
     if informe_doc is None:
@@ -42040,6 +42651,17 @@ def _derive_informe_operational_status(
 
 
 def _render_informe_operational_status_badge(**kwargs: Any) -> str:
+    partial_mode = kwargs.pop("partial_mode", False)
+    if partial_mode:
+        label = (
+            "Abierto · comprobación parcial"
+            if kwargs.get("cuenta_estado") == "abierta"
+            else "Comprobado y cerrado"
+        )
+        return _informe_status_badge(
+            label,
+            color="#d97706" if kwargs.get("cuenta_estado") == "abierta" else "#0f766e",
+        )
     label, color = _derive_informe_operational_status(**kwargs)
     return _informe_status_badge(label, color=color)
 
@@ -42435,6 +43057,7 @@ async def cuentas_de_gastos_list(
             and str(getattr(informe_doc, "estado", "") or "").strip().lower() == "cancelado"
         )
         estado_badge = _render_informe_operational_status_badge(
+            partial_mode=bool(getattr(cuenta, "comprobacion_parcial", False)),
             cuenta_estado=cuenta.estado,
             informe_estado=getattr(informe_doc, "estado", None),
             solicitudes=data.get("solicitudes", []),
@@ -43138,7 +43761,8 @@ def _quick_expense_values(
             descuento_amount,
             impuestos_net,
         ) + propina_amount
-        iva_amount = max(impuestos_net, Decimal("0"))
+        # A net fiscal amount does not identify IVA without a tax breakdown.
+        iva_amount = None
 
     if not concepto_final:
         raise ValueError("Descripción del gasto es requerida")
@@ -43395,7 +44019,7 @@ async def crear_gasto_rapido_en_informe(
             tipo_gasto="manual",
             departamento=(owner.departamento if owner else None) or "Operaciones",
             fase_torneo=(cuenta.fase or "").strip() or "No Aplica",
-            iva=float(values["iva"]),
+            iva=float(values["iva"]) if values["iva"] is not None else None,
             origen="informe_quick_entry",
             skip_initial_tocino=True,
             categorias=list(getattr(cuenta, "categorias", None) or []),
@@ -43415,6 +44039,7 @@ async def crear_gasto_rapido_en_informe(
         expense.cuenta_gastos_id = cuenta.id
         expense.referencia_base = cuenta.referencia_base
         expense.informe_documento_id = informe_doc.id
+        await apply_budget_concept_cuenta_mapping(session, expense)
 
         if resolved_cfdi is not None:
             ingestion = await ingest_cfdi_from_upload(
@@ -43559,7 +44184,11 @@ async def crear_gasto_rapido_en_informe(
                 tipo_gasto="manual",
                 departamento=(owner.departamento if owner else None) or "Operaciones",
                 fase_torneo=(cuenta.fase or "").strip() or "No Aplica",
-                iva=float(supplement_values["iva"]),
+                iva=(
+                    float(supplement_values["iva"])
+                    if supplement_values["iva"] is not None
+                    else None
+                ),
                 origen="informe_quick_entry",
                 skip_initial_tocino=True,
                 categorias=list(getattr(cuenta, "categorias", None) or []),
@@ -43575,6 +44204,7 @@ async def crear_gasto_rapido_en_informe(
             supplement_expense.cuenta_gastos_id = cuenta.id
             supplement_expense.referencia_base = cuenta.referencia_base
             supplement_expense.informe_documento_id = informe_doc.id
+            await apply_budget_concept_cuenta_mapping(session, supplement_expense)
 
             if supplement_cfdi is not None:
                 ingestion = await ingest_cfdi_from_upload(
@@ -43733,6 +44363,11 @@ async def actualizar_gastos_amex_en_informe(
     cuenta = cuenta_result.scalar_one_or_none()
     if cuenta is None:
         raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
+    if getattr(cuenta, "comprobacion_parcial", False):
+        raise HTTPException(
+            status_code=409,
+            detail="La comprobación parcial de anticipo no admite cambios a AMEX empresa.",
+        )
     if not _cuenta_allows_company_amex(cuenta):
         return RedirectResponse(
             url=_append_error_params(
@@ -43788,6 +44423,82 @@ async def actualizar_gastos_amex_en_informe(
         ),
         status_code=303,
     )
+
+
+async def _build_partial_comprobacion_controls(
+    session: AsyncSession,
+    *,
+    cuenta: CuentaDeGastos,
+    informe_doc: Optional[Documento],
+    active_expenses: list[ExpenseReport],
+    monto_entregado: float,
+    total_amex: float,
+    is_owner: bool,
+    can_manage: bool,
+    cerrar_informe_form_html: str,
+) -> tuple[str, str, str]:
+    """Render the confirmed new lot, prior approvals and zero-balance closure."""
+    partial_actions_html = ""
+    partial_history_html = ""
+    if informe_doc and monto_entregado > 0 and total_amex == 0:
+        lots = list(
+            (
+                await session.execute(
+                    select(Documento)
+                    .where(Documento.informe_origen_id == informe_doc.id)
+                    .order_by(Documento.creado_en.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        partial_history_html = '<div class="surface"><h3>Comprobaciones parciales</h3>'
+        for lot in lots:
+            partial_history_html += (
+                f'<p><a href="/documentos/{lot.id}">{escape(lot.numero_referencia)}</a> '
+                f"{_documento_human_status_badge(lot.estado)} "
+                f"{format_currency(lot.monto_total, currency_for(cuenta))}</p>"
+            )
+        partial_history_html += "<p>Cada lote aprobado genera su propia póliza. Capturar gastos no reduce el saldo contable hasta su aprobación.</p></div>"
+        fresh = [
+            e
+            for e in active_expenses
+            if e.informe_documento_id in (None, informe_doc.id)
+        ]
+        fresh_total = sum(
+            (Decimal(str(e.gasto_cantidad or 0)) for e in fresh), Decimal(0)
+        ).quantize(Decimal("0.01"))
+        if (
+            is_owner
+            and can_manage
+            and cuenta.estado == "abierta"
+            and informe_doc.estado == "borrador"
+            and fresh
+        ):
+            partial_actions_html = (
+                f'<form method="POST" action="/informes-de-gastos/{cuenta.id}/comprobacion-parcial">'
+                f'<input type="hidden" name="submission_id" value="{uuid4()}">'
+                f'<input type="hidden" name="expense_ids" value="{",".join(str(e.id) for e in fresh)}">'
+                f'<input type="hidden" name="expected_total" value="{fresh_total}">'
+                f"<p>{len(fresh)} gastos nuevos: {format_currency(fresh_total, currency_for(cuenta))}</p>"
+                "<label>Motivo para enviar una comprobación con saldo pendiente</label>"
+                '<textarea name="motivo" required maxlength="2000" placeholder="Explica por qué queda saldo pendiente y qué falta por comprobar."></textarea>'
+                '<button type="submit" class="button primary" '
+                "onclick=\"return confirm('¿Confirmas el motivo y el envío de estos gastos nuevos a aprobación y mantener abierto el informe?')\">"
+                "Enviar comprobación parcial</button></form>"
+            )
+        if cuenta.comprobacion_parcial:
+            cerrar_informe_form_html = (
+                (
+                    f'<form method="POST" action="/informes-de-gastos/{cuenta.id}/cerrar">'
+                    '<button type="submit" class="button warning" '
+                    "onclick=\"return confirm('¿Cerrar el informe? Requiere todos los lotes aprobados y saldo contable en cero.')\">"
+                    "Cerrar informe saldado</button></form>"
+                )
+                if can_manage and cuenta.estado == "abierta"
+                else ""
+            )
+    return partial_actions_html, partial_history_html, cerrar_informe_form_html
 
 
 @router.get("/informes-de-gastos/{cuenta_id}", response_class=HTMLResponse)
@@ -43920,11 +44631,14 @@ async def cuenta_de_gastos_detail(
         settled_amount=settled_amount_cuenta,
     )
     saldo = saldo_breakdown.saldo
-    advance_return_stale = advance_return_is_stale(
+    advance_return_stale = not cuenta.comprobacion_parcial and advance_return_is_stale(
         saldo_gross=saldo_breakdown.saldo_gross,
         returned_amount=sum(
-            (Decimal(str(r.monto or 0)) for r in active_cuenta_reembolsos
-             if r.tipo == "devolucion"),
+            (
+                Decimal(str(r.monto or 0))
+                for r in active_cuenta_reembolsos
+                if r.tipo == "devolucion"
+            ),
             Decimal("0.00"),
         ),
     )
@@ -44092,9 +44806,9 @@ async def cuenta_de_gastos_detail(
     movimientos_entries.sort(key=lambda item: item[0])
     movimientos_rows = "".join(row for _, row in movimientos_entries)
 
-
     # Estado operativo: derived from workflow, payment, settlement and proof signals.
     estado_badge = _render_informe_operational_status_badge(
+        partial_mode=cuenta.comprobacion_parcial,
         cuenta_estado=cuenta.estado,
         informe_estado=getattr(informe_doc, "estado", None),
         solicitudes=solicitudes_list,
@@ -44210,7 +44924,8 @@ async def cuenta_de_gastos_detail(
             informe_estado=informe_doc_estado,
             saldo=saldo,
             monto_entregado=monto_entregado,
-            has_active_settlement=has_active_settlement,
+            has_active_settlement=has_active_settlement
+            and not cuenta.comprobacion_parcial,
             can_submit=_can_submit_settlement(cuenta, current_empleado, "devolucion"),
         )
     elif saldo < 0 and informe_doc_approved:
@@ -44250,6 +44965,7 @@ async def cuenta_de_gastos_detail(
         solicitudes_section_rows += (
             f"<tr><td><a href=\"/documentos/{d.id}\" style=\"color: #4CAF50;\">"
             f"{escape(d.numero_referencia)}</a></td>"
+            f"<td>{escape(str(d.referencia_operaciones or '—'))}</td>"
             f"<td>{_documento_human_status_badge(d.estado)}</td>"
             f"<td>{format_currency(d.monto_solicitado, currency_for(d))}</td>"
             f"<td>{escape(currency_for(d))}</td>"
@@ -44273,8 +44989,8 @@ async def cuenta_de_gastos_detail(
                 {nueva_solicitud_btn_html}
                 <div class="table-shell">
                 <table>
-                    <thead><tr><th>Referencia</th><th>Estado</th><th>Monto</th><th>Moneda</th><th>Fecha</th><th>Archivos</th><th>Acción</th></tr></thead>
-                    <tbody>{solicitudes_section_rows if solicitudes_section_rows else '<tr><td colspan="7" style="text-align: center; color: #666;">No hay solicitudes de transferencia vinculadas a este informe.</td></tr>'}</tbody>
+                    <thead><tr><th>Referencia</th><th>Referencia Operaciones</th><th>Estado</th><th>Monto</th><th>Moneda</th><th>Fecha</th><th>Archivos</th><th>Acción</th></tr></thead>
+                    <tbody>{solicitudes_section_rows if solicitudes_section_rows else '<tr><td colspan="8" style="text-align: center; color: #666;">No hay solicitudes de transferencia vinculadas a este informe.</td></tr>'}</tbody>
                 </table>
                 </div>
             </div>'''
@@ -44392,10 +45108,24 @@ async def cuenta_de_gastos_detail(
             )
             diot_actions_html = (
                 '<span class="section-note">'
-                'La DIOT se habilita cuando el INFORME esté aprobado.'
-                '</span>'
+                "La DIOT se habilita cuando el INFORME esté aprobado."
+                "</span>"
             )
     devolver_sobrante_actions_html = saldar_cta_html if saldo > 0 else ""
+    partial_actions_html, partial_history_html, cerrar_informe_form_html = (
+        await _build_partial_comprobacion_controls(
+            session,
+            cuenta=cuenta,
+            informe_doc=informe_doc,
+            active_expenses=active_expenses,
+            monto_entregado=monto_entregado,
+            total_amex=total_amex,
+            is_owner=_is_cuenta_owner,
+            can_manage=_can_manage_cuenta,
+            cerrar_informe_form_html=cerrar_informe_form_html,
+        )
+    )
+
     detail_actions_html = f"""
         <a href="/informes-de-gastos" class="button secondary">Volver a mis informes</a>
         {informe_support_actions_html}
@@ -44406,13 +45136,15 @@ async def cuenta_de_gastos_detail(
         {devolver_sobrante_actions_html}
         {cerrar_informe_form_html}
         {cancelar_borrador_form_html}
+        {partial_actions_html}
+        {partial_history_html}
     """
     detail_side_html = f"""
         <div class="eyebrow">Estado del informe</div>
         <div style="margin-bottom:12px;">{estado_badge}</div>
         <div class="meta-grid">
             <div class="meta-card">
-                <span>Saldo</span>
+                <span>{'Saldo de captura' if cuenta.comprobacion_parcial else 'Saldo'}</span>
                 <strong style="color:{saldo_color};">{format_currency(abs(saldo), currency_for(cuenta))}</strong>
                 <small>{saldo_label}</small>
                 {saldar_cta_html if saldo <= 0 else ""}
@@ -44523,7 +45255,7 @@ async def cuenta_de_gastos_detail(
                                         </td>
                                         <td><input type="number" min="0" step="0.01" name="subtotal" id="quick-subtotal" required></td>
                                         <td><input type="number" min="0" step="0.01" name="descuento" id="quick-descuento" value="0" aria-label="Descuento aplicado"></td>
-                                        <td><input type="number" step="0.01" name="impuestos_y_retenciones" id="quick-impuestos-y-retenciones" value="0" required></td>
+                                        <td><input type="number" step="0.01" name="impuestos_y_retenciones" id="quick-impuestos-y-retenciones" value="0" required><small>Sin XML, este neto no identifica IVA ni retenciones; Contabilidad debe revisar el desglose.</small></td>
                                         <td class="quick-tip-col" hidden><input type="number" min="0" step="0.01" name="propina_no_deducible" id="quick-propina" value="0" aria-label="Propina no deducible"></td>
                                         <td><input type="text" id="quick-total" value="0.00" readonly></td>
                                         <td><input type="text" value="{escape(currency_for(cuenta))}" readonly></td>
@@ -44593,6 +45325,12 @@ async def cuenta_de_gastos_detail(
         """
 
     debtor_aux = await build_cuenta_debtor_auxiliary(session, cuenta_id=cuenta.id)
+    if cuenta.comprobacion_parcial:
+        detail_side_html += (
+            '<div class="meta-card"><span>Saldo contable pendiente</span>'
+            f'<strong>{format_currency(debtor_aux["saldo"], currency_for(cuenta))}</strong>'
+            "<small>Se reduce con comprobaciones aprobadas y devoluciones registradas.</small></div>"
+        )
     debtor_aux_html = _render_debtor_auxiliary_section(
         debtor_aux,
         currency_for(cuenta),
@@ -45685,6 +46423,58 @@ async def nueva_solicitud_desde_cuenta_submit(
     )
 
 
+@router.post("/informes-de-gastos/{cuenta_id}/comprobacion-parcial")
+async def enviar_comprobacion_parcial(
+    cuenta_id: UUIDType,
+    request: Request,
+    submission_id: str = Form(...),
+    expense_ids: str = Form(...),
+    expected_total: str = Form(...),
+    motivo: str = Form(...),
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    cuenta = await session.get(CuentaDeGastos, cuenta_id)
+    if cuenta is None:
+        raise HTTPException(status_code=404, detail="Informe no encontrado")
+    if not _can_mutate_cuenta_de_gastos(cuenta, current_empleado):
+        raise HTTPException(status_code=403, detail="Acceso de solo lectura al informe")
+    try:
+        amount = Decimal(expected_total)
+        if not amount.is_finite() or amount <= 0:
+            raise ValueError("Monto inválido")
+        lot = await submit_partial_advance_lot(
+            session,
+            cuenta_id=cuenta_id,
+            actor=current_empleado,
+            submission_id=UUIDType(submission_id),
+            expected_expense_ids={UUIDType(value) for value in expense_ids.split(",")},
+            expected_total=amount,
+            motivo=motivo,
+        )
+    except (
+        PartialAdvanceError,
+        ValueError,
+        ArithmeticError,
+        DocumentoWorkflowValidationError,
+    ) as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/informes-de-gastos/{cuenta_id}", error_msg=str(exc)
+            ),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=_append_success_params(
+            f"/informes-de-gastos/{cuenta_id}",
+            success="comprobacion_enviada",
+            msg=f"{lot.numero_referencia} enviado a revisión. El informe permanece abierto.",
+        ),
+        status_code=303,
+    )
+
+
 @router.post("/informes-de-gastos/{cuenta_id}/cerrar")
 async def cerrar_cuenta_de_gastos(
     cuenta_id: UUIDType,
@@ -45741,6 +46531,35 @@ async def cerrar_cuenta_de_gastos(
                         f"actual es {cuenta.estado}."
                     ),
                 },
+            ),
+            status_code=303,
+        )
+
+    if cuenta.comprobacion_parcial:
+        try:
+            await finalize_partial_advance(session, cuenta=cuenta, informe=informe_doc)
+            session.add(
+                Aprobacion(
+                    tipo_entidad="documento",
+                    entidad_id=informe_doc.id,
+                    aprobador_id=current_empleado.id,
+                    accion="cerrar_comprobacion_parcial",
+                    comentario="Informe cerrado con todos sus lotes aprobados y saldo contable en cero.",
+                    fecha=datetime.now(timezone.utc),
+                )
+            )
+            await session.commit()
+        except PartialAdvanceError as exc:
+            await session.rollback()
+            return RedirectResponse(
+                url=_append_error_params(redirect_url, error_msg=str(exc)),
+                status_code=303,
+            )
+        return RedirectResponse(
+            url=_append_success_params(
+                redirect_url,
+                success="cerrada",
+                msg="Informe cerrado; las pólizas de sus lotes se conservan.",
             ),
             status_code=303,
         )
@@ -46011,9 +46830,15 @@ async def _compute_cuenta_saldo_context(
         monto_entregado=monto_entregado,
         settled_amount=settled_amount,
     )
-    advance_return_stale = bool(active_count) and advance_return_is_stale(
-        saldo_gross=saldo_breakdown.saldo_gross,
-        returned_amount=await sum_active_advance_returns(session, cuenta_id),
+    cuenta = await session.get(CuentaDeGastos, cuenta_id)
+    partial_mode = bool(getattr(cuenta, "comprobacion_parcial", False))
+    advance_return_stale = (
+        not partial_mode
+        and bool(active_count)
+        and advance_return_is_stale(
+            saldo_gross=saldo_breakdown.saldo_gross,
+            returned_amount=await sum_active_advance_returns(session, cuenta_id),
+        )
     )
     return {
         "total_gastos": total_pagado_empleado,
@@ -46022,6 +46847,7 @@ async def _compute_cuenta_saldo_context(
         "monto_entregado": monto_entregado,
         "settled_amount": settled_amount,
         "active_settlement_count": active_count,
+        "partial_mode": partial_mode,
         "advance_return_stale": advance_return_stale,
         "saldo_gross": saldo_breakdown.saldo_gross,
         "saldo_raw": saldo_breakdown.saldo,
@@ -46158,7 +46984,7 @@ async def saldar_cuenta_form(
             '<div class="notice warn"><strong>Sin documento INFORME.</strong> '
             'No se puede liquidar una cuenta sin documento vinculado.</div>'
         )
-    elif saldo_ctx["active_settlement_count"] > 0:
+    elif saldo_ctx["active_settlement_count"] > 0 and not saldo_ctx.get("partial_mode"):
         blocked = True
         notice_html = (
             '<div class="notice warn"><strong>Ya existe una liquidación activa.</strong> '
@@ -46227,6 +47053,28 @@ async def saldar_cuenta_form(
             if tipo == "devolucion"
             else "Registrar liquidación"
         )
+        partial_controls = ""
+        if (
+            tipo == "devolucion"
+            and informe_doc.estado == "borrador"
+            and cuenta.estado == "abierta"
+        ):
+            partial_controls = (
+                "<label>Monto que efectivamente devuelve</label>"
+                f'<input type="number" name="monto" min="0.01" max="{saldo_abs:.2f}" step="0.01" value="{saldo_abs:.2f}" required>'
+                + (
+                    '<input type="hidden" name="allow_partial" value="1">'
+                    if cuenta.comprobacion_parcial
+                    else '<label><input type="checkbox" name="allow_partial" value="1"> Mantener abierto para comprobaciones parciales de anticipo (sin AMEX)</label>'
+                )
+                + f'<input type="hidden" name="client_submission_id" value="{uuid4()}">'
+                '<div class="section-note">Puedes devolver una parte. El informe queda abierto y el resto permanece a cargo del colaborador.</div>'
+            )
+        else:
+            partial_controls = (
+                f'<input type="hidden" name="monto" value="{saldo_abs:.2f}">'
+                '<div class="section-note">El reembolso liquida el saldo completo.</div>'
+            )
         form_html = f"""
         <form method="POST" action="/informes-de-gastos/{cuenta_id}/saldar"
               enctype="multipart/form-data" class="surface" style="padding:20px;">
@@ -46238,9 +47086,8 @@ async def saldar_cuenta_form(
             <div class="form-group">
                 <label>Monto a liquidar</label>
                 <div style="font-size:1.3rem;"><strong>{saldo_display}</strong> MXN</div>
-                <input type="hidden" name="monto" value="{saldo_abs:.2f}">
+                {partial_controls}
                 <input type="hidden" name="saldo_snapshot" value="{saldo_abs:.2f}">
-                <div class="section-note">Se liquida el saldo completo; no se permiten pagos parciales.</div>
             </div>
             <div class="form-group">
                 <label for="metodo_pago_sld">Método de pago</label>
@@ -46368,6 +47215,8 @@ async def saldar_cuenta_submit(
     referencia_pago: Optional[str] = Form(None),
     notas: Optional[str] = Form(None),
     comprobante: Optional[UploadFile] = File(None),
+    allow_partial: Optional[str] = Form(None),
+    client_submission_id: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """Register a full-settlement reembolso/devolucion for the cuenta."""
     cuenta_row = await session.execute(
@@ -46413,8 +47262,13 @@ async def saldar_cuenta_submit(
             comprobante_filename=comprobante_filename,
             comprobante_mime=comprobante_mime,
             saldo_snapshot=saldo_snapshot,
+            allow_partial=allow_partial == "1",
+            client_submission_id=(
+                client_submission_id if isinstance(client_submission_id, str) else None
+            ),
         )
     except CuentaSettlementPermissionError as exc:
+        await session.rollback()
         return RedirectResponse(
             url=_append_error_params(
                 f"/informes-de-gastos/{cuenta_id}/saldar",
@@ -46424,6 +47278,7 @@ async def saldar_cuenta_submit(
             status_code=303,
         )
     except CuentaSettlementValidationError as exc:
+        await session.rollback()
         if exc.code == "cuenta_not_found":
             raise HTTPException(status_code=404, detail=exc.message)
         return RedirectResponse(
@@ -46467,7 +47322,11 @@ async def saldar_cuenta_submit(
         if result.tipo == "reembolso"
         else "Devolución de Sobrantes"
     )
-    success_msg = f"{label} registrado exitosamente. Cuenta saldada."
+    success_msg = f"{label} registrado exitosamente."
+    if getattr(cuenta, "comprobacion_parcial", False):
+        success_msg += " El informe permanece abierto; revisa el saldo contable en el auxiliar de deudores."
+    else:
+        success_msg += " Cuenta saldada."
     return RedirectResponse(
         url=_append_success_params(
             f"/informes-de-gastos/{cuenta_id}",
@@ -46777,3 +47636,8 @@ async def descargar_reembolso_adjunto(
         media_type=media_type,
         headers={"Content-Disposition": disposition},
     )
+
+
+from .supplier_advance_routes import router as supplier_advance_router
+
+router.include_router(supplier_advance_router)

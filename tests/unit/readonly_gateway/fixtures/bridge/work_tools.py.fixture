@@ -1,0 +1,81 @@
+"""Closed MCP schemas and UID-authenticated local worker proxy."""
+import json
+import os
+import socket
+import stat
+import struct
+from pathlib import Path
+
+MAX_FRAME = 65536
+STRING = {'type': 'string'}
+SCOPE = {'type': 'object', 'properties': {
+    key: {'type': 'array', 'items': STRING, 'uniqueItems': True}
+    for key in ('read_files', 'write_files', 'checks')},
+    'required': ['read_files', 'write_files', 'checks'], 'additionalProperties': False}
+FIELDS = {
+ 'work_create': (['project','request_id','mode','base_sha','manifest_hash','objective','scope'], ['story_ref','spec_ref']),
+ 'work_start': (['work_id','expected_contract_hash','request_id'], []),
+ 'work_resume': (['work_id','expected_contract_hash','request_id'], []),
+ 'work_message': (['work_id','expected_contract_hash','request_id','message'], []),
+ 'work_cancel': (['work_id','request_id'], []),
+ 'work_status': (['work_id'], ['cursor']),
+ 'work_list': (['project'], ['cursor']),
+ 'work_artifact': (['work_id','artifact_id'], ['cursor']),
+}
+TOOLS = {name: ({key: SCOPE if key == 'scope' else STRING for key in required+optional},
+                required, 'SamChat development work: '+name.removeprefix('work_')+'. No arbitrary commands.')
+         for name,(required,optional) in FIELDS.items()}
+INTERNAL = {
+ 'checkout_info': ({'project': STRING}, ['project'], 'Registered checkout identity.'),
+ 'checkout_read': ({'project': STRING, 'path': STRING}, ['project', 'path'], 'Bounded source read.'),
+}
+
+class WorkerError(ValueError):
+    pass
+
+class WorkClient:
+    def __init__(self, path, worker_uid):
+        self.path = Path(path)
+        if not self.path.is_absolute() or worker_uid <= 0:
+            raise ValueError('Explicit worker socket and non-root UID required')
+        self.worker_uid = worker_uid
+
+    def call(self, name, args):
+        operations = {**TOOLS, **INTERNAL}
+        if name not in operations or not isinstance(args,dict):
+            raise WorkerError('INVALID_ARGUMENT: Unknown operation')
+        properties,required,_ = operations[name]
+        if set(args)-set(properties) or set(required)-set(args):
+            raise WorkerError('INVALID_ARGUMENT: Missing or unknown fields')
+        if any(not isinstance(value,dict if key=='scope' else str) for key,value in args.items()):
+            raise WorkerError('INVALID_ARGUMENT: Invalid field type')
+        frame = json.dumps({'tool':name,'args':args},ensure_ascii=True,separators=(',',':')).encode()+b'\n'
+        if len(frame)>131072:
+            raise WorkerError('RESOURCE_LIMIT: Request too large')
+        try:
+            info = self.path.lstat()
+            if not stat.S_ISSOCK(info.st_mode) or info.st_uid != self.worker_uid:
+                raise WorkerError('WORKER_UNAVAILABLE: Untrusted socket')
+            with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as sock:
+                sock.settimeout(5)
+                sock.connect(str(self.path))
+                _,uid,_ = struct.unpack('3i',sock.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))
+                if uid != self.worker_uid:
+                    raise WorkerError('WORKER_UNAVAILABLE: Untrusted peer')
+                sock.sendall(frame)
+                response = bytearray()
+                while b'\n' not in response:
+                    chunk=sock.recv(min(4096,MAX_FRAME+1-len(response)))
+                    if not chunk: raise WorkerError('WORKER_UNAVAILABLE: Incomplete frame')
+                    response.extend(chunk)
+                    if len(response)>MAX_FRAME: raise WorkerError('RESOURCE_LIMIT: Response too large')
+                data=json.loads(response)
+                if set(data)=={'error'}:
+                    code=data['error'].get('code','WORKER_FAILED')
+                    if not isinstance(code,str) or len(code)>64: code='WORKER_FAILED'
+                    raise WorkerError(code+': Worker rejected operation')
+                if set(data)!={'result'} or not isinstance(data['result'],dict):
+                    raise WorkerError('WORKER_UNAVAILABLE: Invalid response')
+                return data['result']
+        except (OSError,UnicodeError,json.JSONDecodeError):
+            raise WorkerError('WORKER_UNAVAILABLE: Local worker unavailable') from None

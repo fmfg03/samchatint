@@ -134,11 +134,18 @@ async def transition_draft(
 
 
 async def build_report_draft(
-    session: Any, *, portfolio_id: str, edition_year: int
+    session: Any,
+    *,
+    portfolio_id: str,
+    edition_year: int,
+    accounting_access: bool = False,
 ) -> dict[str, Any]:
     """Freeze the client-safe CEO read model; this function never delivers it."""
     dashboard = await build_portfolio_dashboard(
-        session, portfolio_id=portfolio_id, edition_year=edition_year
+        session,
+        portfolio_id=portfolio_id,
+        edition_year=edition_year,
+        accounting_access=accounting_access,
     )
     return {
         "state": "draft",
@@ -147,4 +154,23 @@ async def build_report_draft(
         "snapshot": dashboard,
         "summary": build_client_executive_summary(dashboard),
         "delivery": "not_requested",
+    }
+
+
+def filter_report_accounting(
+    snapshot: dict[str, Any], *, accounting_access: bool
+) -> dict[str, Any]:
+    """Respect current source denials when consuming an already stored draft."""
+    if accounting_access:
+        return snapshot
+    return {
+        **snapshot,
+        "cards": [
+            {
+                key: value
+                for key, value in card.items()
+                if key not in {"accounting", "accounting_previous_year"}
+            }
+            for card in snapshot.get("cards", [])
+        ],
     }

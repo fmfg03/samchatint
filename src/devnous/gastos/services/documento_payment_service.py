@@ -79,6 +79,7 @@ async def _load_documento_for_payment(
             selectinload(Documento.torneo),
         )
         .where(Documento.id == documento_id)
+        .with_for_update(of=Documento)
     )
     return result.scalar_one_or_none()
 
@@ -295,6 +296,56 @@ async def register_document_payment(
             documento=documento,
             aprobacion=aprobacion,
             expense=None,
+        )
+
+    if getattr(documento, "is_supplier_advance", False) or getattr(
+        documento, "supplier_advance_id", None
+    ):
+        posting = await ensure_provider_payment_posting(
+            session, documento=documento, fecha_pago=fecha_pago
+        )
+        if posting.status not in {"created", "exists"}:
+            raise DocumentoPaymentValidationError(
+                "accounting_posting_pending",
+                f"Configuración contable incompleta: {posting.reason}.",
+            )
+        if getattr(documento, "supplier_advance_id", None):
+            from ..models import ExpenseReport
+
+            documento.gasto_generado_id = (
+                await session.execute(
+                    select(ExpenseReport.id).where(
+                        ExpenseReport.documento_id == documento.id,
+                        ExpenseReport.cfdi_report_id == documento.cfdi_report_id,
+                    )
+                )
+            ).scalar_one()
+        documento.estado = "pagado"
+        documento.pagado_en = datetime.utcnow()
+        aprobacion = Aprobacion(
+            tipo_entidad="documento",
+            entidad_id=documento.id,
+            aprobador_id=payment_actor.id,
+            accion="pagar",
+            comentario=_payment_proof_audit_comment(
+                "Pago de anticipo a proveedor o remanente confirmado.",
+                review_status=payment_proof_review_status,
+                resolution_reason=payment_proof_resolution_reason,
+                evidence_source=payment_proof_evidence_source,
+                template_id=payment_proof_template_id,
+            ),
+            fecha=datetime.utcnow(),
+        )
+        session.add(aprobacion)
+        await _finalize_document_payment_write(
+            session, documento=documento, aprobacion=aprobacion, commit=commit
+        )
+        if notify:
+            _schedule_solicitud_paid_telegram_notifications(
+                documento_id=documento.id, actor_id=payment_actor.id
+            )
+        return DocumentoPagoResult(
+            documento=documento, aprobacion=aprobacion, expense=None
         )
 
     has_proveedor = documento.proveedor_cliente_id is not None

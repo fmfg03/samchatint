@@ -11,7 +11,13 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models import BudgetConcept, CuentaContable, Documento, ExpenseReport
+from ..models import (
+    BudgetConcept,
+    CuentaContable,
+    CuentaDeGastos,
+    Documento,
+    ExpenseReport,
+)
 from samchat.budgets.service import validate_active_cuenta_contable_id
 
 logger = logging.getLogger(__name__)
@@ -30,14 +36,14 @@ class CleanupAccountingDisplay:
 def resolve_effective_budget_concept(
     expense: ExpenseReport,
 ) -> Optional[BudgetConcept]:
-    """Return the expense partida, falling back to linked documento records."""
+    """Return the expense partida, preferring its owning Informe on fallback."""
 
     budget_concept = getattr(expense, "budget_concept", None)
     if budget_concept:
         return budget_concept
     for doc in (
-        getattr(expense, "documento", None),
         getattr(expense, "informe_documento", None),
+        getattr(expense, "documento", None),
         getattr(expense, "solicitud_documento", None),
     ):
         concept = getattr(doc, "budget_concept", None)
@@ -72,6 +78,47 @@ def build_cleanup_accounting_display(
     )
 
 
+async def load_effective_budget_concept(
+    session: AsyncSession,
+    expense: ExpenseReport,
+    *,
+    budget_concept_id: Optional[UUID] = None,
+) -> Optional[BudgetConcept]:
+    """Resolve the partida from its owner without implicit async loads."""
+
+    concept_id = budget_concept_id or getattr(expense, "budget_concept_id", None)
+    loaded = vars(expense).get("budget_concept")
+    if loaded is not None and (not concept_id or str(loaded.id) == str(concept_id)):
+        return loaded
+    if not concept_id:
+        for relation, field in (
+            ("informe_documento", "informe_documento_id"),
+            ("documento", "documento_id"),
+            ("solicitud_documento", "solicitud_documento_id"),
+        ):
+            document = vars(expense).get(relation)
+            loaded = vars(document).get("budget_concept") if document else None
+            if loaded is not None:
+                return loaded
+            concept_id = getattr(document, "budget_concept_id", None)
+            document_id = getattr(expense, field, None)
+            if not concept_id and document_id:
+                result = await session.execute(
+                    select(Documento.budget_concept_id).where(
+                        Documento.id == document_id
+                    )
+                )
+                concept_id = result.scalar_one_or_none()
+            if concept_id:
+                break
+    if not concept_id:
+        return None
+    result = await session.execute(
+        select(BudgetConcept).where(BudgetConcept.id == concept_id)
+    )
+    return result.scalar_one_or_none()
+
+
 async def apply_budget_concept_cuenta_mapping(
     session: AsyncSession,
     expense: ExpenseReport,
@@ -83,14 +130,9 @@ async def apply_budget_concept_cuenta_mapping(
     if expense.cuenta_contable_id is not None:
         return False
 
-    concept_id = budget_concept_id or expense.budget_concept_id
-    if not concept_id:
-        return False
-
-    result = await session.execute(
-        select(BudgetConcept).where(BudgetConcept.id == concept_id)
+    concept = await load_effective_budget_concept(
+        session, expense, budget_concept_id=budget_concept_id
     )
-    concept = result.scalar_one_or_none()
     if concept is None or concept.cuenta_contable_id is None:
         return False
 
@@ -99,11 +141,13 @@ async def apply_budget_concept_cuenta_mapping(
             session, str(concept.cuenta_contable_id)
         )
         expense.cuenta_contable_id = UUID(validated_id)
+        if expense.budget_concept_id is None:
+            expense.budget_concept_id = concept.id
         return True
     except ValueError:
         logger.warning(
             "Skipping inactive/missing cuenta for budget concept %s on expense %s",
-            concept_id,
+            concept.id,
             getattr(expense, "id", None),
         )
         return False
@@ -212,7 +256,47 @@ def cleanup_expense_loader_options() -> list:
             BudgetConcept.cuenta_contable
         )
     )
-    return [doc_budget, informe_budget, solicitud_budget, expense_budget]
+    options = [doc_budget, informe_budget, solicitud_budget, expense_budget]
+    for relation in (
+        ExpenseReport.documento,
+        ExpenseReport.informe_documento,
+        ExpenseReport.solicitud_documento,
+    ):
+        options.extend(
+            [
+                selectinload(relation).selectinload(
+                    Documento.beneficiario_empleado
+                ),
+                selectinload(relation).selectinload(
+                    Documento.beneficiario_proveedor_cliente
+                ),
+                selectinload(relation).selectinload(Documento.proveedor_cliente),
+                selectinload(relation).selectinload(Documento.empleado),
+                selectinload(relation)
+                .selectinload(Documento.cuenta_gastos)
+                .selectinload(CuentaDeGastos.beneficiario_empleado),
+                selectinload(relation)
+                .selectinload(Documento.cuenta_gastos)
+                .selectinload(CuentaDeGastos.beneficiario_proveedor_cliente),
+                selectinload(relation)
+                .selectinload(Documento.cuenta_gastos)
+                .selectinload(CuentaDeGastos.empleado),
+            ]
+        )
+    options.extend(
+        [
+            selectinload(ExpenseReport.cuenta_gastos).selectinload(
+                CuentaDeGastos.beneficiario_empleado
+            ),
+            selectinload(ExpenseReport.cuenta_gastos).selectinload(
+                CuentaDeGastos.beneficiario_proveedor_cliente
+            ),
+            selectinload(ExpenseReport.cuenta_gastos).selectinload(
+                CuentaDeGastos.empleado
+            ),
+        ]
+    )
+    return options
 
 
 __all__ = [
@@ -222,4 +306,5 @@ __all__ = [
     "build_cleanup_accounting_display",
     "cleanup_expense_loader_options",
     "resolve_effective_budget_concept",
+    "load_effective_budget_concept",
 ]

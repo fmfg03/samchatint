@@ -233,7 +233,8 @@ def budget_sql_db():
         db.executescript("""
             CREATE TABLE documentos (
                 id INTEGER, tipo TEXT, budget_concept_id TEXT,
-                monto_solicitado REAL, monto_total REAL);
+                monto_solicitado REAL, monto_total REAL,
+                is_supplier_advance BOOLEAN DEFAULT 0, supplier_invoice_total REAL);
             CREATE TABLE expense_reports (
                 id INTEGER, gasto_cantidad REAL, iva REAL,
                 propina_no_deducible REAL, hospedaje_impuesto_monto REAL,
@@ -295,7 +296,8 @@ def test_expense_sql_and_python_count_tip_once(
 def test_document_prorata_rounds_each_row_before_aggregation(budget_sql_db, base):
     budget_sql_db.execute("INSERT INTO cfdi_reports VALUES (1, ?, 0, 116)", (base,))
     budget_sql_db.executemany(
-        "INSERT INTO documentos VALUES (?, 'SOLICITUD', 'c', 58, 58)", [(1,), (2,)]
+        "INSERT INTO documentos(id,tipo,budget_concept_id,monto_solicitado,monto_total) VALUES (?, 'SOLICITUD', 'c', 58, 58)",
+        [(1,), (2,)],
     )
     aggregate = budget_sql_db.execute(
         f"SELECT SUM({_budget_document_base_amount_sql()}) FROM documentos d "
@@ -324,7 +326,7 @@ def test_cfdi_applied_amount_parity_without_shared_flag(
 ):
     budget_sql_db.execute("INSERT INTO cfdi_reports VALUES (1, 99.97, 0, 116)")
     budget_sql_db.execute(
-        "INSERT INTO documentos VALUES (1, 'SOLICITUD', 'c', ?, ?)",
+        "INSERT INTO documentos(id,tipo,budget_concept_id,monto_solicitado,monto_total) VALUES (1, 'SOLICITUD', 'c', ?, ?)",
         (applied, applied),
     )
     budget_sql_db.execute(
@@ -365,7 +367,7 @@ def test_cfdi_applied_amount_parity_without_shared_flag(
 
 def test_informe_header_does_not_classify_unassigned_expense(budget_sql_db):
     budget_sql_db.executemany(
-        "INSERT INTO documentos VALUES (?, ?, 'header', 116, 116)",
+        "INSERT INTO documentos(id,tipo,budget_concept_id,monto_solicitado,monto_total) VALUES (?, ?, 'header', 116, 116)",
         [(1, "INFORME"), (2, "SOLICITUD")],
     )
     budget_sql_db.executemany(
@@ -2756,3 +2758,23 @@ def test_generate_budget_income_xlsx_contains_expected_real_and_pending_cfdi():
     assert linked_sheet["A2"].value == "UUID-1"
     pending_sheet = workbook["CFDI sin clasificar"]
     assert pending_sheet["A2"].value == "UUID-PENDING"
+
+
+@pytest.mark.parametrize("remainder", [0, 50, 116])
+def test_supplier_invoice_budget_uses_full_fiscal_base_not_bank_remainder(
+    budget_sql_db, remainder
+):
+    budget_sql_db.execute("INSERT INTO cfdi_reports VALUES (1, 100, 5, 110.20)")
+    budget_sql_db.execute(
+        "INSERT INTO documentos(id,tipo,budget_concept_id,monto_solicitado,monto_total,supplier_invoice_total) VALUES (1,'SOLICITUD','c',?,?,110.20)",
+        (remainder, remainder),
+    )
+    amount = budget_sql_db.execute(
+        f"SELECT {_budget_document_base_amount_sql()} FROM documentos d CROSS JOIN cfdi_reports document_cfdi"
+    ).fetchone()[0]
+    assert Decimal(str(amount)) == Decimal("95.00")
+    budget_sql_db.execute("UPDATE documentos SET is_supplier_advance=1")
+    amount = budget_sql_db.execute(
+        f"SELECT {_budget_document_base_amount_sql()} FROM documentos d CROSS JOIN cfdi_reports document_cfdi"
+    ).fetchone()[0]
+    assert amount == 0

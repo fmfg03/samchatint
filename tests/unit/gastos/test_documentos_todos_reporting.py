@@ -1292,7 +1292,8 @@ def test_informe_detail_uses_human_status_and_single_back_action():
     assert "escape(d.estado or '-')" not in solicitudes_section
     assert "Revisar solicitud" in solicitudes_section
     assert '<th>Acción</th>' in detail
-    assert 'colspan="7"' in detail
+    assert '<th>Referencia Operaciones</th>' in detail
+    assert 'colspan="8"' in detail
     assert (
         "Estas solicitudes son salidas de efectivo vinculadas al informe; "
         "afectan el saldo cuando Finanzas registra el pago."
@@ -1349,7 +1350,9 @@ def test_saldar_form_uses_devolucion_sobrantes_copy():
     assert 'name="monto"' in saldar_form
     assert 'name="saldo_snapshot"' in saldar_form
     assert "No se permiten pagos parciales" not in saldar_form
-    assert "no se permiten pagos parciales" in saldar_form
+    assert "Puedes devolver una parte" in saldar_form
+    assert 'name="allow_partial"' in saldar_form
+    assert "El reembolso liquida el saldo completo" in saldar_form
 
 
 def test_saldar_submit_reports_devolucion_sobrantes_success():
