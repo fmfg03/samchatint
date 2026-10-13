@@ -20,7 +20,10 @@ from devnous.gastos.routes.dependencies import get_current_empleado, get_db_sess
 def session_with(*rows):
     session = AsyncMock()
     session.execute.side_effect = [
-        SimpleNamespace(scalars=lambda rows=row: SimpleNamespace(all=lambda: rows))
+        SimpleNamespace(
+            scalars=lambda rows=row: SimpleNamespace(all=lambda: rows),
+            all=lambda rows=row: rows,
+        )
         for row in rows
     ]
     return session
@@ -61,7 +64,7 @@ async def test_review_form_check_choice_versions_and_adjustment_downloads_escape
         reason='" onmouseover="bad',
     )
     cut = SimpleNamespace(id=uuid4(), kind="initial", accounting_date=date(2026, 9, 30))
-    session = session_with([expense], [review], [account], [cut])
+    session = session_with([expense], [review], [account], [cut], [])
     session.get.return_value = informe
     request = Request(
         {"type": "http", "query_string": b"msg=%3Cscript%3Ex%3C%2Fscript%3E"}
