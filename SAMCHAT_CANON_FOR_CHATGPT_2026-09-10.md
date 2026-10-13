@@ -204,6 +204,11 @@ La aprobación final real de un INFORME acredita comprobación documental de su 
 
 Partidas AMEX de informe aprobado pueden originar reconocimiento contable report-first con ancla real de partida y sin cargo bancario previamente seleccionado. Corte completo mantiene una póliza inicial única e inmutable por INFORME, y ajustes preservan historia. Históricos sin snapshot no reciben atestaciones retrospectivas ficticias; confirmación actual Finance se identifica como tal y no regulariza los 14 casos históricos bloqueados.
 
+
+Amendment date: 2026-10-13. Explicit human approval of the technical specification and exact canon text. Reason: a clear statement-to-policy workflow and separation of report attention from AMEX manual queues. Evidence: `docs/roadmap/amex-statement-workflow-20261013-story.md` and `docs/roadmap/amex-statement-workflow-20261013-spec.md`. Approved implementation scope; merge, owner-run migration, deployment and authenticated Finance UAT require their own receipts.
+
+AMEX dispone de un recorrido por importación de estado de cuenta con identidad persistida de archivo, tarjeta y período declarados. Su avance separa pendientes operativos, asociación bancaria y disponibilidad contable. La importación no aprueba informes ni origina pólizas. Finanzas selecciona fuentes explícitas y confirma cada INFORME completo mediante el corte canónico; vínculo de navegación no acredita conciliación. La política de atención por beneficiario explícito puede retirar informes y partidas de la cola manual sin ocultar cargos bancarios, alterar su estado ni excluirlos de controles financieros. Identidad ausente o contradictoria permanece visible. Cargas históricas no reciben identidad de estado reconstruida.
+
 ### 9.2 Monthly DIOT by effective payment date
 
 Amendment date: 2026-10-09. This canon diff received explicit human approval.

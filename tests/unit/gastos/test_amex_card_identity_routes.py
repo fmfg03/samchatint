@@ -60,7 +60,15 @@ class Result:
         return self.items[0] if self.items else None
 
 
-async def render(monkeypatch, *, candidates, historical=None, informe_links=None):
+async def render(
+    monkeypatch,
+    *,
+    candidates,
+    historical=None,
+    informe_links=None,
+    attention_context=None,
+    request=None,
+):
     charge = item(last4="1005")
     catalog_card = card()
     session = SimpleNamespace(
@@ -107,6 +115,20 @@ async def render(monkeypatch, *, candidates, historical=None, informe_links=None
     )
     monkeypatch.setattr(user_routes, "render_top_navigation", lambda *_a, **_k: "")
     actor = SimpleNamespace(id=uuid4(), rol="finanzas", nombre="Finanzas", activo=True)
+    from devnous.gastos.services.amex_attention_policy import (
+        AttentionContext,
+        AttentionPolicy,
+    )
+
+    # This fixture tests card identity, not metadata joins. Unknown beneficiaries
+    # remain visible; policy resolution has its own real DB acceptance coverage.
+    monkeypatch.setattr(
+        user_routes,
+        "load_amex_attention_context",
+        AsyncMock(
+            return_value=attention_context or AttentionContext(AttentionPolicy(False))
+        ),
+    )
     view = user_routes.amex_conciliacion_view
     # Re-run the same acceptance test against the unmodified view for red evidence.
     if os.environ.get("AMEX_IDENTITY_BASELINE"):
@@ -128,7 +150,7 @@ async def render(monkeypatch, *, candidates, historical=None, informe_links=None
         )
         view = namespace[view.__name__]
     html = await view(
-        request=None,
+        request=request,
         session=session,
         current_empleado=actor,
         year=2026,
