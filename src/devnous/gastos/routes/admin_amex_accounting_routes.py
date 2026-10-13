@@ -4,6 +4,7 @@ import json
 from datetime import date
 from html import escape
 from urllib.parse import quote
+from typing import cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -27,6 +28,7 @@ from ..services.amex_accounting_cut_service import (
     review_amex_partida,
 )
 from ..services.amex_cut_export_service import cut_expense_cfdis
+from ..services.amex_attention_policy import load_amex_attention_context
 from ..services.amex_expense_service import FINANCE_AMEX_ROLES, company_amex_sql_condition
 from ..services.amex_recognition_service import load_amex_card_display_identities
 from ..services.coi_poliza_exporter import (
@@ -79,21 +81,47 @@ async def amex_accounting_reports(
         ExpenseReport.estado_gasto != "cancelado",
         company_amex_sql_condition(),
     )
-    result = await session.execute(
-        select(Documento)
-        .where(Documento.tipo == "INFORME", Documento.estado == "aprobado", linked)
-        .order_by(Documento.aprobado_en.desc())
-        .limit(100)
+    with session.no_autoflush:
+        result = await session.execute(
+            select(Documento)
+            .options(raiseload("*"))
+            .where(Documento.tipo == "INFORME", Documento.estado == "aprobado", linked)
+            .order_by(Documento.aprobado_en.desc())
+        )
+    documents = result.scalars().all()
+    context = await load_amex_attention_context(session, documents=documents)
+    visible = [
+        doc for doc in documents
+        if context.document_decisions[cast(UUID, doc.id)].visible
+    ]
+    warnings = "".join(
+        '<p class="notice">No se pudo verificar la exclusión por beneficiario; '
+        'las partidas permanecen visibles para revisión.</p>'
+        for warning in context.warnings
     )
+    attention_reasons = {
+        "amex_attention_missing_beneficiary": "Falta beneficiario explícito",
+        "amex_attention_beneficiary_conflict": "Beneficiarios contradictorios",
+        "amex_attention_multiple_or_missing_informes": "Informe ausente o ambiguo",
+        "amex_attention_ambiguous_beneficiary": "Identidad de beneficiario ambigua",
+        "amex_attention_configuration_disabled": (
+            "Exclusión desactivada: revisar configuración"
+        ),
+    }
     rows = "".join(
-        f'<tr><td>{escape(str(document.numero_referencia or "Informe"))}</td>'
+        f'<tr><td>{escape(str(document.numero_referencia or "Informe"))}'
+        f'<small>{escape(attention_reasons.get(
+            context.document_decisions[cast(UUID, document.id)].reason, ""
+        ))}</small></td>'
         f'<td><a href="{BASE}/informes/{document.id}">Preparar corte del informe</a></td></tr>'
-        for document in result.scalars().all()
+        for document in visible[:100]
     )
     return Response(
         _page(
             "Revisión contable AMEX",
-            "<p>Usa la comprobación aprobada y declara las decisiones pendientes en conjunto antes de confirmar el corte.</p>"
+            warnings
+            + "<p>Usa la comprobación aprobada y declara las decisiones pendientes "
+            "en conjunto antes de confirmar el corte.</p>"
             f"<table><thead><tr><th>Informe aprobado</th><th>Acción</th></tr></thead>"
             f'<tbody>{rows or "<tr><td colspan=2>Sin informes AMEX aprobados.</td></tr>"}</tbody></table>',
         ),

@@ -493,6 +493,16 @@ async def bank_page(monkeypatch, *, bound=False):
         user_routes, "suggest_pase_monthly_cfdi_matches", AsyncMock(return_value=[])
     )
     monkeypatch.setattr(user_routes, "render_top_navigation", lambda *_a, **_k: "")
+    from devnous.gastos.services.amex_attention_policy import (
+        AttentionContext,
+        AttentionPolicy,
+    )
+
+    monkeypatch.setattr(
+        user_routes,
+        "load_amex_attention_context",
+        AsyncMock(return_value=AttentionContext(AttentionPolicy(False))),
+    )
     page = await user_routes.amex_conciliacion_view(
         None,
         session,

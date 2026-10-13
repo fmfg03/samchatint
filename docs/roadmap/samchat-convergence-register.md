@@ -22,9 +22,9 @@ canon edits silently.
 
 | Protected source path | SHA-256 at Line 0 baseline |
 | --- | --- |
-| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `f312b24e77d45f3c78bc1881d560ed08e3f258536fec82e68f93ccfdb4cf4e36` |
+| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `b55ae07a926eb8de78e07345b744e59b6fdf30021e17208e12309580aa32875c` |
 | `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `2c55cc807c464d5462bca3e9d092fcefe6f5f2f66f4498231d72a7b57d795985` |
-| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `122423a0fce63a86f320014e5de218c09c757fdc83326458d34fc8a9a111b2ac` |
+| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `0d2128b70f40c5670b2153599dd0ab4cb2b768ebba634ce5a9b6283baa9ecd81` |
 
 | Canon amendment date | Affected sources | Reason and evidence | Evidence state |
 | --- | --- | --- | --- |
@@ -38,6 +38,8 @@ canon edits silently.
 | 2026-10-06 | Product and Engineering canons | Human-approved review-only admission contract for the 11 reconciled Copa Telmex 2026 dossiers. Exact edition, PDF, page, extraction and technical-staff evidence is bound to idempotent review drafts; team, staff and eligibility writes remain blocked pending a separately approved Zaubern staff contract. Evidence: `docs/roadmap/ctt-pilot-batch-admission.md`, 56 focused tests, isolated PostgreSQL migration verification, and independent validation with no critical or important findings. | Approved isolated-worktree candidate; not committed, merged, deployed, migration-applied, data-admitted, UAT-validated, or business accepted. |
 | 2026-10-09 | Product and Engineering canons | Human-approved monthly DIOT contract based on `Documento.fecha_pago_efectiva`, with explicit missing/ambiguous-date queues, fail-closed TXT blockers, proportional confirmed shared-CFDI allocation, and IVA withholding read only from XML. Evidence: isolated implementation, 10 focused tests, route import verification, and production classification in a read-only transaction. Sweep canon unchanged because this feature does not revise the historical installation inventory. | Approved isolated-worktree candidate; not committed, merged, deployed, SAT-submitted, authenticated-UAT-validated, or business accepted. |
 | 2026-10-13 | Product and Engineering canons | Human-approved technical specification and exact canon amendment for approved-INFORME AMEX recognition, consolidated explicit Finance confirmation and subsequent nonposting bank association. Evidence: `docs/roadmap/amex-approved-informe-20261013-story.md` and `docs/roadmap/amex-approved-informe-20261013-spec.md`. Sweep unchanged because no historical sweep inventory is revised. | Approved candidate; implementation validation, commit, merge, migration, deployment and Finance UAT remain pending. |
+
+| 2026-10-13 | Product and Engineering canons | Human-approved statement workflow and explicit beneficiary attention policy. Exact amendment text approved with technical specification; evidence: `docs/roadmap/amex-statement-workflow-20261013-story.md` and `docs/roadmap/amex-statement-workflow-20261013-spec.md`. Sweep unchanged: historical inventory is not rewritten. | Approved implementation scope; Git publication, owner-run migration, deployment and Finance UAT pending separate receipts. |
 
 ## Work lanes and gates
 

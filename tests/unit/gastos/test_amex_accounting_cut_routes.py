@@ -30,7 +30,29 @@ def session_with(*rows):
 
 
 @pytest.mark.asyncio
-async def test_reports_empty_and_escaped_reference():
+async def test_reports_empty_and_escaped_reference(monkeypatch):
+    from devnous.gastos.services.amex_attention_policy import (
+        AttentionContext,
+        AttentionDecision,
+        AttentionPolicy,
+    )
+
+    async def attention_context(_session, *, documents):
+        return AttentionContext(
+            AttentionPolicy(False),
+            document_decisions={
+                document.id: AttentionDecision(
+                    True, "amex_attention_configuration_disabled"
+                )
+                for document in documents
+            },
+        )
+
+    monkeypatch.setattr(
+        routes,
+        "load_amex_attention_context",
+        attention_context,
+    )
     for documents in (
         [],
         [SimpleNamespace(id=uuid4(), numero_referencia="<script>x</script>")],
@@ -251,7 +273,19 @@ async def test_cut_export_fails_closed(failure):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role,status", [("finanzas", 200), ("empleado", 403)])
-async def test_real_permission_dependency_and_uuid_validation(role, status):
+async def test_real_permission_dependency_and_uuid_validation(
+    role, status, monkeypatch
+):
+    from devnous.gastos.services.amex_attention_policy import (
+        AttentionContext,
+        AttentionPolicy,
+    )
+
+    monkeypatch.setattr(
+        routes,
+        "load_amex_attention_context",
+        AsyncMock(return_value=AttentionContext(AttentionPolicy(False))),
+    )
     app = FastAPI()
     app.include_router(routes.router)
     actor = SimpleNamespace(id=uuid4(), rol=role, permisos=[], activo=True)

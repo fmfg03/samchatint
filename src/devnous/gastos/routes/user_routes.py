@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, date, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Optional, List, Union, Dict, Any, Tuple, Iterable
+from typing import Optional, List, Union, Dict, Any, Tuple, Iterable, cast
 from uuid import UUID as UUIDType, uuid4
 from urllib.parse import quote, unquote, parse_qs, urlparse, urlencode
 from dotenv import dotenv_values
@@ -142,7 +142,6 @@ from ..services.amex_cfdi_matching_service import (
     validate_amex_cfdi_suggestion,
     validate_pase_monthly_cfdi_suggestion,
 )
-from ..services.amex_statement_matcher import find_amex_cfdi_match
 from ..services.amex_recognition_service import (
     activation_reason,
     assign_missing_amex_card,
@@ -461,6 +460,12 @@ from .block_messages import (
     expense_lock_reason,
 )
 from .admin_amex_accounting_routes import router as amex_accounting_router
+from .admin_amex_statement_routes import router as amex_statement_router
+from ..services.amex_attention_policy import load_amex_attention_context
+from ..services.amex_statement_import_service import (
+    StatementValidationError,
+    import_amex_csv_rows,
+)
 from ..services.payment_run_service import (
     PaymentRunPermissionError,
     require_payment_run_access,
@@ -576,6 +581,7 @@ router = APIRouter(route_class=ExpenseBlockRoute)
 
 
 router.include_router(amex_accounting_router)
+router.include_router(amex_statement_router)
 
 # This will be set by the app that includes these routes
 _db_session_maker = None
@@ -669,6 +675,47 @@ def _safe_redirect_base(return_to: Optional[str], fallback: str = "/admin/contab
     if not redirect_base.startswith("/"):
         return fallback
     return redirect_base
+
+
+def _amex_statement_return_to(value: Any) -> Optional[str]:
+    """Accept local workflow steps and one explicit report selection only."""
+    if not isinstance(value, str) or any(ord(c) < 32 for c in value):
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme or parsed.netloc or parsed.params or parsed.fragment:
+        return None
+    match = re.fullmatch(
+        r"/admin/contabilidad/amex/estados/([0-9a-fA-F-]{36})/(pendientes|polizas)",
+        parsed.path,
+    )
+    if match is None:
+        return None
+    try:
+        statement_id = UUIDType(match.group(1))
+    except ValueError:
+        return None
+    target = f"/admin/contabilidad/amex/estados/{statement_id}/{match.group(2)}"
+    if parsed.query:
+        try:
+            query = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
+            if match.group(2) != "polizas" or set(query) != {"informe_id"}:
+                return None
+            if len(query["informe_id"]) != 1:
+                return None
+            report_id = UUIDType(query["informe_id"][0])
+        except (ValueError, TypeError, KeyError):
+            return None
+        target += "?" + urlencode({"informe_id": str(report_id)})
+    return target
+
+
+def _amex_reconciliation_return_context(url: str, value: Any) -> str:
+    """Carry only a validated statement destination before the URL fragment."""
+    target = _amex_statement_return_to(value)
+    if target is None:
+        return url
+    base, separator, fragment = url.partition("#")
+    return _append_query_params(base, {"return_to": target}) + separator + fragment
 
 
 async def _resolve_latest_bank_source(session: AsyncSession) -> tuple[AccountingImportRun, Path]:
@@ -5075,7 +5122,7 @@ def _render_coi_exportable_lote_rows_html(
         if is_amex_report:
             coi_action += (
                 f' <a href="/admin/contabilidad/amex/informes/{documento_id}">'
-                "Revisar partidas y cortes AMEX</a>"
+                "Preparar póliza del informe</a>"
             )
         cleanup_action = ""
         cleanup_blockers = [
@@ -16276,7 +16323,8 @@ async def panel(
         ("admin.contabilidad", "/admin/contabilidad/coi", "Vista contable", "Revisa pólizas COI y el detalle de sus cuentas."),
         ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Revisa el vínculo por UUID con empleado y proyecto operativo."),
         ("admin.gastos.cfdi_carga", "/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CSV por UUID para alimentar la revisión de matching."),
-        ("admin.gastos.amex", "/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta para conciliación mensual; requiere piloto UAT antes de operación."),
+        ("admin.gastos.amex", "/admin/contabilidad/amex/estados", "AMEX",
+         "Carga el estado, resuelve pendientes y prepara las pólizas del informe."),
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "Prepara CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
     ], visible_tool_keys)
     if is_superadmin_role(getattr(current_empleado, "rol", None)):
@@ -20364,6 +20412,8 @@ async def carga_masiva_amex_get(
             </div>
         """
     hero_actions_html = """
+        <a href="/admin/contabilidad/amex/estados" class="button primary">
+            Abrir recorrido AMEX</a>
         <a href="/admin/gastos/amex/conciliacion" class="button secondary">Ver conciliación AMEX</a>
         <a href="/admin/gastos" class="button secondary">Volver a finanzas</a>
     """
@@ -20645,225 +20695,57 @@ async def carga_masiva_amex_post(
             )
             cfdi_mensual_report = cfdi_result.scalar_one_or_none()
 
-        # Read and decode CSV file
+        # Shared parsing/intake preserves legacy fiscal matching, without
+        # creating a fabricated statement identity for clients without a period.
         contents = await archivo_csv.read()
-        # Try utf-8-sig first (handles BOM), fallback to utf-8
         try:
-            text = contents.decode('utf-8-sig')
-        except UnicodeDecodeError:
-            try:
-                text = contents.decode('utf-8')
-            except UnicodeDecodeError:
-                return RedirectResponse(
-                    url=_append_error_params(
-                        "/gastos/carga-masiva-amex",
-                        error_msg="El archivo CSV no está en formato UTF-8 válido",
-                    ),
-                    status_code=303
-                )
-
-        # Parse CSV
-        csv_reader = csv.DictReader(io.StringIO(text))
-
-        # Detect column names (case-insensitive)
-        fieldnames = csv_reader.fieldnames
-        if not fieldnames:
+            imported = await import_amex_csv_rows(
+                session=session,
+                employee=empleado,
+                card_account=amex_card_account,
+                content=contents,
+                cfdi_uuid_mensual=cfdi_uuid_mensual_norm,
+            )
+        except StatementValidationError as exc:
+            await session.rollback()
+            validation_messages = {
+                "invalid_utf8": "El archivo CSV no está en formato UTF-8 válido",
+                "missing_headers": "El archivo CSV está vacío o no tiene encabezados",
+                "missing_columns": (
+                    "El archivo debe incluir fecha, descripción e importe."
+                ),
+                "monthly_cfdi_multiple_months": (
+                    "El CFDI mensual consolidado solo puede aplicarse a un mes "
+                    "por carga. Se detectaron movimientos de más de un mes."
+                ),
+            }
             return RedirectResponse(
                 url=_append_error_params(
                     "/gastos/carga-masiva-amex",
-                    error_msg="El archivo CSV está vacío o no tiene encabezados",
-                ),
-                status_code=303
-            )
-
-        # Normalize fieldnames to lowercase for matching
-        fieldnames_lower = {f.lower(): f for f in fieldnames}
-
-        # Find date column (try multiple common names)
-        date_col = None
-        for possible_name in ['fecha de compra', 'date', 'fecha', 'transaction date', 'fecha de transacción']:
-            if possible_name.lower() in fieldnames_lower:
-                date_col = fieldnames_lower[possible_name.lower()]
-                break
-
-        # Find description column
-        desc_col = None
-        for possible_name in ['descripción', 'description', 'merchant', 'descripcion', 'merchant name']:
-            if possible_name.lower() in fieldnames_lower:
-                desc_col = fieldnames_lower[possible_name.lower()]
-                break
-
-        # Find amount column
-        amount_col = None
-        for possible_name in ['importe', 'amount', 'charge amount', 'monto', 'cargo']:
-            if possible_name.lower() in fieldnames_lower:
-                amount_col = fieldnames_lower[possible_name.lower()]
-                break
-
-        # Validate required columns
-        if not date_col or not desc_col or not amount_col:
-            missing = []
-            if not date_col:
-                missing.append("Fecha de compra/Date/Fecha")
-            if not desc_col:
-                missing.append("Descripción/Description/Merchant")
-            if not amount_col:
-                missing.append("Importe/Amount/Charge Amount")
-
-            return RedirectResponse(
-                url=_append_error_params(
-                    "/gastos/carga-masiva-amex",
-                    error_msg=(
-                        "Formato de archivo AMEX no reconocido. Revisa que tenga las columnas: "
-                        + ", ".join(missing)
+                    error_msg=validation_messages.get(
+                        str(exc), "No se pudo validar el archivo AMEX."
                     ),
                 ),
-                status_code=303
+                status_code=303,
             )
-
-        # Process rows
-        total_rows = 0
-        created_count = 0
-        skipped_count = 0
-        auto_cfdi_match_count = 0
-        auto_tip_match_count = 0
-        auto_pase_match_count = 0
-        errors = []
-        cfdi_month_key: Optional[str] = None
-        if not cfdi_uuid_mensual_norm:
-            await _ensure_expense_tip_schema(session)
-
-        for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 (row 1 is header)
-            total_rows += 1
-
-            try:
-                # Extract and validate date
-                date_str = row.get(date_col, '').strip()
-                if not date_str:
-                    skipped_count += 1
-                    errors.append(f"Fila {row_num}: Fecha vacía")
-                    continue
-
-                # Try multiple date formats
-                fecha_dt = None
-                date_formats = [
-                    '%d %b %Y',      # 26 Nov 2025 (AMEX export format)
-                    '%d %B %Y',      # 26 November 2025 (full month name)
-                    '%Y-%m-%d',      # 2025-11-26
-                    '%d/%m/%Y',      # 26/11/2025
-                    '%m/%d/%Y',      # 11/26/2025
-                    '%Y/%m/%d',      # 2025/11/26
-                    '%d-%m-%Y',      # 26-11-2025
-                    '%m-%d-%Y'       # 11-26-2025
-                ]
-                for fmt in date_formats:
-                    try:
-                        fecha_dt = datetime.strptime(date_str, fmt)
-                        break
-                    except ValueError:
-                        continue
-
-                if not fecha_dt:
-                    skipped_count += 1
-                    errors.append(f"Fila {row_num}: Formato de fecha no reconocido: {date_str}")
-                    continue
-
-                if cfdi_uuid_mensual_norm:
-                    row_month_key = f"{fecha_dt.year:04d}-{fecha_dt.month:02d}"
-                    if cfdi_month_key is None:
-                        cfdi_month_key = row_month_key
-                    elif row_month_key != cfdi_month_key:
-                        await session.rollback()
-                        return RedirectResponse(
-                            url=_append_error_params(
-                                "/gastos/carga-masiva-amex",
-                                error_msg="El CFDI mensual consolidado solo puede aplicarse a un mes por carga. Se detectaron movimientos de más de un mes.",
-                            ),
-                            status_code=303
-                        )
-
-                # Extract and validate description
-                descripcion = row.get(desc_col, '').strip()
-                if not descripcion:
-                    skipped_count += 1
-                    errors.append(f"Fila {row_num}: Descripción vacía")
-                    continue
-
-                # Extract and validate amount
-                amount_str = row.get(amount_col, '').strip()
-                if not amount_str:
-                    skipped_count += 1
-                    errors.append(f"Fila {row_num}: Importe vacío")
-                    continue
-
-                # Clean amount string (remove currency symbols, commas, etc.)
-                amount_str = amount_str.replace('$', '').replace(',', '').replace(' ', '')
-                try:
-                    # Handle negative amounts (charges are typically negative in AMEX exports)
-                    # Use Decimal to avoid float precision issues
-                    amount_decimal = Decimal(amount_str)
-                    gasto_cantidad = float(abs(amount_decimal))
-                except (ValueError, Exception):
-                    skipped_count += 1
-                    errors.append(f"Fila {row_num}: Importe inválido: {amount_str}")
-                    continue
-
-                if gasto_cantidad <= 0:
-                    skipped_count += 1
-                    errors.append(f"Fila {row_num}: El importe debe ser mayor a cero")
-                    continue
-
-                # Create expense using the service
-                expense = await create_expense_from_data(
-                    session=session,
-                    concepto=descripcion,
-                    gasto_cantidad=gasto_cantidad,
-                    fecha=fecha_dt,
-                    empleado_id=empleado.id,
-                    nombre_enviador=empleado.nombre,
-                    tipo_gasto="manual",
-                    metodo_pago="TARJETA CREDITO AMEX",
-                    ultimos_4_digitos=amex_card_account.last4,
-                    origen="amex_batch",
-                    # Do NOT set tournament_id, proyecto, rfc_id, or file fields
-                )
-                expense.pagado_con_amex_empresa = True
-
-                if cfdi_uuid_mensual_norm:
-                    expense.cfdi_uuid_manual = cfdi_uuid_mensual_norm
-                    if cfdi_mensual_report:
-                        expense.cfdi_report_id = cfdi_mensual_report.id
-                    session.add(expense)
-                else:
-                    amex_match = await find_amex_cfdi_match(
-                        session,
-                        charge_description=descripcion,
-                        charge_amount=gasto_cantidad,
-                        charge_date=fecha_dt,
-                    )
-                    if amex_match is not None:
-                        expense.cfdi_report_id = amex_match.cfdi.id
-                        expense.cfdi_uuid_manual = (amex_match.cfdi.cfdi_uuid or "").strip().upper() or None
-                        if amex_match.inferred_tip > 0:
-                            try:
-                                expense.propina_no_deducible = round(float(amex_match.inferred_tip), 2)
-                            except Exception:
-                                pass
-                            auto_tip_match_count += 1
-                        elif amex_match.confidence == "pase_monthly":
-                            auto_pase_match_count += 1
-                        else:
-                            auto_cfdi_match_count += 1
-                        session.add(expense)
-
-                created_count += 1
-
-            except Exception as e:
-                skipped_count += 1
-                error_msg = str(e)
-                errors.append(f"Fila {row_num}: {error_msg}")
-                logger.error(f"Error processing row {row_num} in AMEX CSV: {e}", exc_info=True)
-                continue
+        created_count = imported["created_count"]
+        skipped_count = imported["skipped_count"]
+        auto_cfdi_match_count = imported["auto_cfdi_match_count"]
+        auto_tip_match_count = imported["auto_tip_match_count"]
+        auto_pase_match_count = imported["auto_pase_match_count"]
+        row_messages = {
+            "missing_date": "Fecha vacía",
+            "invalid_date": "Formato de fecha no reconocido",
+            "missing_description": "Descripción vacía",
+            "missing_amount": "Importe vacío",
+            "invalid_amount": "Importe inválido",
+        }
+        errors = [
+            f"Fila {row['row_number']}: " + row_messages.get(
+                row.get("reason_code"), "Fila no válida"
+            )
+            for row in imported["rows"] if row["status"] == "skipped"
+        ]
 
         # Commit if at least one expense was created
         if created_count > 0:
@@ -21220,12 +21102,14 @@ async def amex_conciliacion_identify_card(
     confirmed: bool = Form(False),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
+    return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """Identify selected report items; binding and accounting remain separate."""
     redirect_base = (
         f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}"
         f"&month={month or datetime.utcnow().month}"
     )
+    redirect_base = _amex_reconciliation_return_context(redirect_base, return_to)
     try:
         parsed_ids = [UUIDType(value) for value in expense_ids]
         card_id = UUIDType(amex_card_account_id)
@@ -21309,12 +21193,14 @@ async def amex_conciliacion_bind_consumption(
     report_consumption_ids: List[str] = Form([]),
     bank_association_confirmed: bool = Form(False),
     statement_only_reason: str = Form(""),
+    return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """Confirm which report items and statement charge are one consumption."""
     redirect_base = (
         f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}"
         f"&month={month or datetime.utcnow().month}#consumos"
     )
+    redirect_base = _amex_reconciliation_return_context(redirect_base, return_to)
     exception_reason = (
         statement_only_reason if isinstance(statement_only_reason, str) else ""
     )
@@ -21425,8 +21311,10 @@ async def amex_conciliacion_link_cfdi(
     cfdi_report_id: str = Form(...),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
+    return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     redirect_base = f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}&month={month or datetime.utcnow().month}"
+    redirect_base = _amex_reconciliation_return_context(redirect_base, return_to)
     redirect_anchor = "#sugerencias"
     try:
         expense_uuid = UUIDType(expense_id)
@@ -21477,8 +21365,10 @@ async def amex_conciliacion_link_cfdi_bulk(
     selected_links: List[str] = Form(default=[]),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
+    return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     redirect_base = f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}&month={month or datetime.utcnow().month}"
+    redirect_base = _amex_reconciliation_return_context(redirect_base, return_to)
     redirect_anchor = "#sugerencias"
     if not selected_links:
         return RedirectResponse(
@@ -21550,8 +21440,10 @@ async def amex_conciliacion_link_pase_monthly_cfdi(
     cfdi_report_id: str = Form(...),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
+    return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     redirect_base = f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}&month={month or datetime.utcnow().month}"
+    redirect_base = _amex_reconciliation_return_context(redirect_base, return_to)
     try:
         expense_uuid_list = [UUIDType(raw.strip()) for raw in (expense_ids or "").split(",") if raw.strip()]
         cfdi_uuid = UUIDType(cfdi_report_id)
@@ -21611,10 +21503,12 @@ async def amex_conciliacion_schedule_card_payment(
     pago_urgente: Optional[str] = Form(None),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
+    return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     selected_year = year or datetime.utcnow().year
     selected_month = month or datetime.utcnow().month
     redirect_base = f"/admin/gastos/amex/conciliacion?year={selected_year}&month={selected_month}"
+    redirect_base = _amex_reconciliation_return_context(redirect_base, return_to)
     try:
         card_account_uuid = UUIDType(amex_card_account_id)
         payment_request = AmexCardPaymentRequest(
@@ -21652,10 +21546,12 @@ async def amex_conciliacion_validate_notify(
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
     amex_card_account_id: str = Form(...),
+    return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     selected_year = year or datetime.utcnow().year
     selected_month = month or datetime.utcnow().month
     redirect_base = f"/admin/gastos/amex/conciliacion?year={selected_year}&month={selected_month}"
+    redirect_base = _amex_reconciliation_return_context(redirect_base, return_to)
     try:
         try:
             card_account_uuid = UUIDType(str(amex_card_account_id or "").strip())
@@ -21708,6 +21604,21 @@ async def amex_conciliacion_validate_notify(
         url=redirect_base + "&msg=" + quote(msg),
         status_code=303,
     )
+
+
+def _amex_attention_note(decision: Any) -> str:
+    """Explain visible beneficiary exceptions without changing financial state."""
+    reasons = {
+        "amex_attention_missing_beneficiary": "Falta beneficiario explícito",
+        "amex_attention_beneficiary_conflict": "Beneficiarios contradictorios",
+        "amex_attention_multiple_or_missing_informes": "Informe ausente o ambiguo",
+        "amex_attention_ambiguous_beneficiary": "Identidad de beneficiario ambigua",
+        "amex_attention_configuration_disabled": (
+            "Exclusión desactivada: revisar configuración"
+        ),
+    }
+    return reasons.get(str(getattr(decision, "reason", "")), "")
+
 
 async def _load_amex_bank_report_context(
     session: AsyncSession,
@@ -21791,20 +21702,35 @@ async def _load_amex_bank_report_context(
         )
         .order_by(ExpenseReport.fecha.asc(), ExpenseReport.id.asc())
     )
+    available = list(result.all())
+    attention = await load_amex_attention_context(
+        session, expenses=[expense for _consumption, expense, _cut in available]
+    )
+    available = [
+        row for row in available
+        if attention.expense_decisions.get(row[1].id) is None
+        or attention.expense_decisions[row[1].id].visible
+    ]
     return {
         "headers": headers,
         "associated": associated,
         "receipt_links": receipt_links,
-        "available": list(result.all()),
+        "available": available,
+        "attention_warnings": attention.warnings,
+        "attention_decisions": attention.expense_decisions,
     }
 
 
 def _amex_report_bank_rows(context: Dict[str, Any]) -> str:
     rows = []
     for consumption, expense, cut in context["available"]:
+        attention_note = escape(_amex_attention_note(
+            context.get("attention_decisions", {}).get(expense.id)
+        ))
         rows.append(
             f'<tr><td><a href="/gastos/{expense.id}">'
-            f"{escape(str(expense.numero_referencia or expense.id))}</a></td>"
+            f"{escape(str(expense.numero_referencia or expense.id))}</a>"
+            f"<small>{attention_note}</small></td>"
             f"<td>{consumption.economic_date.isoformat()}</td>"
             f"<td>{format_currency(consumption.amount, consumption.currency)}</td>"
             f'<td><a href="/admin/contabilidad/amex/informes/{cut.informe_id}">'
@@ -21831,6 +21757,17 @@ async def amex_conciliacion_view(
     """
     if not _can_identify_amex_card(current_empleado):
         raise HTTPException(403, "Se requiere un perfil activo de Finanzas.")
+    workflow_return = _amex_statement_return_to(
+        request.query_params.get("return_to") if request is not None else None
+    )
+    workflow_return_input = (
+        f'<input type="hidden" name="return_to" value="{escape(workflow_return)}">'
+        if workflow_return else ""
+    )
+    workflow_return_link = (
+        f'<a href="{escape(workflow_return)}" class="button secondary">'
+        'Volver al estado AMEX</a>' if workflow_return else ""
+    )
     now = datetime.utcnow()
     selected_year = year or now.year
     selected_month = month or now.month
@@ -21878,6 +21815,22 @@ async def amex_conciliacion_view(
         .order_by(ExpenseReport.fecha.asc(), ExpenseReport.id.asc())
     )
     report_candidates = list(report_result.scalars().all())
+    report_attention = await load_amex_attention_context(
+        session, expenses=report_candidates
+    )
+    report_candidates = [
+        item for item in report_candidates
+        if report_attention.expense_decisions.get(cast(UUIDType, item.id)) is None
+        or report_attention.expense_decisions[cast(UUIDType, item.id)].visible
+    ]
+    attention_warning = bool(
+        report_attention.warnings or bank_context.get("attention_warnings", ())
+    )
+    attention_notice_html = (
+        '<div class="notice warn">No se pudo verificar la separación de '
+        'atención por informe. Las partidas permanecen visibles para revisión.</div>'
+        if attention_warning else ""
+    )
     missing_card_items = [
         item for item in report_candidates if not (item.ultimos_4_digitos or "").strip()
     ]
@@ -21910,6 +21863,11 @@ async def amex_conciliacion_view(
                 else "Pendiente de identificar tarjeta"
             )
         )
+        attention_note = _amex_attention_note(
+            report_attention.expense_decisions.get(cast(UUIDType, item.id))
+        )
+        if attention_note:
+            historical_note += "<br>" + escape(attention_note)
         informe_label = escape(
             str(
                 getattr(informe, "numero_referencia", None)
@@ -21984,7 +21942,8 @@ async def amex_conciliacion_view(
         bridge_form = f"""
             <form method="POST" action="/admin/gastos/amex/conciliacion/vincular-consumo">
                 <input type="hidden" name="imported_expense_id" value="{charge.id}">
-                <input type="hidden" name="year" value="{selected_year}">
+                {workflow_return_input}
+                    <input type="hidden" name="year" value="{selected_year}">
                 <input type="hidden" name="month" value="{selected_month}">
                 <label>Consumos del informe con póliza y corte completos
                     <select name="report_consumption_ids" multiple>{bridge_options}</select>
@@ -22008,7 +21967,10 @@ async def amex_conciliacion_view(
             f'<option value="{item.id}">'
             f'{escape(str(item.numero_referencia or "Partida de informe"))} · '
             f'{escape(str(item.concepto or ""))} · '
-            f'${float(item.gasto_cantidad or 0):,.2f}</option>'
+            f'${float(item.gasto_cantidad or 0):,.2f} '
+            f'{escape(_amex_attention_note(
+                report_attention.expense_decisions.get(cast(UUIDType, item.id))
+            ))}</option>'
             for item in report_candidates
             if item.ultimos_4_digitos == charge.ultimos_4_digitos
         )
@@ -22041,7 +22003,8 @@ async def amex_conciliacion_view(
                     {bridge_form}
                     <form method="POST" action="/admin/gastos/amex/conciliacion/vincular-consumo">
                         <input type="hidden" name="imported_expense_id" value="{charge.id}">
-                        <input type="hidden" name="year" value="{selected_year}">
+                        {workflow_return_input}
+                    <input type="hidden" name="year" value="{selected_year}">
                         <input type="hidden" name="month" value="{selected_month}">
                         <label>Partidas del informe correspondientes al mismo consumo
                             <select name="report_expense_ids" multiple>{options}</select>
@@ -22173,6 +22136,7 @@ async def amex_conciliacion_view(
                 <form method="POST" action="/admin/gastos/amex/conciliacion/vincular-cfdi" style="margin:0;">
                     <input type="hidden" name="expense_id" value="{exp.id}">
                     <input type="hidden" name="cfdi_report_id" value="{suggestion.cfdi_report_id}">
+                    {workflow_return_input}
                     <input type="hidden" name="year" value="{selected_year}">
                     <input type="hidden" name="month" value="{selected_month}">
                     <button type="submit" class="button primary" style="padding:8px 10px;">Vincular</button>
@@ -22205,6 +22169,7 @@ async def amex_conciliacion_view(
                 <form method="POST" action="/admin/gastos/amex/conciliacion/vincular-pase-mensual" style="margin:0;">
                     <input type="hidden" name="expense_ids" value="{escape(joined_expense_ids)}">
                     <input type="hidden" name="cfdi_report_id" value="{suggestion.cfdi_report_id}">
+                    {workflow_return_input}
                     <input type="hidden" name="year" value="{selected_year}">
                     <input type="hidden" name="month" value="{selected_month}">
                     <button type="submit" class="button primary" style="padding:8px 10px;">Vincular mes</button>
@@ -22243,7 +22208,8 @@ async def amex_conciliacion_view(
         <a href="/admin/gastos/amex/tarjetas" class="button secondary">Catálogo tarjetas</a>
         <a href="/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}" class="button secondary">Ir a conciliación contable</a>
         <form method="POST" action="/admin/gastos/amex/conciliacion/validar-notificar" style="display:inline-flex;gap:8px;align-items:center;margin:0;" onsubmit="return confirm('Validar la conciliacion AMEX de esta tarjeta y notificar a Benjamin, LAO, FGV y FGN?');">
-            <input type="hidden" name="year" value="{selected_year}">
+            {workflow_return_input}
+                    <input type="hidden" name="year" value="{selected_year}">
             <input type="hidden" name="month" value="{selected_month}">
             <select name="amex_card_account_id" required {card_payment_disabled} style="width:auto;min-width:260px;padding:10px;border-radius:12px;border:1px solid #cbd5e1;">{card_account_options}</select>
             <button type="submit" class="button primary" {card_payment_disabled}>Validar y notificar</button>
@@ -22302,7 +22268,9 @@ async def amex_conciliacion_view(
                 side_html=hero_side_html,
             )}
             <div class="stack">
+            {workflow_return_link}
             {notice_html}
+            {attention_notice_html}
             <section class="surface">
                 <div class="section-head">
                     <div>
@@ -22312,6 +22280,7 @@ async def amex_conciliacion_view(
                     </div>
                 </div>
                 <form method="GET" action="/admin/gastos/amex/conciliacion" class="toolbar">
+                    {workflow_return_input}
                     <div><label>Año</label><select name="year">{year_options}</select></div>
                     <div><label>Mes</label><select name="month">{month_options}</select></div>
                     <div><label>&nbsp;</label><button type="submit" class="button primary">Filtrar</button></div>
@@ -22328,6 +22297,7 @@ async def amex_conciliacion_view(
                     <a href="/admin/finanzas/payment-run" class="button secondary">Abrir Payment Run</a>
                 </div>
                 <form method="POST" action="/admin/gastos/amex/conciliacion/programar-pago" class="toolbar" onsubmit="return confirm('¿Enviar este pago AMEX a Payment Run?');">
+                    {workflow_return_input}
                     <input type="hidden" name="year" value="{selected_year}">
                     <input type="hidden" name="month" value="{selected_month}">
                     <div style="min-width:320px;flex:2;"><label>Tarjeta AMEX</label><select name="amex_card_account_id" required {card_payment_disabled}>{card_account_options}</select></div>
@@ -22408,6 +22378,7 @@ async def amex_conciliacion_view(
                 ni sustituye la revisión histórica AMEX.</p>
                 <form method="POST"
                     action="/admin/gastos/amex/conciliacion/identificar-tarjeta">
+                    {workflow_return_input}
                     <input type="hidden" name="year" value="{selected_year}">
                     <input type="hidden" name="month" value="{selected_month}">
                     <div class="table-shell"><table>
@@ -22463,6 +22434,7 @@ async def amex_conciliacion_view(
                     </div>
                 </div>
                 <form id="amex-bulk-link-form" method="POST" action="/admin/gastos/amex/conciliacion/vincular-cfdi-masivo#sugerencias" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0;">
+                    {workflow_return_input}
                     <input type="hidden" name="year" value="{selected_year}">
                     <input type="hidden" name="month" value="{selected_month}">
                     <button type="submit" class="button primary" onclick="return confirm('Vincular todas las sugerencias seleccionadas?');">Vincular seleccionados</button>
@@ -28089,6 +28061,19 @@ async def ver_gasto(
     """
     await _ensure_expense_tip_schema(session)
 
+    workflow_return_to = _amex_statement_return_to(
+        request.query_params.get("return_to")
+    )
+    workflow_return_html = (
+        f'<a href="{escape(workflow_return_to)}" class="btn btn-secondary">'
+        'Volver al estado AMEX</a>' if workflow_return_to else ""
+    )
+    edit_expense_url = f"/gastos/{gasto_id}/editar"
+    if workflow_return_to:
+        edit_expense_url = _append_query_params(
+            edit_expense_url, {"return_to": workflow_return_to}
+        )
+
     # Load expense
     result = await session.execute(
         select(ExpenseReport).where(ExpenseReport.id == gasto_id)
@@ -28440,7 +28425,7 @@ async def ver_gasto(
             {f'''
             <div class="info-section">
                 <h3>Acciones</h3>
-                {f'<a href="/gastos/{gasto_id}/editar" class="btn" style="margin-right: 10px;">✏️ Editar gasto</a>' if can_edit else ''}
+                {f'<a href="{escape(edit_expense_url)}" class="btn" style="margin-right: 10px;">✏️ Editar gasto</a>' if can_edit else ''}
                 {f'''
                 <form method="POST" action="/gastos/{gasto_id}/solicitar-cfdi" style="display: inline;">
                     <button type="submit" class="btn">📄 Solicitar CFDI</button>
@@ -28452,6 +28437,7 @@ async def ver_gasto(
             </div>
             ''' if (can_edit or can_request_cfdi) else ''}
 
+            {workflow_return_html}
             <a href="/informes-de-gastos" class="btn btn-secondary">← Volver a informes de gastos</a>
         </div>
     </body>
@@ -28769,8 +28755,11 @@ async def editar_gasto_form(
         if expense.cuenta_gastos_id
         else ""
     )
+    supplied_return_to = request.query_params.get("return_to")
+    if str(supplied_return_to or "").startswith("/admin/contabilidad/amex/estados"):
+        supplied_return_to = _amex_statement_return_to(supplied_return_to)
     safe_return_to = _safe_internal_next(
-        request.query_params.get("return_to"),
+        supplied_return_to,
         linked_informe_url or f"/gastos/{gasto_id}",
     )
     edit_form_url = f"/gastos/{gasto_id}/editar"
@@ -29083,6 +29072,12 @@ async def editar_gasto_form(
         report_return_button_html = (
             f'<a href="{escape(safe_return_to)}" class="button secondary">'
             "Volver al informe de gastos</a>"
+        )
+    workflow_return = _amex_statement_return_to(safe_return_to)
+    if workflow_return:
+        report_return_button_html = (
+            f'<a href="{escape(workflow_return)}" class="button secondary">'
+            'Volver al estado AMEX</a>'
         )
     editar_gasto_actions_html = f"""
         {report_return_button_html}
@@ -29517,6 +29512,10 @@ async def editar_gasto(
         if expense.cuenta_gastos_id
         else ""
     )
+    if isinstance(return_to, str) and return_to.startswith(
+        "/admin/contabilidad/amex/estados"
+    ):
+        return_to = _amex_statement_return_to(return_to)
     safe_return_to = _safe_internal_next(
         return_to,
         linked_informe_url or f"/gastos/{gasto_id}",

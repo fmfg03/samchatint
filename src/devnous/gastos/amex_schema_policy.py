@@ -28,7 +28,19 @@ CTT_OWNER_MIGRATION_TABLES = frozenset(
     }
 )
 
-OWNER_MIGRATION_TABLES = AMEX_OWNER_MIGRATION_TABLES | CTT_OWNER_MIGRATION_TABLES
+AMEX_STATEMENT_OWNER_MIGRATION_TABLES = frozenset(
+    {
+        "amex_statement_imports",
+        "amex_statement_import_items",
+        "amex_statement_cut_links",
+    }
+)
+
+OWNER_MIGRATION_TABLES = (
+    AMEX_OWNER_MIGRATION_TABLES
+    | CTT_OWNER_MIGRATION_TABLES
+    | AMEX_STATEMENT_OWNER_MIGRATION_TABLES
+)
 
 
 def runtime_managed_tables(metadata: MetaData) -> list[Table]:

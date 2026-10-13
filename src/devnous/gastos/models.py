@@ -326,6 +326,127 @@ class AmexAccountingCut(Base):
     )
 
 
+class AmexStatementImport(Base):
+    """Immutable receipt of a declared statement, never financial recognition."""
+
+    __tablename__ = "amex_statement_imports"
+    __table_args__ = (
+        UniqueConstraint(
+            "file_sha256",
+            "card_account_id",
+            "employee_id",
+            "period_start",
+            "period_end",
+            "parser_version",
+            name="uq_amex_statement_identity",
+        ),
+        CheckConstraint("period_end >= period_start", name="ck_amex_statement_period"),
+        CheckConstraint(
+            "imported_count > 0 AND skipped_count >= 0 "
+            "AND total_rows = imported_count + skipped_count",
+            name="ck_amex_statement_counts",
+        ),
+        CheckConstraint("length(file_sha256) = 64", name="ck_amex_statement_hash"),
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    card_account_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_card_accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    employee_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    period_start = Column(Date, nullable=False)
+    period_end = Column(Date, nullable=False)
+    file_sha256 = Column(String(64), nullable=False)
+    filename = Column(String(200), nullable=False)
+    parser_version = Column(String(50), nullable=False)
+    actor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    total_rows = Column(Integer, nullable=False)
+    imported_count = Column(Integer, nullable=False)
+    skipped_count = Column(Integer, nullable=False)
+    summary_json = Column(JSONB, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class AmexStatementImportItem(Base):
+    """Original row receipt with an explicit imported expense or omission."""
+
+    __tablename__ = "amex_statement_import_items"
+    __table_args__ = (
+        UniqueConstraint("import_id", "row_number", name="uq_amex_statement_row"),
+        UniqueConstraint("imported_expense_id", name="uq_amex_statement_expense"),
+        CheckConstraint("row_number >= 2", name="ck_amex_statement_row_number"),
+        CheckConstraint(
+            "(status = 'imported' AND imported_expense_id IS NOT NULL "
+            "AND reason_code IS NULL) OR (status = 'skipped' "
+            "AND imported_expense_id IS NULL AND reason_code IS NOT NULL)",
+            name="ck_amex_statement_item_status",
+        ),
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    import_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_statement_imports.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    row_number = Column(Integer, nullable=False)
+    imported_expense_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("expense_reports.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    status = Column(String(20), nullable=False)
+    reason_code = Column(String(50), nullable=True)
+    normalized_json = Column(JSONB, nullable=False)
+
+
+class AmexStatementCutLink(Base):
+    """Insert-only declaration of navigation to a real frozen accounting cut."""
+
+    __tablename__ = "amex_statement_cut_links"
+    __table_args__ = (
+        UniqueConstraint("import_id", "cut_id", name="uq_amex_statement_cut"),
+        CheckConstraint(
+            "length(request_payload_hash) = 64", name="ck_amex_statement_link_hash"
+        ),
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    import_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_statement_imports.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    cut_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_accounting_cuts.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    actor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    request_payload_hash = Column(String(64), nullable=False)
+    request_payload_json = Column(JSONB, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
 class ExpenseReport(Base):
     """
     Expense reports from users (with or without receipts).

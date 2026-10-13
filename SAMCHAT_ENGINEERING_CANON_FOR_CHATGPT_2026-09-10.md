@@ -249,6 +249,11 @@ Reconocimiento conserva un origen exacto statement/report con una sola ancla vá
 
 Asociación bancaria posterior usa header real statement/report_bridge, ancla importada única y asociaciones INSERT-only a consumos report-first plenamente reconocidos. Selección explícita valida economía exacta y conjunto completo; no matching heurístico ni fusionar identidades o cortes. Header bridge nunca postea, incluso sin hijos. Ownership y exclusión legacy/bridge se protegen mediante constraints y guard triggers parent/child, sin mutación/borrado de anclas económicas ni asociaciones. Importación no origina segundo gasto/póliza. Schema nuevo sólo se provisiona con migración autorizada; helpers/runtime no ejecutan DDL.
 
+
+Amendment date: 2026-10-13. Explicit human approval of the technical specification and exact canon text. Reason: a clear statement-to-policy workflow and separation of report attention from AMEX manual queues. Evidence: `docs/roadmap/amex-statement-workflow-20261013-story.md` and `docs/roadmap/amex-statement-workflow-20261013-spec.md`. Approved implementation scope; merge, owner-run migration, deployment and authenticated Finance UAT require their own receipts.
+
+El recorrido AMEX conserva imports e items con archivo exacto, tarjeta, titular, período y actor declarados; replay de importación no crea cargos adicionales. Tablas y guards se provisionan mediante migración owner-run, excluida de startup. Una política de presentación por UUID de beneficiario explícito se comparte entre descubrimiento, selectores y contadores, sin alterar owners financieros ni cubrir conflictos de identidad con fallbacks al capturista. Vínculos de navegación usan FK a cortes reales y guardan confirmación/payload; no sustituyen AmexReportBankAssociation. Confirmación y link por INFORME son transaccionales, con decisiones y source/version actuales; exportación usa snapshots completos sin cambios de granularidad. Cargos sin fuente aprobada permanecen bloqueados para generación independiente. Datos financieros/históricos y límites de permisos se preservan.
+
 #### 8.2.2 Monthly DIOT read contract
 
 Amendment date: 2026-10-09. This canon diff received explicit human approval.
