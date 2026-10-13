@@ -543,3 +543,131 @@ def test_inactive_catalog_identity_blocks_preview_without_reactivation():
     assert p["counts"] == {"conflict": 1}
     assert p["operations"][0]["inactive_concept_ids"] == ["inactive"]
     assert any("inactiva" in b for b in p["blockers"])
+
+
+def catalog_pair(data):
+    scope = {"applicable_phase_labels": ["Estatal"]}
+    return [
+        {
+            "id": "active",
+            "tournament_id": "t",
+            "active": True,
+            "concept_key": "canonical",
+            "concept_name": "Pelotas",
+            "cuenta_contable_id": "expense-account",
+            "pasivo_cuenta_contable_id": "liability",
+            "metadata": scope,
+        },
+        {
+            "id": "retired",
+            "tournament_id": "t",
+            "active": False,
+            "concept_key": data["rows"][0]["concept_key"],
+            "concept_name": "Pelotas",
+            "cuenta_contable_id": "expense-account",
+            "pasivo_cuenta_contable_id": "liability",
+            "metadata": scope,
+        },
+    ]
+
+
+def test_reuses_unique_active_account_match_preserving_retired_concept():
+    from copy import deepcopy
+
+    data = parsed([["Estatal", "Pelotas", 10]])
+    concepts = catalog_pair(data)
+    before = deepcopy(concepts)
+    p = plan(data, concepts=concepts)
+    assert not p["blockers"]
+    assert p["operations"][0]["concept_id"] == "active"
+    assert p["operations"][0]["retired_matching_concept_ids"] == ["retired"]
+    assert concepts == before
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("cuenta_contable_id", "other"),
+        ("pasivo_cuenta_contable_id", "other"),
+        ("cuenta_contable_id", None),
+        ("concept_name", "Otro"),
+        ("budget_direction", "income"),
+    ],
+)
+def test_incompatible_retired_identity_still_blocks(field, value):
+    data = parsed([["Estatal", "Pelotas", 10]])
+    concepts = catalog_pair(data)
+    concepts[1][field] = value
+    assert plan(data, concepts=concepts)["counts"] == {"conflict": 1}
+
+
+def test_multiple_active_matches_with_retired_identity_still_block():
+    data = parsed([["Estatal", "Pelotas", 10]])
+    concepts = catalog_pair(data)
+    concepts.append({**concepts[0], "id": "second"})
+    assert plan(data, concepts=concepts)["counts"] == {"conflict": 1}
+
+
+def test_reuse_updates_existing_line_and_records_source_before_state():
+    data = parsed([["Estatal", "Pelotas", 10]])
+    concepts = catalog_pair(data)
+    line = {
+        "id": "line",
+        "tournament_id": "t",
+        "budget_version_id": "v",
+        "budget_concept_id": "active",
+        "budget_amount": 7,
+        "phase": "Estatal",
+        "metadata": {},
+    }
+    p = plan(data, concepts=concepts, lines=[line], confirmed_updates=True)
+    assert not p["blockers"]
+    op = p["operations"][0]
+    assert op["action"] == "update" and op["line_id"] == "line"
+    assert op["before_amount"] == "7.00"
+
+
+def test_retired_exact_key_does_not_override_conflicting_scope_evidence():
+    data = parsed([["Estatal", "Pelotas", 10]])
+    concepts = catalog_pair(data)
+    concepts[1]["metadata"] = {"applicable_phase_labels": ["Nacional"]}
+    assert plan(data, concepts=concepts)["counts"] == {"conflict": 1}
+
+
+def test_retired_exact_key_without_scope_evidence_stays_blocked():
+    data = parsed([["Estatal", "Pelotas", 10]])
+    concepts = catalog_pair(data)
+    concepts[1]["metadata"] = {}
+    assert plan(data, concepts=concepts)["counts"] == {"conflict": 1}
+
+
+def test_missing_liability_accounts_are_not_evidence_of_compatibility():
+    data = parsed([["Estatal", "Pelotas", 10]])
+    concepts = catalog_pair(data)
+    for concept in concepts:
+        concept["pasivo_cuenta_contable_id"] = None
+    assert plan(data, concepts=concepts)["counts"] == {"conflict": 1}
+
+
+@pytest.mark.parametrize("active_line", [False, True])
+def test_retired_line_blocks_reuse_without_migrating_or_doubling(active_line):
+    from copy import deepcopy
+
+    data = parsed([["Estatal", "Pelotas", 10]])
+    concepts = catalog_pair(data)
+    retired = {
+        "id": "old-line",
+        "tournament_id": "t",
+        "budget_version_id": "v",
+        "budget_concept_id": "retired",
+        "budget_amount": 7,
+        "phase": "Estatal",
+        "metadata": {},
+    }
+    lines = [retired]
+    if active_line:
+        lines.append({**retired, "id": "active-line", "budget_concept_id": "active"})
+    before = deepcopy(lines)
+    p = plan(data, concepts=concepts, lines=lines, confirmed_updates=True)
+    assert p["counts"] == {"conflict": 1}
+    assert lines == before

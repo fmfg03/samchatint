@@ -232,7 +232,42 @@ def build_upload_plan(
             "before_upload_source": None,
             "had_upload_source": False,
         }
-        if inactive_matches:
+        reusable_inactive = bool(
+            inactive_matches
+            and len(matches) == 1
+            and not any(by_concept[str(c["id"])] for c in inactive_matches)
+            and matches[0].get("cuenta_contable_id")
+            and matches[0].get("pasivo_cuenta_contable_id")
+            and all(
+                any(
+                    service._normalize_budget_key(label)
+                    == service._normalize_budget_key(row["phase"])
+                    for label in (
+                        (c.get("metadata") or {}).get("applicable_phase_labels", [])
+                        + (c.get("metadata") or {}).get(
+                            "applicable_subproject_labels", []
+                        )
+                    )
+                )
+                for c in [matches[0], *inactive_matches]
+            )
+            and all(
+                c.get("budget_direction", "expense") == "expense"
+                and service._normalize_budget_key(c.get("concept_name") or "")
+                == service._normalize_budget_key(matches[0].get("concept_name") or "")
+                == service._normalize_budget_key(row["concept_name"])
+                and str(c.get("cuenta_contable_id") or "")
+                == str(matches[0]["cuenta_contable_id"])
+                and str(c.get("pasivo_cuenta_contable_id") or "")
+                == str(matches[0].get("pasivo_cuenta_contable_id") or "")
+                for c in inactive_matches
+            )
+        )
+        if reusable_inactive:
+            op["retired_matching_concept_ids"] = [
+                str(c["id"]) for c in inactive_matches
+            ]
+        if inactive_matches and not reusable_inactive:
             op["action"] = "conflict"
             op["inactive_concept_ids"] = [str(c["id"]) for c in inactive_matches]
             blockers.append(
