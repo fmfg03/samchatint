@@ -2,7 +2,7 @@
 
 Fecha: 2026-10-13; cierre de auditoría 2026-10-14. Worktree aislado `amex-statement-workflow-20261013`, base `4b971ab3ff4576216a7009aaf883d1351b7c7eb2`.
 
-Estado: implementación y aceptación automatizada verificadas; revisión funcional independiente sin defectos pendientes. Calidad global parcial por deuda heredada. Audit externo de dependencias aprobado tras autorización de continuación; publicación Git, merge, migración, despliegue y UAT productiva pendientes. No se reutilizan aprobaciones de PR480 para estos efectos.
+Estado: implementación y aceptación automatizada verificadas; revisión funcional independiente sin defectos pendientes. Calidad global parcial por deuda heredada. Audit externo de dependencias aprobado tras autorización de continuación; publicación Git inicial en PR #482 completada; correcciones de review pendientes de push/CI/merge al redactar este cierre. Migración, despliegue y UAT productiva pendientes. No se reutilizan aprobaciones de PR480 para estos efectos.
 
 ## Trabajo completado
 
@@ -19,15 +19,15 @@ Estado: implementación y aceptación automatizada verificadas; revisión funcio
 | Verificación | Resultado |
 |---|---|
 | Regresión unitaria general, excluyendo plugin/readonly separados | 5.123 PASS; 8 subtests PASS |
-| AMEX + navegación/reporting, fuentes finales | 537 PASS |
+| AMEX + navegación/reporting, fuentes finales tras review | 552 PASS |
 | Todas las integraciones AMEX, PostgreSQL 16 desechable | 228 PASS |
-| Nueva migración y workflow PG, repetición final | 26 PASS |
+| Nueva migración y workflow PG, repetición final tras review | 29 PASS |
 | Integración restante del repositorio | 89 PASS, 5 SKIP |
 | Plugin offline/inventario, incluida repetición final | 135 PASS |
-| Playwright desktop/mobile, recorrido real de formularios sintético | 2 PASS |
+| Playwright desktop/mobile, recorrido y paginación reales sintéticos | 4 PASS |
 | Aceptación independiente | 310 PASS en grupos separados; criterios 1–7 cubiertos |
 | Validación funcional independiente | 72 PASS; sin hallazgos funcionales pendientes |
-| Líneas modificadas contra origin/main | 892/963 cubiertas, 92,63%; gate ≥85% aprobado |
+| Líneas modificadas contra origin/main | 892/960 cubiertas, 92,92%; gate ≥85% aprobado |
 | Seis archivos nuevos, flake8 estricto 88 y mypy con imports silent | Sin errores |
 | Legacy frente a base, errores nuevos/líneas modificadas | Cero; deuda total flake8 4.148→4.134, mypy 1.048→1.041 |
 | Regresiones aceptadas, superficie de registro, packaging | Aprobados |
@@ -80,7 +80,7 @@ PYTHONPATH=/tmp/samchat-amex-approved-security-tools python -m pip_audit --requi
 
 Sin desviaciones funcionales de la historia/especificación aprobadas. Correcciones de navegación, motivos, totales y tipos están dentro de alcance. Guard UPDATE/DELETE de cut-link se verifica mediante catálogo/cuerpo de función compartida; aún no tiene negativo dedicado sobre un cut-link creado. El renderer usa HTML canónico: futuros cambios deben mantener regresiones de navegación.
 
-Seguir [preparación de release](amex-statement-workflow-20261013-release.md). Producción, los nueve informes reales, los 14 históricos protegidos y aceptación en COI requieren autorización/recibos/UAT separados. No se ha migrado, desplegado ni publicado esta entrega.
+Seguir [preparación de release](amex-statement-workflow-20261013-release.md). Producción, los nueve informes reales, los 14 históricos protegidos y aceptación en COI requieren autorización/recibos/UAT separados. PR #482 publicado; merge pendiente de las correcciones y sus checks. No se ha migrado ni desplegado esta entrega.
 
 ## Archivos cambiados
 
@@ -117,3 +117,17 @@ Seguir [preparación de release](amex-statement-workflow-20261013-release.md). P
 - `tests/unit/gastos/test_documentos_todos_reporting.py`
 - `docs/roadmap/amex-statement-workflow-20261013-release.md`
 - `docs/roadmap/amex-statement-workflow-20261013-build-report.md`
+
+## Cierre de observaciones de PR #482 — 2026-10-14
+
+La primera cabeza actualizada con main (`274166dcc`) pasó los checks remotos, incluido Required PR gate. Antes del merge se recibieron tres observaciones P2 y se verificaron directamente; las correcciones permanecen dentro de la historia/especificación y autoridad de publicación aprobadas:
+
+1. Tablero sin límite: el listado ahora consulta 20 importaciones por página (límite interno máximo 50), orden estable por fecha/id y lookahead de una fila. Solo construye detalles de la página y ofrece navegación al historial, incluso desde una página vacía. No se ocultan cargas antiguas.
+2. Cargo cancelado: estado explícito `cancelado` y pendiente operativo; importe original y asociación histórica conservados. PostgreSQL prueba los casos sin vínculo y con vínculo legado legítimo. La protección existente de `report_bridge` impide cancelar su fuente económica y se conserva: test de SQLSTATE23514 y rollback, sin bypass ni modificación del owner.
+3. Snapshot inválido: el servicio público normaliza `ValueError` anticipado a `WorkflowConflict`; el endpoint devuelve HTTP409 sin archivo parcial ni detalle interno. El test alcanza dos snapshots y comprueba que el generador no corre si el segundo falla; ASGI usa el convertidor real sobre evidencia inválida.
+
+Recibos finales: 552 regresiones AMEX/reporting; 29 PG de importación/workflow; 4 Playwright; 135 plugin offline. Backend propio 61 PASS (48 unidades y 13 PG); frontend propio 39 PASS; grupos solapados. Validación independiente focalizada: 62 PASS. Lint/tipos estrictos de los dos módulos corregidos aprobados. Inventario actualizado; diff check aprobado. Cobertura modificada 892/960=92,92%.
+
+La primera recombinación posterior al review omitió las mediciones de migración/importación y falló con 81%. Se ejecutaron las 29 pruebas PG y se recombinó el conjunto correcto; el gate ≥85% aprobó. El fallo era del conjunto de evidencia, no una corrección de lógica omitida. Una prueba presupuestal aislada falló en colección por orden de import circular de código ajeno; la ejecución con orden de carga de la suite pasó 82 tests, sin ampliar alcance para editar presupuestos.
+
+Canon unchanged para estas correcciones: el recorrido, ownership, granularidad contable, schema, política de atención y límites de autoridad siguen siendo los de las enmiendas exactas aprobadas. CI se repetirá sobre el commit corregido antes de resolver el merge; esta nota no acredita su finalización ni despliegue.

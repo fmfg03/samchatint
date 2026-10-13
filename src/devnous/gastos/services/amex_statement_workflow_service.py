@@ -96,21 +96,40 @@ async def _sources(session: Any, values: Any) -> list[Any]:
     return docs
 
 
-async def _list_statement_workflows(session: Any, *, actor: Any) -> list[dict]:
+async def _list_statement_workflows(
+    session: Any,
+    *,
+    actor: Any,
+    page: int = 1,
+    page_size: int = 20,
+) -> dict[str, Any]:
     await _authorize(session, actor)
+    if (
+        isinstance(page, bool)
+        or not isinstance(page, int)
+        or page < 1
+        or isinstance(page_size, bool)
+        or not isinstance(page_size, int)
+        or page_size < 1
+    ):
+        raise WorkflowConflict("Selecciona una página válida.")
+    page_size = min(page_size, 50)
     imports = (
         (
             await session.execute(
-                select(AmexStatementImport).order_by(
-                    AmexStatementImport.created_at.desc()
+                select(AmexStatementImport)
+                .order_by(
+                    AmexStatementImport.created_at.desc(), AmexStatementImport.id.desc()
                 )
+                .limit(page_size + 1)
+                .offset((page - 1) * page_size)
             )
         )
         .scalars()
         .all()
     )
     result = []
-    for row in imports:
+    for row in imports[:page_size]:
         view = await _statement_workflow_view(session, row.id, actor=actor)
         result.append(
             {
@@ -137,7 +156,13 @@ async def _list_statement_workflows(session: Any, *, actor: Any) -> list[dict]:
                 },
             }
         )
-    return result
+    return {
+        "rows": result,
+        "page": page,
+        "page_size": page_size,
+        "has_next": len(imports) > page_size,
+        "has_previous": page > 1,
+    }
 
 
 async def _statement_workflow_view(
@@ -289,6 +314,14 @@ async def _statement_workflow_view(
     for item in items:
         if item.status != "imported":
             state, reason = "omitido", "Fila omitida: requiere atención de importación."
+        elif (
+            item.imported_expense_id in expenses
+            and expenses[item.imported_expense_id].estado_gasto == "cancelado"
+        ):
+            state, reason = (
+                "cancelado",
+                "Cargo importado cancelado; conserva el importe original del estado.",
+            )
         elif item.imported_expense_id in bank_linked:
             state, reason = "vinculado", "Asociación bancaria registrada."
         else:
@@ -301,6 +334,7 @@ async def _statement_workflow_view(
             )
         item_states[item.id] = {
             "status": state,
+            "bank_associated": item.imported_expense_id in bank_linked,
             "reason": reason,
             "action_url": "/admin/gastos/amex/conciliacion",
         }
@@ -413,6 +447,10 @@ async def _statement_workflow_view(
     for item in items:
         item_state = item_states[item.id]
         item_state["blockers"] = []
+        if item_state["status"] == "cancelado":
+            item_state["blockers"].append(
+                "Cargo importado cancelado: requiere revisión"
+            )
         item_state["source_ids"] = sorted(
             str(value)
             for value in source_ids_by_bank.get(item.imported_expense_id, set())
@@ -862,7 +900,7 @@ async def _export_statement(
     return generators[export_format](items)
 
 
-async def list_statement_workflows(session: Any, **kwargs: Any) -> list[dict]:
+async def list_statement_workflows(session: Any, **kwargs: Any) -> dict[str, Any]:
     """Read-only dashboard loading."""
     with session.no_autoflush:
         return await _list_statement_workflows(session, **kwargs)
@@ -877,4 +915,11 @@ async def statement_workflow_view(session: Any, import_id: UUID, **kwargs: Any) 
 async def export_statement(session: Any, **kwargs: Any) -> bytes:
     """Frozen export never flushes pending ORM mutations."""
     with session.no_autoflush:
-        return await _export_statement(session, **kwargs)
+        try:
+            return await _export_statement(session, **kwargs)
+        except WorkflowConflict:
+            raise
+        except ValueError as exc:
+            raise WorkflowConflict(
+                "No se puede exportar: un corte contiene evidencia inválida."
+            ) from exc

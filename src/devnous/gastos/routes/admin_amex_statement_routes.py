@@ -6,7 +6,16 @@ from html import escape
 from urllib.parse import urlencode
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -100,6 +109,9 @@ def _row_reason(code: str | None) -> str:
         "Falta evidencia fiscal o tratamiento en el informe": (
             "Revisa la factura y el tratamiento del informe."
         ),
+        "Cargo importado cancelado: requiere revisión": (
+            "Cargo cancelado: requiere revisión."
+        ),
         "missing_date": "Falta la fecha del cargo.",
         "invalid_date": "La fecha no tiene un formato válido.",
         "missing_description": "Falta la descripción del cargo.",
@@ -181,13 +193,16 @@ async def _view(session, import_id, **kwargs):
 
 @router.get(BASE, response_class=Response)
 async def statement_dashboard(
+    page: int = Query(1, ge=1),
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = require_admin_finanzas(),
 ):
     _require_finance_actor(current_empleado)
-    summaries = await list_statement_workflows(session, actor=current_empleado)
+    listing = await list_statement_workflows(
+        session, actor=current_empleado, page=page, page_size=20
+    )
     rows = []
-    for summary in summaries:
+    for summary in listing["rows"]:
         statement = summary["import"]
         skipped = summary["skipped_count"]
         card_label = escape(
@@ -206,6 +221,20 @@ async def statement_dashboard(
             f'<td>{_progress(summary)}{partial}</td><td><a class="button"'
             f' href="{BASE}/{statement.id}/pendientes">Continuar</a></td></tr>'
         )
+    paging = (
+        f'<nav aria-label="Páginas de estados"><span>Página {listing["page"]}</span>'
+    )
+    if listing["has_previous"]:
+        paging += (
+            f'<a class="button" href="{BASE}?page={listing["page"] - 1}">'
+            "Anterior</a>"
+        )
+    if listing["has_next"]:
+        paging += (
+            f'<a class="button" href="{BASE}?page={listing["page"] + 1}">'
+            "Siguiente</a>"
+        )
+    paging += "</nav>"
     return _html(
         "Estados de cuenta AMEX",
         f'<p><a class="button" href="{BASE}/nuevo">Cargar estado de cuenta</a></p><div'
@@ -213,8 +242,10 @@ async def statement_dashboard(
         " declarado</th><th>Cargos</th><th>Pendientes"
         " operativos</th><th>Banco</th><th>Avance"
         " contable</th><th>Acción</th></tr></thead><tbody>"
-        + ("".join(rows) or '<tr><td colspan="7">Sin estados cargados.</td></tr>')
-        + '</tbody></table></div><p><a href="/admin/gastos/amex/conciliacion">Cargos'
+        + ("".join(rows) or '<tr><td colspan="7">Sin estados en esta página.</td></tr>')
+        + "</tbody></table></div>"
+        + paging
+        + '<p><a href="/admin/gastos/amex/conciliacion">Cargos'
         " anteriores</a> · Las cargas anteriores conservan su flujo; no se"
         " reconstruye su archivo o período.</p>",
     )
@@ -361,6 +392,10 @@ async def statement_pending(
                 str(state.get("reason", "Estado bancario pendiente de lectura"))
             )
         )
+        if state.get("status") == "cancelado":
+            bank_state = "Cargo cancelado; conserva el importe original del estado."
+            if state.get("bank_associated"):
+                bank_state += " Asociación bancaria anterior conservada."
         action = (
             f'<a href="/gastos/{expense_id}?{return_query}">Revisar'
             " evidencia del cargo</a>"

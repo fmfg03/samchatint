@@ -87,23 +87,29 @@ def workspace(monkeypatch):
         routes,
         "list_statement_workflows",
         AsyncMock(
-            return_value=[
-                {
-                    "import": statement,
-                    "items_count": 1,
-                    "imported_count": 1,
-                    "skipped_count": 0,
-                    "linked_cut_count": 0,
-                    "imported_totals": {"MXN": Decimal("229.98")},
-                    "operational_pending_count": 1,
-                    "bank_pending_count": 1,
-                    "financial_progress": {
+            return_value={
+                "page": 1,
+                "page_size": 20,
+                "has_next": False,
+                "has_previous": False,
+                "rows": [
+                    {
+                        "import": statement,
+                        "items_count": 1,
+                        "imported_count": 1,
+                        "skipped_count": 0,
                         "linked_cut_count": 0,
-                        "selected_source_count": None,
-                        "selected_generated_count": None,
-                    },
-                }
-            ]
+                        "imported_totals": {"MXN": Decimal("229.98")},
+                        "operational_pending_count": 1,
+                        "bank_pending_count": 1,
+                        "financial_progress": {
+                            "linked_cut_count": 0,
+                            "selected_source_count": None,
+                            "selected_generated_count": None,
+                        },
+                    }
+                ],
+            },
         ),
     )
     monkeypatch.setattr(
@@ -554,4 +560,92 @@ async def test_informe_selector_explains_visible_identity_gaps(
     assert workspace.informe.numero_referencia in option.text_content()
     assert label in option.text_content()
     assert reason not in response.text
+    workspace.session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dashboard_pages_retain_history_navigation(workspace):
+    listing = routes.list_statement_workflows.return_value
+    listing.update(page=2, has_previous=True, has_next=True)
+    response = await request(workspace, "GET", f"{routes.BASE}?page=2")
+    assert response.status_code == 200
+    assert f'href="{routes.BASE}?page=1"' in response.text
+    assert f'href="{routes.BASE}?page=3"' in response.text
+    assert "Página 2" in response.text
+    assert routes.list_statement_workflows.await_args.kwargs["page"] == 2
+    assert routes.list_statement_workflows.await_args.kwargs["page_size"] == 20
+    listing.update(page=3, rows=[], has_next=False)
+    response = await request(workspace, "GET", f"{routes.BASE}?page=3")
+    assert f'href="{routes.BASE}?page=2"' in response.text
+    assert "Siguiente" not in response.text
+    assert "Sin estados en esta página." in response.text
+    workspace.session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("page", ["0", "-1", "bad"])
+async def test_dashboard_rejects_invalid_page(workspace, page):
+    response = await request(workspace, "GET", f"{routes.BASE}?page={page}")
+    assert response.status_code == 422
+    routes.list_statement_workflows.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_canceled_bank_row_keeps_original_amount_and_historical_link(workspace):
+    workspace.view["item_states"] = {
+        workspace.item.id: {
+            "status": "cancelado",
+            "bank_associated": True,
+            "reason": "vinculado",  # canceled display outranks stale success text
+            "blockers": ["Cargo importado cancelado: requiere revisión"],
+        }
+    }
+    workspace.view["expenses"] = {
+        workspace.item.imported_expense_id: NS(
+            estado_gasto="cancelado", gasto_cantidad=0
+        )
+    }
+    response = await request(
+        workspace, "GET", f"{routes.BASE}/{workspace.statement.id}/pendientes"
+    )
+    assert "Cargo cancelado; conserva el importe original" in response.text
+    assert "Cargo cancelado: requiere revisión." in response.text
+    assert "Asociación bancaria anterior conservada." in response.text
+    assert "vinculado" not in response.text
+    assert "$229.98 MXN" in response.text
+    assert "229.98</td>" in response.text
+    workspace.session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_real_invalid_frozen_snapshot_returns_safe_409(workspace, monkeypatch):
+    from contextlib import nullcontext
+
+    from devnous.gastos.services import amex_statement_workflow_service as service
+    from tests.unit.gastos.test_amex_statement_workflow_service import Result
+
+    cut = NS(
+        id=uuid4(),
+        informe_id=workspace.informe.id,
+        snapshot_json={"partidas": [], "lines": []},
+    )
+    payload, digest = service._payload(
+        workspace.statement.id, cut.id, [workspace.informe.id], "", "confirm"
+    )
+    link = NS(cut_id=cut.id, request_payload_json=payload, request_payload_hash=digest)
+    workspace.session.no_autoflush = nullcontext()
+    workspace.session.get.return_value = workspace.actor
+    workspace.session.execute.side_effect = [
+        Result([workspace.statement]),
+        Result([link]),
+        Result([cut]),
+    ]
+    monkeypatch.setattr(routes, "export_statement", service.export_statement)
+    response = await request(
+        workspace, "GET", f"{routes.BASE}/{workspace.statement.id}/exportar.csv"
+    )
+    assert response.status_code == 409
+    assert "Content-Disposition" not in response.headers
+    assert "conjunto completo" in response.text
+    assert str(cut.id) not in response.text
     workspace.session.commit.assert_not_awaited()

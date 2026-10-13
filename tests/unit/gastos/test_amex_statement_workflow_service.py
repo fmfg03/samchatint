@@ -190,13 +190,14 @@ async def test_export_invalid_second_cut_fails_without_partial_file():
         svc, "_statement", AsyncMock()
     ), patch.object(
         svc, "cut_expense_cfdis", side_effect=[[NS()], ValueError("invalid")]
-    ), patch.object(
+    ) as snapshot, patch.object(
         svc, "generate_coi_poliza_csv"
     ) as generator:
-        with pytest.raises(ValueError):
+        with pytest.raises(svc.WorkflowConflict, match="evidencia inválida"):
             await svc.export_statement(
-                session, import_id=uuid4(), actor=NS(id=uuid4()), export_format="csv"
+                session, import_id=statement, actor=NS(id=uuid4()), export_format="csv"
             )
+        assert snapshot.call_count == 2
         generator.assert_not_called()
 
 
@@ -256,3 +257,75 @@ async def test_export_rejects_a_corrupt_navigation_receipt_before_generator():
                 session, import_id=statement, actor=NS(id=uuid4()), export_format="csv"
             )
         generator.assert_not_called()
+
+
+def summary_view():
+    return dict(
+        card=NS(),
+        links=[],
+        imported_totals={},
+        totals_unknown_count=0,
+        imported_total=None,
+        imported_currency=None,
+        omitted_count=0,
+        operational_pending_count=0,
+        bank_pending_count=0,
+        bank_linked_count=0,
+        financial_progress={},
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "page,page_size,limit,offset", [(1, 20, 21, 0), (2, 100, 51, 50)]
+)
+async def test_dashboard_queries_only_bounded_page_and_omits_lookahead_detail(
+    page, page_size, limit, offset
+):
+    rows = [
+        NS(id=uuid4(), total_rows=1, imported_count=1, skipped_count=0)
+        for _ in range(limit)
+    ]
+    session = NS(
+        no_autoflush=nullcontext(), execute=AsyncMock(return_value=Result(rows))
+    )
+    with patch.object(svc, "_authorize", AsyncMock()), patch.object(
+        svc, "_statement_workflow_view", AsyncMock(return_value=summary_view())
+    ) as detail:
+        result = await svc.list_statement_workflows(
+            session, actor=NS(id=uuid4()), page=page, page_size=page_size
+        )
+    query = session.execute.await_args.args[0]
+    assert query._limit_clause.value == limit and query._offset_clause.value == offset
+    assert str(query).count(" DESC") == 2
+    assert detail.await_count == limit - 1
+    assert len(result["rows"]) == limit - 1 and result["has_next"]
+    assert result["has_previous"] is (page > 1)
+    assert result["page"] == page and result["page_size"] == limit - 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "page,page_size", [(0, 20), (-1, 20), (True, 20), (1, 0), (1, False), (1, "20")]
+)
+async def test_dashboard_invalid_pagination_never_reads_history(page, page_size):
+    session = NS(no_autoflush=nullcontext(), execute=AsyncMock())
+    with patch.object(svc, "_authorize", AsyncMock()):
+        with pytest.raises(svc.WorkflowConflict):
+            await svc.list_statement_workflows(
+                session, actor=NS(id=uuid4()), page=page, page_size=page_size
+            )
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dashboard_empty_page_is_explicit_without_false_next_link():
+    session = NS(no_autoflush=nullcontext(), execute=AsyncMock(return_value=Result()))
+    with patch.object(svc, "_authorize", AsyncMock()), patch.object(
+        svc, "_statement_workflow_view", AsyncMock()
+    ) as detail:
+        result = await svc.list_statement_workflows(
+            session, actor=NS(id=uuid4()), page=2
+        )
+        assert not result["rows"] and not result["has_next"] and result["has_previous"]
+        detail.assert_not_awaited()

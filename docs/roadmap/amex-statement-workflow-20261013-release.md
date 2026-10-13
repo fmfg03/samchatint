@@ -23,6 +23,9 @@ Restaurar selector de código anterior y verificar servicio/health/guards. Conse
 
 ## UAT Finance posterior
 
+- Navegar páginas del historial de estados y regresar al recorrido conservando la carga seleccionada.
+- Revisar cancelaciones legadas: cargo y monto original visibles, revisión pendiente, asociación histórica preservada. La cancelación de una fuente `report_bridge` permanece impedida por el owner.
+
 - Verificar las nueve cuentas/informes explícitos de Odilón fuera de descubrimiento, selectores y contadores manuales; Bibiana, identidades ausentes/contradictorias y cargos bancarios siguen visibles.
 - Cargar un estado real y comparar todas las monedas/importes/fechas con el archivo; revisar filas omitidas. Replay no agrega cargos.
 - Resolver evidencia y asociación bancaria, volver al estado sin perder contexto; nunca afirmar asociación por un vínculo de navegación.

@@ -106,3 +106,30 @@ def test_actual_forms_three_steps_confirmation_and_download(page, workspace):
             page.get_by_role("link", name="CSV", exact=True).click()
         assert downloading.value.suggested_filename == "amex-polizas.csv"
         assert not errors
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        {"name": "desktop", "width": 1440, "height": 1000},
+        {"name": "mobile", "width": 390, "height": 844},
+    ],
+    indirect=True,
+)
+def test_dashboard_history_pages_are_navigable(page, workspace):
+    first = dict(routes.list_statement_workflows.return_value)
+    first.update(page=1, has_previous=False, has_next=True)
+    second = {**first, "page": 2, "has_previous": True, "has_next": False}
+    routes.list_statement_workflows.side_effect = [first, second]
+    with live_app(workspace.app) as base_url:
+        page.goto(base_url + routes.BASE)
+        assert page.get_by_role("link", name="Anterior", exact=True).count() == 0
+        page.get_by_role("link", name="Siguiente", exact=True).click()
+        page.wait_for_url("**?page=2")
+        assert "Página 2" in page.locator("main").inner_text()
+        assert page.get_by_role("link", name="Anterior", exact=True).is_visible()
+        assert page.get_by_role("link", name="Siguiente", exact=True).count() == 0
+        assert "$229.98 MXN" in page.locator("main").inner_text()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        assert routes.list_statement_workflows.await_args.kwargs["page"] == 2
+        workspace.session.commit.assert_not_awaited()

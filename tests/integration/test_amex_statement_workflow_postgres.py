@@ -132,7 +132,7 @@ async def test_real_cut_and_link_replay_keep_original_ids(pg):
     async with pg.factory() as session:
         actor = await session.get(models.Empleado, pg.actor)
         dashboard = await service.list_statement_workflows(session, actor=actor)
-        assert dashboard[0]["linked_cut_count"] == 1
+        assert dashboard["rows"][0]["linked_cut_count"] == 1
         exported = await service.export_statement(
             session, import_id=statement_id, actor=actor, export_format="csv"
         )
@@ -412,3 +412,94 @@ async def test_missing_original_amount_is_unknown_not_zero(pg):
             "Falta importe original válido en el estado"
             in next(iter(view["item_states"].values()))["blockers"]
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("associated", [False, True])
+async def test_canceled_imported_charge_visible_with_original_total_and_bank_history(
+    pg, associated
+):
+    from decimal import Decimal
+    from devnous.gastos.services import amex_recognition_service as recognition
+
+    data = await setup_report(pg)
+    statement_id = await statement(pg, data)
+    if associated:
+        # The legacy representation owner permits this historic cancellation.
+        # Report-first bridges have a stronger guard, tested separately below.
+        async with pg.factory.begin() as session:
+            bound = await recognition.bind_amex_consumption(
+                session,
+                imported_expense_id=data.imports[0].id,
+                report_expense_ids=[data.reports[0].id],
+                actor_id=pg.actor,
+            )
+            assert bound.status in {
+                "created",
+                "exists",
+                "linked",
+                "bound",
+            }, bound.reason
+    async with pg.factory.begin() as session:
+        bank = await session.get(models.ExpenseReport, data.imports[0].id)
+        bank.estado_gasto = "cancelado"
+    async with pg.factory() as session:
+        actor = await session.get(models.Empleado, pg.actor)
+        view = await service.statement_workflow_view(session, statement_id, actor=actor)
+        item_state = next(iter(view["item_states"].values()))
+        assert item_state["status"] == "cancelado"
+        assert item_state["bank_associated"] is associated
+        assert "cancelado" in item_state["reason"]
+        assert "Cargo importado cancelado: requiere revisión" in item_state["blockers"]
+        assert view["operational_pending_count"] == 1
+        assert view["imported_total"] == Decimal("116.0") and len(view["items"]) == 1
+        assert view["bank_linked_count"] == int(associated)
+        assert view["bank_pending_count"] == int(not associated)
+        assert not view["links"]
+    assert await _journal_count(pg) == 0
+
+
+@pytest.mark.asyncio
+async def test_report_first_bridge_cancellation_guard_is_preserved(pg):
+    from sqlalchemy.exc import IntegrityError
+    from devnous.gastos.services import amex_recognition_service as recognition
+
+    data = await setup_report(pg)
+    statement_id = await statement(pg, data)
+    preview = await prepare(pg, data)
+    async with pg.factory.begin() as session:
+        actor = await session.get(models.Empleado, pg.actor)
+        result = await service.confirm_statement_informe(
+            session,
+            import_id=statement_id,
+            actor=actor,
+            selected_informe_ids=[data.informe.id],
+            **payload(data, preview),
+        )
+        assert result.status == "created", result.reason
+        consumption = (
+            await session.scalars(
+                select(models.AmexRecognitionConsumption).where(
+                    models.AmexRecognitionConsumption.source_report_expense_id
+                    == data.reports[0].id
+                )
+            )
+        ).one()
+        bound = await recognition.bind_amex_report_bank_consumptions(
+            session,
+            imported_expense_id=data.imports[0].id,
+            report_consumption_ids=[consumption.id],
+            actor_id=pg.actor,
+        )
+        assert bound.status == "bound", bound.reason
+    with pytest.raises(IntegrityError, match="Bridged economic source cannot change"):
+        async with pg.factory.begin() as session:
+            bank = await session.get(models.ExpenseReport, data.imports[0].id)
+            bank.estado_gasto = "cancelado"
+    async with pg.factory() as session:
+        actor = await session.get(models.Empleado, pg.actor)
+        view = await service.statement_workflow_view(session, statement_id, actor=actor)
+        assert view["bank_linked_count"] == 1 and view["operational_pending_count"] == 0
+        assert next(iter(view["item_states"].values()))["status"] == "vinculado"
+        assert len(view["links"]) == 1
+    assert await _journal_count(pg) == 1
