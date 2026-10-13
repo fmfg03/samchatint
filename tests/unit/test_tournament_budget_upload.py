@@ -560,6 +560,7 @@ def catalog_pair(data):
         },
         {
             "id": "retired",
+            "operational_reference_count": 0,
             "tournament_id": "t",
             "active": False,
             "concept_key": data["rows"][0]["concept_key"],
@@ -671,3 +672,128 @@ def test_retired_line_blocks_reuse_without_migrating_or_doubling(active_line):
     p = plan(data, concepts=concepts, lines=lines, confirmed_updates=True)
     assert p["counts"] == {"conflict": 1}
     assert lines == before
+
+
+def test_retired_income_line_also_blocks_reuse():
+    data = parsed([["Estatal", "Pelotas", 10]])
+    line = {
+        "id": "legacy-income",
+        "tournament_id": "t",
+        "budget_version_id": "v",
+        "budget_concept_id": "retired",
+        "budget_amount": 9,
+        "line_direction": "income",
+        "phase": "Estatal",
+    }
+    assert plan(data, concepts=catalog_pair(data), lines=[line])["counts"] == {
+        "conflict": 1
+    }
+
+
+@pytest.mark.parametrize("phase", ["Estatal", "FASE ESTATAL"])
+def test_unlinked_matching_legacy_line_blocks_active_reuse(phase):
+    data = parsed([["Estatal", "Pelotas", 10]])
+    line = {
+        "id": "unlinked",
+        "tournament_id": "t",
+        "budget_version_id": "v",
+        "budget_concept_id": None,
+        "concept_name": "Pelotas",
+        "budget_amount": 9,
+        "phase": phase,
+    }
+    assert plan(data, concepts=catalog_pair(data), lines=[line])["counts"] == {
+        "conflict": 1
+    }
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"applicable_phase_labels": ["FASE ESTATAL"]},
+        {"applicable_phase_keys": ["fase_estatal"]},
+        {"scope_mode": "global"},
+    ],
+)
+def test_reuse_recognizes_canonical_scope_aliases_keys_and_explicit_global(metadata):
+    data = parsed([["Estatal", "Pelotas", 10]])
+    concepts = catalog_pair(data)
+    for c in concepts:
+        c["metadata"] = metadata
+    assert not plan(data, concepts=concepts)["blockers"]
+
+
+@pytest.mark.parametrize("count", [None, 1, 2])
+def test_retired_operational_references_or_missing_evidence_block_reuse(count):
+    data = parsed([["Estatal", "Pelotas", 10]])
+    concepts = catalog_pair(data)
+    concepts[1]["operational_reference_count"] = count
+    assert plan(data, concepts=concepts)["counts"] == {"conflict": 1}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count", [0, 1])
+async def test_preview_loads_retired_operational_evidence_read_only(monkeypatch, count):
+    data = parsed([["Estatal", "Pelotas", 10]])
+    concepts = catalog_pair(data)
+    concepts[1].pop("operational_reference_count")
+
+    class Result:
+        def __init__(self, values):
+            self.values = values
+
+        def mappings(self):
+            return self
+
+        def first(self):
+            return self.values[0]
+
+        def all(self):
+            return self.values
+
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                Result(
+                    [
+                        {
+                            "id": "t",
+                            "name": "Liga Telmex Telcel de Béisbol",
+                            "active": True,
+                        }
+                    ]
+                ),
+                Result([] if not count else [{"id": "retired", "count": count}]),
+            ]
+        )
+    )
+    monkeypatch.setattr(
+        upload.service,
+        "get_budget_version",
+        AsyncMock(return_value={"id": "v", "edition_year": 2026, "status": "draft"}),
+    )
+    monkeypatch.setattr(
+        upload.service, "list_budget_concepts", AsyncMock(return_value=concepts)
+    )
+    monkeypatch.setattr(upload.service, "list_budget_lines", AsyncMock(return_value=[]))
+    p = await upload.preview_tournament_upload(
+        session,
+        tournament_id="t",
+        version_id="v",
+        edition_year=2026,
+        file_bytes=workbook([["Estatal", "Pelotas", 10]]),
+        filename="budget.xlsx",
+        currency="MXN",
+        tax_basis="includes_vat",
+    )
+    assert bool(p["blockers"]) is bool(count)
+    sql, args = session.execute.call_args.args
+    assert args == {"ids": ["retired"]}
+    assert "documentos" in str(sql) and "expense_reports" in str(sql)
+    assert "budget_movement_assignments" in str(sql)
+    assert "budget_cfdi_income_links" in str(sql)
+    assert str(sql).lstrip().startswith("SELECT")
+    if not count:
+        assert p["operations"][0]["retired_operational_reference_counts"] == {
+            "retired": 0
+        }
