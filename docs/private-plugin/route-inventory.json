@@ -3469,11 +3469,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "0d1845f7d8a8",
+      "id": "f7e0c9e32c23",
       "source": "src/devnous/gastos/routes/admin_amex_accounting_routes.py",
-      "line": 63,
+      "line": 71,
       "handler": "amex_accounting_reports",
-      "source_sha256": "ff493a5867ca6a68c4d57a4e1db5c3ae06f979cf456a39e663f42e28b18ff043",
+      "source_sha256": "4bcdc62f26636f8ae7d7217cb5d1a590ea051579da52e37f31a078435b40b794",
       "method": "GET",
       "paths": [],
       "declared_path": "DYNAMIC:BASE",
@@ -3493,7 +3493,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_amex_accounting_routes.py:amex_accounting_reports",
-      "proposed_tool": "documents_and_other_amex_accounting_reports_get_0d1845",
+      "proposed_tool": "documents_and_other_amex_accounting_reports_get_f7e0c9",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -3511,11 +3511,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "283d42633149",
+      "id": "ea4f201b5509",
       "source": "src/devnous/gastos/routes/admin_amex_accounting_routes.py",
-      "line": 95,
+      "line": 103,
       "handler": "amex_accounting_report_review",
-      "source_sha256": "ff493a5867ca6a68c4d57a4e1db5c3ae06f979cf456a39e663f42e28b18ff043",
+      "source_sha256": "4bcdc62f26636f8ae7d7217cb5d1a590ea051579da52e37f31a078435b40b794",
       "method": "GET",
       "paths": [],
       "declared_path": "DYNAMIC:BASE + '/informes/{informe_id}'",
@@ -3535,7 +3535,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_amex_accounting_routes.py:amex_accounting_report_review",
-      "proposed_tool": "documents_and_other_amex_accounting_report_review_get_283d42",
+      "proposed_tool": "documents_and_other_amex_accounting_report_review_get_ea4f20",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "informe_id",
@@ -3554,11 +3554,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "459311a14019",
+      "id": "e8a0c32b2b29",
       "source": "src/devnous/gastos/routes/admin_amex_accounting_routes.py",
-      "line": 207,
+      "line": 245,
       "handler": "amex_accounting_review_save",
-      "source_sha256": "ff493a5867ca6a68c4d57a4e1db5c3ae06f979cf456a39e663f42e28b18ff043",
+      "source_sha256": "4bcdc62f26636f8ae7d7217cb5d1a590ea051579da52e37f31a078435b40b794",
       "method": "POST",
       "paths": [],
       "declared_path": "DYNAMIC:BASE + '/informes/{informe_id}/partidas/{expense_id}'",
@@ -3580,7 +3580,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_amex_accounting_routes.py:amex_accounting_review_save",
-      "proposed_tool": "documents_and_other_amex_accounting_review_save_post_459311",
+      "proposed_tool": "documents_and_other_amex_accounting_review_save_post_e8a0c3",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "informe_id",
@@ -3607,11 +3607,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "2d6e8c472b0a",
+      "id": "9efeb23edbdb",
       "source": "src/devnous/gastos/routes/admin_amex_accounting_routes.py",
-      "line": 244,
+      "line": 282,
       "handler": "amex_accounting_cut_confirm",
-      "source_sha256": "ff493a5867ca6a68c4d57a4e1db5c3ae06f979cf456a39e663f42e28b18ff043",
+      "source_sha256": "4bcdc62f26636f8ae7d7217cb5d1a590ea051579da52e37f31a078435b40b794",
       "method": "POST",
       "paths": [],
       "declared_path": "DYNAMIC:BASE + '/informes/{informe_id}/cortes'",
@@ -3633,7 +3633,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_amex_accounting_routes.py:amex_accounting_cut_confirm",
-      "proposed_tool": "documents_and_other_amex_accounting_cut_confirm_post_2d6e8c",
+      "proposed_tool": "documents_and_other_amex_accounting_cut_confirm_post_9efeb2",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "informe_id",
@@ -3660,11 +3660,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d28b790c3321",
+      "id": "48a72dfbaecd",
       "source": "src/devnous/gastos/routes/admin_amex_accounting_routes.py",
-      "line": 290,
+      "line": 328,
       "handler": "amex_accounting_cut_export",
-      "source_sha256": "ff493a5867ca6a68c4d57a4e1db5c3ae06f979cf456a39e663f42e28b18ff043",
+      "source_sha256": "4bcdc62f26636f8ae7d7217cb5d1a590ea051579da52e37f31a078435b40b794",
       "method": "GET",
       "paths": [],
       "declared_path": "DYNAMIC:BASE + '/cortes/{cut_id}.{export_format}'",
@@ -3684,7 +3684,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_amex_accounting_routes.py:amex_accounting_cut_export",
-      "proposed_tool": "documents_and_other_amex_accounting_cut_export_get_d28b79",
+      "proposed_tool": "documents_and_other_amex_accounting_cut_export_get_48a72d",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "cut_id",
