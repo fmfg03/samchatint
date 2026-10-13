@@ -232,7 +232,31 @@ async def set_company_amex_status(
     expense_ids: Iterable[UUID],
     mark_as_amex: bool,
     actor: Empleado,
+    card_account_id: UUID | None = None,
+    reason: str = "Identificación de tarjeta al marcar AMEX.",
 ) -> List[ExpenseReport]:
+    from .amex_recognition_service import (
+        _card_identity_eligibility,
+        _write_card_identity,
+        lock_recognition,
+        validate_amex_card_identity,
+    )
+
+    card = None
+    await lock_recognition(session)
+    actor = await session.get(
+        Empleado, actor.id, populate_existing=True, with_for_update=True
+    )
+    if actor is None or not actor.activo:
+        raise AmexExpensePermissionError("Actor AMEX inactivo o inexistente.")
+    if mark_as_amex:
+        if card_account_id is None:
+            raise AmexExpenseValidationError("Selecciona una tarjeta AMEX explícita.")
+        if not reason or not reason.strip():
+            raise AmexExpenseValidationError("Indica el motivo de identificación AMEX.")
+        card, invalid = await validate_amex_card_identity(session, card_account_id)
+        if invalid:
+            raise AmexExpenseValidationError(invalid)
     role = (actor.rol or "").strip().lower()
     if role not in FINANCE_AMEX_ROLES:
         raise AmexExpensePermissionError(
@@ -246,7 +270,9 @@ async def set_company_amex_status(
     result = await session.execute(
         select(ExpenseReport)
         .where(ExpenseReport.id.in_(unique_ids))
+        .order_by(ExpenseReport.id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     expenses = list(result.scalars().all())
     if len(expenses) != len(unique_ids):
@@ -258,11 +284,26 @@ async def set_company_amex_status(
     if any(expense.estado_gasto == "cancelado" for expense in expenses):
         raise AmexExpenseValidationError("No se pueden modificar gastos cancelados.")
 
+    identity_changed_ids = set()
+    invalid = await _card_identity_eligibility(
+        session, expenses, card, require_amex=False
+    )
+    if invalid:
+        raise AmexExpenseValidationError(invalid)
+    if mark_as_amex:
+        assert card is not None  # Validated before any source mutation.
+        identity_changed_ids = {
+            e.id for e in expenses if e.ultimos_4_digitos != card.last4
+        }
+        _write_card_identity(session, expenses, card, actor_id=actor.id, reason=reason)
+
     changed: List[ExpenseReport] = []
     now = datetime.now(timezone.utc)
     for expense in expenses:
         previous = is_company_amex_expense(expense)
         if previous == mark_as_amex:
+            if expense.id in identity_changed_ids:
+                changed.append(expense)
             continue
         expense.pagado_con_amex_empresa = mark_as_amex
         mapped_from_partida = False

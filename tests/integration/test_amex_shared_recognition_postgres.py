@@ -1362,3 +1362,427 @@ async def test_review_detects_selected_partner_account_code_drift_with_stable_uu
     assert "1170-002-099" in {
         line.cuenta_codigo for line in await _lines(pg, fresh.poliza.id) if line.debe
     }
+
+
+async def _missing_card(pg, data):
+    async with pg.factory.begin() as session:
+        await session.execute(
+            update(models.ExpenseReport)
+            .where(models.ExpenseReport.id.in_([row.id for row in data.reports]))
+            .values(ultimos_4_digitos=None)
+        )
+
+
+async def _assign_card(pg, data, **overrides):
+    args = dict(
+        expense_ids=[row.id for row in data.reports],
+        card_account_id=data.card.id,
+        actor_id=pg.actor,
+        reason="Finanzas confirma tarjeta con evidencia",
+        confirmed=True,
+    )
+    args.update(overrides)
+    async with pg.factory.begin() as session:
+        return await recognition.assign_missing_amex_card(session, **args)
+
+
+async def _identity_audits(pg, data):
+    async with pg.factory() as session:
+        return list(
+            (
+                await session.scalars(
+                    select(models.Aprobacion).where(
+                        models.Aprobacion.entidad_id.in_(
+                            [row.id for row in data.reports]
+                        ),
+                        models.Aprobacion.accion == "editar",
+                    )
+                )
+            ).all()
+        )
+
+
+@pytest.mark.asyncio
+async def test_card_identity_recovery_preserves_approved_report_and_creates_one_cut(pg):
+    data = await _seed(pg, count=2)
+    await _missing_card(pg, data)
+    fields = (
+        "gasto_cantidad",
+        "currency",
+        "fecha",
+        "cfdi_report_id",
+        "cuenta_contable_id",
+        "cuenta_gastos_id",
+        "informe_documento_id",
+        "coi_estado",
+        "estado_gasto",
+        "pagado_con_amex_empresa",
+    )
+    async with pg.factory() as session:
+        before = {
+            row.id: tuple(getattr(row, field) for field in fields)
+            for row in (
+                await session.scalars(
+                    select(models.ExpenseReport).where(
+                        models.ExpenseReport.id.in_([item.id for item in data.reports])
+                    )
+                )
+            ).all()
+        }
+    assigned = await _assign_card(pg, data)
+    assert (assigned.status, assigned.updated_count, assigned.unchanged_count) == (
+        "assigned",
+        2,
+        0,
+    )
+    assert await _journal_count(pg) == 0
+    async with pg.factory() as session:
+        informe = await session.get(models.Documento, data.informe.id)
+        assert informe.estado == "aprobado"
+        assert informe.aprobado_en == data.informe.aprobado_en
+        for item in data.reports:
+            row = await session.get(models.ExpenseReport, item.id)
+            assert tuple(getattr(row, field) for field in fields) == before[item.id]
+            assert row.ultimos_4_digitos == data.card.last4
+    audits = await _identity_audits(pg, data)
+    assert len(audits) == 2
+    assert all(row.aprobador_id == pg.actor for row in audits)
+    assert all(str(data.card.id) in row.comentario for row in audits)
+    assert all("None -> 5007" in row.comentario for row in audits)
+    retry = await _assign_card(pg, data)
+    assert (retry.status, retry.updated_count, retry.unchanged_count) == (
+        "unchanged",
+        0,
+        2,
+    )
+    assert len(await _identity_audits(pg, data)) == 2
+    await _bind(pg, data)
+    versions = await _review(pg, data)
+    cut = await _cut(pg, data, versions)
+    assert cut.status == "created", cut.reason
+    retry_cut = await _cut(pg, data, versions)
+    assert retry_cut.status == "exists", retry_cut.reason
+    assert await _journal_count(pg) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "cancelled",
+        "not_amex",
+        "different_card",
+        "imported",
+        "posted",
+        "reverse",
+        "missing",
+        "rejected_report",
+    ],
+)
+async def test_card_identity_mixed_batch_rejects_all_without_partial_audit(pg, invalid):
+    data = await _seed(pg, count=2)
+    await _missing_card(pg, data)
+    ids = [row.id for row in data.reports]
+    async with pg.factory.begin() as session:
+        if invalid == "missing":
+            ids[1] = uuid4()
+        elif invalid == "rejected_report":
+            await session.execute(
+                update(models.Documento)
+                .where(models.Documento.id == data.informe.id)
+                .values(estado="rechazado")
+            )
+        else:
+            values = {
+                "cancelled": {"estado_gasto": "cancelado"},
+                "not_amex": {"pagado_con_amex_empresa": False},
+                "different_card": {"ultimos_4_digitos": "9999"},
+                "imported": {"origen": "amex_batch"},
+                "posted": {"coi_estado": "contabilizado"},
+                "reverse": {"coi_estado": "reversar"},
+            }[invalid]
+            await session.execute(
+                update(models.ExpenseReport)
+                .where(models.ExpenseReport.id == ids[1])
+                .values(**values)
+            )
+    result = await _assign_card(pg, data, expense_ids=ids)
+    assert result.status == "pending" and result.reason
+    async with pg.factory() as session:
+        first = await session.get(models.ExpenseReport, ids[0])
+        assert first.ultimos_4_digitos is None
+    assert not await _identity_audits(pg, data)
+
+
+@pytest.mark.asyncio
+async def test_card_identity_transaction_error_rolls_back_metadata_and_audit(pg):
+    data = await _seed(pg)
+    await _missing_card(pg, data)
+    with pytest.raises(RuntimeError, match="caller failure"):
+        async with pg.factory.begin() as session:
+            assigned = await recognition.assign_missing_amex_card(
+                session,
+                expense_ids=[data.reports[0].id],
+                card_account_id=data.card.id,
+                actor_id=pg.actor,
+                reason="Confirmacion",
+                confirmed=True,
+            )
+            assert assigned.status == "assigned"
+            await session.flush()
+            raise RuntimeError("caller failure")
+    async with pg.factory() as session:
+        row = await session.get(models.ExpenseReport, data.reports[0].id)
+        assert row.ultimos_4_digitos is None
+    assert not await _identity_audits(pg, data)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cut", [False, True])
+async def test_card_identity_cannot_change_bound_or_frozen_sources(pg, cut):
+    data = await _seed(pg)
+    await _bind(pg, data)
+    if cut:
+        versions = await _review(pg, data)
+        created = await _cut(pg, data, versions)
+        assert created.status == "created"
+    blocked = await _assign_card(pg, data)
+    assert blocked.status == "pending"
+    assert blocked.reason in {
+        "amex_representation_already_bound",
+        "amex_informe_already_cut",
+    }
+    assert not await _identity_audits(pg, data)
+    assert await _journal_count(pg) == int(cut)
+
+
+@pytest.mark.asyncio
+async def test_card_identity_does_not_bypass_fourteen_historical_sources(pg):
+    data = await _seed(pg, count=14)
+    await _missing_card(pg, data)
+    async with pg.factory.begin() as session:
+        await session.execute(
+            update(models.ExpenseReport)
+            .where(models.ExpenseReport.id.in_([row.id for row in data.reports]))
+            .values(created_at=datetime(2026, 9, 30))
+        )
+    assigned = await _assign_card(pg, data)
+    assert assigned.status == "assigned" and assigned.updated_count == 14
+    async with pg.factory.begin() as session:
+        for imported, report in zip(data.imports, data.reports):
+            result = await recognition.bind_amex_consumption(
+                session,
+                imported_expense_id=imported.id,
+                report_expense_ids=[report.id],
+                actor_id=pg.actor,
+            )
+            assert result.status == "pending"
+            assert result.reason == "historical_amex_representation_requires_review"
+        assert (
+            await session.scalar(
+                select(func.count()).select_from(models.AmexRecognitionConsumption)
+            )
+            == 0
+        )
+    assert await _journal_count(pg) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["date", "currency", "amount"])
+async def test_recovered_card_retains_economic_binding_guards(pg, change):
+    data = await _seed(pg)
+    await _missing_card(pg, data)
+    assert (await _assign_card(pg, data)).status == "assigned"
+    async with pg.factory.begin() as session:
+        values = {
+            "date": {"fecha": datetime(2026, 10, 3)},
+            "currency": {"currency": "USD"},
+            "amount": {"gasto_cantidad": 117},
+        }[change]
+        await session.execute(
+            update(models.ExpenseReport)
+            .where(models.ExpenseReport.id == data.reports[0].id)
+            .values(**values)
+        )
+        blocked = await recognition.bind_amex_consumption(
+            session,
+            imported_expense_id=data.imports[0].id,
+            report_expense_ids=[data.reports[0].id],
+            actor_id=pg.actor,
+        )
+        assert blocked.status == "pending"
+        assert blocked.reason in {
+            "amex_card_currency_date_mismatch",
+            "amex_representation_amount_mismatch",
+        }
+    assert await _journal_count(pg) == 0
+
+
+@pytest.mark.asyncio
+async def test_concurrent_identity_retries_serialize_without_duplicate_audit(pg):
+    data = await _seed(pg)
+    await _missing_card(pg, data)
+    results = await asyncio.wait_for(
+        asyncio.gather(_assign_card(pg, data), _assign_card(pg, data)), timeout=10
+    )
+    assert sorted(row.status for row in results) == ["assigned", "unchanged"]
+    assert len(await _identity_audits(pg, data)) == 1
+
+
+@pytest.mark.asyncio
+async def test_card_identity_invalidates_prior_review_without_erasing_it(pg):
+    data = await _seed(pg)
+    await _missing_card(pg, data)
+    versions = await _review(pg, data)
+    assert (await _assign_card(pg, data)).status == "assigned"
+    await _bind(pg, data)
+    blocked = await _cut(pg, data, versions)
+    assert blocked.status == "pending"
+    assert blocked.reason == "stale_amex_review_source"
+    assert await _journal_count(pg) == 0
+    fresh_versions = await _review(pg, data)
+    assert fresh_versions[str(data.reports[0].id)] > versions[str(data.reports[0].id)]
+    assert (await _cut(pg, data, fresh_versions)).status == "created"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "inactive_actor",
+        "wrong_role",
+        "no_confirm",
+        "no_reason",
+        "inactive_card",
+        "inactive_liability",
+        "wrong_liability",
+    ],
+)
+async def test_card_identity_guards_require_authority_and_active_catalog(pg, invalid):
+    data = await _seed(pg)
+    await _missing_card(pg, data)
+    overrides = {}
+    async with pg.factory.begin() as session:
+        if invalid in {"inactive_actor", "wrong_role"}:
+            values = (
+                {"activo": False} if invalid == "inactive_actor" else {"rol": "usuario"}
+            )
+            await session.execute(
+                update(models.Empleado)
+                .where(models.Empleado.id == pg.actor)
+                .values(**values)
+            )
+        elif invalid == "inactive_card":
+            await session.execute(
+                update(models.AmexCardAccount)
+                .where(models.AmexCardAccount.id == data.card.id)
+                .values(active=False)
+            )
+        elif invalid in {"inactive_liability", "wrong_liability"}:
+            values = (
+                {"activo": False}
+                if invalid == "inactive_liability"
+                else {"codigo": "9999"}
+            )
+            await session.execute(
+                update(models.CuentaContable)
+                .where(models.CuentaContable.id == data.liability.id)
+                .values(**values)
+            )
+        elif invalid == "no_confirm":
+            overrides["confirmed"] = False
+        else:
+            overrides["reason"] = " "
+    result = await _assign_card(pg, data, **overrides)
+    assert result.status == "pending" and result.reason
+    assert not await _identity_audits(pg, data)
+    async with pg.factory() as session:
+        assert (
+            await session.get(models.ExpenseReport, data.reports[0].id)
+        ).ultimos_4_digitos is None
+
+
+@pytest.mark.asyncio
+async def test_card_identity_lock_blocks_binding_until_assignment_commits(pg):
+    data = await _seed(pg)
+    await _missing_card(pg, data)
+    assigned = asyncio.Event()
+    release = asyncio.Event()
+
+    async def identify():
+        async with pg.factory.begin() as session:
+            result = await recognition.assign_missing_amex_card(
+                session,
+                expense_ids=[data.reports[0].id],
+                card_account_id=data.card.id,
+                actor_id=pg.actor,
+                reason="Confirmacion concurrente",
+                confirmed=True,
+            )
+            assert result.status == "assigned"
+            assigned.set()
+            await release.wait()
+        return result
+
+    identity_task = asyncio.create_task(identify())
+    binding_task = None
+    try:
+        await asyncio.wait_for(assigned.wait(), timeout=5)
+        binding_task = asyncio.create_task(_bind(pg, data))
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(binding_task), timeout=0.2)
+        release.set()
+        await asyncio.wait_for(asyncio.gather(identity_task, binding_task), timeout=5)
+    finally:
+        release.set()
+        await identity_task
+        if binding_task:
+            await binding_task
+    assert len(await _identity_audits(pg, data)) == 1
+    versions = await _review(pg, data)
+    assert (await _cut(pg, data, versions)).status == "created"
+
+
+@pytest.mark.asyncio
+async def test_real_reconciliation_selector_recovers_only_selected_card(
+    pg, monkeypatch
+):
+    from devnous.gastos.routes import user_routes
+
+    data = await _seed(pg)
+    await _missing_card(pg, data)
+    monkeypatch.setattr(
+        user_routes, "suggest_amex_cfdi_matches", AsyncMock(return_value=[])
+    )
+    monkeypatch.setattr(
+        user_routes, "suggest_pase_monthly_cfdi_matches", AsyncMock(return_value=[])
+    )
+    monkeypatch.setattr(user_routes, "render_top_navigation", lambda *_a, **_k: "")
+
+    async def render():
+        async with pg.factory() as session:
+            actor = await session.get(models.Empleado, pg.actor)
+            return await user_routes.amex_conciliacion_view(
+                request=None,
+                session=session,
+                current_empleado=actor,
+                year=2026,
+                month=10,
+                msg=None,
+                error_msg=None,
+            )
+
+    option = f'<option value="{data.reports[0].id}">'
+    before = await render()
+    assert option not in before
+    assert "Partidas AMEX sin tarjeta" in before
+    assert f'name="expense_ids" value="{data.reports[0].id}"' in before
+    assert (await _assign_card(pg, data)).status == "assigned"
+    assert option in await render()
+    async with pg.factory.begin() as session:
+        await session.execute(
+            update(models.ExpenseReport)
+            .where(models.ExpenseReport.id == data.imports[0].id)
+            .values(ultimos_4_digitos="9999")
+        )
+    assert option not in await render()
