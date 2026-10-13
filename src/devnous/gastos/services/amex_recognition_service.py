@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import date, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -21,6 +21,8 @@ from sqlalchemy.orm import selectinload
 from ..models import (
     AccountingClosePeriod,
     AccountingPoliza,
+    Aprobacion,
+    AmexAccountingCut,
     AmexCardAccount,
     AmexRecognitionActivation,
     AmexRecognitionConsumption,
@@ -28,6 +30,7 @@ from ..models import (
     CFDIReport,
     CuentaContable,
     Empleado,
+    Documento,
     ExpenseReport,
 )
 
@@ -45,6 +48,227 @@ async def lock_recognition(session: AsyncSession) -> None:
     await session.execute(
         text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
         {"key": "samchat:amex:shared-recognition"},
+    )
+
+
+@dataclass(frozen=True)
+class AmexCardIdentityResult:
+    """Metadata assignment receipt; the transaction belongs to the caller."""
+
+    status: str
+    reason: str | None = None
+    updated_count: int = 0
+    unchanged_count: int = 0
+
+
+async def validate_amex_card_identity(
+    session: AsyncSession, card_account_id: UUID
+) -> tuple[AmexCardAccount | None, str | None]:
+    """Lock and refresh the explicit card and its canonical liability account."""
+    from .amex_accounting_posting_service import ALLOWED_AMEX_LIABILITY_CODES
+
+    card = await session.get(
+        AmexCardAccount,
+        card_account_id,
+        populate_existing=True,
+        with_for_update=True,
+    )
+    if card is None or not card.active:
+        return None, "invalid_amex_card_identity"
+    liability = await session.get(
+        CuentaContable,
+        card.liability_cuenta_contable_id,
+        populate_existing=True,
+        with_for_update=True,
+    )
+    if (
+        liability is None
+        or not liability.activo
+        or liability.codigo not in ALLOWED_AMEX_LIABILITY_CODES
+    ):
+        return None, "invalid_amex_liability"
+    if len(str(card.last4 or "")) != 4 or not str(card.last4).isdigit():
+        return None, "invalid_amex_card_identity"
+    return card, None
+
+
+async def _card_identity_eligibility(
+    session: AsyncSession,
+    expenses: list[ExpenseReport],
+    card: AmexCardAccount | None,
+    *,
+    require_amex: bool = True,
+) -> str | None:
+    """Validate the complete locked batch before writing any metadata."""
+    from .expense_coi_export_service import informe_expense_link_condition
+
+    for expense in expenses:
+        if (
+            expense.estado_gasto != "activo"
+            or expense.origen == "amex_batch"
+            or (require_amex and not expense.pagado_con_amex_empresa)
+            or expense.coi_estado in {"contabilizado", "reversar"}
+        ):
+            return "invalid_amex_report_expense"
+        if card is not None and expense.ultimos_4_digitos not in (None, "", card.last4):
+            return "amex_card_identity_conflict"
+        result = await session.execute(
+            select(Documento)
+            .join(ExpenseReport, informe_expense_link_condition())
+            .where(ExpenseReport.id == expense.id, Documento.tipo == "INFORME")
+            .order_by(Documento.id)
+            .with_for_update(of=Documento)
+            .execution_options(populate_existing=True)
+        )
+        informes = list(result.scalars().all())
+        if len(informes) != 1 or informes[0].estado not in {
+            "borrador",
+            "control_presupuestal",
+            "enviado",
+            "aprobado",
+        }:
+            return "invalid_amex_informe"
+        result = await session.execute(
+            select(AmexAccountingCut.id).where(
+                AmexAccountingCut.informe_id == informes[0].id
+            )
+        )
+        if result.first() is not None:
+            return "amex_informe_already_cut"
+    result = await session.execute(
+        select(AmexRecognitionRepresentation.id).where(
+            AmexRecognitionRepresentation.expense_id.in_([e.id for e in expenses])
+        )
+    )
+    if result.first() is not None:
+        return "amex_representation_already_bound"
+    return None
+
+
+async def validate_amex_pending_edit_transition(
+    session: AsyncSession, *, expense_id: UUID
+) -> str | None:
+    """Guard factual AMEX marking pending Finance without accessing its catalog.
+
+    Existing route permissions remain authoritative. This helper cannot assign
+    corporate identity and never clears a previously recorded card identity.
+    """
+    await lock_recognition(session)
+    expenses = await load_expenses(session, [expense_id])
+    if len(expenses) != 1:
+        return "missing_amex_representation"
+    if expenses[0].ultimos_4_digitos:
+        return "amex_card_identity_requires_finance"
+    return await _card_identity_eligibility(session, expenses, None, require_amex=False)
+
+
+async def validate_amex_card_edit_transition(
+    session: AsyncSession, *, expense_id: UUID, card_account_id: UUID
+) -> tuple[AmexCardAccount | None, str | None]:
+    """Guard an existing row's AMEX transition without granting edit authority.
+
+    The route owns authorization and audit. Transaction-scoped recognition and
+    source locks remain held until its edit commits or rolls back, so a cut or
+    binding cannot freeze the source between this validation and that write.
+    """
+    await lock_recognition(session)
+    card, invalid = await validate_amex_card_identity(session, card_account_id)
+    if invalid:
+        return None, invalid
+    expenses = await load_expenses(session, [expense_id])
+    if len(expenses) != 1:
+        return None, "missing_amex_representation"
+    invalid = await _card_identity_eligibility(
+        session, expenses, card, require_amex=False
+    )
+    if invalid:
+        return None, invalid
+    return card, None
+
+
+def _write_card_identity(
+    session: AsyncSession,
+    expenses: list[ExpenseReport],
+    card: AmexCardAccount,
+    *,
+    actor_id: UUID,
+    reason: str,
+) -> int:
+    updated = 0
+    for expense in expenses:
+        previous = expense.ultimos_4_digitos
+        if previous == card.last4:
+            continue
+        expense.ultimos_4_digitos = card.last4
+        session.add(
+            Aprobacion(
+                tipo_entidad="gasto",
+                entidad_id=expense.id,
+                aprobador_id=actor_id,
+                accion="editar",
+                comentario=(
+                    f"Identificación explícita AMEX: {previous!r} -> {card.last4}; "
+                    f"tarjeta_id={card.id}; motivo={reason.strip()}"
+                ),
+                fecha=datetime.now(timezone.utc),
+            )
+        )
+        updated += 1
+    return updated
+
+
+async def assign_missing_amex_card(
+    session: AsyncSession,
+    *,
+    expense_ids: list[UUID],
+    card_account_id: UUID,
+    actor_id: UUID,
+    reason: str,
+    confirmed: bool,
+) -> AmexCardIdentityResult:
+    """Identify explicit AMEX report rows without posting or committing.
+
+    All guards precede mutations. The caller must roll back transaction errors.
+    Historical activation restrictions remain owned by recognition, not identity.
+    """
+    await lock_recognition(session)
+    actor = await session.get(
+        Empleado, actor_id, populate_existing=True, with_for_update=True
+    )
+    if (
+        actor is None
+        or not actor.activo
+        or actor.rol
+        not in {
+            "finanzas",
+            "admin",
+            "superadmin",
+            "super_admin",
+        }
+    ):
+        return AmexCardIdentityResult("pending", "unauthorized_amex_accounting_actor")
+    if not confirmed:
+        return AmexCardIdentityResult("pending", "missing_amex_card_confirmation")
+    if not reason or not reason.strip():
+        return AmexCardIdentityResult("pending", "missing_amex_card_reason")
+    if not expense_ids or len(set(expense_ids)) != len(expense_ids):
+        return AmexCardIdentityResult("pending", "missing_amex_representation")
+    card, invalid = await validate_amex_card_identity(session, card_account_id)
+    if invalid:
+        return AmexCardIdentityResult("pending", invalid)
+    expenses = await load_expenses(session, expense_ids)
+    if len(expenses) != len(expense_ids):
+        return AmexCardIdentityResult("pending", "missing_amex_representation")
+    invalid = await _card_identity_eligibility(session, expenses, card)
+    if invalid:
+        return AmexCardIdentityResult("pending", invalid)
+    updated = _write_card_identity(
+        session, expenses, card, actor_id=actor_id, reason=reason
+    )
+    return AmexCardIdentityResult(
+        "assigned" if updated else "unchanged",
+        updated_count=updated,
+        unchanged_count=len(expenses) - updated,
     )
 
 

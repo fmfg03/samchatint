@@ -45,6 +45,43 @@ class _FakeSession:
         self.added.append(item)
 
 
+class _AmexSession(_FakeSession):
+    """Persisted actor/catalog/report context required by AMEX mutation guards."""
+
+    def __init__(self, rows, actor):
+        super().__init__(rows)
+        self.actor = actor
+        self.card = SimpleNamespace(
+            id=uuid4(), active=True, last4="1005", liability_cuenta_contable_id=uuid4()
+        )
+
+    async def get(self, model, identity, **kwargs):
+        from devnous.gastos.models import AmexCardAccount, CuentaContable, Empleado
+        from devnous.gastos.services.amex_accounting_posting_service import (
+            ALLOWED_AMEX_LIABILITY_CODES,
+        )
+
+        if model is Empleado:
+            return self.actor
+        if model is AmexCardAccount:
+            return self.card
+        if model is CuentaContable:
+            return SimpleNamespace(
+                activo=True, codigo=next(iter(ALLOWED_AMEX_LIABILITY_CODES))
+            )
+        raise AssertionError(model)
+
+    async def execute(self, query, *args):
+        sql = str(query)
+        result = _FakeExecuteResult([])
+        result.first = lambda: None
+        if "FROM documentos" in sql:
+            return _FakeExecuteResult([SimpleNamespace(id=uuid4(), estado="borrador")])
+        if "FROM expense_reports" in sql:
+            return _FakeExecuteResult(self._rows)
+        return result
+
+
 def read(relpath: str) -> str:
     return (ROOT / relpath).read_text(encoding="utf-8")
 
@@ -306,12 +343,14 @@ async def test_bulk_unchecking_company_amex_applies_budget_mapping(monkeypatch) 
         id=uuid4(),
         cuenta_gastos_id=cuenta_id,
         estado_gasto="activo",
+        coi_estado="pendiente",
+        ultimos_4_digitos="1005",
         pagado_con_amex_empresa=True,
         origen=None,
         cuenta_contable_id=None,
     )
-    actor = SimpleNamespace(id=uuid4(), rol="finanzas")
-    session = _FakeSession([expense])
+    actor = SimpleNamespace(id=uuid4(), rol="finanzas", activo=True)
+    session = _AmexSession([expense], actor)
 
     async def fake_apply_mapping(_session, mapped_expense):
         mapped_expense.cuenta_contable_id = mapped_account_id
@@ -346,12 +385,14 @@ async def test_bulk_company_amex_keeps_existing_account(monkeypatch) -> None:
         id=uuid4(),
         cuenta_gastos_id=cuenta_id,
         estado_gasto="activo",
+        coi_estado="pendiente",
+        ultimos_4_digitos="1005",
         pagado_con_amex_empresa=True,
         origen=None,
         cuenta_contable_id=existing_account_id,
     )
-    actor = SimpleNamespace(id=uuid4(), rol="finanzas")
-    session = _FakeSession([expense])
+    actor = SimpleNamespace(id=uuid4(), rol="finanzas", activo=True)
+    session = _AmexSession([expense], actor)
     calls = []
 
     async def fake_apply_mapping(_session, mapped_expense):
@@ -383,12 +424,14 @@ async def test_bulk_company_amex_noops_when_status_is_unchanged(monkeypatch) -> 
         id=uuid4(),
         cuenta_gastos_id=cuenta_id,
         estado_gasto="activo",
+        coi_estado="pendiente",
+        ultimos_4_digitos="1005",
         pagado_con_amex_empresa=True,
         origen=None,
         cuenta_contable_id=None,
     )
-    actor = SimpleNamespace(id=uuid4(), rol="finanzas")
-    session = _FakeSession([expense])
+    actor = SimpleNamespace(id=uuid4(), rol="finanzas", activo=True)
+    session = _AmexSession([expense], actor)
     calls = []
 
     async def fake_apply_mapping(_session, mapped_expense):
@@ -406,6 +449,7 @@ async def test_bulk_company_amex_noops_when_status_is_unchanged(monkeypatch) -> 
         cuenta_id=cuenta_id,
         expense_ids=[expense.id],
         mark_as_amex=True,
+        card_account_id=session.card.id,
         actor=actor,
     )
 
