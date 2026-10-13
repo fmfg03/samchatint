@@ -16,7 +16,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select, text
+from sqlalchemy import and_, exists, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -26,6 +26,10 @@ from ..models import (
     CuentaContable,
     Documento,
     ExpenseReport,
+)
+from .amex_accounting_identity_service import (
+    amex_bank_header_condition,
+    accounting_expense_condition,
 )
 from .amex_cfdi_matching_service import is_pase_expense
 from .amex_expense_service import company_amex_sql_condition
@@ -182,6 +186,13 @@ async def _single_expense_fiscal_lines(
     *,
     meta: dict[str, Any],
 ) -> tuple[Optional[list[dict[str, Any]]], Decimal, Optional[str]]:
+    header = await session.scalar(
+        select(amex_bank_header_condition(ExpenseReport)).where(
+            ExpenseReport.id == expense.id
+        )
+    )
+    if header is True:
+        return None, Decimal("0.00"), "amex_bridge_header_not_postable"
     account = getattr(expense, "cuenta_contable", None)
     if account is None and getattr(expense, "cuenta_contable_id", None):
         account = await session.get(CuentaContable, expense.cuenta_contable_id)
@@ -289,6 +300,16 @@ async def _pase_group_fiscal_lines(
     *,
     meta: dict[str, Any],
 ) -> tuple[Optional[list[dict[str, Any]]], Decimal, Optional[str]]:
+    header_present = await session.scalar(
+        select(
+            exists().where(
+                ExpenseReport.id.in_([expense.id for expense in expenses]),
+                amex_bank_header_condition(ExpenseReport),
+            )
+        )
+    )
+    if header_present is True:
+        return None, Decimal("0.00"), "amex_bridge_header_not_postable"
     """Post one global PASE CFDI once, never once per individual toll."""
 
     first = expenses[0]
@@ -493,6 +514,7 @@ async def ensure_amex_reconciliation_posting(
         .where(
             and_(
                 ExpenseReport.origen == "amex_batch",
+                accounting_expense_condition(ExpenseReport),
                 ExpenseReport.estado_gasto == "activo",
                 ExpenseReport.ultimos_4_digitos == card_account.last4,
                 ExpenseReport.fecha >= start,
@@ -560,6 +582,7 @@ async def ensure_amex_payment_posting(
     history = await session.execute(
         select(AmexRecognitionConsumption).where(
             AmexRecognitionConsumption.card_account_id == card.id,
+            AmexRecognitionConsumption.binding_mode != "report_bridge",
             AmexRecognitionConsumption.accounting_poliza_id.is_not(None),
             or_(
                 AmexRecognitionConsumption.liability_account_id != liability.id,

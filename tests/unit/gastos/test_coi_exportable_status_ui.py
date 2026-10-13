@@ -60,6 +60,10 @@ def test_cross_month_policy_is_discovered_in_only_one_batch_period(relation, ame
             "pagado_con_amex_empresa BOOLEAN, origen TEXT)"
         )
         connection.exec_driver_sql(
+            "CREATE TABLE amex_recognition_consumptions (id TEXT, "
+            "imported_expense_id TEXT, source_kind TEXT, binding_mode TEXT)"
+        )
+        connection.exec_driver_sql(
             "CREATE TABLE amex_accounting_cuts (id TEXT, informe_id TEXT, kind TEXT, "
             "accounting_date DATE)"
         )

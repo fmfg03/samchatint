@@ -642,6 +642,36 @@ async def transition_documento_workflow(
     documento_uuid = UUID(str(documento_id))
     actor_uuid = UUID(str(actor_id))
 
+    # AMEX recognition/cut locks global before document. Never invert that order
+    # while capturing an approval snapshot. Non-report workflows keep their path.
+    if normalized_action == "approve":
+        amex_report = (
+            await session.execute(
+                select(Documento.id)
+                .join(
+                    ExpenseReport,
+                    ExpenseReport.cuenta_gastos_id == Documento.cuenta_gastos_id,
+                )
+                .where(
+                    Documento.id == documento_uuid,
+                    Documento.tipo == "INFORME",
+                    ExpenseReport.estado_gasto != "cancelado",
+                    (
+                        ExpenseReport.pagado_con_amex_empresa.is_(True)
+                        | (
+                            ExpenseReport.pagado_con_amex_empresa.is_(None)
+                            & (ExpenseReport.origen == "amex_batch")
+                        )
+                    ),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if amex_report is not None:
+            from .amex_recognition_service import lock_recognition
+
+            await lock_recognition(session)
+
     documento = await _load_documento(session, documento_uuid)
     if documento is None:
         raise DocumentoWorkflowValidationError(
@@ -1002,6 +1032,17 @@ async def transition_documento_workflow(
     session.add(aprobacion)
     if auto_aprobacion is not None:
         session.add(auto_aprobacion)
+    if normalized_action == "approve" and documento.tipo == "INFORME":
+        from .amex_report_evidence_service import record_amex_final_report_approval
+
+        try:
+            await session.flush()
+            await record_amex_final_report_approval(
+                session, informe=documento, approval=aprobacion
+            )
+        except Exception:
+            await session.rollback()
+            raise
     await session.commit()
     await session.refresh(documento)
     await session.refresh(aprobacion)

@@ -147,6 +147,7 @@ from ..services.amex_recognition_service import (
     activation_reason,
     assign_missing_amex_card,
     bind_amex_consumption,
+    bind_amex_report_bank_consumptions,
     validate_amex_card_identity,
     validate_amex_card_edit_transition,
     validate_amex_pending_edit_transition,
@@ -154,7 +155,13 @@ from ..services.amex_recognition_service import (
 from ..services.amex_expense_service import company_amex_sql_condition
 from ..services.expense_coi_export_service import informe_expense_link_condition
 from ..services.amex_cut_export_service import cut_expense_cfdis
-from ..models import AmexAccountingCut, AmexRecognitionActivation
+from ..models import (
+    AmexAccountingCut,
+    AmexRecognitionActivation,
+    AmexRecognitionConsumption,
+    AmexRecognitionRepresentation,
+    AmexReportBankAssociation,
+)
 from ..services.authorization_profile_service import (
     copy_authorization_profile,
     list_authorization_profiles,
@@ -21264,6 +21271,32 @@ async def amex_conciliacion_identify_card(
     )
 
 
+def _amex_bank_reason_text(reason: Optional[str]) -> str:
+    explanations = {
+        "unauthorized_amex_accounting_actor": "Se requiere un perfil activo de Finanzas.",
+        "invalid_amex_bridge_selection": "Selecciona el conjunto completo de consumos reconocidos.",
+        "amex_bridge_requires_report_receipts": "Las fuentes deben tener una póliza contable registrada.",
+        "amex_bridge_requires_complete_cuts": "Cada fuente debe tener un corte inicial completo.",
+        "amex_bridge_source_changed": "La fuente cambió desde su reconocimiento. Revisa la excepción contable.",
+        "amex_bridge_header_conflict": "El cargo bancario ya tiene un uso incompatible con esta asociación.",
+        "amex_report_already_bank_associated": "Una fuente ya está asociada a otro cargo bancario.",
+        "amex_bridge_partition_mismatch": "El cargo ya fue asociado a un conjunto diferente. No se modificó su asociación.",
+        "invalid_amex_statement_source": "El cargo importado ya no está activo o no admite asociación.",
+        "amex_card_currency_date_mismatch": "La tarjeta, moneda y día deben coincidir exactamente.",
+        "amex_representation_amount_mismatch": "La suma de las fuentes debe coincidir con el cargo completo a centavos.",
+        "invalid_amex_liability": "Revisa la tarjeta activa y su cuenta pasivo contable.",
+        "invalid_amex_report_anchor": "La fuente del informe cambió o ya no está disponible.",
+        "missing_amex_representation": "Falta una de las fuentes seleccionadas. Vuelve a revisar el conjunto.",
+        "amex_representation_already_bound": "Una partida ya pertenece a otro vínculo de consumo.",
+        "historical_amex_representation_requires_review": "Requiere revisión histórica AMEX separada.",
+        "amex_statement_only_requires_exception": "Indica el motivo de la excepción para un cargo ajeno al informe.",
+    }
+    return explanations.get(
+        reason or "",
+        "Revisa las fuentes, tarjetas y el conjunto antes de asociar el banco.",
+    )
+
+
 @router.post("/admin/gastos/amex/conciliacion/vincular-consumo")
 async def amex_conciliacion_bind_consumption(
     session: AsyncSession = Depends(get_db_session),
@@ -21273,47 +21306,108 @@ async def amex_conciliacion_bind_consumption(
     statement_only: bool = Form(False),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
+    report_consumption_ids: List[str] = Form([]),
+    bank_association_confirmed: bool = Form(False),
+    statement_only_reason: str = Form(""),
 ) -> RedirectResponse:
     """Confirm which report items and statement charge are one consumption."""
     redirect_base = (
         f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}"
         f"&month={month or datetime.utcnow().month}#consumos"
     )
+    exception_reason = (
+        statement_only_reason if isinstance(statement_only_reason, str) else ""
+    )
+    bridge_values = (
+        report_consumption_ids if isinstance(report_consumption_ids, list) else []
+    )
+    bridge_confirmed = bank_association_confirmed is True
+    bridge_mode = bool(bridge_values) or bridge_confirmed
+    if bridge_mode and not _can_identify_amex_card(current_empleado):
+        raise HTTPException(403, "Se requiere un perfil activo de Finanzas.")
     try:
         imported_id = UUIDType(imported_expense_id)
         report_ids = [UUIDType(value) for value in report_expense_ids]
+        consumption_ids = [UUIDType(value) for value in bridge_values]
     except (TypeError, ValueError):
         return RedirectResponse(
             url=redirect_base.replace(
-                "#consumos", "&error_msg=" + quote("Selección de consumo inválida.")
-                + "#consumos",
+                "#consumos",
+                "&error_msg=" + quote("Selección de consumo inválida.") + "#consumos",
             ),
             status_code=303,
         )
-    if (not report_ids and not statement_only) or (report_ids and statement_only):
+    if bridge_mode:
+        invalid_selection = (
+            not bridge_confirmed
+            or not consumption_ids
+            or report_ids
+            or statement_only
+            or len(set(consumption_ids)) != len(consumption_ids)
+        )
+        message = (
+            "Selecciona el conjunto completo de consumos reconocidos del informe "
+            "y confirma su asociación bancaria. No combines otros modos."
+        )
+    else:
+        invalid_selection = (not report_ids and not statement_only) or (
+            report_ids and statement_only
+        )
         message = (
             "Selecciona las partidas del informe o confirma que el cargo "
             "no está registrado en un informe."
         )
+        if statement_only and not exception_reason.strip():
+            invalid_selection = True
+            message = "Indica el motivo de la excepción para un cargo ajeno al informe."
+    if invalid_selection:
         return RedirectResponse(
             url=redirect_base.replace(
                 "#consumos", "&error_msg=" + quote(message) + "#consumos"
             ),
             status_code=303,
         )
-    result = await bind_amex_consumption(
-        session,
-        imported_expense_id=imported_id,
-        report_expense_ids=report_ids,
-        actor_id=UUIDType(str(current_empleado.id)),
-    )
+    try:
+        if bridge_mode:
+            result = await bind_amex_report_bank_consumptions(
+                session,
+                imported_expense_id=imported_id,
+                report_consumption_ids=consumption_ids,
+                actor_id=UUIDType(str(current_empleado.id)),
+            )
+        elif statement_only:
+            result = await bind_amex_consumption(
+                session,
+                imported_expense_id=imported_id,
+                report_expense_ids=report_ids,
+                actor_id=UUIDType(str(current_empleado.id)),
+                statement_only_reason=exception_reason.strip(),
+            )
+        else:
+            result = await bind_amex_consumption(
+                session,
+                imported_expense_id=imported_id,
+                report_expense_ids=report_ids,
+                actor_id=UUIDType(str(current_empleado.id)),
+            )
+    except Exception:
+        await session.rollback()
+        raise
     if result.status == "pending":
         await session.rollback()
-        message = f"No se pudo vincular el consumo ({result.reason})."
+        message = (
+            "No se pudo asociar el banco. " + _amex_bank_reason_text(result.reason)
+            if bridge_mode or statement_only
+            else f"No se pudo vincular el consumo ({result.reason})."
+        )
         parameter = "error_msg"
     else:
         await session.commit()
-        message = "Consumo vinculado. Informe y conciliación compartirán su registro contable."
+        message = (
+            "Asociación bancaria guardada. La póliza y el corte del informe se conservan."
+            if bridge_mode
+            else "Consumo vinculado. Informe y conciliación compartirán su registro contable."
+        )
         parameter = "msg"
     return RedirectResponse(
         url=redirect_base.replace(
@@ -21615,6 +21709,110 @@ async def amex_conciliacion_validate_notify(
         status_code=303,
     )
 
+async def _load_amex_bank_report_context(
+    session: AsyncSession,
+    *,
+    charge_ids: List[UUIDType],
+    start_dt: datetime,
+    end_dt: datetime,
+) -> Dict[str, Any]:
+    """Read bank headers and fully posted report receipts without inferring matches."""
+    headers = {}
+    associated: Dict[UUIDType, List[UUIDType]] = {}
+    if charge_ids:
+        result = await session.execute(
+            select(AmexRecognitionConsumption).where(
+                AmexRecognitionConsumption.imported_expense_id.in_(charge_ids)
+            )
+        )
+        headers = {row.imported_expense_id: row for row in result.scalars().all()}
+        if headers:
+            result = await session.execute(
+                select(AmexReportBankAssociation).where(
+                    AmexReportBankAssociation.statement_consumption_id.in_(
+                        [row.id for row in headers.values()]
+                    )
+                )
+            )
+            for association in result.scalars().all():
+                associated.setdefault(association.statement_consumption_id, []).append(
+                    association.report_consumption_id
+                )
+    receipt_links: Dict[UUIDType, List[Any]] = {}
+    if associated:
+        result = await session.execute(
+            select(
+                AmexReportBankAssociation.statement_consumption_id,
+                ExpenseReport,
+                AmexAccountingCut,
+            )
+            .join(
+                AmexRecognitionConsumption,
+                AmexRecognitionConsumption.id
+                == AmexReportBankAssociation.report_consumption_id,
+            )
+            .join(
+                ExpenseReport,
+                ExpenseReport.id == AmexRecognitionConsumption.source_report_expense_id,
+            )
+            .join(
+                AmexAccountingCut,
+                AmexAccountingCut.accounting_poliza_id
+                == AmexRecognitionConsumption.accounting_poliza_id,
+            )
+            .where(AmexReportBankAssociation.statement_consumption_id.in_(associated))
+        )
+        for header_id, expense, cut in result.all():
+            receipt_links.setdefault(header_id, []).append((expense, cut))
+    result = await session.execute(
+        select(AmexRecognitionConsumption, ExpenseReport, AmexAccountingCut)
+        .join(
+            ExpenseReport,
+            ExpenseReport.id == AmexRecognitionConsumption.source_report_expense_id,
+        )
+        .join(
+            AmexAccountingCut,
+            AmexAccountingCut.accounting_poliza_id
+            == AmexRecognitionConsumption.accounting_poliza_id,
+        )
+        .where(
+            AmexAccountingCut.kind == "initial",
+            AmexAccountingCut.snapshot_json["source_evidence_id"].astext.isnot(None),
+            AmexRecognitionConsumption.source_kind == "report",
+            AmexRecognitionConsumption.binding_mode == "report",
+            AmexRecognitionConsumption.accounting_poliza_id.isnot(None),
+            ExpenseReport.estado_gasto == "activo",
+            ExpenseReport.fecha >= start_dt - timedelta(days=10),
+            ExpenseReport.fecha < end_dt + timedelta(days=10),
+            ~exists().where(
+                AmexReportBankAssociation.report_consumption_id
+                == AmexRecognitionConsumption.id
+            ),
+        )
+        .order_by(ExpenseReport.fecha.asc(), ExpenseReport.id.asc())
+    )
+    return {
+        "headers": headers,
+        "associated": associated,
+        "receipt_links": receipt_links,
+        "available": list(result.all()),
+    }
+
+
+def _amex_report_bank_rows(context: Dict[str, Any]) -> str:
+    rows = []
+    for consumption, expense, cut in context["available"]:
+        rows.append(
+            f'<tr><td><a href="/gastos/{expense.id}">'
+            f"{escape(str(expense.numero_referencia or expense.id))}</a></td>"
+            f"<td>{consumption.economic_date.isoformat()}</td>"
+            f"<td>{format_currency(consumption.amount, consumption.currency)}</td>"
+            f'<td><a href="/admin/contabilidad/amex/informes/{cut.informe_id}">'
+            "Póliza y corte existentes</a></td><td>Banco pendiente de asociar</td></tr>"
+        )
+    return "".join(rows)
+
+
 @router.get("/admin/gastos/amex/conciliacion", response_class=HTMLResponse)
 async def amex_conciliacion_view(
     request: Request,
@@ -21631,6 +21829,8 @@ async def amex_conciliacion_view(
     - Supports 1 CFDI mensual consolidado -> N cargos
     - Tolerates restaurant tip deltas where CFDI can exclude tip
     """
+    if not _can_identify_amex_card(current_empleado):
+        raise HTTPException(403, "Se requiere un perfil activo de Finanzas.")
     now = datetime.utcnow()
     selected_year = year or now.year
     selected_month = month or now.month
@@ -21658,6 +21858,12 @@ async def amex_conciliacion_view(
     expenses = expenses_result.scalars().all()
     amex_card_accounts = await list_amex_card_accounts(session)
 
+    bank_context = await _load_amex_bank_report_context(
+        session, charge_ids=[UUIDType(str(expense.id)) for expense in expenses],
+        start_dt=start_dt, end_dt=end_dt,
+    )
+    bank_report_rows = _amex_report_bank_rows(bank_context)
+    cards_by_last4 = {card.last4: card for card in amex_card_accounts}
     report_result = await session.execute(
         select(ExpenseReport)
         .where(
@@ -21665,6 +21871,7 @@ async def amex_conciliacion_view(
             or_(ExpenseReport.origen.is_(None), ExpenseReport.origen != "amex_batch"),
             ExpenseReport.estado_gasto == "activo",
             ExpenseReport.cuenta_gastos_id.isnot(None),
+            ~exists().where(AmexRecognitionRepresentation.expense_id == ExpenseReport.id),
             ExpenseReport.fecha >= start_dt - timedelta(days=10),
             ExpenseReport.fecha < end_dt + timedelta(days=10),
         )
@@ -21739,6 +21946,64 @@ async def amex_conciliacion_view(
     identity_disabled = "" if amex_card_accounts and missing_card_items else "disabled"
     consumption_rows_html = ""
     for charge in expenses:
+        header = bank_context["headers"].get(charge.id)
+        linked_targets = bank_context["associated"].get(header.id, []) if header else []
+        if header is not None and (
+            header.binding_mode != "report_bridge" or linked_targets
+        ):
+            status = (
+                "Banco asociado a fuente contable ya reconocida; no genera otra póliza."
+                if header.binding_mode == "report_bridge" else "Consumo ya vinculado."
+            )
+            receipt_html = "".join(
+                f'<p><a href="/gastos/{item.id}">'
+                f'{escape(str(item.numero_referencia or item.id))}</a> · '
+                f'<a href="/admin/contabilidad/amex/cortes/{cut.id}.xlsx">'
+                'Póliza del corte existente</a></p>'
+                for item, cut in bank_context.get("receipt_links", {}).get(header.id, [])
+            )
+            consumption_rows_html += (
+                f'<tr><td>{escape(str(charge.numero_referencia or "Cargo AMEX"))}</td>'
+                f'<td>{escape(str(charge.concepto or ""))}</td>'
+                f'<td>{format_currency(charge.gasto_cantidad, currency_for(charge))}</td>'
+                f'<td>{status}{receipt_html}</td></tr>'
+            )
+            continue
+        selected_card = cards_by_last4.get(charge.ultimos_4_digitos)
+        bridge_options = "".join(
+            f'<option value="{consumption.id}">'
+            f'{escape(str(item.numero_referencia or item.id))} · '
+            f'{format_currency(consumption.amount, consumption.currency)}</option>'
+            for consumption, item, cut in bank_context["available"]
+            if selected_card is not None
+            and consumption.card_account_id == selected_card.id
+            and charge.fecha is not None
+            and consumption.economic_date == charge.fecha.date()
+            and consumption.currency == currency_for(charge)
+        )
+        bridge_form = f"""
+            <form method="POST" action="/admin/gastos/amex/conciliacion/vincular-consumo">
+                <input type="hidden" name="imported_expense_id" value="{charge.id}">
+                <input type="hidden" name="year" value="{selected_year}">
+                <input type="hidden" name="month" value="{selected_month}">
+                <label>Consumos del informe con póliza y corte completos
+                    <select name="report_consumption_ids" multiple>{bridge_options}</select>
+                </label>
+                <small>Declara el conjunto completo. Su suma debe corresponder al cargo entero.
+                    Esta asociación bancaria conserva los reconocimientos existentes.</small>
+                <label><input type="checkbox" name="bank_association_confirmed" value="true" required>
+                    Confirmo la asociación bancaria de este conjunto completo</label>
+                <button type="submit" class="button">Asociar banco sin otra póliza</button>
+            </form>
+        """ if bridge_options else ""
+        if header is not None:
+            consumption_rows_html += (
+                f'<tr><td>{escape(str(charge.numero_referencia or "Cargo AMEX"))}</td>'
+                f'<td>{escape(str(charge.concepto or ""))}</td>'
+                f'<td>{format_currency(charge.gasto_cantidad, currency_for(charge))}</td>'
+                f'<td>Asociación bancaria pendiente de revisar.{bridge_form}</td></tr>'
+            )
+            continue
         options = "".join(
             f'<option value="{item.id}">'
             f'{escape(str(item.numero_referencia or "Partida de informe"))} · '
@@ -21773,6 +22038,7 @@ async def amex_conciliacion_view(
                 <td>{escape(str(charge.concepto or ''))}</td>
                 <td>${float(charge.gasto_cantidad or 0):,.2f}</td>
                 <td>
+                    {bridge_form}
                     <form method="POST" action="/admin/gastos/amex/conciliacion/vincular-consumo">
                         <input type="hidden" name="imported_expense_id" value="{charge.id}">
                         <input type="hidden" name="year" value="{selected_year}">
@@ -21783,6 +22049,9 @@ async def amex_conciliacion_view(
                         </label>
                         <label><input type="checkbox" name="statement_only" value="true">
                             Confirmo que este cargo no está registrado en un informe
+                        </label>
+                        <label>Motivo de la excepción si es ajeno al informe
+                            <input name="statement_only_reason" maxlength="1000">
                         </label>
                         <button type="submit" class="button">Confirmar vínculo</button>
                     </form>
@@ -22166,7 +22435,15 @@ async def amex_conciliacion_view(
             </section>
 
             <section id="consumos" class="surface">
-                <h2>Consumos e informes</h2>
+                <h2>Fuentes contables y asociación bancaria</h2>
+                <p>Las partidas del informe pueden tener póliza y corte completos antes
+                de importar el estado. Asociar el banco después no genera otra póliza.</p>
+                <div class="table-shell"><table>
+                    <thead><tr><th>Partida reconocida</th><th>Fecha</th><th>Importe</th>
+                    <th>Contabilidad</th><th>Estado bancario</th></tr></thead>
+                    <tbody>{bank_report_rows or '<tr><td colspan="5">Sin fuentes de informe pendientes de banco en este período.</td></tr>'}</tbody>
+                </table></div>
+                <h3>Consumos e informes</h3>
                 <p>Relaciona cada cargo con todas las partidas que lo representan en un informe.
                 Esta confirmación evita contabilizar el mismo consumo dos veces; no genera una póliza.</p>
                 <div class="table-shell">

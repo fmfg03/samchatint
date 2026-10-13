@@ -4,23 +4,27 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import (
     AccountingPoliza,
+    Aprobacion,
+    AmexReportSourceEvidence,
     AmexAccountingCut,
     AmexAccountingReview,
     AmexCardAccount,
     AmexRecognitionConsumption,
     AmexRecognitionRepresentation,
     CuentaContable,
+    CuentaDeGastos,
     Documento,
     Empleado,
     ExpenseReport,
@@ -41,6 +45,7 @@ from .amex_recognition_service import (
     lock_recognition,
     period_reason,
     signature,
+    review_source_key,
 )
 from .expense_coi_export_service import (
     coi_document_loader_options,
@@ -117,6 +122,7 @@ async def review_amex_partida(
     debtor_account_id: UUID | None,
     actor: Empleado,
     reason: str = "",
+    source_evidence_id: UUID | None = None,
 ) -> AmexCutResult:
     """Persist an explicit Finance decision; automatic matching cannot reset it."""
     await lock_recognition(session)
@@ -162,6 +168,27 @@ async def review_amex_partida(
         and review.reason == reason
     ):
         return AmexCutResult("reviewed", review=review)
+    if review and source_evidence_id is None:
+        # Adopted legacy projections deliberately keep their original NULL FK.
+        # Their immutable Finance receipt still protects subsequent decisions.
+        protected = getattr(review, "source_evidence_id", None) is not None
+        if not protected:
+            adopted = (
+                await session.execute(
+                    select(AmexReportSourceEvidence.id)
+                    .where(
+                        AmexReportSourceEvidence.informe_id == informe_id,
+                        AmexReportSourceEvidence.kind == "finance_confirmation",
+                        AmexReportSourceEvidence.decisions_json[
+                            "adopted_reviews"
+                        ].contains([{"expense_id": str(expense_id)}]),
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            protected = adopted is not None
+        if protected:
+            return AmexCutResult("pending", "amex_review_update_requires_confirmation")
     async with session.begin_nested():
         if review is None:
             review = AmexAccountingReview(
@@ -170,6 +197,7 @@ async def review_amex_partida(
             session.add(review)
         else:
             review.version += 1
+        review.source_evidence_id = source_evidence_id
         review.source_key = source_key
         review.treatment = treatment
         review.debtor_account_id = debtor_account_id
@@ -224,8 +252,14 @@ async def create_amex_accounting_cut(
     accounting_date: date,
     adjustment: bool = False,
     reason: str = "",
+    source_evidence_id: UUID | None = None,
 ) -> AmexCutResult:
     """Confirm all active report items atomically, or compensate a prior cut."""
+    from .amex_report_evidence_service import (
+        build_amex_report_source_snapshot,
+        load_amex_report_attachment_evidence,
+    )
+
     if not isinstance(accounting_date, date) or isinstance(accounting_date, datetime):
         return AmexCutResult("pending", "invalid_amex_accounting_date")
     await lock_recognition(session)
@@ -235,6 +269,18 @@ async def create_amex_accounting_cut(
     informe = await _informe(session, informe_id)
     if informe is None:
         return AmexCutResult("pending", "amex_informe_not_approved")
+    finance_evidence = None
+    if source_evidence_id is not None:
+        finance_evidence = await session.get(
+            AmexReportSourceEvidence, source_evidence_id
+        )
+        if (
+            finance_evidence is None
+            or finance_evidence.kind != "finance_confirmation"
+            or finance_evidence.informe_id != informe_id
+            or finance_evidence.actor_id != stored_actor.id
+        ):
+            return AmexCutResult("pending", "invalid_amex_finance_evidence")
     query_result_1 = await session.execute(
         select(ExpenseReport.id)
         .where(
@@ -248,6 +294,14 @@ async def create_amex_accounting_cut(
     )
     if not expenses:
         return AmexCutResult("pending", "empty_amex_accounting_cut")
+    if finance_evidence is not None:
+        await load_amex_report_attachment_evidence(session, expenses, locked=True)
+        if (
+            finance_evidence.source_key
+            != build_amex_report_source_snapshot(expenses)["source_key"]
+        ):
+            return AmexCutResult("pending", "stale_amex_finance_source_evidence")
+
     if any(
         not (
             e.pagado_con_amex_empresa is True
@@ -296,6 +350,12 @@ async def create_amex_accounting_cut(
     )
     same = query_result_3.scalar_one_or_none()
     if same:
+        if source_evidence_id is not None and same.snapshot_json.get(
+            "source_evidence_id"
+        ) != str(source_evidence_id):
+            return AmexCutResult(
+                "pending", "amex_finance_confirmation_payload_conflict"
+            )
         return AmexCutResult(
             "exists",
             cut=same,
@@ -337,8 +397,82 @@ async def create_amex_accounting_cut(
         )
     )
     links = {link.expense_id: link for link in query_result_5.scalars().all()}
-    if set(links) != ids:
+    missing = ids - set(links)
+    if missing and source_evidence_id is None:
         return AmexCutResult("pending", "missing_amex_consumption_identity")
+    if missing:
+        # This branch is reached only inside the consolidated Finance transaction.
+        evidence = await session.get(AmexReportSourceEvidence, source_evidence_id)
+        if (
+            evidence is None
+            or evidence.kind != "finance_confirmation"
+            or evidence.informe_id != informe_id
+            or evidence.actor_id != stored_actor.id
+        ):
+            return AmexCutResult("pending", "invalid_amex_finance_evidence")
+        for expense in expenses:
+            if expense.id not in missing:
+                continue
+            if expense.origen == "amex_batch" or expense.coi_estado in {
+                "contabilizado",
+                "reversar",
+            }:
+                return AmexCutResult("pending", "invalid_amex_report_anchor")
+            card = (
+                await session.execute(
+                    select(AmexCardAccount).where(
+                        AmexCardAccount.last4 == expense.ultimos_4_digitos,
+                        AmexCardAccount.active.is_(True),
+                    )
+                )
+            ).scalar_one_or_none()
+            liability = (
+                await session.get(
+                    CuentaContable,
+                    card.liability_cuenta_contable_id,
+                    populate_existing=True,
+                )
+                if card
+                else None
+            )
+            if (
+                card is None
+                or liability is None
+                or not liability.activo
+                or liability.codigo not in ALLOWED_AMEX_LIABILITY_CODES
+            ):
+                return AmexCutResult("pending", "invalid_amex_liability")
+            if (
+                str(expense.currency or "").upper() != "MXN"
+                or _money(expense.gasto_cantidad) <= 0
+            ):
+                return AmexCutResult("pending", "invalid_amex_consumption_amount")
+            consumption = AmexRecognitionConsumption(
+                id=uuid4(),
+                source_kind="report",
+                binding_mode="report",
+                imported_expense_id=None,
+                source_report_expense_id=expense.id,
+                card_account_id=card.id,
+                amount=_money(expense.gasto_cantidad),
+                currency="MXN",
+                economic_date=expense.fecha.date(),
+                liability_account_id=liability.id,
+                liability_code=liability.codigo,
+                classification_json=[],
+                actor_id=stored_actor.id,
+            )
+            session.add(consumption)
+            await session.flush()
+            link = AmexRecognitionRepresentation(
+                id=uuid4(),
+                consumption_id=consumption.id,
+                expense_id=expense.id,
+                role="report",
+            )
+            session.add(link)
+            links[expense.id] = link
+        await session.flush()
     query_result_6 = await session.execute(
         select(AmexRecognitionConsumption)
         .where(
@@ -355,6 +489,8 @@ async def create_amex_accounting_cut(
     if set(consumptions) != {link.consumption_id for link in links.values()}:
         return AmexCutResult("pending", "missing_amex_consumption_identity")
     for consumption in consumptions.values():
+        if getattr(consumption, "binding_mode", "legacy") == "report_bridge":
+            return AmexCutResult("pending", "amex_bridge_header_not_postable")
         if consumption.currency != "MXN":
             return AmexCutResult("pending", "unsupported_amex_currency")
         query_result_7 = await session.execute(
@@ -389,7 +525,14 @@ async def create_amex_accounting_cut(
             return AmexCutResult("pending", "amex_liability_mapping_changed")
         anchor_result = await session.execute(
             select(ExpenseReport)
-            .where(ExpenseReport.id == consumption.imported_expense_id)
+            .where(
+                ExpenseReport.id
+                == (
+                    consumption.source_report_expense_id
+                    if getattr(consumption, "source_kind", "statement") == "report"
+                    else consumption.imported_expense_id
+                )
+            )
             .with_for_update()
         )
         anchor = anchor_result.scalar_one_or_none()
@@ -483,6 +626,15 @@ async def create_amex_accounting_cut(
         frozen = _freeze_lines(rows)
         current = {
             **meta,
+            "source_key": review_source_key(expense),
+            "report_source_key": build_amex_report_source_snapshot([expense])[
+                "source_key"
+            ],
+            "source_evidence_id": (
+                str(review.source_evidence_id)
+                if getattr(review, "source_evidence_id", None)
+                else None
+            ),
             "amount": str(amount),
             "currency": consumption.currency,
             "version": review.version,
@@ -583,6 +735,20 @@ async def create_amex_accounting_cut(
             actor_id=stored_actor.id,
             reason=reason,
             snapshot_json={
+                "source_evidence_id": (
+                    str(source_evidence_id) if source_evidence_id else None
+                ),
+                "operational_evidence_id": (
+                    str(finance_evidence.operational_evidence_id)
+                    if finance_evidence and finance_evidence.operational_evidence_id
+                    else None
+                ),
+                "finance_confirmation_actor_id": (
+                    str(finance_evidence.actor_id) if finance_evidence else None
+                ),
+                "finance_confirmation_payload_hash": (
+                    finance_evidence.request_payload_hash if finance_evidence else None
+                ),
                 "partidas": partidas,
                 "lines": frozen_journal,
                 "informe_reference": informe.numero_referencia,
@@ -604,3 +770,610 @@ async def create_amex_accounting_cut(
                 )
         await session.flush()
     return AmexCutResult("created", cut=cut, poliza=poliza)
+
+
+@dataclass(frozen=True)
+class AmexApprovedInformePreview:
+    status: str
+    reason: str | None = None
+    informe: Any = None
+    expenses: Any = field(default_factory=list)
+    operational_evidence: Any = None
+    approval_event: Any = None
+    source_key: str | None = None
+    reviews: Any = field(default_factory=dict)
+    current_versions: Any = field(default_factory=dict)
+    approval_version: int | None = None
+    fresh_review_ids: Any = field(default_factory=set)
+    exceptions: Any = field(default_factory=dict)
+
+
+def _receipt_hash(value: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, default=str, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _review_projection(review: Any) -> dict[str, Any]:
+    return {
+        "expense_id": str(review.expense_id),
+        "actor_id": str(review.actor_id),
+        "reviewed_at": str(review.reviewed_at),
+        "treatment": review.treatment,
+        "debtor_account_id": (
+            str(review.debtor_account_id) if review.debtor_account_id else None
+        ),
+        "reason": review.reason,
+        "version": review.version,
+        "source_key": review.source_key,
+        "source_evidence_id": (
+            str(review.source_evidence_id)
+            if getattr(review, "source_evidence_id", None)
+            else None
+        ),
+    }
+
+
+async def _approved_informe_preview(
+    session: AsyncSession,
+    *,
+    informe_id: UUID,
+    actor: Empleado,
+    locked: bool,
+) -> AmexApprovedInformePreview:
+    from .amex_report_evidence_service import (
+        build_amex_report_source_snapshot,
+        load_amex_report_attachment_evidence,
+    )
+
+    if await _actor(session, actor) is None:
+        return AmexApprovedInformePreview(
+            "pending", "unauthorized_amex_accounting_actor"
+        )
+    query = (
+        select(Documento)
+        .options(*coi_document_loader_options())
+        .where(Documento.id == informe_id)
+        .execution_options(populate_existing=True)
+    )
+    if locked:
+        query = query.with_for_update()
+    informe = (await session.execute(query)).scalar_one_or_none()
+    if (
+        informe is None
+        or informe.tipo != "INFORME"
+        or informe.estado != "aprobado"
+        or not informe.cuenta_gastos_id
+    ):
+        return AmexApprovedInformePreview("pending", "amex_informe_not_approved")
+    if locked:
+        cuenta = await session.get(
+            CuentaDeGastos,
+            informe.cuenta_gastos_id,
+            populate_existing=True,
+            with_for_update=True,
+        )
+        if cuenta is None:
+            return AmexApprovedInformePreview(
+                "pending", "missing_amex_informe_account", informe=informe
+            )
+    query = (
+        select(ExpenseReport)
+        .options(
+            selectinload(ExpenseReport.cuenta_contable),
+            selectinload(ExpenseReport.cuenta_iva),
+            selectinload(ExpenseReport.cfdi_report),
+        )
+        .where(
+            ExpenseReport.cuenta_gastos_id == informe.cuenta_gastos_id,
+            ExpenseReport.estado_gasto != "cancelado",
+        )
+        .order_by(ExpenseReport.id)
+    )
+    expenses: list[Any]
+    if locked:
+        ids = list(
+            (
+                await session.execute(
+                    select(ExpenseReport.id)
+                    .where(
+                        ExpenseReport.cuenta_gastos_id == informe.cuenta_gastos_id,
+                        ExpenseReport.estado_gasto != "cancelado",
+                    )
+                    .order_by(ExpenseReport.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        expenses = await load_expenses(session, ids)
+    else:
+        expenses = list((await session.execute(query)).scalars().all())
+    if not expenses:
+        return AmexApprovedInformePreview(
+            "pending", "empty_amex_accounting_cut", informe=informe
+        )
+    if any(
+        not (
+            e.pagado_con_amex_empresa is True
+            or (e.pagado_con_amex_empresa is None and e.origen == "amex_batch")
+        )
+        for e in expenses
+    ):
+        return AmexApprovedInformePreview(
+            "pending",
+            "unsupported_mixed_amex_informe",
+            informe=informe,
+            expenses=expenses,
+        )
+    evidences = list(
+        (
+            await session.execute(
+                select(AmexReportSourceEvidence)
+                .where(
+                    AmexReportSourceEvidence.informe_id == informe_id,
+                    AmexReportSourceEvidence.kind == "operational_approval",
+                )
+                .order_by(AmexReportSourceEvidence.version.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    operational: Any = evidences[0] if evidences else None
+    approval: Any = (
+        await session.get(Aprobacion, operational.approval_id) if operational else None
+    )
+    if operational is None:
+        # Only the final event matching the real approval timestamp is evidence.
+        approval = (
+            await session.execute(
+                select(Aprobacion)
+                .where(
+                    Aprobacion.tipo_entidad == "documento",
+                    Aprobacion.entidad_id == informe_id,
+                    Aprobacion.accion == "aprobar",
+                    Aprobacion.fecha == informe.aprobado_en,
+                )
+                .order_by(Aprobacion.id)
+            )
+        ).scalar_one_or_none()
+    await load_amex_report_attachment_evidence(session, expenses, locked=locked)
+    source_snapshot = build_amex_report_source_snapshot(expenses)
+    exceptions: dict[str, str] = {}
+    if operational and operational.source_key != source_snapshot["source_key"]:
+        exceptions["source"] = "stale_amex_operational_source"
+    elif operational is None:
+        exceptions["source"] = "missing_amex_operational_attestation"
+    query = (
+        select(AmexAccountingReview)
+        .where(AmexAccountingReview.expense_id.in_([e.id for e in expenses]))
+        .execution_options(populate_existing=True)
+    )
+    if locked:
+        query = query.order_by(AmexAccountingReview.expense_id).with_for_update()
+    reviews: dict[UUID, Any] = {
+        cast(Any, r).expense_id: r
+        for r in (await session.execute(query)).scalars().all()
+    }
+    fresh = set()
+    fingerprints: dict[str, Any] = {}
+    for expense in expenses:
+        review = reviews.get(cast(Any, expense).id)
+        if review and review.informe_id != informe_id:
+            exceptions[str(expense.id)] = "amex_partida_reviewed_for_another_informe"
+            continue
+        # Bind displayed factual expense/tax mappings even before a treatment
+        # is declared. Computing this key does not assign a financial decision.
+        fingerprints["expense_mapping:" + str(expense.id)] = (
+            await accounting_review_source_key(
+                session,
+                expense,
+                treatment="expense",
+                debtor_account_id=None,
+                locked=locked,
+            )
+        )
+        if review:
+            key = await accounting_review_source_key(
+                session,
+                expense,
+                treatment=review.treatment,
+                debtor_account_id=review.debtor_account_id,
+                locked=locked,
+            )
+            fingerprints[str(expense.id)] = key
+            if key == review.source_key:
+                fresh.add(expense.id)
+            else:
+                exceptions[str(expense.id)] = "stale_amex_review_source"
+        else:
+            exceptions[str(expense.id)] = "unreviewed_amex_partida"
+        card = (
+            await session.execute(
+                select(AmexCardAccount)
+                .where(AmexCardAccount.last4 == expense.ultimos_4_digitos)
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if locked and card is not None:
+            card = await session.get(
+                AmexCardAccount, card.id, populate_existing=True, with_for_update=True
+            )
+        liability = (
+            await session.get(
+                CuentaContable,
+                card.liability_cuenta_contable_id,
+                populate_existing=True,
+            )
+            if card
+            else None
+        )
+        fingerprints["card:" + str(expense.id)] = {
+            "id": str(card.id) if card else None,
+            "active": bool(card.active) if card else None,
+            "last4": card.last4 if card else None,
+            "account": str(liability.id) if liability else None,
+            "code": liability.codigo if liability else None,
+            "account_active": bool(liability.activo) if liability else None,
+        }
+        if (
+            card is None
+            or not card.active
+            or liability is None
+            or not liability.activo
+            or liability.codigo not in ALLOWED_AMEX_LIABILITY_CODES
+        ):
+            exceptions[str(expense.id)] = "invalid_amex_liability"
+    cutoff = await activation_reason(session, expenses)
+    if cutoff:
+        exceptions["activation"] = cutoff
+    versions = {
+        str(e.id): reviews[cast(Any, e).id].version if cast(Any, e).id in reviews else 0
+        for e in expenses
+    }
+    partner_catalog = list(
+        (
+            await session.execute(
+                select(CuentaContable)
+                .where(
+                    CuentaContable.activo.is_(True),
+                    CuentaContable.codigo.like("1170-002-%"),
+                )
+                .order_by(CuentaContable.id)
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    fingerprints["partner_catalog"] = [
+        {"id": str(account.id), "code": account.codigo, "active": bool(account.activo)}
+        for account in partner_catalog
+        if len(account.codigo.removeprefix("1170-002-")) == 3
+        and account.codigo.removeprefix("1170-002-").isdigit()
+    ]
+    aggregate = _receipt_hash(
+        {
+            "source": source_snapshot["source_key"],
+            "fingerprints": fingerprints,
+            "reviews": {str(k): _review_projection(v) for k, v in reviews.items()},
+            "approval_id": str(approval.id) if approval else None,
+            "approval_version": operational.version if operational else None,
+        }
+    )
+    return AmexApprovedInformePreview(
+        "ready",
+        informe=informe,
+        expenses=expenses,
+        operational_evidence=operational,
+        approval_event=approval,
+        source_key=aggregate,
+        reviews=reviews,
+        current_versions=versions,
+        approval_version=operational.version if operational else None,
+        fresh_review_ids=fresh,
+        exceptions=exceptions,
+    )
+
+
+async def preview_amex_approved_informe(
+    session: AsyncSession,
+    *,
+    informe_id: UUID,
+    actor: Empleado,
+) -> AmexApprovedInformePreview:
+    """Read-only consolidated evidence; GET never writes accounting decisions."""
+    with session.no_autoflush:
+        return await _approved_informe_preview(
+            session, informe_id=informe_id, actor=actor, locked=False
+        )
+
+
+class _PendingFinanceConfirmation(Exception):
+    def __init__(self, result: AmexCutResult):
+        self.result = result
+
+
+async def confirm_amex_approved_informe_cut(
+    session: AsyncSession,
+    *,
+    informe_id: UUID,
+    actor: Empleado,
+    expected_source_key: str,
+    expected_versions: dict[str, int],
+    expected_approval_id: UUID | None,
+    expected_approval_version: int | None,
+    decisions: list[dict[str, Any]],
+    accounting_date: date,
+    confirmed: bool,
+    reason: str = "",
+    adjustment: bool = False,
+) -> AmexCutResult:
+    """One financial confirmation, immutable provenance and complete atomic cut."""
+    from .amex_report_evidence_service import build_amex_report_source_snapshot
+
+    await lock_recognition(session)
+    stored_actor = await _actor(session, actor)
+    if stored_actor is None:
+        return AmexCutResult("pending", "unauthorized_amex_accounting_actor")
+    if not confirmed:
+        return AmexCutResult("pending", "missing_amex_finance_confirmation")
+    if not isinstance(accounting_date, date) or isinstance(accounting_date, datetime):
+        return AmexCutResult("pending", "invalid_amex_accounting_date")
+    normalized = []
+    declared = {}
+    try:
+        for group in decisions:
+            ids = sorted({str(UUID(str(i))) for i in group["expense_ids"]})
+            if not ids or len(ids) != len(group["expense_ids"]):
+                raise ValueError("duplicate IDs")
+            treatment = group["treatment"]
+            if treatment not in {"expense", "partner_receivable"}:
+                raise ValueError("treatment")
+            account = (
+                str(UUID(str(group["debtor_account_id"])))
+                if group.get("debtor_account_id")
+                else None
+            )
+            item = {
+                "expense_ids": ids,
+                "treatment": treatment,
+                "debtor_account_id": account,
+                "reason": str(group.get("reason") or "").strip(),
+            }
+            for expense_id in ids:
+                if expense_id in declared:
+                    raise ValueError("overlap")
+                declared[expense_id] = item
+            normalized.append(item)
+    except (KeyError, TypeError, ValueError):
+        return AmexCutResult("pending", "invalid_amex_finance_decisions")
+    normalized.sort(key=lambda g: g["expense_ids"])
+    payload = {
+        "informe_id": str(informe_id),
+        "source_key": expected_source_key,
+        "versions": expected_versions,
+        "approval_id": str(expected_approval_id) if expected_approval_id else None,
+        "approval_version": expected_approval_version,
+        "decisions": normalized,
+        "accounting_date": str(accounting_date),
+        "adjustment": bool(adjustment),
+        "reason": reason.strip(),
+    }
+    payload_hash = _receipt_hash(payload)
+    previous_evidences = list(
+        (
+            await session.execute(
+                select(AmexReportSourceEvidence)
+                .where(
+                    AmexReportSourceEvidence.informe_id == informe_id,
+                    AmexReportSourceEvidence.kind == "finance_confirmation",
+                )
+                .order_by(AmexReportSourceEvidence.version.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for evidence in previous_evidences:
+        if evidence.request_payload_hash == payload_hash:
+            cuts = list(
+                (
+                    await session.execute(
+                        select(AmexAccountingCut).where(
+                            AmexAccountingCut.informe_id == informe_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            same = next(
+                (
+                    c
+                    for c in cuts
+                    if c.snapshot_json.get("source_evidence_id") == str(evidence.id)
+                ),
+                None,
+            )
+            if same:
+                return AmexCutResult(
+                    "exists",
+                    cut=same,
+                    poliza=await session.get(
+                        AccountingPoliza, same.accounting_poliza_id
+                    ),
+                )
+    prior_cuts = list(
+        (
+            await session.execute(
+                select(AmexAccountingCut).where(
+                    AmexAccountingCut.informe_id == informe_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not adjustment and any(c.kind == "initial" for c in prior_cuts):
+        return AmexCutResult("pending", "amex_finance_confirmation_payload_conflict")
+    prepared = await _approved_informe_preview(
+        session, informe_id=informe_id, actor=stored_actor, locked=True
+    )
+    if prepared.status != "ready":
+        return AmexCutResult("pending", prepared.reason)
+    if (
+        prepared.source_key != expected_source_key
+        or prepared.current_versions != expected_versions
+    ):
+        return AmexCutResult("pending", "stale_amex_finance_preview")
+    actual_approval = prepared.approval_event.id if prepared.approval_event else None
+    if (
+        actual_approval != expected_approval_id
+        or prepared.approval_version != expected_approval_version
+    ):
+        return AmexCutResult("pending", "stale_amex_approval_evidence")
+    full_ids = {str(e.id) for e in prepared.expenses}
+    if set(expected_versions) != full_ids or not set(declared).issubset(full_ids):
+        return AmexCutResult("pending", "incomplete_amex_finance_decisions")
+    if (
+        prepared.operational_evidence is None
+        or prepared.exceptions.get("source") == "stale_amex_operational_source"
+    ) and not reason.strip():
+        return AmexCutResult("pending", "amex_current_attestation_requires_reason")
+    if prepared.exceptions.get("activation"):
+        return AmexCutResult("pending", prepared.exceptions["activation"])
+    adoptions = []
+    projections = []
+    for expense in prepared.expenses:
+        review = prepared.reviews.get(expense.id)
+        decision = declared.get(str(expense.id))
+        if decision is None:
+            if review is None or expense.id not in prepared.fresh_review_ids:
+                return AmexCutResult("pending", "incomplete_amex_finance_decisions")
+            adoptions.append(_review_projection(review))
+        elif review is not None:
+            if expense.id in prepared.fresh_review_ids and (
+                review.treatment == decision["treatment"]
+                and str(review.debtor_account_id or "")
+                == str(decision["debtor_account_id"] or "")
+                and review.reason == decision["reason"]
+            ):
+                adoptions.append(_review_projection(review))
+            else:
+                projections.append(_review_projection(review))
+    resulting_reviews = []
+    adopted_ids = {r["expense_id"] for r in adoptions}
+    for expense in prepared.expenses:
+        if str(expense.id) in adopted_ids:
+            continue
+        decision = declared[str(expense.id)]
+        old = prepared.reviews.get(expense.id)
+        resulting_reviews.append(
+            {
+                "expense_id": str(expense.id),
+                "version": old.version + 1 if old else 1,
+                "actor_id": str(stored_actor.id),
+                "treatment": decision["treatment"],
+                "debtor_account_id": decision["debtor_account_id"],
+                "reason": decision["reason"],
+                "source_key": await accounting_review_source_key(
+                    session,
+                    expense,
+                    treatment=decision["treatment"],
+                    debtor_account_id=(
+                        UUID(decision["debtor_account_id"])
+                        if decision["debtor_account_id"]
+                        else None
+                    ),
+                ),
+            }
+        )
+    finance_evidence: Any = AmexReportSourceEvidence(
+        id=uuid4(),
+        informe_id=informe_id,
+        kind="finance_confirmation",
+        approval_id=None,
+        operational_evidence_id=(
+            prepared.operational_evidence.id if prepared.operational_evidence else None
+        ),
+        actor_id=stored_actor.id,
+        created_at=datetime.now(timezone.utc),
+        version=max([e.version for e in previous_evidences], default=0) + 1,
+        source_key=build_amex_report_source_snapshot(prepared.expenses)["source_key"],
+        snapshot_json=build_amex_report_source_snapshot(prepared.expenses),
+        decisions_json={
+            "payload": payload,
+            "adopted_reviews": adoptions,
+            "prior_review_projection": projections,
+            "resulting_reviews": resulting_reviews,
+        },
+        request_payload_hash=payload_hash,
+        reason=reason.strip() or None,
+    )
+    try:
+        async with session.begin_nested():
+            session.add(finance_evidence)
+            await session.flush()
+            adopted_ids = {r["expense_id"] for r in adoptions}
+            for expense_id, decision in declared.items():
+                if expense_id in adopted_ids:
+                    continue
+                result = await review_amex_partida(
+                    session,
+                    informe_id=informe_id,
+                    expense_id=UUID(expense_id),
+                    actor=stored_actor,
+                    treatment=decision["treatment"],
+                    debtor_account_id=(
+                        UUID(decision["debtor_account_id"])
+                        if decision["debtor_account_id"]
+                        else None
+                    ),
+                    reason=decision["reason"],
+                    source_evidence_id=finance_evidence.id,
+                )
+                if result.status == "pending":
+                    raise _PendingFinanceConfirmation(result)
+            current_reviews: list[Any] = list(
+                (
+                    await session.execute(
+                        select(AmexAccountingReview).where(
+                            AmexAccountingReview.expense_id.in_(
+                                [e.id for e in prepared.expenses]
+                            )
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            observed = {str(r.expense_id): r for r in current_reviews}
+            for expected in resulting_reviews:
+                current = observed[expected["expense_id"]]
+                if (
+                    current.version != expected["version"]
+                    or current.source_key != expected["source_key"]
+                    or current.source_evidence_id != finance_evidence.id
+                ):
+                    raise _PendingFinanceConfirmation(
+                        AmexCutResult("pending", "amex_finance_projection_conflict")
+                    )
+            result = await create_amex_accounting_cut(
+                session,
+                informe_id=informe_id,
+                actor=stored_actor,
+                expected_versions={
+                    str(r.expense_id): r.version for r in current_reviews
+                },
+                accounting_date=accounting_date,
+                adjustment=adjustment,
+                reason=reason,
+                source_evidence_id=finance_evidence.id,
+            )
+            if result.status == "pending":
+                raise _PendingFinanceConfirmation(result)
+    except _PendingFinanceConfirmation as pending:
+        return pending.result
+    return result

@@ -48,6 +48,8 @@ def identity_review_fixture():
             concepto="Alimentos de prueba",
             fecha=datetime(2026, 7, 2),
             gasto_cantidad=780.16,
+            metodo_pago="TARJETA CREDITO AMEX",
+            currency="MXN",
             ultimos_4_digitos="9999",  # Not an identity source for this view.
         )
         for index in range(2)
@@ -66,19 +68,62 @@ def identity_review_fixture():
     identities = [
         (expense.id, uuid4(), "Titular sintético", "1234") for expense in expenses
     ]
-    session = session_with(expenses, [review], accounts, [], identities)
+    review.actor_id = uuid4()
+    review.reviewed_at = datetime(2026, 7, 3)
+    session = session_with(accounts, [], identities, [])
+    session.preview = SimpleNamespace(
+        status="ready",
+        reason=None,
+        informe=informe,
+        expenses=expenses,
+        reviews={review.expense_id: review},
+        fresh_review_ids={review.expense_id},
+        current_versions={
+            str(expense.id): 3 if expense.id == review.expense_id else 0
+            for expense in expenses
+        },
+        operational_evidence=None,
+        approval_event=None,
+        approval_version=None,
+        source_key="a" * 64,
+        exceptions={"source": "missing_amex_operational_attestation"},
+    )
     session.identity_rows = identities
     session.get.return_value = informe
     return session, informe, expenses, accounts
 
 
 async def render_identity_review(session, informe):
-    return await routes.amex_accounting_report_review(
-        informe.id,
-        Request({"type": "http", "query_string": b""}),
-        session,
-        SimpleNamespace(),
-    )
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            routes,
+            "preview_amex_approved_informe",
+            AsyncMock(
+                return_value=session.__dict__.get("preview")
+                or SimpleNamespace(
+                    status="ready",
+                    reason=None,
+                    informe=SimpleNamespace(
+                        id=informe.id, tipo="INFORME", numero_referencia="ORM"
+                    ),
+                    expenses=[],
+                    reviews={},
+                    fresh_review_ids=set(),
+                    current_versions={},
+                    operational_evidence=None,
+                    approval_event=None,
+                    approval_version=None,
+                    source_key="a" * 64,
+                    exceptions={},
+                )
+            ),
+        )
+        return await routes.amex_accounting_report_review(
+            informe.id,
+            Request({"type": "http", "query_string": b""}),
+            session,
+            SimpleNamespace(rol="finanzas", activo=True),
+        )
 
 
 @pytest.mark.asyncio
@@ -96,14 +141,15 @@ async def test_distinct_people_preserve_manual_selection_and_read_only_view():
     for row in tree.xpath("//tbody/tr"):
         assert "Titular AMEX: Titular sintético" in row.text_content()
         assert "Tarjeta: ••••1234" in row.text_content()
-    selected = tree.xpath('//select[@name="debtor_account_id"]/option[@selected]')
-    assert [option.get("value") for option in selected] == [str(accounts[1].id)]
+    selected = tree.xpath('//select[@id="amex-batch-debtor"]/option[@selected]')
+    assert selected == []
+    assert "Cargo al socio por el total" in html and "Deudor distinto" in html
     assert "9999" not in html
     session.commit.assert_not_awaited()
     session.rollback.assert_not_awaited()
     session.add.assert_not_called()
-    assert session.execute.await_count == 5  # One batch, independent of item count.
-    statement = str(session.execute.await_args.args[0])
+    assert session.execute.await_count == 4  # Batch reads, independent of item count.
+    statement = str(session.execute.await_args_list[2].args[0])
     assert "card_account_id" in statement and "consumption_id" in statement
     assert "last4 =" not in statement
 
@@ -319,13 +365,16 @@ async def test_beneficiary_orm_loading_works_without_lazy_reads():
         ("admin", [], 200),
         ("superadmin", [], 200),
         ("empleado", [], 403),
-        ("empleado", ["finanzas.manage"], 200),
+        ("empleado", ["finanzas.manage"], 403),
     ],
 )
 async def test_context_is_only_visible_through_existing_finance_guard(
-    role, permissions, status
+    monkeypatch, role, permissions, status
 ):
     session, informe, _, _ = identity_review_fixture()
+    monkeypatch.setattr(
+        routes, "preview_amex_approved_informe", AsyncMock(return_value=session.preview)
+    )
     app = FastAPI()
     app.include_router(routes.router)
     actor = SimpleNamespace(id=uuid4(), rol=role, permissions=permissions, activo=True)

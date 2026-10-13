@@ -198,6 +198,12 @@ that groups XLSX, CSV, ZIP, document, and batch exports by `INFORME` and adds
 focused regression coverage. Merge, deployment, authenticated Finance UAT, and
 business acceptance remain separate evidence.
 
+Amendment date: 2026-10-13. Explicit human approval of technical specification and this canon text. Reason: use the approved expense account as accounting source without repeating its comprobacion. Evidence: `docs/roadmap/amex-approved-informe-20261013-spec.md` and its approved story. Approved candidate; implementation validation, merge, deployment and Finance UAT remain pending.
+
+La aprobación final real de un INFORME acredita comprobación documental de su CuentaDeGastos mediante evidencia inmutable del evento autoritativo, entidad, actor, fecha y versión. No atribuye autoridad Finance al aprobador ni genera póliza. Finanzas declara tratamientos y excepciones del informe completo con una confirmación contable explícita; no repite comprobación individual ya aprobada. Falta de tarjeta, mapping, tratamiento o evidencia produce excepción, jamás inferencia o cero.
+
+Partidas AMEX de informe aprobado pueden originar reconocimiento contable report-first con ancla real de partida y sin cargo bancario previamente seleccionado. Corte completo mantiene una póliza inicial única e inmutable por INFORME, y ajustes preservan historia. Históricos sin snapshot no reciben atestaciones retrospectivas ficticias; confirmación actual Finance se identifica como tal y no regulariza los 14 casos históricos bloqueados.
+
 ### 9.2 Monthly DIOT by effective payment date
 
 Amendment date: 2026-10-09. This canon diff received explicit human approval.

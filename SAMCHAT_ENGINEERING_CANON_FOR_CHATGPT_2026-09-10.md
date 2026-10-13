@@ -243,6 +243,12 @@ SQL-backed period-selection tests and frozen-cut regression tests in
 `tests/unit/gastos/test_coi_exportable_status_ui.py`. These are approved source
 changes under PR review; deployment and authenticated UAT remain unproven.
 
+Amendment date: 2026-10-13. Explicit human approval of technical specification and this canon text. Reason: use the approved expense account as accounting source without repeating its comprobacion. Evidence: `docs/roadmap/amex-approved-informe-20261013-spec.md` and its approved story. Approved candidate; implementation validation, merge, deployment and Finance UAT remain pending.
+
+Reconocimiento conserva un origen exacto statement/report con una sola ancla válida. Report-first mantiene UUID de consumo, representación report, evidencia real de aprobación y confirmación financiera/versiones; no fabrica UUID importado. Captura de evidencia operativa ocurre en la transacción de aprobación final; preview es puro y confirmación/corte Finance es atómica, idempotente por huella completa de fuente, decisiones, fecha/periodo y evidencia.
+
+Asociación bancaria posterior usa header real statement/report_bridge, ancla importada única y asociaciones INSERT-only a consumos report-first plenamente reconocidos. Selección explícita valida economía exacta y conjunto completo; no matching heurístico ni fusionar identidades o cortes. Header bridge nunca postea, incluso sin hijos. Ownership y exclusión legacy/bridge se protegen mediante constraints y guard triggers parent/child, sin mutación/borrado de anclas económicas ni asociaciones. Importación no origina segundo gasto/póliza. Schema nuevo sólo se provisiona con migración autorizada; helpers/runtime no ejecutan DDL.
+
 #### 8.2.2 Monthly DIOT read contract
 
 Amendment date: 2026-10-09. This canon diff received explicit human approval.

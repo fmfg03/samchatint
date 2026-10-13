@@ -14,6 +14,8 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from devnous.gastos.services.amex_accounting_identity_service import accounting_expense_sql
+
 from devnous.gastos.services.document_amount_service import (
     resolve_payable_document_amount,
 )
@@ -208,6 +210,7 @@ async def build_executive_facts(
                 SELECT 1 FROM expense_reports sibling
                 WHERE sibling.cfdi_report_id = e.cfdi_report_id
                   AND sibling.id <> e.id AND sibling.estado_gasto <> 'cancelado'
+                  AND {accounting_expense_sql('sibling')}
             )) AS shared_cfdi
         FROM expense_reports e
         LEFT JOIN LATERAL (
@@ -237,6 +240,7 @@ async def build_executive_facts(
         LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
         WHERE COALESCE(d.torneo_id, expense_cuenta.torneo_id) = ANY(CAST(:ids AS uuid[]))
           AND e.estado_gasto <> 'cancelado'
+          AND {accounting_expense_sql('e')}
           AND (e.fecha IS NULL OR DATE(e.fecha) BETWEEN :start AND :end)
         ), ranked AS (
             SELECT *, ROW_NUMBER() OVER (PARTITION BY tournament_id ORDER BY id) AS source_rank
