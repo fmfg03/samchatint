@@ -59,6 +59,8 @@ async def pg():
             models.Aprobacion,
             models.CFDIReport,
             models.ExpenseReport,
+            # Canonical CFDI usage excludes only explicit AMEX bank headers.
+            models.AmexRecognitionConsumption,
             models.AccountingPoliza,
         ):
             model.__table__.to_metadata(copied)

@@ -108,3 +108,14 @@ El código antiguo no admite imported_expense_id NULL tras reconocimiento report
 - `tests/unit/gastos/test_informe_coi_beneficiary_counterpart.py`
 
 Este reporte también forma parte del diff final. Evidencia detallada en `/tmp/samchat-amex-approved-*20261013.*`, datasets coverage aislados en /tmp y recepción de aceptación `/tmp/samchat-amex-approved-informe-acceptance-20261013.md`.
+
+## Seguimiento de publicación y corrección de CI — PR #480
+
+El estado inicial de este reporte corresponde al candidato antes de publicación. El usuario aprobó explícitamente commit, push, PR y merge; commit inicial `a476c35cf5f45655d5e3a2760cad767ca7d2d5d9`, PR `https://github.com/fmfg03/samchatint/pull/480`. Migración, release y UAT productivos siguen separados.
+
+CI detectó dos regresiones causadas por la extensión AMEX: la prueba browser todavía esperaba revisión por partida y ausencia total de scripts; la fixture compartida de evidencia tardía no creaba la tabla consultada por los lectores nuevos. Se actualizaron únicamente esas pruebas/fixture y se corrigió `white-space` del contexto personal en la nueva segunda columna, que heredaba nowrap. La prueba ahora ejecuta el lote real en escritorio/móvil, verifica rechazo de socio sin cuenta/motivo, payload completo y XSS con nombres que incluyen tags de imagen/script. No se eliminan controles de seguridad ni assertions de saldo/concurrencia.
+
+Canon unchanged en esta corrección: presentación responsive y fixtures del flujo ya aprobado; sin cambio de fuente contable, autoridad, fiscalidad, modelo, migración o contrato de negocio. Se refrescaron los hashes de inventario y el manifest de rollback porque cambió un byte de fuente de UI.
+
+Verificación local de corrección: `pytest -q tests/browser --timeout=90 --tb=short`: **80 passed**; suites PostgreSQL `test_bulk_cfdi_late_evidence_postgres.py` y `test_late_solicitud_evidence_postgres.py`: **47 passed**. Manifest de rollback, `git apply --unidiff-zero --check`, Black/flake8 del browser y `git diff --check`: correctos. Advertencias de deprecación existentes, sin fallos.
+Verificación del inventario actualizado: **135 pruebas offline private-plugin aprobadas**.

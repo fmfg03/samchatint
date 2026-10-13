@@ -51,7 +51,7 @@ def _page(title: str, content: str) -> str:
     input,select,button{{padding:8px;margin:4px 0;max-width:100%}}
     label{{display:block}}.notice{{padding:12px;background:#fff2cc;margin:12px 0}}
     .table-shell{{overflow-x:auto}}nav{{margin-bottom:20px}}section{{margin:24px 0}}
-    .person-context{{margin-top:8px;font-size:.9rem;overflow-wrap:anywhere;max-width:28rem}}
+    .person-context{{margin-top:8px;font-size:.9rem;white-space:normal;overflow-wrap:anywhere;max-width:28rem}}
     .table-shell td:nth-child(2),.table-shell td:nth-child(3){{white-space:nowrap}}
     .report-beneficiary{{overflow-wrap:anywhere}}
     @media(max-width:600px){{body{{margin:12px}}.table-shell table{{min-width:720px}}}}
