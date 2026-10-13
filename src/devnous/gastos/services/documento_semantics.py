@@ -4,15 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-
 EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX = "Reembolso de saldo a favor"
 
 
 def effective_account_beneficiary_id(cuenta: Any) -> Any:
     """Return the employee beneficiary without changing report ownership."""
-    return (
-        getattr(cuenta, "beneficiario_empleado_id", None)
-        or getattr(cuenta, "empleado_id", None)
+    return getattr(cuenta, "beneficiario_empleado_id", None) or getattr(
+        cuenta, "empleado_id", None
     )
 
 
@@ -26,23 +24,27 @@ def account_uses_provider_beneficiary(cuenta: Any) -> bool:
     return effective_account_provider_beneficiary_id(cuenta) is not None
 
 
-def effective_account_beneficiary(cuenta: Any) -> Any:
+def effective_account_beneficiary(cuenta: Any, *, explicit_only: bool = False) -> Any:
     """Resolve the beneficiary party shown for a Cuenta de Gastos."""
     if cuenta is None:
         return None
     return (
         getattr(cuenta, "beneficiario_empleado", None)
         or getattr(cuenta, "beneficiario_proveedor_cliente", None)
-        or getattr(cuenta, "empleado", None)
+        or (None if explicit_only else getattr(cuenta, "empleado", None))
     )
 
 
-def effective_document_beneficiary(documento: Any) -> Any:
+def effective_document_beneficiary(
+    documento: Any, *, explicit_only: bool = False
+) -> Any:
     """Resolve the beneficiary consistently across reports and document views.
 
     A report may name an employee or a registered provider/operator directly on
     the document.  Older or linked records retain that party only on their
     Cuenta de Gastos, so fall back to the account before the requester.
+    ``explicit_only`` excludes legacy owner/requester fallbacks for views that
+    require an evidenced beneficiary. Existing callers retain their semantics.
     """
     if documento is None:
         return None
@@ -50,17 +52,17 @@ def effective_document_beneficiary(documento: Any) -> Any:
     return (
         getattr(documento, "beneficiario_empleado", None)
         or getattr(documento, "beneficiario_proveedor_cliente", None)
-        or effective_account_beneficiary(cuenta)
-        or getattr(documento, "proveedor_cliente", None)
-        or getattr(documento, "empleado", None)
+        or effective_account_beneficiary(cuenta, explicit_only=explicit_only)
+        or (None if explicit_only else getattr(documento, "proveedor_cliente", None))
+        or (None if explicit_only else getattr(documento, "empleado", None))
     )
 
 
 def effective_document_beneficiary_name(
-    documento: Any, *, fallback: str = "—"
+    documento: Any, *, fallback: str = "—", explicit_only: bool = False
 ) -> str:
     """Return the effective beneficiary name without inventing a party."""
-    beneficiary = effective_document_beneficiary(documento)
+    beneficiary = effective_document_beneficiary(documento, explicit_only=explicit_only)
     name = str(getattr(beneficiary, "nombre", "") or "").strip()
     return name or fallback
 
@@ -122,15 +124,13 @@ def approval_subject_empleado(documento: Any) -> Any:
     approval lane belongs to the employee who receives/benefits from the funds.
     Existing direct documents keep the requester as the approval subject.
     """
-    return (
-        getattr(documento, "beneficiario_empleado", None)
-        or getattr(documento, "empleado", None)
+    return getattr(documento, "beneficiario_empleado", None) or getattr(
+        documento, "empleado", None
     )
 
 
 def approval_subject_empleado_id(documento: Any) -> Any:
     """Return the effective employee id for approval routing without loading relations."""
-    return (
-        getattr(documento, "beneficiario_empleado_id", None)
-        or getattr(documento, "empleado_id", None)
+    return getattr(documento, "beneficiario_empleado_id", None) or getattr(
+        documento, "empleado_id", None
     )

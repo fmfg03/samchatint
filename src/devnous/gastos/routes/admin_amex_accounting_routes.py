@@ -10,11 +10,13 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload, raiseload
 
 from ..models import (
     AmexAccountingCut,
     AmexAccountingReview,
     CuentaContable,
+    CuentaDeGastos,
     Documento,
     Empleado,
     ExpenseReport,
@@ -25,11 +27,13 @@ from ..services.amex_accounting_cut_service import (
 )
 from ..services.amex_cut_export_service import cut_expense_cfdis
 from ..services.amex_expense_service import company_amex_sql_condition
+from ..services.amex_recognition_service import load_amex_card_display_identities
 from ..services.coi_poliza_exporter import (
     generate_coi_poliza_csv,
     generate_coi_poliza_xlsx,
     generate_coi_poliza_zip,
 )
+from ..services.documento_semantics import effective_document_beneficiary_name
 from .dependencies import get_db_session, require_admin_finanzas
 
 router = APIRouter()
@@ -46,6 +50,10 @@ def _page(title: str, content: str) -> str:
     input,select,button{{padding:8px;margin:4px 0;max-width:100%}}
     label{{display:block}}.notice{{padding:12px;background:#fff2cc;margin:12px 0}}
     .table-shell{{overflow-x:auto}}nav{{margin-bottom:20px}}section{{margin:24px 0}}
+    .person-context{{margin-top:8px;font-size:.9rem;overflow-wrap:anywhere;max-width:28rem}}
+    .table-shell td:nth-child(2),.table-shell td:nth-child(3){{white-space:nowrap}}
+    .report-beneficiary{{overflow-wrap:anywhere}}
+    @media(max-width:600px){{body{{margin:12px}}.table-shell table{{min-width:720px}}}}
     </style></head><body><main><nav><a href="/admin/contabilidad/coi">Contabilidad COI</a>
     · <a href="{BASE}">Revisión AMEX</a>
     · <a href="/admin/gastos/amex/conciliacion">Conciliación AMEX</a></nav>
@@ -98,7 +106,21 @@ async def amex_accounting_report_review(
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = require_admin_finanzas(),
 ):
-    informe = await session.get(Documento, informe_id)
+    informe = await session.get(
+        Documento,
+        informe_id,
+        options=[
+            raiseload("*"),
+            joinedload(Documento.beneficiario_empleado),
+            joinedload(Documento.beneficiario_proveedor_cliente),
+            joinedload(Documento.cuenta_gastos).joinedload(
+                CuentaDeGastos.beneficiario_empleado
+            ),
+            joinedload(Documento.cuenta_gastos).joinedload(
+                CuentaDeGastos.beneficiario_proveedor_cliente
+            ),
+        ],
+    )
     if informe is None or informe.tipo != "INFORME":
         raise HTTPException(404, "Informe no encontrado.")
     result = await session.execute(
@@ -138,6 +160,12 @@ async def amex_accounting_report_review(
         .order_by(AmexAccountingCut.created_at.desc(), AmexAccountingCut.id.desc())
     )
     cuts = list(result.scalars().all())
+    beneficiary_name = effective_document_beneficiary_name(
+        informe, fallback="Sin identificar", explicit_only=True
+    )
+    card_identities = await load_amex_card_display_identities(
+        session, [expense.id for expense in expenses]
+    )
     versions = {
         str(expense.id): reviews[expense.id].version
         for expense in expenses
@@ -145,6 +173,13 @@ async def amex_accounting_report_review(
     }
     rows = []
     for expense in expenses:
+        identity = card_identities.get(expense.id)
+        cardholder = identity.cardholder_name if identity else "Sin identificar"
+        card = (
+            f"••••{identity.last4}"
+            if identity and identity.last4
+            else "Sin identificar"
+        )
         review = reviews.get(expense.id)
         treatment = review.treatment if review else "expense"
         options = '<option value="">Selecciona la cuenta del socio</option>' + "".join(
@@ -154,7 +189,9 @@ async def amex_accounting_report_review(
             for account in accounts
         )
         rows.append(f"""<tr>
-            <td>{escape(str(expense.numero_referencia or 'Partida'))}<br>{escape(str(expense.concepto or ''))}</td>
+            <td>{escape(str(expense.numero_referencia or 'Partida'))}<br>{escape(str(expense.concepto or ''))}
+                <div class="person-context"><div><strong>Titular AMEX:</strong> {escape(cardholder)}</div>
+                <div><strong>Tarjeta:</strong> {escape(card)}</div></div></td>
             <td>{expense.fecha.date().isoformat() if expense.fecha else 'Sin fecha'}</td>
             <td>${float(expense.gasto_cantidad or 0):,.2f}</td>
             <td><form method="POST" action="{BASE}/informes/{informe_id}/partidas/{expense.id}">
@@ -184,7 +221,8 @@ async def amex_accounting_report_review(
     notice = (
         request.query_params.get("error_msg") or request.query_params.get("msg") or ""
     )
-    content = f"""<div class="notice">{escape(notice) if notice else 'La opción Cargo al socio usa el total de la partida, incluso si tiene factura.'}</div>
+    content = f"""<p class="report-beneficiary"><strong>Beneficiario del informe:</strong> {escape(beneficiary_name)}</p>
+        <div class="notice">{escape(notice) if notice else 'La opción Cargo al socio usa el total de la partida, incluso si tiene factura.'}</div>
         <p>El corte incluye todas las partidas activas del informe. Completa sus revisiones y confirma una sola póliza.</p>
         <div class="table-shell"><table><thead><tr><th>Partida</th><th>Fecha</th><th>Total</th><th>Revisión de Finanzas</th></tr></thead>
         <tbody>{''.join(rows) or '<tr><td colspan="4">Sin partidas activas.</td></tr>'}</tbody></table></div>

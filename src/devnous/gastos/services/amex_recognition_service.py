@@ -21,16 +21,16 @@ from sqlalchemy.orm import selectinload
 from ..models import (
     AccountingClosePeriod,
     AccountingPoliza,
-    Aprobacion,
     AmexAccountingCut,
     AmexCardAccount,
     AmexRecognitionActivation,
     AmexRecognitionConsumption,
     AmexRecognitionRepresentation,
+    Aprobacion,
     CFDIReport,
     CuentaContable,
-    Empleado,
     Documento,
+    Empleado,
     ExpenseReport,
 )
 
@@ -41,6 +41,68 @@ class AmexRecognitionResult:
     reason: str | None = None
     consumption: Any = None
     poliza: AccountingPoliza | None = None
+
+
+@dataclass(frozen=True)
+class AmexCardDisplayIdentity:
+    """Minimal display context from an explicit consumption/card association."""
+
+    cardholder_name: str
+    last4: str | None
+
+
+async def load_amex_card_display_identities(
+    session: AsyncSession, expense_ids: list[UUID]
+) -> dict[UUID, AmexCardDisplayIdentity]:
+    """Read card context in one batch; missing or ambiguous links stay unknown.
+
+    Use the same representation → consumption → card IDs as recognition.
+    Never identify a card by its suffix or load its unrelated payment metadata.
+    This read does not validate or authorize accounting treatment.
+    """
+    if not expense_ids:
+        return {}
+    # Core columns keep this projection typed without loading ORM entities.
+    representation = AmexRecognitionRepresentation.__table__
+    consumption = AmexRecognitionConsumption.__table__
+    card = AmexCardAccount.__table__
+    statement = (
+        select(
+            representation.c.expense_id,
+            card.c.id,
+            card.c.cardholder_name,
+            card.c.last4,
+        )
+        .select_from(representation)
+        .outerjoin(
+            consumption,
+            consumption.c.id == representation.c.consumption_id,
+        )
+        .outerjoin(
+            card,
+            card.c.id == consumption.c.card_account_id,
+        )
+        .where(representation.c.expense_id.in_(expense_ids))
+    )
+    result = await session.execute(statement)
+    linked: dict[UUID, list[Any]] = {}
+    for row in result.all():
+        linked.setdefault(row[0], []).append(row)
+    identities = {}
+    for expense_id, rows in linked.items():
+        if len(rows) != 1 or rows[0][1] is None:
+            continue
+        _, _, name, suffix = rows[0]
+        last4 = str(suffix or "")
+        identities[expense_id] = AmexCardDisplayIdentity(
+            cardholder_name=str(name or "").strip() or "Sin identificar",
+            last4=(
+                last4
+                if len(last4) == 4 and last4.isascii() and last4.isdigit()
+                else None
+            ),
+        )
+    return identities
 
 
 async def lock_recognition(session: AsyncSession) -> None:
