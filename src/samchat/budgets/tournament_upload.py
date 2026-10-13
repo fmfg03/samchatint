@@ -35,20 +35,32 @@ def _money(value: Any) -> Decimal:
     return amount
 
 
-def _concept_matches_upload_row(concept: dict[str, Any], row: dict[str, Any]) -> bool:
-    """Match exact keys or evidenced normalized phase and concept names."""
-    if concept.get("concept_key") == row["concept_key"]:
-        return True
+def _concept_has_upload_scope(concept: dict[str, Any], phase: str) -> bool:
+    """Use canonical aliases, deriving keys only from explicit legacy labels."""
     metadata = concept.get("metadata") or {}
-    labels = (metadata.get("applicable_phase_labels") or []) + (
+    if not isinstance(metadata, dict):
+        return False
+    labels = list(metadata.get("applicable_phase_labels") or []) + list(
         metadata.get("applicable_subproject_labels") or []
     )
+    if labels and not (
+        metadata.get("applicable_phase_keys")
+        or metadata.get("applicable_subproject_keys")
+    ):
+        metadata = {**metadata, **service.build_budget_concept_scope_metadata(labels)}
+    return service.budget_concept_matches_fase({**concept, "metadata": metadata}, phase)
+
+
+def _concept_matches_upload_row(concept: dict[str, Any], row: dict[str, Any]) -> bool:
+    """Match exact keys or evidenced canonical phase and concept names."""
+    if concept.get("concept_key") == row["concept_key"]:
+        return True
     return service._normalize_budget_key(
         concept.get("concept_name") or ""
-    ) == service._normalize_budget_key(row["concept_name"]) and any(
-        service._normalize_budget_key(label)
-        == service._normalize_budget_key(row["phase"])
-        for label in labels
+    ) == service._normalize_budget_key(
+        row["concept_name"]
+    ) and _concept_has_upload_scope(
+        concept, row["phase"]
     )
 
 
@@ -232,7 +244,41 @@ def build_upload_plan(
             "before_upload_source": None,
             "had_upload_source": False,
         }
-        if inactive_matches:
+        reusable_inactive = bool(
+            inactive_matches
+            and len(matches) == 1
+            and not any(
+                str(line.get("budget_concept_id"))
+                in {str(c["id"]) for c in inactive_matches}
+                for line in lines
+            )
+            and all(c.get("operational_reference_count") == 0 for c in inactive_matches)
+            and matches[0].get("cuenta_contable_id")
+            and matches[0].get("pasivo_cuenta_contable_id")
+            and all(
+                _concept_has_upload_scope(c, row["phase"])
+                for c in [matches[0], *inactive_matches]
+            )
+            and all(
+                c.get("budget_direction", "expense") == "expense"
+                and service._normalize_budget_key(c.get("concept_name") or "")
+                == service._normalize_budget_key(matches[0].get("concept_name") or "")
+                == service._normalize_budget_key(row["concept_name"])
+                and str(c.get("cuenta_contable_id") or "")
+                == str(matches[0]["cuenta_contable_id"])
+                and str(c.get("pasivo_cuenta_contable_id") or "")
+                == str(matches[0].get("pasivo_cuenta_contable_id") or "")
+                for c in inactive_matches
+            )
+        )
+        if reusable_inactive:
+            op["retired_operational_reference_counts"] = {
+                str(c["id"]): c["operational_reference_count"] for c in inactive_matches
+            }
+            op["retired_matching_concept_ids"] = [
+                str(c["id"]) for c in inactive_matches
+            ]
+        if inactive_matches and not reusable_inactive:
             op["action"] = "conflict"
             op["inactive_concept_ids"] = [str(c["id"]) for c in inactive_matches]
             blockers.append(
@@ -275,15 +321,18 @@ def build_upload_plan(
                     else "update"
                 )
         # A legacy unscoped line must never be silently doubled by a new scoped concept.
-        if not matches and any(
+        if any(
             service._normalize_budget_key(existing_line.get("concept_name") or "")
             == service._normalize_budget_key(row["concept_name"])
             and (
                 not existing_line.get("phase")
-                or service._normalize_budget_key(existing_line.get("phase") or "")
-                == service._normalize_budget_key(row["phase"])
+                or bool(
+                    service._budget_scope_aliases(existing_line.get("phase"))
+                    & service._budget_scope_aliases(row["phase"])
+                )
             )
             for existing_line in lines
+            if not matches or not existing_line.get("budget_concept_id")
         ):
             op["action"] = "conflict"
         if op["action"] == "conflict":
@@ -359,6 +408,36 @@ async def preview_tournament_upload(
     concepts = await service.list_budget_concepts(
         session, tournament_id=tournament_id, active_only=False, limit=5000
     )
+    retired_ids = [str(c["id"]) for c in concepts if c.get("active") is False]
+    if retired_ids:
+        reference_rows = (
+            (
+                await session.execute(
+                    text(
+                        """SELECT budget_concept_id::text AS id, COUNT(*) AS count
+                    FROM (
+                        SELECT budget_concept_id FROM documentos
+                        WHERE budget_concept_id = ANY(CAST(:ids AS uuid[]))
+                        UNION ALL SELECT budget_concept_id FROM expense_reports
+                        WHERE budget_concept_id = ANY(CAST(:ids AS uuid[]))
+                        UNION ALL SELECT budget_concept_id FROM budget_movement_assignments
+                        WHERE budget_concept_id = ANY(CAST(:ids AS uuid[]))
+                        UNION ALL SELECT budget_concept_id FROM budget_cfdi_income_links
+                        WHERE budget_concept_id = ANY(CAST(:ids AS uuid[]))
+                    ) AS references_to_retired GROUP BY budget_concept_id"""
+                    ),
+                    {"ids": retired_ids},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        counts = {str(r["id"]): int(r["count"]) for r in reference_rows}
+        for concept in concepts:
+            if concept.get("active") is False:
+                concept["operational_reference_count"] = counts.get(
+                    str(concept["id"]), 0
+                )
     # Include legacy code/name rows as blockers; never silently bypass their amounts.
     code = service._derive_budget_tournament_code(
         tournament["name"], tournament["name"]
