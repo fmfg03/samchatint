@@ -1,6 +1,7 @@
-"""Desktop/mobile review context and manual form behavior, using synthetic data."""
+"""Desktop/mobile report context and consolidated decisions with synthetic data."""
 
 import asyncio
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 
@@ -23,7 +24,11 @@ from tests.unit.gastos.test_amex_accounting_identity_context import (
 def test_review_people_context_and_explicit_debtor_selection(page):
     session, informe, expenses, accounts = identity_review_fixture()
     # Deliberately long escaped names exercise wrapping at both viewport sizes.
-    name = 'Persona <sintética> & "prueba" ' + "ApellidoLargo" * 8
+    name = (
+        'Persona <sintética> & "prueba" '
+        '<img src=x onerror="window.amexInjected=true">'
+        "<script>window.amexInjected=true</script> " + "ApellidoLargo" * 8
+    )
     informe.beneficiario_empleado.nombre = name
     session.identity_rows[0] = (
         expenses[0].id,
@@ -43,37 +48,59 @@ def test_review_people_context_and_explicit_debtor_selection(page):
     assert page.locator(".report-beneficiary").inner_text().endswith(name)
     context = page.locator(".person-context").first
     assert name in context.inner_text() and "Tarjeta: ••••1234" in context.inner_text()
-    assert page.locator("img, script").count() == 0
+    assert page.locator("img").count() == 0
+    assert context.locator("script").count() == 0
+    assert page.locator(".report-beneficiary script").count() == 0
+    assert page.evaluate("window.amexInjected === undefined")
+    # The single application script implements the approved explicit batch UI;
+    # escaped people names must never become executable script content.
+    scripts = page.locator("script")
+    assert scripts.count() == 1
+    assert "amex-apply-batch" in scripts.inner_text()
+    assert name not in scripts.inner_text()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert context.evaluate("el => el.scrollWidth <= el.clientWidth")
-    debtor = page.locator('select[name="debtor_account_id"]')
-    assert debtor.nth(0).input_value() == str(accounts[1].id)
-    assert debtor.nth(1).input_value() == ""
+    assert page.locator('input[name="reviewed"]').count() == 0
+    debtor = page.locator("#amex-batch-debtor")
+    treatment = page.locator("#amex-batch-treatment")
+    assert debtor.input_value() == "" and treatment.input_value() == ""
     assert (
-        debtor.nth(1).locator("option").first.inner_text()
-        == "Selecciona la cuenta del socio"
+        debtor.locator("option").first.inner_text() == "Selecciona la cuenta del socio"
     )
-    treatment = page.locator('select[name="treatment"]').nth(1)
+    selected_expense = page.locator(".amex-batch-item").nth(1)
+    selected_expense.check()
     treatment.select_option("partner_receivable")
-    assert (
-        debtor.nth(1).input_value() == ""
-    )  # Choosing treatment never infers a debtor.
-    debtor.nth(1).select_option(str(accounts[1].id))
-    form = page.locator("tbody tr").nth(1).locator("form")
-    form.locator('input[name="reviewed"]').check()
-    form.locator('input[name="reason"]').fill("Elección manual sintética")
+    assert debtor.input_value() == ""  # Selecting a treatment never infers a debtor.
+    page.locator("#amex-apply-batch").click()
+    assert page.locator("#amex-decisions").input_value() == "[]"
+    assert "cuenta y motivo" in page.locator("#amex-batch-error").inner_text()
+    debtor.select_option(str(accounts[1].id))
+    page.locator("#amex-batch-reason").fill("Elección manual sintética")
+    page.locator("#amex-apply-batch").click()
+    form = page.locator("#amex-cut-confirmation")
+    form.locator('input[name="confirmed"]').check()
+    form.locator('input[name="reason"]').fill("Atestación actual sintética")
     submitted = form.evaluate("el => Object.fromEntries(new FormData(el))")
-    assert submitted == {
-        "reviewed": "true",
-        "treatment": "partner_receivable",
-        "debtor_account_id": str(accounts[1].id),
-        "reason": "Elección manual sintética",
-    }
-    assert form.get_attribute("action").endswith(f"/partidas/{expenses[1].id}")
+    assert submitted["confirmation_mode"] == "approved_informe"
+    assert submitted["confirmed"] == "true"
+    assert submitted["expected_source_key"] == session.preview.source_key
+    assert (
+        json.loads(submitted["expected_versions"]) == session.preview.current_versions
+    )
+    assert json.loads(submitted["decisions"]) == [
+        {
+            "expense_ids": [str(expenses[1].id)],
+            "treatment": "partner_receivable",
+            "debtor_account_id": str(accounts[1].id),
+            "reason": "Elección manual sintética",
+        }
+    ]
+    assert submitted["reason"] == "Atestación actual sintética"
+    assert form.get_attribute("action").endswith(f"/informes/{informe.id}/cortes")
     shell = page.locator(".table-shell")
     shell.evaluate("el => el.scrollLeft = el.scrollWidth")
-    debtor.nth(1).scroll_into_view_if_needed()
-    assert debtor.nth(1).is_visible()
+    debtor.scroll_into_view_if_needed()
+    assert debtor.is_visible()
     assert not errors
     # Optional local evidence; all people and financial data here are synthetic.
     evidence_dir = os.environ.get("AMEX_CONTEXT_SCREENSHOT_DIR")

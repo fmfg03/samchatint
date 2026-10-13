@@ -673,6 +673,12 @@ def test_real_duplicate_select_excludes_self_and_cancelled_rows():
     with engine.begin() as connection:
         connection.execute(
             text(
+                "CREATE TABLE amex_recognition_consumptions (id CHAR(32), "
+                "imported_expense_id CHAR(32), source_kind TEXT, binding_mode TEXT)"
+            )
+        )
+        connection.execute(
+            text(
                 "CREATE TABLE expense_reports (id CHAR(32), estado_gasto TEXT, "
                 "cfdi_uuid_manual TEXT, cfdi_report_id CHAR(32))"
             )

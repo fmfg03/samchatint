@@ -12,6 +12,8 @@ from uuid import UUID
 
 from sqlalchemy import and_, false, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from .amex_accounting_identity_service import accounting_expense_condition
 from sqlalchemy.orm import selectinload, undefer
 
 from ..models import (
@@ -244,6 +246,7 @@ async def validate_shared_cfdi_payment_amount(
     expense_conditions = [
         ExpenseReport.cfdi_report_id == report_id if report_id else false(),
         ExpenseReport.estado_gasto != "cancelado",
+        accounting_expense_condition(ExpenseReport),
         ~reservation_document_exists.exists(),
     ]
     if exclude_expense_id is not None:

@@ -36,7 +36,8 @@ async def test_reports_empty_and_escaped_reference():
         [SimpleNamespace(id=uuid4(), numero_referencia="<script>x</script>")],
     ):
         response = await routes.amex_accounting_reports(
-            session=session_with(documents), current_empleado=SimpleNamespace()
+            session=session_with(documents),
+            current_empleado=SimpleNamespace(rol="finanzas", activo=True),
         )
         html = response.body.decode()
         assert "<script>" not in html
@@ -44,7 +45,9 @@ async def test_reports_empty_and_escaped_reference():
 
 
 @pytest.mark.asyncio
-async def test_review_form_check_choice_versions_and_adjustment_downloads_escape():
+async def test_review_form_consolidated_choices_versions_and_adjustment_downloads_escape(
+    monkeypatch,
+):
     informe = SimpleNamespace(
         id=uuid4(), tipo="INFORME", cuenta_gastos_id=uuid4(), numero_referencia="<I>"
     )
@@ -54,6 +57,8 @@ async def test_review_form_check_choice_versions_and_adjustment_downloads_escape
         concepto="<script>bad</script>",
         fecha=datetime(2026, 9, 15),
         gasto_cantidad=116,
+        metodo_pago="TARJETA CREDITO AMEX",
+        currency="MXN",
     )
     account = SimpleNamespace(id=uuid4(), codigo="1170-002-004", nombre="<Partner>")
     review = SimpleNamespace(
@@ -64,17 +69,39 @@ async def test_review_form_check_choice_versions_and_adjustment_downloads_escape
         reason='" onmouseover="bad',
     )
     cut = SimpleNamespace(id=uuid4(), kind="initial", accounting_date=date(2026, 9, 30))
-    session = session_with([expense], [review], [account], [cut], [])
+    review.actor_id = uuid4()
+    review.reviewed_at = datetime(2026, 9, 16)
+    preview = SimpleNamespace(
+        status="ready",
+        reason=None,
+        informe=informe,
+        expenses=[expense],
+        reviews={expense.id: review},
+        fresh_review_ids={expense.id},
+        current_versions={str(expense.id): 3},
+        approval_event=None,
+        operational_evidence=None,
+        approval_version=None,
+        source_key="a" * 64,
+        exceptions={"source": "missing_amex_operational_attestation"},
+    )
+    monkeypatch.setattr(
+        routes, "preview_amex_approved_informe", AsyncMock(return_value=preview)
+    )
+    session = session_with([account], [cut], [], [])
     session.get.return_value = informe
     request = Request(
         {"type": "http", "query_string": b"msg=%3Cscript%3Ex%3C%2Fscript%3E"}
     )
     response = await routes.amex_accounting_report_review(
-        informe.id, request, session, SimpleNamespace()
+        informe.id, request, session, SimpleNamespace(rol="finanzas", activo=True)
     )
     html = response.body.decode()
-    assert "<script>" not in html
-    assert 'name="reviewed"' in html and "checked required" in html
+    assert "<script>bad</script>" not in html
+    assert "&lt;script&gt;bad&lt;/script&gt;" in html
+    assert 'name="reviewed"' not in html
+    assert html.count('name="confirmed"') == 1
+    assert 'name="decisions" value="[]"' in html
     assert "partner_receivable" in html and "&lt;Partner&gt;" in html
     assert "&quot; onmouseover=&quot;bad" in html
     assert str(expense.id) in html and "&quot;: 3" in html
@@ -84,12 +111,17 @@ async def test_review_form_check_choice_versions_and_adjustment_downloads_escape
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("document", [None, SimpleNamespace(tipo="SOLICITUD")])
-async def test_review_missing_or_wrong_document(document):
+async def test_review_missing_or_wrong_document(monkeypatch, document):
     session = AsyncMock()
     session.get.return_value = document
+    monkeypatch.setattr(
+        routes,
+        "preview_amex_approved_informe",
+        AsyncMock(return_value=SimpleNamespace(informe=document)),
+    )
     with pytest.raises(HTTPException) as exc:
         await routes.amex_accounting_report_review(
-            uuid4(), None, session, SimpleNamespace()
+            uuid4(), None, session, SimpleNamespace(rol="finanzas", activo=True)
         )
     assert exc.value.status_code == 404
 

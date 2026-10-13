@@ -76,6 +76,11 @@ class _Session:
     def __init__(self, cuenta):
         self.cuenta = cuenta
 
+    async def scalar(self, statement):
+        # These beneficiaries have no explicit bank bridge identity.
+        assert "amex_recognition_consumptions" in str(statement)
+        return None
+
     async def get(self, model, identifier):
         if model is CuentaDeGastos and identifier == self.cuenta.id:
             return self.cuenta

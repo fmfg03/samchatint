@@ -13,6 +13,8 @@ from uuid import UUID
 
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from .amex_accounting_identity_service import accounting_expense_condition
 from sqlalchemy.orm import lazyload
 
 from ..models import Aprobacion, CFDIReport, Documento, ExpenseReport
@@ -157,6 +159,7 @@ async def _enforce_expense_cfdi_uniqueness(
         .where(
             ExpenseReport.id != expense.id,
             ExpenseReport.estado_gasto != "cancelado",
+            accounting_expense_condition(ExpenseReport),
             or_(*conditions),
         )
         .limit(1)

@@ -17,6 +17,8 @@ from openpyxl import Workbook, load_workbook
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from devnous.gastos.services.amex_accounting_identity_service import accounting_expense_sql
+
 from samchat.budgets.deduplication import (
     budget_concept_semantic_identity,
     is_valid_budget_concept_identifier,
@@ -773,6 +775,7 @@ def _build_budget_scope_filters(
     ]
     expense_filter = [
         "e.estado_gasto != 'cancelado'",
+        accounting_expense_sql("e"),
         "DATE(e.fecha) >= :date_from",
         "DATE(e.fecha) <= :date_to",
     ]
@@ -1271,7 +1274,7 @@ async def list_budget_tournament_commitments(
                         ) AS related_expense_total,
                         MAX(e.fecha) FILTER (WHERE e.estado_gasto != 'cancelado') AS related_expense_latest_date
                     FROM expense_reports e
-                    WHERE (
+                    WHERE {accounting_expense_sql('e')} AND (
                         e.id = d.gasto_generado_id
                         OR e.documento_id = d.id
                         OR e.solicitud_documento_id = d.id
@@ -6842,7 +6845,8 @@ async def build_budget_snapshot(
             SELECT COUNT(*) FILTER (WHERE e.cfdi_compartido_confirmado IS TRUE
                 OR EXISTS (SELECT 1 FROM expense_reports sibling
                     WHERE sibling.cfdi_report_id = e.cfdi_report_id
-                      AND sibling.id <> e.id AND sibling.estado_gasto <> 'cancelado')) AS shared_count,
+                      AND sibling.id <> e.id AND sibling.estado_gasto <> 'cancelado'
+                      AND {accounting_expense_sql('sibling')})) AS shared_count,
                 COUNT(*) FILTER (WHERE COALESCE(e.currency, '') <> 'MXN') AS currency_count,
                 COUNT(*) FILTER (WHERE e.gasto_cantidad IS NULL) AS missing_amount_count
             FROM expense_reports e

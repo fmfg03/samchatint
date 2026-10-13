@@ -11,10 +11,10 @@ import json
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import and_, exists, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -435,6 +435,7 @@ async def accounting_review_source_key(
     *,
     treatment: str,
     debtor_account_id: UUID | None,
+    locked: bool = True,
 ) -> str:
     """Freeze the accounts relevant to this decision, including resolved taxes.
 
@@ -464,7 +465,7 @@ async def accounting_review_source_key(
     accounts = []
     for account_id in sorted(account_ids, key=str):
         account = await session.get(
-            CuentaContable, account_id, populate_existing=True, with_for_update=True
+            CuentaContable, account_id, populate_existing=True, with_for_update=locked
         )
         accounts.append(
             {
@@ -532,16 +533,36 @@ def signature(lines: list[dict[str, Any]]) -> list[dict[str, str]]:
 async def fiscal_lines(
     session: AsyncSession, expenses: list[ExpenseReport]
 ) -> tuple[list[dict[str, Any]] | None, Decimal, str | None]:
-    """Allocate a shared invoice only after verifying full statement coverage.
+    """Verify full invoice coverage across explicitly distinct economic sources.
 
-    The existing fiscal constructor resolves accounts and allocates taxes
-    only for explicitly confirmed shared invoices. Coverage is checked across
-    imported charges, never across duplicated administrative representations.
+    Linked legacy report aliases and bank bridge headers reuse their canonical
+    source receipts. Unbound similar rows remain distinct and may conflict.
+    The fiscal constructor and explicit shared-invoice rules remain unchanged.
     """
     from .amex_accounting_posting_service import _money, _single_expense_fiscal_lines
 
     rows = []
     total = Decimal("0.00")
+    duplicate_legacy_report = exists(
+        select(AmexRecognitionRepresentation.id)
+        .join(
+            AmexRecognitionConsumption,
+            AmexRecognitionConsumption.id
+            == AmexRecognitionRepresentation.consumption_id,
+        )
+        .where(
+            AmexRecognitionRepresentation.expense_id == ExpenseReport.id,
+            AmexRecognitionRepresentation.role == "report",
+            AmexRecognitionConsumption.source_kind == "statement",
+            AmexRecognitionConsumption.binding_mode == "legacy",
+        )
+    )
+    bridge_header = exists(
+        select(AmexRecognitionConsumption.id).where(
+            AmexRecognitionConsumption.imported_expense_id == ExpenseReport.id,
+            AmexRecognitionConsumption.binding_mode == "report_bridge",
+        )
+    )
     for expense in expenses:
         if not expense.cfdi_report_id or expense.cfdi_report is None:
             return None, Decimal(0), "unlinked_amex_charges"
@@ -551,7 +572,17 @@ async def fiscal_lines(
                 selectinload(ExpenseReport.cfdi_report),
             )
             .where(
-                ExpenseReport.origen == "amex_batch",
+                or_(
+                    and_(ExpenseReport.origen == "amex_batch", ~bridge_header),
+                    and_(
+                        or_(
+                            ExpenseReport.origen.is_(None),
+                            ExpenseReport.origen != "amex_batch",
+                        ),
+                        ExpenseReport.pagado_con_amex_empresa.is_(True),
+                        ~duplicate_legacy_report,
+                    ),
+                ),
                 ExpenseReport.estado_gasto != "cancelado",
                 ExpenseReport.cfdi_report_id == expense.cfdi_report_id,
             )
@@ -599,6 +630,7 @@ async def bind_amex_consumption(
     imported_expense_id: UUID,
     report_expense_ids: list[UUID],
     actor_id: UUID,
+    statement_only_reason: str = "",
 ) -> AmexRecognitionResult:
     """Bind explicitly selected representations; never post or commit here."""
     from .amex_accounting_posting_service import ALLOWED_AMEX_LIABILITY_CODES, _money
@@ -617,6 +649,10 @@ async def bind_amex_consumption(
         }
     ):
         return AmexRecognitionResult("pending", "unauthorized_amex_accounting_actor")
+    if not report_expense_ids and not statement_only_reason.strip():
+        return AmexRecognitionResult(
+            "pending", "amex_statement_only_requires_exception"
+        )
     ids = [imported_expense_id, *report_expense_ids]
     if len(set(ids)) != len(ids):
         return AmexRecognitionResult("pending", "duplicate_amex_representation")
@@ -683,6 +719,11 @@ async def bind_amex_consumption(
         )
     )
     consumption = result.scalar_one_or_none()
+    if (
+        consumption
+        and getattr(consumption, "binding_mode", "legacy") == "report_bridge"
+    ):
+        return AmexRecognitionResult("pending", "amex_bridge_header_not_postable")
     result = await session.execute(
         select(AmexRecognitionRepresentation).where(
             AmexRecognitionRepresentation.expense_id.in_(ids)
@@ -726,6 +767,18 @@ async def bind_amex_consumption(
                 actor_id=actor_id,
             )
             session.add(consumption)
+            if not report_expense_ids:
+                session.add(
+                    Aprobacion(
+                        tipo_entidad="gasto",
+                        entidad_id=imported_expense_id,
+                        aprobador_id=actor_id,
+                        accion="editar",
+                        fecha=datetime.now(timezone.utc),
+                        comentario="Excepción financiera AMEX sin informe: "
+                        + statement_only_reason.strip(),
+                    )
+                )
             await session.flush()
         linked_ids = {r.expense_id for r in links}
         for expense in expenses:
@@ -740,6 +793,287 @@ async def bind_amex_consumption(
                 )
         await session.flush()
     return AmexRecognitionResult("bound", consumption=consumption)
+
+
+async def bind_amex_report_bank_consumptions(
+    session: AsyncSession,
+    *,
+    imported_expense_id: UUID,
+    report_consumption_ids: list[UUID],
+    actor_id: UUID,
+) -> AmexRecognitionResult:
+    """Attach an explicit complete bank charge to existing report receipts only."""
+    from ..models import AmexReportBankAssociation
+    from .amex_report_evidence_service import (
+        build_amex_report_source_snapshot,
+        load_amex_report_attachment_evidence,
+    )
+    from .amex_accounting_posting_service import ALLOWED_AMEX_LIABILITY_CODES, _money
+
+    await lock_recognition(session)
+    actor = await session.get(Empleado, actor_id, populate_existing=True)
+    if (
+        actor is None
+        or not actor.activo
+        or actor.rol
+        not in {
+            "finanzas",
+            "admin",
+            "superadmin",
+            "super_admin",
+        }
+    ):
+        return AmexRecognitionResult("pending", "unauthorized_amex_accounting_actor")
+    if not report_consumption_ids or len(set(report_consumption_ids)) != len(
+        report_consumption_ids
+    ):
+        return AmexRecognitionResult("pending", "invalid_amex_bridge_selection")
+    result = await session.execute(
+        select(AmexRecognitionConsumption)
+        .where(AmexRecognitionConsumption.id.in_(report_consumption_ids))
+        .order_by(AmexRecognitionConsumption.id)
+        .execution_options(populate_existing=True)
+    )
+    targets: list[Any] = list(result.scalars().all())
+    if len(targets) != len(report_consumption_ids) or any(
+        c.source_kind != "report"
+        or c.binding_mode != "report"
+        or c.accounting_poliza_id is None
+        for c in targets
+    ):
+        return AmexRecognitionResult("pending", "amex_bridge_requires_report_receipts")
+    # Lock owning documents before canonical accounts and source rows.
+    result = await session.execute(
+        select(AmexAccountingCut).where(
+            AmexAccountingCut.accounting_poliza_id.in_(
+                [c.accounting_poliza_id for c in targets]
+            )
+        )
+    )
+    cuts: dict[UUID, Any] = {
+        cast(Any, c).accounting_poliza_id: c for c in result.scalars().all()
+    }
+    if set(cuts) != {c.accounting_poliza_id for c in targets}:
+        return AmexRecognitionResult("pending", "amex_bridge_requires_complete_cuts")
+    await session.execute(
+        select(Documento)
+        .where(Documento.id.in_({c.informe_id for c in cuts.values()}))
+        .order_by(Documento.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    expenses: list[Any] = await load_expenses(
+        session, [imported_expense_id, *[c.source_report_expense_id for c in targets]]
+    )
+    await load_amex_report_attachment_evidence(session, expenses, locked=True)
+    by_id: dict[UUID, Any] = {e.id: e for e in expenses}
+    if len(by_id) != len(targets) + 1:
+        return AmexRecognitionResult("pending", "missing_amex_representation")
+    imported = by_id[imported_expense_id]
+    if (
+        imported.origen != "amex_batch"
+        or imported.estado_gasto != "activo"
+        or imported.coi_estado in {"contabilizado", "reversar"}
+    ):
+        return AmexRecognitionResult("pending", "invalid_amex_statement_source")
+    if imported.fecha is None or str(imported.currency or "").upper() != "MXN":
+        return AmexRecognitionResult("pending", "amex_card_currency_date_mismatch")
+    blocked = await activation_reason(session, expenses)
+    if blocked:
+        return AmexRecognitionResult("pending", blocked)
+    card = (
+        await session.execute(
+            select(AmexCardAccount)
+            .where(AmexCardAccount.last4 == imported.ultimos_4_digitos)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    liability = (
+        await session.get(
+            CuentaContable, card.liability_cuenta_contable_id, populate_existing=True
+        )
+        if card
+        else None
+    )
+    if (
+        card is None
+        or not card.active
+        or liability is None
+        or not liability.activo
+        or liability.codigo not in ALLOWED_AMEX_LIABILITY_CODES
+    ):
+        return AmexRecognitionResult("pending", "invalid_amex_liability")
+    for target in targets:
+        report = by_id[target.source_report_expense_id]
+        cut = cuts[target.accounting_poliza_id]
+        frozen = next(
+            (
+                p
+                for p in cut.snapshot_json["partidas"]
+                if p["expense_id"] == str(report.id)
+                and p["consumption_id"] == str(target.id)
+            ),
+            None,
+        )
+        if (
+            frozen is None
+            or str(target.id) not in cut.snapshot_json["consumption_ids"]
+            or frozen.get("source_key") != review_source_key(report)
+            or frozen.get("report_source_key")
+            != build_amex_report_source_snapshot([report])["source_key"]
+            or report.estado_gasto != "activo"
+            or report.coi_estado == "reversar"
+            or not report.pagado_con_amex_empresa
+            or target.card_account_id != card.id
+            or target.currency != "MXN"
+            or target.economic_date != imported.fecha.date()
+            or target.liability_account_id != liability.id
+            or target.liability_code != liability.codigo
+            or report.fecha is None
+            or report.fecha.date() != target.economic_date
+            or report.ultimos_4_digitos != card.last4
+            or str(report.currency or "").upper() != "MXN"
+            or _money(report.gasto_cantidad) != _money(target.amount)
+        ):
+            return AmexRecognitionResult("pending", "amex_bridge_source_changed")
+        links = list(
+            (
+                await session.execute(
+                    select(AmexRecognitionRepresentation).where(
+                        AmexRecognitionRepresentation.consumption_id == target.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if (
+            len(links) != 1
+            or links[0].role != "report"
+            or links[0].expense_id != report.id
+        ):
+            return AmexRecognitionResult("pending", "invalid_amex_report_anchor")
+    amount = _money(imported.gasto_cantidad)
+    if amount <= 0 or sum((_money(c.amount) for c in targets), Decimal(0)) != amount:
+        return AmexRecognitionResult("pending", "amex_representation_amount_mismatch")
+    header: Any = (
+        await session.execute(
+            select(AmexRecognitionConsumption)
+            .where(
+                AmexRecognitionConsumption.imported_expense_id == imported_expense_id
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if header and (
+        header.source_kind != "statement"
+        or header.binding_mode != "report_bridge"
+        or header.accounting_poliza_id is not None
+        or header.card_account_id != card.id
+        or _money(header.amount) != amount
+        or header.economic_date != imported.fecha.date()
+        or header.currency != "MXN"
+        or header.liability_account_id != liability.id
+        or header.liability_code != liability.codigo
+        or header.classification_json.get("source_key")
+        != build_amex_report_source_snapshot([imported])["source_key"]
+    ):
+        return AmexRecognitionResult("pending", "amex_bridge_header_conflict")
+    result = await session.execute(
+        select(AmexReportBankAssociation).where(
+            AmexReportBankAssociation.report_consumption_id.in_(report_consumption_ids)
+        )
+    )
+    associations = list(result.scalars().all())
+    if associations and (
+        header is None
+        or any(a.statement_consumption_id != header.id for a in associations)
+    ):
+        return AmexRecognitionResult("pending", "amex_report_already_bank_associated")
+    if header:
+        all_associations = list(
+            (
+                await session.execute(
+                    select(AmexReportBankAssociation).where(
+                        AmexReportBankAssociation.statement_consumption_id == header.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if {a.report_consumption_id for a in all_associations} != set(
+            report_consumption_ids
+        ):
+            return AmexRecognitionResult("pending", "amex_bridge_partition_mismatch")
+        return AmexRecognitionResult("exists", consumption=header)
+    representations = list(
+        (
+            await session.execute(
+                select(AmexRecognitionRepresentation).where(
+                    AmexRecognitionRepresentation.expense_id == imported_expense_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if representations:
+        return AmexRecognitionResult("pending", "amex_representation_already_bound")
+    # Existing cut ownership on an otherwise-unbound imported source is frozen.
+    from .expense_coi_export_service import informe_expense_link_condition
+
+    result = await session.execute(
+        select(AmexAccountingCut.id)
+        .join(Documento, Documento.id == AmexAccountingCut.informe_id)
+        .join(ExpenseReport, informe_expense_link_condition())
+        .where(ExpenseReport.id == imported_expense_id)
+    )
+    if result.first() is not None:
+        return AmexRecognitionResult("pending", "amex_bridge_header_conflict")
+    async with session.begin_nested():
+        header = AmexRecognitionConsumption(
+            id=uuid4(),
+            source_kind="statement",
+            binding_mode="report_bridge",
+            imported_expense_id=imported_expense_id,
+            source_report_expense_id=None,
+            card_account_id=card.id,
+            amount=amount,
+            currency="MXN",
+            economic_date=imported.fecha.date(),
+            liability_account_id=liability.id,
+            liability_code=liability.codigo,
+            accounting_poliza_id=None,
+            classification_json={
+                "source_key": build_amex_report_source_snapshot([imported])[
+                    "source_key"
+                ]
+            },
+            actor_id=actor_id,
+        )
+        session.add(header)
+        await session.flush()
+        session.add(
+            AmexRecognitionRepresentation(
+                id=uuid4(),
+                consumption_id=header.id,
+                expense_id=imported_expense_id,
+                role="statement",
+            )
+        )
+        for target in targets:
+            session.add(
+                AmexReportBankAssociation(
+                    statement_consumption_id=header.id,
+                    report_consumption_id=target.id,
+                    actor_id=actor_id,
+                )
+            )
+        await session.flush()
+    return AmexRecognitionResult("bound", consumption=header)
 
 
 async def recognize_expenses(

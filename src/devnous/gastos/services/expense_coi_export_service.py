@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from .amex_accounting_identity_service import accounting_expense_condition
 from sqlalchemy.orm import aliased, selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -101,9 +103,12 @@ def expense_coi_batch_period_condition(
     owner_in_period = exists(
         select(Documento.id).where(owner, informe_coi_period_condition(start, end))
     ).correlate(ExpenseReport)
-    return or_(
-        owner_in_period,
-        and_(~has_owner, ExpenseReport.fecha >= start, ExpenseReport.fecha < end),
+    return and_(
+        accounting_expense_condition(ExpenseReport),
+        or_(
+            owner_in_period,
+            and_(~has_owner, ExpenseReport.fecha >= start, ExpenseReport.fecha < end),
+        ),
     )
 
 
@@ -285,6 +290,17 @@ async def assess_expense_coi_cleanup_ready(
     expense: ExpenseReport,
 ) -> Tuple[bool, List[str]]:
     """True when the expense is safe to emit in a COI policy."""
+    header = await session.scalar(
+        select(ExpenseReport.id).where(
+            ExpenseReport.id == expense.id,
+            ~accounting_expense_condition(ExpenseReport),
+        )
+    )
+    if header is not None:
+        return False, [
+            "El cargo bancario ya es evidencia de un reconocimiento AMEX; "
+            "no genera otra póliza."
+        ]
     if getattr(expense, "origen", None) == "supplier_advance_invoice":
         return False, ["Comprobación de anticipo a proveedor: requiere pólizas contables por evento, fuera de la exportación genérica."]
     state = await build_cleanup_preview(session, expense)
@@ -307,6 +323,18 @@ async def build_expense_cfdi_for_export(
 
     Requires persisted cleanup fields (cuenta, contrapartida, CFDI unless non-fiscal).
     """
+    if not require_cleanup_ready:
+        header = await session.scalar(
+            select(ExpenseReport.id).where(
+                ExpenseReport.id == expense.id,
+                ~accounting_expense_condition(ExpenseReport),
+            )
+        )
+        if header is not None:
+            raise ValueError(
+                "El cargo bancario ya es evidencia de un reconocimiento AMEX; "
+                "no genera otra póliza."
+            )
     if getattr(expense, "origen", None) == "supplier_advance_invoice":
         raise ValueError("Comprobación de anticipo a proveedor excluida de la póliza de transferencia genérica.")
     if require_cleanup_ready:

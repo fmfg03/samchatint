@@ -89,6 +89,11 @@ async def render(monkeypatch, *, candidates, historical=None, informe_links=None
         ),
     )
     monkeypatch.setattr(
+        user_routes,
+        "_load_amex_bank_report_context",
+        AsyncMock(return_value={"headers": {}, "associated": {}, "available": []}),
+    )
+    monkeypatch.setattr(
         user_routes, "list_amex_card_accounts", AsyncMock(return_value=[catalog_card])
     )
     monkeypatch.setattr(

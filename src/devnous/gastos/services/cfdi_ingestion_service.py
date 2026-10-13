@@ -11,6 +11,8 @@ from uuid import uuid4
 from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .amex_accounting_identity_service import accounting_expense_condition
+
 from ..models import Aprobacion, CFDIReport, Documento, Empleado, ExpenseReport
 from .cfdi_expense_link_service import (
     find_cfdi_report_by_fiscal_uuid,
@@ -280,7 +282,10 @@ def _apply_parsed_data(
 async def _other_expense_links(
     session: AsyncSession, report_id: Any, entity: Optional[CFDIEntity]
 ) -> int:
-    conditions = [ExpenseReport.cfdi_report_id == report_id]
+    conditions = [
+        ExpenseReport.cfdi_report_id == report_id,
+        accounting_expense_condition(ExpenseReport),
+    ]
     if isinstance(entity, ExpenseReport) and getattr(entity, "id", None):
         conditions.append(ExpenseReport.id != entity.id)
     result = await session.execute(
@@ -490,6 +495,7 @@ async def find_blocking_cfdi_usage(
         .where(
             ExpenseReport.cfdi_report_id == report_id,
             ExpenseReport.cfdi_compartido_confirmado.is_(False),
+            accounting_expense_condition(ExpenseReport),
             Documento.estado.in_(_CFDI_RESERVING_DOCUMENT_STATES),
             *([Documento.id != exclude_documento_id] if exclude_documento_id is not None else []),
         ).limit(1)
