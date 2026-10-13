@@ -382,3 +382,70 @@ async def test_edit_transition_rejects_protected_source_before_mark(
     )
     assert card is None and invalid == reason
     assert expense.pagado_con_amex_empresa is False and not session.added
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["borrador", "enviado", "aprobado"])
+async def test_owner_pending_transition_preserves_source_and_avoids_catalog(
+    setup, state
+):
+    session, expense, loader = setup
+    expense.pagado_con_amex_empresa = False
+    session.informe.estado = state
+    session.get = AsyncMock(
+        side_effect=AssertionError("Catalog/actor access forbidden")
+    )
+    reason = await service.validate_amex_pending_edit_transition(
+        session, expense_id=expense.id
+    )
+    assert reason is None
+    loader.assert_awaited_once_with(session, [expense.id])
+    session.get.assert_not_awaited()
+    assert "pg_advisory_xact_lock" in session.queries[0]
+    assert any("FOR UPDATE" in query for query in session.queries)
+    assert expense.pagado_con_amex_empresa is False
+    assert expense.ultimos_4_digitos is None and not session.added
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "protected,reason",
+    [
+        ("bound", "amex_representation_already_bound"),
+        ("cut", "amex_informe_already_cut"),
+        ("coi", "invalid_amex_report_expense"),
+        ("reversar", "invalid_amex_report_expense"),
+        ("imported", "invalid_amex_report_expense"),
+        ("missing", "missing_amex_representation"),
+        ("identity", "amex_card_identity_requires_finance"),
+        ("cancelled", "invalid_amex_informe"),
+        ("rejected", "invalid_amex_informe"),
+    ],
+)
+async def test_owner_pending_transition_rejects_frozen_or_identified_source(
+    setup, protected, reason
+):
+    session, expense, loader = setup
+    expense.pagado_con_amex_empresa = False
+    session.get = AsyncMock(side_effect=AssertionError("Catalog access forbidden"))
+    if protected in {"bound", "cut"}:
+        setattr(session, protected, True)
+    elif protected in {"coi", "reversar"}:
+        expense.coi_estado = "contabilizado" if protected == "coi" else "reversar"
+    elif protected == "imported":
+        expense.origen = "amex_batch"
+    elif protected == "missing":
+        loader.return_value = []
+    elif protected == "identity":
+        expense.ultimos_4_digitos = "1005"
+    else:
+        session.informe.estado = (
+            "cancelado" if protected == "cancelled" else "rechazado"
+        )
+    before = vars(expense).copy()
+    result = await service.validate_amex_pending_edit_transition(
+        session, expense_id=expense.id
+    )
+    assert result == reason
+    session.get.assert_not_awaited()
+    assert vars(expense) == before and not session.added

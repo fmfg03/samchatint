@@ -149,6 +149,7 @@ from ..services.amex_recognition_service import (
     bind_amex_consumption,
     validate_amex_card_identity,
     validate_amex_card_edit_transition,
+    validate_amex_pending_edit_transition,
 )
 from ..services.amex_expense_service import company_amex_sql_condition
 from ..services.expense_coi_export_service import informe_expense_link_condition
@@ -21099,51 +21100,107 @@ async def _require_amex_form_card(
     return card
 
 
+def _can_identify_amex_card(actor: Empleado) -> bool:
+    """Corporate identity belongs to active Finance roles, independently of facts."""
+    return bool(getattr(actor, "activo", False)) and (
+        str(getattr(actor, "rol", "") or "").strip().lower() in FINANCE_AMEX_ROLES
+    )
+
+
+def _reject_unauthorized_amex_card_submission(
+    actor: Empleado, card_account_id: Optional[str]
+) -> None:
+    if str(card_account_id or "").strip() and not _can_identify_amex_card(actor):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo Finanzas puede identificar la tarjeta AMEX de empresa.",
+        )
+
+
+async def _amex_visible_card_options(
+    session: AsyncSession, actor: Empleado, *, enabled: bool
+) -> str:
+    """Never load the corporate catalog into an owner's capture or edit view."""
+    if not enabled or not _can_identify_amex_card(actor):
+        return ""
+    return _amex_identity_card_options(await list_amex_card_accounts(session))
+
+
+def _amex_identity_control_html(
+    actor: Empleado,
+    *,
+    card_options: str,
+    existing_expense: Optional[ExpenseReport] = None,
+) -> str:
+    if existing_expense is not None and is_company_amex_expense(existing_expense):
+        last4 = str(existing_expense.ultimos_4_digitos or "").strip()
+        if last4:
+            return f"<small>Tarjeta AMEX registrada: ****{escape(last4)}</small>"
+        return (
+            "<small>Pendiente de identificar tarjeta por Finanzas. "
+            '<a href="/admin/gastos/amex/conciliacion#sin-tarjeta">'
+            "Partidas AMEX sin tarjeta</a>.</small>"
+        )
+    if not _can_identify_amex_card(actor):
+        return "<small>Pendiente de identificar tarjeta por Finanzas.</small>"
+    return (
+        "<label>Tarjeta AMEX verificada "
+        '<select name="amex_card_account_id">'
+        f"{card_options}</select></label>"
+    )
+
+
 async def _validated_amex_edit_identity(
     session: AsyncSession,
     expense: ExpenseReport,
     *,
+    actor: Empleado,
     requested_amex: bool,
     card_account_id: Optional[str],
     requested_last4: Optional[str],
 ) -> Optional[str]:
-    """Keep existing AMEX identity immutable outside audited recovery."""
-    existing_last4 = expense.ultimos_4_digitos
-    if requested_amex:
-        if is_company_amex_expense(expense):
-            selected_card = await _require_amex_form_card(session, card_account_id)
-            if (
-                not (existing_last4 or "").strip()
-                or existing_last4 != selected_card.last4
-            ):
-                raise ValueError(
-                    "La identidad de una partida AMEX existente "
-                    "no puede cambiarse aquí. "
-                    "Usa Partidas AMEX sin tarjeta en Conciliación AMEX "
-                    "para identificarla con auditoría."
-                )
-        else:
-            try:
-                card_id = UUIDType(str(card_account_id or "").strip())
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    "Selecciona una tarjeta AMEX activa del catálogo."
-                ) from exc
-            selected_card, reason = await validate_amex_card_edit_transition(
-                session, expense_id=UUIDType(str(expense.id)), card_account_id=card_id
+    """Preserve existing identity; only Finance may assign a new corporate card."""
+    _reject_unauthorized_amex_card_submission(actor, card_account_id)
+    existing_last4 = str(expense.ultimos_4_digitos or "").strip() or None
+    if is_company_amex_expense(expense):
+        if requested_last4 not in (None, "", existing_last4) or card_account_id:
+            raise ValueError(
+                "La identidad de una partida AMEX existente no puede cambiarse aquí. "
+                "Usa Partidas AMEX sin tarjeta en Conciliación AMEX "
+                "para identificarla con auditoría."
             )
-            if selected_card is None or reason:
-                raise ValueError(
-                    "No se puede declarar AMEX: revisa la tarjeta, el informe y su "
-                    "estado contable. Una partida vinculada o con corte guardado "
-                    "no admite cambios."
-                )
-        return str(selected_card.last4)
-    if is_company_amex_expense(expense) and requested_last4 != existing_last4:
-        raise ValueError(
-            "No se puede cambiar la identidad de tarjeta de una partida AMEX existente."
+        return existing_last4
+    if not requested_amex:
+        return requested_last4
+    if not _can_identify_amex_card(actor):
+        if (requested_last4 or "").strip():
+            raise HTTPException(
+                status_code=403,
+                detail="Solo Finanzas puede identificar la tarjeta AMEX de empresa.",
+            )
+        reason = await validate_amex_pending_edit_transition(
+            session, expense_id=UUIDType(str(expense.id))
         )
-    return requested_last4
+        if reason:
+            raise ValueError(
+                "No se puede declarar AMEX: revisa el informe y su estado contable. "
+                "La identidad de tarjeta requiere revisión de Finanzas."
+            )
+        return None
+    try:
+        card_id = UUIDType(str(card_account_id or "").strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Selecciona una tarjeta AMEX activa del catálogo.") from exc
+    selected_card, reason = await validate_amex_card_edit_transition(
+        session, expense_id=UUIDType(str(expense.id)), card_account_id=card_id
+    )
+    if selected_card is None or reason:
+        raise ValueError(
+            "No se puede declarar AMEX: revisa la tarjeta, el informe y su "
+            "estado contable. Una partida vinculada o con corte guardado "
+            "no admite cambios."
+        )
+    return str(selected_card.last4)
 
 
 @router.post("/admin/gastos/amex/conciliacion/identificar-tarjeta")
@@ -28682,8 +28739,13 @@ async def editar_gasto_form(
     company_amex_disabled = "disabled" if disabled_attr else ""
     company_amex_edit_html = ""
     if company_amex_edit_allowed or current_company_amex:
-        edit_amex_options = _amex_identity_card_options(
-            await list_amex_card_accounts(session)
+        edit_amex_options = await _amex_visible_card_options(
+            session, current_empleado, enabled=not current_company_amex
+        )
+        edit_amex_identity_html = _amex_identity_control_html(
+            current_empleado,
+            card_options=edit_amex_options,
+            existing_expense=expense,
         )
         company_amex_edit_html = f"""
                 <div class="form-group" style="border:1px solid #bfdbfe; border-radius:10px; padding:14px; background:#eff6ff;">
@@ -28691,14 +28753,7 @@ async def editar_gasto_form(
                         <input type="checkbox" name="pagado_con_amex_empresa" value="1" {company_amex_checked} {company_amex_disabled}>
                         Pago con AMEX empresa
                     </label>
-                    <label>Tarjeta AMEX verificada
-                        <select name="amex_card_account_id" {company_amex_disabled}>
-                            {edit_amex_options}</select>
-                    </label>
-                    <small>Selecciona explícitamente la tarjeta al declarar AMEX.
-                    Para partidas AMEX sin identidad,
-                    usa <a href="/admin/gastos/amex/conciliacion#sin-tarjeta">
-                        Partidas AMEX sin tarjeta</a>.</small>
+                    {edit_amex_identity_html}
                 </div>
         """
 
@@ -28902,7 +28957,10 @@ async def editar_gasto_form(
 
                 <div class="form-group">
                     <label for="ultimos_4_digitos">Últimos 4 Dígitos</label>
-                    <input type="text" name="ultimos_4_digitos" id="ultimos_4_digitos" value="{expense.ultimos_4_digitos or ''}" {disabled_attr} maxlength="4" pattern="[0-9]{{4}}" title="Debe ser exactamente 4 dígitos">
+                    <input type="text" name="ultimos_4_digitos" id="ultimos_4_digitos"
+                        value="{expense.ultimos_4_digitos or ''}" {disabled_attr}
+                        {"readonly" if current_company_amex else ""} maxlength="4"
+                        pattern="[0-9]{{4}}" title="Debe ser exactamente 4 dígitos">
                     <small>Ingrese exactamente 4 dígitos (opcional)</small>
                 </div>
 
@@ -29164,6 +29222,8 @@ async def editar_gasto(
     """
     from datetime import timezone
 
+    _reject_unauthorized_amex_card_submission(current_empleado, amex_card_account_id)
+
     await _ensure_expense_tip_schema(session)
 
     # Load expense
@@ -29334,12 +29394,18 @@ async def editar_gasto(
             )
 
     if _form_checkbox_checked(pagado_con_amex_empresa):
+        raw_amex_cuenta = str(cuenta_gastos_id or "").strip()
+        invalid_amex_cuenta = False
         try:
-            requested_amex_cuenta = UUIDType(str(cuenta_gastos_id or "").strip())
+            requested_amex_cuenta = (
+                UUIDType(raw_amex_cuenta) if raw_amex_cuenta else None
+            )
         except (TypeError, ValueError):
             requested_amex_cuenta = None
+            invalid_amex_cuenta = True
         if (
-            requested_amex_cuenta is None
+            invalid_amex_cuenta
+            or (requested_amex_cuenta is None and not is_company_amex_expense(expense))
             or requested_amex_cuenta != expense.cuenta_gastos_id
         ):
             await session.rollback()
@@ -29359,10 +29425,14 @@ async def editar_gasto(
         ultimos_4_digitos = await _validated_amex_edit_identity(
             session,
             expense,
+            actor=current_empleado,
             requested_amex=_form_checkbox_checked(pagado_con_amex_empresa),
             card_account_id=amex_card_account_id,
             requested_last4=ultimos_4_digitos,
         )
+    except HTTPException:
+        await session.rollback()
+        raise
     except ValueError as exc:
         await session.rollback()
         return RedirectResponse(
@@ -29621,7 +29691,11 @@ async def editar_gasto(
     company_amex_allowed = bool(
         linked_cuenta_for_amex and _cuenta_allows_company_amex(linked_cuenta_for_amex)
     )
-    if requested_company_amex and not company_amex_allowed:
+    if (
+        requested_company_amex
+        and not company_amex_allowed
+        and not current_company_amex
+    ):
         return RedirectResponse(
             url=_append_error_params(
                 edit_form_url,
@@ -29964,7 +30038,12 @@ async def editar_gasto(
     return RedirectResponse(
         url=_append_success_params(
             safe_return_to,
-            success_msg="Gasto actualizado exitosamente.",
+            success_msg=(
+                "Gasto actualizado exitosamente. "
+                "Pendiente de identificar tarjeta por Finanzas."
+                if requested_company_amex and not expense.ultimos_4_digitos
+                else "Gasto actualizado exitosamente."
+            ),
         ),
         status_code=303
     )
@@ -44171,6 +44250,7 @@ async def crear_gasto_rapido_en_informe(
     exceso_equipaje_cfdi_compartido_motivo: Optional[str] = Form(None),
     exceso_equipaje_impuestos_y_retenciones: Optional[str] = Form("0"),
 ) -> RedirectResponse:
+    _reject_unauthorized_amex_card_submission(current_empleado, amex_card_account_id)
     redirect_base = f"/informes-de-gastos/{cuenta_id}"
     try:
         cuenta_result = await session.execute(
@@ -44337,13 +44417,18 @@ async def crear_gasto_rapido_en_informe(
                 bool(exceso_equipaje_cfdi_pdf and exceso_equipaje_cfdi_pdf.filename),
             ]
         )
-        if quick_company_amex_requested or (
+        quick_amex_identity_required = quick_company_amex_requested or (
             has_air_supplement
             and is_company_amex_account(cuenta.beneficiario_proveedor_cliente)
-        ):
-            quick_amex_card = await _require_amex_form_card(
-                session, amex_card_account_id
-            )
+        )
+        amex_identity_pending = False
+        if quick_amex_identity_required:
+            if _can_identify_amex_card(current_empleado):
+                quick_amex_card = await _require_amex_form_card(
+                    session, amex_card_account_id
+                )
+            else:
+                amex_identity_pending = True
         expense = await create_expense_from_data(
             session=session,
             empleado_id=cuenta.empleado_id,
@@ -44365,10 +44450,11 @@ async def crear_gasto_rapido_en_informe(
             propina_no_deducible=float(values["propina_no_deducible"]),
         )
         if quick_company_amex_requested:
-            assert quick_amex_card is not None
             expense.pagado_con_amex_empresa = True
             expense.metodo_pago = "TARJETA CREDITO AMEX"
-            expense.ultimos_4_digitos = quick_amex_card.last4
+            expense.ultimos_4_digitos = (
+                quick_amex_card.last4 if quick_amex_card is not None else None
+            )
         else:
             expense.pagado_con_amex_empresa = False
 
@@ -44536,10 +44622,11 @@ async def crear_gasto_rapido_en_informe(
                 propina_no_deducible=0.0,
             )
             if is_company_amex_account(cuenta.beneficiario_proveedor_cliente):
-                assert quick_amex_card is not None
                 supplement_expense.pagado_con_amex_empresa = True
                 supplement_expense.metodo_pago = "TARJETA CREDITO AMEX"
-                supplement_expense.ultimos_4_digitos = quick_amex_card.last4
+                supplement_expense.ultimos_4_digitos = (
+                    quick_amex_card.last4 if quick_amex_card is not None else None
+                )
             supplement_expense.numero_factura = supplement_values["numero_factura"]
             supplement_expense.cuenta_gastos_id = cuenta.id
             supplement_expense.referencia_base = cuenta.referencia_base
@@ -44646,7 +44733,11 @@ async def crear_gasto_rapido_en_informe(
             url=_append_success_params(
                 redirect_base,
                 success="gasto_rapido_creado",
-                msg="Gasto guardado exitosamente.",
+                msg=(
+                    "Gasto guardado exitosamente. "
+                    "Pendiente de identificar tarjeta por Finanzas."
+                    if amex_identity_pending else "Gasto guardado exitosamente."
+                ),
             ),
             status_code=303,
         )
@@ -45513,10 +45604,13 @@ async def cuenta_de_gastos_detail(
             </div>
         </div>
     """
-    informe_amex_card_options = (
-        _amex_identity_card_options(await list_amex_card_accounts(session))
-        if _can_manage_amex or _cuenta_allows_company_amex(cuenta)
-        else ""
+    informe_amex_card_options = await _amex_visible_card_options(
+        session,
+        current_empleado,
+        enabled=(
+            _cuenta_allows_company_amex(cuenta)
+            or is_company_amex_account(cuenta.beneficiario_proveedor_cliente)
+        ),
     )
     amex_bulk_controls = (
         f"""
@@ -45557,14 +45651,25 @@ async def cuenta_de_gastos_detail(
             required=True,
         )
     quick_company_amex_allowed = _cuenta_allows_company_amex(cuenta)
-    quick_company_amex_header = "<th>AMEX empresa</th>" if quick_company_amex_allowed else ""
-    quick_company_amex_cell = (
-        '<td><label style="display:flex;align-items:center;gap:8px;font-weight:700;white-space:nowrap;">'
-        '<input type="checkbox" name="pagado_con_amex_empresa" value="1"> '
-        'AMEX empresa</label>'
-        '<label>Tarjeta AMEX <select name="amex_card_account_id">'
-        f'{informe_amex_card_options}</select></label></td>'
+    quick_provider_amex = is_company_amex_account(cuenta.beneficiario_proveedor_cliente)
+    quick_amex_controls_visible = quick_company_amex_allowed or quick_provider_amex
+    quick_company_amex_header = (
+        "<th>AMEX empresa</th>" if quick_amex_controls_visible else ""
+    )
+    quick_company_amex_checkbox = (
+        '<label><input type="checkbox" name="pagado_con_amex_empresa" value="1"> '
+        "AMEX empresa</label>"
         if quick_company_amex_allowed
+        else ""
+    )
+    quick_company_amex_cell = (
+        "<td>"
+        + quick_company_amex_checkbox
+        + _amex_identity_control_html(
+            current_empleado, card_options=informe_amex_card_options
+        )
+        + "</td>"
+        if quick_amex_controls_visible
         else ""
     )
     if _can_quick_capture_expense(cuenta, informe_doc, current_empleado):

@@ -101,7 +101,7 @@ async def render(monkeypatch, *, candidates, historical=None, informe_links=None
         user_routes, "suggest_pase_monthly_cfdi_matches", AsyncMock(return_value=[])
     )
     monkeypatch.setattr(user_routes, "render_top_navigation", lambda *_a, **_k: "")
-    actor = SimpleNamespace(id=uuid4(), rol="finanzas", nombre="Finanzas")
+    actor = SimpleNamespace(id=uuid4(), rol="finanzas", nombre="Finanzas", activo=True)
     view = user_routes.amex_conciliacion_view
     # Re-run the same acceptance test against the unmodified view for red evidence.
     if os.environ.get("AMEX_IDENTITY_BASELINE"):
@@ -329,9 +329,9 @@ async def test_bulk_authority_and_catalog_reason_are_required(monkeypatch):
 @pytest.mark.parametrize(
     "current_last4, requested_amex, requested_last4, fails",
     [
-        (None, True, None, True),
-        ("9999", True, "9999", True),
-        ("1005", True, "9999", False),
+        (None, True, None, False),
+        ("9999", True, "9999", False),
+        ("1005", True, "9999", True),
         ("1005", False, "9999", True),
         ("1005", False, "1005", False),
     ],
@@ -350,16 +350,23 @@ async def test_edit_existing_amex_identity_requires_audited_recovery(
     monkeypatch.setattr(user_routes, "is_company_amex_expense", lambda *_: True)
     kwargs = dict(
         requested_amex=requested_amex,
-        card_account_id=str(selected.id),
+        card_account_id=None,
         requested_last4=requested_last4,
     )
     expense = item(last4=current_last4)
     if fails:
-        with pytest.raises(ValueError, match="identidad"):
-            await user_routes._validated_amex_edit_identity(None, expense, **kwargs)
+        with pytest.raises(ValueError):
+            await user_routes._validated_amex_edit_identity(
+                None,
+                expense,
+                **kwargs,
+                actor=SimpleNamespace(rol="finanzas", activo=True),
+            )
     else:
-        value = await user_routes._validated_amex_edit_identity(None, expense, **kwargs)
-        assert value == "1005"
+        value = await user_routes._validated_amex_edit_identity(
+            None, expense, **kwargs, actor=SimpleNamespace(rol="finanzas", activo=True)
+        )
+        assert value == current_last4
     assert expense.ultimos_4_digitos == current_last4
 
 
@@ -382,6 +389,7 @@ async def test_edit_new_amex_uses_selected_catalog_identity(monkeypatch):
             requested_amex=True,
             card_account_id=str(selected.id),
             requested_last4="9999",
+            actor=SimpleNamespace(rol="finanzas", activo=True),
         )
         == selected.last4
     )
@@ -433,7 +441,13 @@ async def test_quick_amex_identity_is_explicit_and_preserved_for_supplement(
     import inspect
     from unittest.mock import Mock
 
-    actor = SimpleNamespace(id=uuid4(), nombre="Finanzas", departamento="Operaciones")
+    actor = SimpleNamespace(
+        id=uuid4(),
+        nombre="Finanzas",
+        departamento="Operaciones",
+        rol="finanzas",
+        activo=True,
+    )
     cuenta = SimpleNamespace(
         id=uuid4(),
         empleado_id=actor.id,
@@ -621,6 +635,7 @@ async def test_edit_new_amex_does_not_bypass_source_accounting_guards(
             requested_amex=True,
             card_account_id=str(uuid4()),
             requested_last4=None,
+            actor=SimpleNamespace(rol="finanzas", activo=True),
         )
     validate.assert_awaited_once()
 
@@ -635,7 +650,7 @@ def test_actual_edit_post_keeps_validated_amex_source_context(monkeypatch, targe
     from devnous.gastos.models import ExpenseReport
     from devnous.gastos.routes import dependencies
 
-    actor = SimpleNamespace(id=uuid4(), rol="finanzas", nombre="Finanzas")
+    actor = SimpleNamespace(id=uuid4(), rol="finanzas", nombre="Finanzas", activo=True)
     account_id = uuid4()
     expense = ExpenseReport(
         id=uuid4(),
@@ -697,3 +712,466 @@ def test_actual_edit_post_keeps_validated_amex_source_context(monkeypatch, targe
         assert expense.concepto == "Alimentos"
         assert expense.ultimos_4_digitos is None
         assert expense.pagado_con_amex_empresa is False
+
+
+@pytest.mark.asyncio
+async def test_review_existing_identity_does_not_require_reselect_or_active_catalog(
+    monkeypatch,
+):
+    expense = item(last4="1005")
+    monkeypatch.setattr(user_routes, "is_company_amex_expense", lambda *_: True)
+    catalog = AsyncMock(
+        side_effect=AssertionError("Existing identity must not query catalog")
+    )
+    monkeypatch.setattr(user_routes, "validate_amex_card_identity", catalog)
+    assert (
+        await user_routes._validated_amex_edit_identity(
+            None,
+            expense,
+            requested_amex=True,
+            card_account_id=None,
+            requested_last4="1005",
+            actor=SimpleNamespace(rol="finanzas", activo=True),
+        )
+        == "1005"
+    )
+    catalog.assert_not_awaited()
+
+
+def test_review_provider_amex_supplement_has_finance_card_selector():
+    import inspect
+    from textwrap import dedent
+
+    source = inspect.getsource(user_routes.cuenta_de_gastos_detail)
+    start = source.index("    quick_company_amex_allowed =")
+    end = source.index("    if _can_quick_capture_expense", start)
+    namespace = dict(user_routes.__dict__)
+    namespace.update(
+        cuenta=SimpleNamespace(beneficiario_proveedor_cliente=SimpleNamespace()),
+        current_empleado=SimpleNamespace(rol="finanzas", activo=True),
+        _cuenta_allows_company_amex=lambda *_: False,
+        is_company_amex_account=lambda *_: True,
+        informe_amex_card_options='<option value="card-id">AMEX ****1005</option>',
+    )
+    exec(
+        compile(dedent(source[start:end]), "quick_amex_real_render_block", "exec"),
+        namespace,
+    )
+    assert 'name="amex_card_account_id"' in namespace["quick_company_amex_cell"]
+    assert "AMEX ****1005" in namespace["quick_company_amex_cell"]
+
+
+def _quick_http_client(
+    monkeypatch, *, role="empleado", main_allowed=True, provider_amex=False
+):
+    from unittest.mock import Mock
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from devnous.gastos.routes import dependencies
+
+    actor = SimpleNamespace(
+        id=uuid4(), nombre="Captura", departamento="Operaciones", rol=role, activo=True
+    )
+    cuenta = SimpleNamespace(
+        id=uuid4(),
+        empleado_id=actor.id,
+        empleado=actor,
+        torneo=None,
+        referencia_base="001",
+        fase="Nacional",
+        categorias=[],
+        edicion=2026,
+        currency="MXN",
+        beneficiario_proveedor_cliente=SimpleNamespace() if provider_amex else None,
+    )
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[Result([cuenta]), Result([SimpleNamespace(id=uuid4())])]
+        ),
+        commit=AsyncMock(),
+        rollback=AsyncMock(),
+        add=Mock(),
+        flush=AsyncMock(),
+    )
+    created = []
+
+    async def create(**kwargs):
+        expense = SimpleNamespace(
+            id=uuid4(), gasto_cantidad=kwargs["gasto_cantidad"], ultimos_4_digitos=None
+        )
+        created.append(expense)
+        return expense
+
+    monkeypatch.setattr(user_routes, "_can_quick_capture_expense", lambda *_: True)
+    monkeypatch.setattr(
+        user_routes, "_cuenta_allows_company_amex", lambda *_: main_allowed
+    )
+    monkeypatch.setattr(
+        user_routes, "is_company_amex_account", lambda *_: provider_amex
+    )
+    monkeypatch.setattr(user_routes, "_ensure_expense_tip_schema", AsyncMock())
+    monkeypatch.setattr(user_routes, "resolve_cfdi_upload", lambda **_: (None, None))
+    monkeypatch.setattr(user_routes, "create_expense_from_data", create)
+    monkeypatch.setattr(user_routes, "apply_budget_concept_cuenta_mapping", AsyncMock())
+    monkeypatch.setattr(
+        user_routes, "link_expense_to_cfdi_if_manual_uuid_set", AsyncMock()
+    )
+    monkeypatch.setattr(user_routes, "create_adjunto_record", AsyncMock())
+    monkeypatch.setattr(user_routes, "is_pdf_content", lambda *_: True)
+    selected = card()
+    monkeypatch.setattr(
+        user_routes,
+        "validate_amex_card_identity",
+        AsyncMock(return_value=(selected, None)),
+    )
+    app = FastAPI()
+    app.add_api_route(
+        "/informes-de-gastos/{cuenta_id}/gastos/quick",
+        user_routes.crear_gasto_rapido_en_informe,
+        methods=["POST"],
+    )
+    app.dependency_overrides[dependencies.get_current_empleado] = lambda: actor
+    app.dependency_overrides[user_routes.get_db_session] = lambda: session
+    return TestClient(app), cuenta, session, created, selected
+
+
+def test_review_owner_cannot_forge_corporate_card_assignment(monkeypatch):
+    client, cuenta, session, created, selected = _quick_http_client(monkeypatch)
+    response = client.post(
+        f"/informes-de-gastos/{cuenta.id}/gastos/quick",
+        data={
+            "concepto": "Alimentos",
+            "fecha": "2026-10-15",
+            "subtotal": "100",
+            "numero_factura": "vale azul",
+            "pagado_con_amex_empresa": "1",
+            "amex_card_account_id": str(selected.id),
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 403
+    assert not created
+    session.execute.assert_not_awaited()
+    session.commit.assert_not_awaited()
+
+
+def _edit_http_client(
+    monkeypatch, *, role="empleado", amex=True, last4="1005", linked=True
+):
+    from unittest.mock import Mock
+
+    from fastapi import FastAPI
+    from fastapi.responses import HTMLResponse
+    from fastapi.testclient import TestClient
+
+    from devnous.gastos.models import CuentaDeGastos, ExpenseReport
+    from devnous.gastos.routes import dependencies
+
+    actor = SimpleNamespace(id=uuid4(), rol=role, activo=True, nombre="Captura")
+    account = CuentaDeGastos(
+        id=uuid4(),
+        empleado_id=actor.id,
+        estado="abierta",
+        referencia_base="001",
+        currency="MXN",
+    )
+    expense = ExpenseReport(
+        id=uuid4(),
+        empleado_id=actor.id,
+        cuenta_gastos_id=account.id if linked else None,
+        estado_gasto="activo",
+        concepto="Alimentos",
+        gasto_cantidad=116,
+        pagado_con_amex_empresa=amex,
+        ultimos_4_digitos=last4,
+        origen="manual" if linked else "amex_batch",
+        numero_referencia="G-001",
+    )
+    session = SimpleNamespace(
+        execute=AsyncMock(), commit=AsyncMock(), rollback=AsyncMock(), add=Mock()
+    )
+
+    async def execute(stmt):
+        sql = str(stmt)
+        if "FROM expense_reports" in sql:
+            return Result([expense])
+        if "FROM cuentas_de_gastos" in sql:
+            return Result([account] if linked else [])
+        if "FROM cuentas_contables" in sql:
+            return Result([])
+        raise AssertionError(sql)
+
+    session.execute.side_effect = execute
+    monkeypatch.setattr(user_routes, "_ensure_expense_tip_schema", AsyncMock())
+    monkeypatch.setattr(user_routes, "_ensure_can_mutate_informe_expense", AsyncMock())
+    monkeypatch.setattr(
+        user_routes, "_expense_block_message", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        user_routes, "get_active_non_deductible_proof", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(user_routes, "render_top_navigation", lambda *_a, **_k: "")
+    monkeypatch.setattr(user_routes, "_cuenta_allows_company_amex", lambda *_: True)
+    monkeypatch.setattr(
+        user_routes,
+        "validate_amex_pending_edit_transition",
+        AsyncMock(return_value=None),
+    )
+    catalog = AsyncMock(
+        side_effect=AssertionError("Unexpected corporate catalog exposure")
+    )
+    monkeypatch.setattr(user_routes, "list_amex_card_accounts", catalog)
+    app = FastAPI()
+    app.add_api_route(
+        "/gastos/{gasto_id}/editar",
+        user_routes.editar_gasto_form,
+        methods=["GET"],
+        response_class=HTMLResponse,
+    )
+    app.add_api_route(
+        "/gastos/{gasto_id}/editar", user_routes.editar_gasto, methods=["POST"]
+    )
+    app.dependency_overrides[dependencies.get_current_empleado] = lambda: actor
+    app.dependency_overrides[user_routes.get_db_session] = lambda: session
+    return TestClient(app), expense, account, session, catalog
+
+
+@pytest.mark.parametrize(
+    "role, last4, linked",
+    [
+        ("empleado", "1005", True),
+        ("finanzas", "1005", True),
+        ("empleado", "1005", False),
+        ("finanzas", "1005", False),
+        ("empleado", None, True),
+    ],
+)
+def test_existing_amex_unrelated_edit_preserves_identity_without_catalog(
+    monkeypatch, role, last4, linked
+):
+    client, expense, account, session, catalog = _edit_http_client(
+        monkeypatch,
+        role=role,
+        last4=last4,
+        linked=linked,
+    )
+    response = client.post(
+        f"/gastos/{expense.id}/editar",
+        data={
+            "concepto": "Alimentos actualizados",
+            "pagado_con_amex_empresa": "1",
+            "cuenta_gastos_id": str(account.id) if linked else "",
+            "ultimos_4_digitos": last4 or "",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "success_msg" in response.headers["location"]
+    session.commit.assert_awaited_once()
+    catalog.assert_not_awaited()
+    assert expense.ultimos_4_digitos == last4
+    assert expense.pagado_con_amex_empresa is True
+    assert expense.concepto == "Alimentos actualizados"
+    assert expense.cuenta_gastos_id == (account.id if linked else None)
+
+
+@pytest.mark.parametrize("amex, last4", [(False, None), (True, None), (True, "1005")])
+def test_owner_real_edit_form_never_loads_global_card_catalog(monkeypatch, amex, last4):
+    client, expense, _account, _session, catalog = _edit_http_client(
+        monkeypatch, amex=amex, last4=last4
+    )
+    response = client.get(f"/gastos/{expense.id}/editar")
+    assert response.status_code == 200
+    assert 'name="amex_card_account_id"' not in response.text
+    catalog.assert_not_awaited()
+    if last4:
+        assert "Tarjeta AMEX registrada: ****1005" in response.text
+        input_tag = response.text.split('id="ultimos_4_digitos"')[1].split(">")[0]
+        assert "readonly" in input_tag
+    else:
+        assert "Pendiente de identificar tarjeta por Finanzas" in response.text
+
+
+@pytest.mark.parametrize("forged", ["card", "last4"])
+def test_owner_edit_cannot_assign_corporate_identity_by_forged_post(
+    monkeypatch, forged
+):
+    client, expense, account, session, catalog = _edit_http_client(
+        monkeypatch, amex=False, last4=None
+    )
+    fields = {
+        "concepto": "Alimentos",
+        "pagado_con_amex_empresa": "1",
+        "cuenta_gastos_id": str(account.id),
+    }
+    fields["amex_card_account_id" if forged == "card" else "ultimos_4_digitos"] = (
+        str(uuid4()) if forged == "card" else "1005"
+    )
+    response = client.post(
+        f"/gastos/{expense.id}/editar", data=fields, follow_redirects=False
+    )
+    assert response.status_code == 403
+    assert "Finanzas" in response.text
+    assert expense.ultimos_4_digitos is None
+    assert expense.pagado_con_amex_empresa is False
+    session.commit.assert_not_awaited()
+    catalog.assert_not_awaited()
+    if forged == "card":
+        session.execute.assert_not_awaited()
+
+
+def test_owner_edit_can_record_new_amex_fact_with_identity_pending_finance(monkeypatch):
+    client, expense, account, session, catalog = _edit_http_client(
+        monkeypatch, amex=False, last4=None
+    )
+    response = client.post(
+        f"/gastos/{expense.id}/editar",
+        data={
+            "concepto": "Alimentos",
+            "pagado_con_amex_empresa": "1",
+            "cuenta_gastos_id": str(account.id),
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "success_msg" in response.headers["location"]
+    assert (
+        "Pendiente de identificar tarjeta por Finanzas"
+        in parse_qs(urlsplit(response.headers["location"]).query)["success_msg"][0]
+    )
+    assert expense.pagado_con_amex_empresa is True
+    assert expense.ultimos_4_digitos is None
+    user_routes.validate_amex_pending_edit_transition.assert_awaited_once()
+    session.commit.assert_awaited_once()
+    catalog.assert_not_awaited()
+
+
+@pytest.mark.parametrize("supplement", [False, True])
+def test_owner_quick_capture_records_amex_fact_pending_finance(monkeypatch, supplement):
+    client, cuenta, session, created, _selected = _quick_http_client(
+        monkeypatch,
+        main_allowed=not supplement,
+        provider_amex=supplement,
+    )
+    fields = {
+        "concepto": "Alimentos",
+        "fecha": "2026-10-15",
+        "subtotal": "100",
+        "numero_factura": "vale azul",
+    }
+    files = None
+    if supplement:
+        fields["asiento_preferencial_subtotal"] = "50"
+        files = {
+            "asiento_preferencial_cfdi_pdf": (
+                "factura.pdf",
+                b"%PDF prueba",
+                "application/pdf",
+            )
+        }
+    else:
+        fields["pagado_con_amex_empresa"] = "1"
+    response = client.post(
+        f"/informes-de-gastos/{cuenta.id}/gastos/quick",
+        data=fields,
+        files=files,
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "gasto_rapido_creado" in response.headers["location"]
+    assert (
+        "Pendiente de identificar tarjeta por Finanzas"
+        in parse_qs(urlsplit(response.headers["location"]).query)["msg"][0]
+    )
+    assert created[-1].pagado_con_amex_empresa is True
+    assert created[-1].ultimos_4_digitos is None
+    session.commit.assert_awaited_once()
+    user_routes.validate_amex_card_identity.assert_not_awaited()
+
+
+def test_finance_can_capture_provider_amex_supplement_outside_main_allowlist(
+    monkeypatch,
+):
+    client, cuenta, session, created, selected = _quick_http_client(
+        monkeypatch,
+        role="finanzas",
+        main_allowed=False,
+        provider_amex=True,
+    )
+    response = client.post(
+        f"/informes-de-gastos/{cuenta.id}/gastos/quick",
+        data={
+            "concepto": "Vuelo",
+            "fecha": "2026-10-15",
+            "subtotal": "100",
+            "numero_factura": "vale azul",
+            "asiento_preferencial_subtotal": "50",
+            "amex_card_account_id": str(selected.id),
+        },
+        files={
+            "asiento_preferencial_cfdi_pdf": (
+                "factura.pdf",
+                b"%PDF prueba",
+                "application/pdf",
+            )
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "gasto_rapido_creado" in response.headers["location"]
+    assert created[0].pagado_con_amex_empresa is False
+    assert created[1].pagado_con_amex_empresa is True
+    assert created[1].ultimos_4_digitos == selected.last4
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "role, active, visible",
+    [
+        ("empleado", True, False),
+        ("operaciones", True, False),
+        ("finanzas", False, False),
+        ("finanzas", True, True),
+    ],
+)
+async def test_catalog_is_loaded_only_for_active_finance_roles(
+    monkeypatch, role, active, visible
+):
+    selected = card()
+    catalog = AsyncMock(return_value=[selected])
+    monkeypatch.setattr(user_routes, "list_amex_card_accounts", catalog)
+    actor = SimpleNamespace(rol=role, activo=active)
+    options = await user_routes._amex_visible_card_options(None, actor, enabled=True)
+    assert bool(catalog.await_count) is visible
+    assert (str(selected.id) in options) is visible
+    html = user_routes._amex_identity_control_html(actor, card_options=options)
+    assert ('name="amex_card_account_id"' in html) is visible
+    assert (str(selected.id) in html) is visible
+
+
+def test_owner_pending_edit_still_respects_source_accounting_guard(monkeypatch):
+    client, expense, account, session, _catalog = _edit_http_client(
+        monkeypatch, amex=False, last4=None
+    )
+    guard = AsyncMock(return_value="amex_informe_already_cut")
+    monkeypatch.setattr(user_routes, "validate_amex_pending_edit_transition", guard)
+    response = client.post(
+        f"/gastos/{expense.id}/editar",
+        data={
+            "concepto": "Cambio de concepto",
+            "pagado_con_amex_empresa": "1",
+            "cuenta_gastos_id": str(account.id),
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "error_msg" in response.headers["location"]
+    guard.assert_awaited_once()
+    session.commit.assert_not_awaited()
+    session.rollback.assert_awaited_once()
+    assert expense.concepto == "Alimentos"
+    assert expense.pagado_con_amex_empresa is False
+    assert expense.ultimos_4_digitos is None

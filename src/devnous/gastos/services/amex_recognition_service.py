@@ -145,6 +145,23 @@ async def _card_identity_eligibility(
     return None
 
 
+async def validate_amex_pending_edit_transition(
+    session: AsyncSession, *, expense_id: UUID
+) -> str | None:
+    """Guard factual AMEX marking pending Finance without accessing its catalog.
+
+    Existing route permissions remain authoritative. This helper cannot assign
+    corporate identity and never clears a previously recorded card identity.
+    """
+    await lock_recognition(session)
+    expenses = await load_expenses(session, [expense_id])
+    if len(expenses) != 1:
+        return "missing_amex_representation"
+    if expenses[0].ultimos_4_digitos:
+        return "amex_card_identity_requires_finance"
+    return await _card_identity_eligibility(session, expenses, None, require_amex=False)
+
+
 async def validate_amex_card_edit_transition(
     session: AsyncSession, *, expense_id: UUID, card_account_id: UUID
 ) -> tuple[AmexCardAccount | None, str | None]:
