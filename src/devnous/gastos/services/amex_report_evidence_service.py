@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+import httpx
 from sqlalchemy import func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +18,13 @@ from ..models import (
     CuentaDeGastos,
     ExpenseReport,
 )
-from ..utils.receipt_bytes import get_adjunto_columns
+from ..utils.receipt_bytes import (
+    ReceiptDecodeError,
+    decode_base64_to_bytes,
+    get_adjunto_columns,
+    is_probably_url,
+    load_adjunto_payload_bytes,
+)
 from .amex_recognition_service import load_expenses, review_source_key
 
 
@@ -73,9 +80,18 @@ def build_amex_report_source_snapshot(expenses: list[Any]) -> dict[str, Any]:
         facts["attachments"] = vars(expense).get("_amex_evidence_attachments")
         # A legacy receipt's bytes are not copied into immutable evidence.
         receipt = vars(expense).get("archivo_data")
-        facts["legacy_receipt_sha256"] = (
-            hashlib.sha256(str(receipt).encode()).hexdigest() if receipt else None
-        )
+        if receipt and is_probably_url(str(receipt)):
+            # Async loading must attest remote content before this pure snapshot.
+            digest = vars(expense).get("_amex_legacy_receipt_sha256")
+            if not digest:
+                raise ValueError("amex_attachment_evidence_unavailable")
+        else:
+            digest = (
+                hashlib.sha256(decode_base64_to_bytes(str(receipt))).hexdigest()
+                if receipt
+                else None
+            )
+        facts["legacy_receipt_sha256"] = digest
         partidas.append(facts)
     encoded = json.dumps(partidas, sort_keys=True, default=str, separators=(",", ":"))
     return {
@@ -255,9 +271,33 @@ async def load_amex_report_attachment_evidence(
         facts = {
             key: row[key] for key in names if key not in {"gasto_id", "ruta_archivo"}
         }
-        facts["payload_sha256"] = hashlib.sha256(
-            str(row["ruta_archivo"]).encode()
-        ).hexdigest()
+        facts["payload_sha256"] = await _attachment_content_sha256(
+            row["ruta_archivo"],
+            mime_hint=row["mime_type"] or row["tipo_archivo"],
+            nombre_archivo=row["nombre_archivo"],
+        )
         by_expense[row["gasto_id"]].append(facts)
     for expense in expenses:
+        receipt = vars(expense).get("archivo_data")
+        expense._amex_legacy_receipt_sha256 = (
+            await _attachment_content_sha256(receipt) if receipt else None
+        )
         expense._amex_evidence_attachments = by_expense[expense.id]
+
+
+async def _attachment_content_sha256(
+    payload: str,
+    *,
+    mime_hint: str | None = None,
+    nombre_archivo: str | None = None,
+) -> str:
+    """Re-read bounded content; never attest a URL or expose signed URL errors."""
+    try:
+        raw, _, _ = await load_adjunto_payload_bytes(
+            payload, mime_hint=mime_hint, nombre_archivo=nombre_archivo
+        )
+        if not raw:
+            raise ReceiptDecodeError("empty attachment")
+    except (ReceiptDecodeError, httpx.HTTPError, httpx.InvalidURL):
+        raise ValueError("amex_attachment_evidence_unavailable") from None
+    return hashlib.sha256(raw).hexdigest()

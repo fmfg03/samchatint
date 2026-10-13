@@ -100,7 +100,11 @@ BEGIN
   IF OLD.binding_mode='report_bridge' OR EXISTS(SELECT 1 FROM amex_report_bank_associations WHERE report_consumption_id=OLD.id) THEN
    IF TG_OP='DELETE' OR NEW IS DISTINCT FROM OLD THEN RAISE EXCEPTION 'Bridged AMEX identity is immutable' USING ERRCODE='23514'; END IF;
   END IF;
-  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  IF TG_OP='DELETE' THEN
+   IF OLD.source_kind='report' OR OLD.accounting_poliza_id IS NOT NULL OR EXISTS(SELECT 1 FROM amex_accounting_cuts WHERE snapshot_json->'consumption_ids' ? OLD.id::text) THEN
+    RAISE EXCEPTION 'Recognized AMEX identity cannot be deleted' USING ERRCODE='23514'; END IF;
+   RETURN OLD;
+  END IF;
   IF (OLD.source_kind,OLD.imported_expense_id,OLD.source_report_expense_id) IS DISTINCT FROM (NEW.source_kind,NEW.imported_expense_id,NEW.source_report_expense_id) THEN
    RAISE EXCEPTION 'AMEX source anchors are immutable' USING ERRCODE='23514'; END IF;
  END IF;
@@ -127,7 +131,11 @@ BEGIN
  IF TG_OP!='INSERT' THEN
   IF owner.binding_mode='report_bridge' OR EXISTS(SELECT 1 FROM amex_report_bank_associations WHERE report_consumption_id=owner_id) THEN
    RAISE EXCEPTION 'Bridged representations are immutable' USING ERRCODE='23514'; END IF;
-  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  IF TG_OP='DELETE' THEN
+   IF owner.source_kind='report' OR owner.accounting_poliza_id IS NOT NULL OR EXISTS(SELECT 1 FROM amex_accounting_cuts WHERE snapshot_json->'consumption_ids' ? owner.id::text) THEN
+    RAISE EXCEPTION 'Recognized AMEX representation cannot be deleted' USING ERRCODE='23514'; END IF;
+   RETURN OLD;
+  END IF;
   IF (NEW.expense_id,NEW.consumption_id,NEW.role) IS DISTINCT FROM (OLD.expense_id,OLD.consumption_id,OLD.role) THEN
    RAISE EXCEPTION 'AMEX representation ownership is immutable' USING ERRCODE='23514'; END IF;
  END IF;

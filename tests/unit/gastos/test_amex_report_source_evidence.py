@@ -1,3 +1,5 @@
+import base64
+import hashlib
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -151,7 +153,7 @@ def test_cfdi_same_uuid_tax_changes_invalidate_factual_source():
 
 
 def test_explicit_attachment_metadata_changes_invalidate_without_snapshot_bytes():
-    row = expense(archivo_data="BASE64-SENSITIVE-CONTENT")
+    row = expense(archivo_data=base64.b64encode(b"SENSITIVE-CONTENT").decode())
     row._amex_evidence_attachments = [{"id": str(uuid4()), "payload_sha256": "a" * 64}]
     original = build_amex_report_source_snapshot([row])
     assert "BASE64-SENSITIVE-CONTENT" not in str(original)
@@ -159,3 +161,195 @@ def test_explicit_attachment_metadata_changes_invalidate_without_snapshot_bytes(
     assert (
         original["source_key"] != build_amex_report_source_snapshot([row])["source_key"]
     )
+
+
+def attachment_session(row, payload):
+    attachment = {
+        "id": uuid4(),
+        "gasto_id": row.id,
+        "ruta_archivo": payload,
+        "categoria": "receipt",
+        "mime_type": "application/pdf",
+        "tipo_archivo": "application/pdf",
+        "nombre_archivo": "receipt.pdf",
+        "activo": True,
+    }
+    result = MagicMock()
+    result.mappings.return_value.all.return_value = [attachment]
+    return SimpleNamespace(execute=AsyncMock(return_value=result)), attachment
+
+
+@pytest.mark.asyncio
+async def test_remote_content_change_invalidates_same_url_but_url_rotation_does_not(
+    monkeypatch,
+):
+    from devnous.gastos.services import amex_report_evidence_service as service
+
+    row = expense()
+    session, attachment = attachment_session(
+        row, "https://example.com/receipt.pdf?signature=first"
+    )
+    monkeypatch.setattr(
+        service, "get_adjunto_columns", AsyncMock(return_value=set(attachment))
+    )
+    loader = AsyncMock(return_value=(b"original-document", "application/pdf", "r.pdf"))
+    monkeypatch.setattr(service, "load_adjunto_payload_bytes", loader)
+    await service.load_amex_report_attachment_evidence(session, [row])
+    original = build_amex_report_source_snapshot([row])
+    assert original["partidas"][0]["attachments"][0]["payload_sha256"] == (
+        hashlib.sha256(b"original-document").hexdigest()
+    )
+    assert "https://" not in str(original) and "original-document" not in str(original)
+    attachment["ruta_archivo"] = "https://example.com/receipt.pdf?signature=rotated"
+    await service.load_amex_report_attachment_evidence(session, [row], locked=True)
+    assert build_amex_report_source_snapshot([row]) == original
+    loader.return_value = (b"changed-document", "application/pdf", "r.pdf")
+    await service.load_amex_report_attachment_evidence(session, [row])
+    assert (
+        build_amex_report_source_snapshot([row])["source_key"] != original["source_key"]
+    )
+    assert loader.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_base64_representation_and_legacy_receipt_attest_decoded_bytes(
+    monkeypatch,
+):
+    from devnous.gastos.services import amex_report_evidence_service as service
+
+    payload = base64.b64encode(b"document bytes").decode()
+    row = expense(archivo_data=payload)
+    session, attachment = attachment_session(row, payload)
+    monkeypatch.setattr(
+        service, "get_adjunto_columns", AsyncMock(return_value=set(attachment))
+    )
+    await service.load_amex_report_attachment_evidence(session, [row])
+    original = build_amex_report_source_snapshot([row])
+    expected = hashlib.sha256(b"document bytes").hexdigest()
+    assert original["partidas"][0]["legacy_receipt_sha256"] == expected
+    assert original["partidas"][0]["attachments"][0]["payload_sha256"] == expected
+    attachment["ruta_archivo"] = "data:application/pdf;base64," + payload
+    row.archivo_data = payload[:4] + "\n" + payload[4:]
+    await service.load_amex_report_attachment_evidence(session, [row])
+    assert build_amex_report_source_snapshot([row]) == original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure", ["timeout", "http", "empty", "decode", "invalid_url"]
+)
+async def test_content_unavailable_fails_closed_without_url_or_payload(
+    monkeypatch, failure
+):
+    import httpx
+
+    from devnous.gastos.services import amex_report_evidence_service as service
+    from devnous.gastos.utils.receipt_bytes import ReceiptDecodeError
+
+    row = expense()
+    session, attachment = attachment_session(row, "https://example.com/?secret=token")
+    monkeypatch.setattr(
+        service, "get_adjunto_columns", AsyncMock(return_value=set(attachment))
+    )
+    loader = AsyncMock(return_value=(b"", "application/pdf", "r.pdf"))
+    if failure == "timeout":
+        loader.side_effect = httpx.ReadTimeout(attachment["ruta_archivo"])
+    elif failure == "http":
+        request = httpx.Request("GET", attachment["ruta_archivo"])
+        loader.side_effect = httpx.HTTPStatusError(
+            attachment["ruta_archivo"],
+            request=request,
+            response=httpx.Response(403, request=request),
+        )
+    elif failure == "decode":
+        loader.side_effect = ReceiptDecodeError("private payload detail")
+    elif failure == "invalid_url":
+        loader.side_effect = httpx.InvalidURL(attachment["ruta_archivo"])
+    monkeypatch.setattr(service, "load_adjunto_payload_bytes", loader)
+    with pytest.raises(
+        ValueError, match="^amex_attachment_evidence_unavailable$"
+    ) as error:
+        await service.load_amex_report_attachment_evidence(session, [row])
+    assert error.value.__suppress_context__
+    assert "token" not in str(error.value)
+    assert "_amex_evidence_attachments" not in vars(row)
+
+
+@pytest.mark.asyncio
+async def test_legacy_remote_receipt_requires_bytes_and_rechecks_changes(monkeypatch):
+    from devnous.gastos.services import amex_report_evidence_service as service
+
+    row = expense(archivo_data="https://example.com/legacy.pdf?token=one")
+    with pytest.raises(ValueError, match="amex_attachment_evidence_unavailable"):
+        build_amex_report_source_snapshot([row])
+    result = MagicMock()
+    result.mappings.return_value.all.return_value = []
+    session = SimpleNamespace(execute=AsyncMock(return_value=result))
+    monkeypatch.setattr(
+        service,
+        "get_adjunto_columns",
+        AsyncMock(return_value={"id", "gasto_id", "ruta_archivo"}),
+    )
+    loader = AsyncMock(return_value=(b"legacy bytes", "application/pdf", "r.pdf"))
+    monkeypatch.setattr(service, "load_adjunto_payload_bytes", loader)
+    await service.load_amex_report_attachment_evidence(session, [row])
+    original = build_amex_report_source_snapshot([row])
+    row.archivo_data = "https://example.com/legacy.pdf?token=two"
+    await service.load_amex_report_attachment_evidence(session, [row])
+    assert build_amex_report_source_snapshot([row]) == original
+    loader.return_value = (b"changed legacy bytes", "application/pdf", "r.pdf")
+    await service.load_amex_report_attachment_evidence(session, [row])
+    assert (
+        build_amex_report_source_snapshot([row])["source_key"] != original["source_key"]
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url", ["http://localhost/r", "https://127.0.0.1/r"])
+async def test_existing_loader_private_literal_guard_remains_fail_closed(url):
+    from devnous.gastos.services.amex_report_evidence_service import (
+        _attachment_content_sha256,
+    )
+
+    with pytest.raises(ValueError, match="^amex_attachment_evidence_unavailable$"):
+        await _attachment_content_sha256(url)
+
+
+@pytest.mark.asyncio
+async def test_real_async_remote_loader_hashes_document_body_and_rejects_http(
+    monkeypatch,
+):
+    import httpx
+
+    from devnous.gastos.services.amex_report_evidence_service import (
+        _attachment_content_sha256,
+    )
+    from devnous.gastos.utils import receipt_bytes
+
+    document = b"%PDF-1.7 document"
+    status = 200
+    requests = []
+
+    async def respond(request):
+        requests.append(request)
+        return httpx.Response(
+            status, content=document, headers={"content-type": "application/pdf"}
+        )
+
+    client_type = httpx.AsyncClient
+    transport = httpx.MockTransport(respond)
+    monkeypatch.setattr(
+        receipt_bytes.httpx,
+        "AsyncClient",
+        lambda **kwargs: client_type(transport=transport, **kwargs),
+    )
+    url = "https://example.com/receipt.pdf?signature=first"
+    original = await _attachment_content_sha256(url)
+    assert original == hashlib.sha256(document).hexdigest()
+    assert original == await _attachment_content_sha256(url.replace("first", "rotated"))
+    document = b"%PDF-1.7 changed document"
+    assert original != await _attachment_content_sha256(url)
+    status = 403
+    with pytest.raises(ValueError, match="^amex_attachment_evidence_unavailable$"):
+        await _attachment_content_sha256(url)
+    assert len(requests) == 4
