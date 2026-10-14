@@ -37,15 +37,27 @@ class CuentaContableSuggestion:
     confidence_score: float  # 0.0 to 1.0
     reason: str
     tier: str  # 'torneo', 'amex_batch', 'rules', 'learned', 'llm'
+    requires_explicit_selection: bool = False
+
+    @property
+    def can_preselect(self) -> bool:
+        """Only explicit catalog rules may populate an unassigned charge account."""
+        return (
+            self.confidence_score >= 0.8
+            and not self.requires_explicit_selection
+            and self.tier
+            in {"partida", "torneo", "amex_catalog", "no_deducible_project"}
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            'cuenta_contable_id': str(self.cuenta_contable_id),
-            'cuenta_codigo': self.cuenta_codigo,
-            'cuenta_nombre': self.cuenta_nombre,
-            'confidence_score': self.confidence_score,
-            'reason': self.reason,
-            'tier': self.tier,
+            "cuenta_contable_id": str(self.cuenta_contable_id),
+            "cuenta_codigo": self.cuenta_codigo,
+            "cuenta_nombre": self.cuenta_nombre,
+            "confidence_score": self.confidence_score,
+            "reason": self.reason,
+            "tier": self.tier,
+            "can_preselect": self.can_preselect,
         }
 
     @property
@@ -413,7 +425,12 @@ class CuentaContableSuggester:
             .where(BudgetConcept.id == budget_concept_id)
         )
         concept = result.scalar_one_or_none()
-        if concept is None or concept.cuenta_contable is None:
+        if (
+            concept is None
+            or not concept.active
+            or concept.cuenta_contable is None
+            or not concept.cuenta_contable.activo
+        ):
             return None
 
         cuenta = concept.cuenta_contable
@@ -529,70 +546,58 @@ class CuentaContableSuggester:
         if not tournament:
             return None
 
-        # Base: Tournament.cuenta_contable_relacionada (e.g. 5300-010) or from first mapping
-        base = tournament.cuenta_contable_relacionada
-        if not base:
-            mapping_result = await self.session.execute(
-                select(TournamentConceptoMapping)
-                .where(
-                    TournamentConceptoMapping.tournament_id == tournament.id,
-                    TournamentConceptoMapping.active == True,
-                )
-                .limit(1)
-            )
-            first_mapping = mapping_result.scalar_one_or_none()
-            if first_mapping and first_mapping.parent_account:
-                base = first_mapping.parent_account
-        if not base:
+        concepto_normalized = self._normalize_concepto(concepto)
+        if not concepto_normalized:
             return None
-
-        # Sub_cuenta: match concepto to TournamentConceptoMapping (exact or contains)
-        concepto_normalized = self._normalize_concepto(concepto) if concepto else ""
-        sub_cuenta = None
         mapping_result = await self.session.execute(
-            select(TournamentConceptoMapping)
-            .where(
+            select(TournamentConceptoMapping).where(
                 TournamentConceptoMapping.tournament_id == tournament.id,
                 TournamentConceptoMapping.active == True,
             )
         )
         mappings = mapping_result.scalars().all()
-        for m in mappings:
-            if m.concepto and concepto_normalized:
-                if m.concepto.lower().strip() == concepto_normalized:
-                    sub_cuenta = m.sub_cuenta
-                    break
-                if concepto_normalized in m.concepto.lower() or m.concepto.lower() in concepto_normalized:
-                    sub_cuenta = m.sub_cuenta
-                    break
-        if not sub_cuenta and mappings:
-            sub_cuenta = mappings[0].sub_cuenta
-
-        if not sub_cuenta:
-            full_codigo = base
-        else:
-            full_codigo = f"{base}-{sub_cuenta}"
-
+        normalized_mappings = [
+            (mapping, self._normalize_concepto(mapping.concepto or ""))
+            for mapping in mappings
+        ]
+        matches = [
+            mapping
+            for mapping, name in normalized_mappings
+            if name == concepto_normalized
+        ]
+        exact_match = bool(matches)
+        if not matches:
+            matches = [
+                mapping
+                for mapping, name in normalized_mappings
+                if name and (name in concepto_normalized or concepto_normalized in name)
+            ]
+        # A partial match remains advisory; row order never resolves ambiguity.
+        if len(matches) != 1:
+            return None
+        mapping = matches[0]
+        base = tournament.cuenta_contable_relacionada or mapping.parent_account
+        sub_cuenta = mapping.sub_cuenta
+        if not base or not sub_cuenta:
+            return None
+        full_codigo = f"{base}-{sub_cuenta}"
         cuenta = self._find_cuenta_by_codigo(full_codigo)
-        if not cuenta:
-            for c in self._cuentas_cache:
-                if c.codigo and c.codigo.startswith(base):
-                    cuenta = c
-                    full_codigo = c.codigo
-                    break
         if not cuenta:
             return None
 
-        reason = f"Torneo/Proyecto: {tournament.name}"
-        if sub_cuenta:
-            reason += f"; concepto → sub_cuenta {sub_cuenta}"
+        reason = (
+            f"Torneo/Proyecto: {tournament.name}; concepto → sub_cuenta {sub_cuenta}"
+        )
+        if not exact_match:
+            reason += "; coincidencia parcial, requiere selección explícita"
         return CuentaContableSuggestion(
             cuenta_contable_id=cuenta.id,
             cuenta_codigo=cuenta.codigo,
             cuenta_nombre=cuenta.nombre,
-            confidence_score=0.90,
+            confidence_score=0.90 if exact_match else 0.65,
             reason=reason,
             tier="torneo",
+            requires_explicit_selection=not exact_match,
         )
 
     async def _apply_amex_batch_rule(
