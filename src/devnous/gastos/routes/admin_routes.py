@@ -26263,7 +26263,7 @@ async def gastos_sin_cuenta_contable(
     # by the rows/export path. Do not count deterministic counterpart fallbacks as
     # human-pending work, otherwise the module appears not to update after save.
     high_confidence_count = sum(
-        1 for s in suggestions.values() if s and s.confidence_score >= 0.8
+        1 for s in suggestions.values() if s and s.can_preselect
     )
     cleanup_states = {}
     for gasto in gastos:
@@ -26485,8 +26485,8 @@ async def gastos_sin_cuenta_contable(
                     </button>
                 </div>
             """
-            # Pre-select high confidence suggestions
-            if suggestion.confidence_score >= 0.8 and gasto.cuenta_contable_id is None:
+            # Preselect only unambiguous catalog rules; preserve manual accounts.
+            if suggestion.can_preselect and gasto.cuenta_contable_id is None:
                 preselect_data = f'data-preselect-id="{suggestion.cuenta_contable_id}" data-preselect-codigo="{escape(suggestion.cuenta_codigo)}" data-preselect-nombre="{escape(suggestion.cuenta_nombre)}"'
 
         contra_preselect_data = ""
@@ -27302,7 +27302,7 @@ async def gastos_sin_cuenta_contable(
                         <span>Niveles:</span>
                         <div class="legend-item">
                             <div class="legend-dot" style="background: #4CAF50;"></div>
-                            <span>Alta (≥80%) - preseleccionada</span>
+                            <span>Alta (≥80%); preselección solo con catálogo inequívoco</span>
                         </div>
                         <div class="legend-item">
                             <div class="legend-dot" style="background: #FF9800;"></div>
@@ -27490,6 +27490,11 @@ async def gastos_sin_cuenta_contable(
                     }}
                     const gastoId = searchInput.getAttribute('data-gasto-id');
                     const cuentaId = selector.getAttribute('data-preselect-id');
+                    const selectedCargo = selector.querySelector('.main-cuenta-id');
+                    // A manual change after page load is never replaced in bulk.
+                    if (!selectedCargo || selectedCargo.value !== cuentaId) {{
+                        return;
+                    }}
                     const contraId = document.querySelector(`.contra-cuenta-id[data-gasto-id="${{gastoId}}"]`)?.value || '';
                     highConfidenceRows.push({{ gastoId, cuentaId, contraId }});
                 }});
