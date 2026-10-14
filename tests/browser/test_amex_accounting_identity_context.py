@@ -52,12 +52,13 @@ def test_review_people_context_and_explicit_debtor_selection(page):
     assert context.locator("script").count() == 0
     assert page.locator(".report-beneficiary script").count() == 0
     assert page.evaluate("window.amexInjected === undefined")
-    # The single application script implements the approved explicit batch UI;
-    # escaped people names must never become executable script content.
+    # Only the trusted platform tracker and explicit batch UI may execute.
     scripts = page.locator("script")
-    assert scripts.count() == 1
-    assert "amex-apply-batch" in scripts.inner_text()
-    assert name not in scripts.inner_text()
+    assert scripts.count() == 2
+    code = "\n".join(scripts.all_text_contents())
+    assert "amex-apply-batch" in code
+    assert "__samchatCustomerSuccessTracker" in code
+    assert name not in code
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert context.evaluate("el => el.scrollWidth <= el.clientWidth")
     assert page.locator('input[name="reviewed"]').count() == 0

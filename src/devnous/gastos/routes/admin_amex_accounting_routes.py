@@ -3,8 +3,8 @@
 import json
 from datetime import date
 from html import escape
-from urllib.parse import quote
 from typing import cast
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -22,14 +22,17 @@ from ..models import (
     ExpenseReport,
 )
 from ..services.amex_accounting_cut_service import (
+    confirm_amex_approved_informe_cut,
     create_amex_accounting_cut,
     preview_amex_approved_informe,
-    confirm_amex_approved_informe_cut,
     review_amex_partida,
 )
-from ..services.amex_cut_export_service import cut_expense_cfdis
 from ..services.amex_attention_policy import load_amex_attention_context
-from ..services.amex_expense_service import FINANCE_AMEX_ROLES, company_amex_sql_condition
+from ..services.amex_cut_export_service import cut_expense_cfdis
+from ..services.amex_expense_service import (
+    FINANCE_AMEX_ROLES,
+    company_amex_sql_condition,
+)
 from ..services.amex_recognition_service import load_amex_card_display_identities
 from ..services.coi_poliza_exporter import (
     generate_coi_poliza_csv,
@@ -43,24 +46,76 @@ router = APIRouter()
 BASE = "/admin/contabilidad/amex"
 
 
-def _page(title: str, content: str) -> str:
+AMEX_CONTENT_START = "<!-- amex-page-content:start -->"
+AMEX_CONTENT_END = "<!-- amex-page-content:end -->"
+
+
+def extract_amex_page_content(page: str) -> str:
+    """Extract only controlled content, excluding navigation and its scripts."""
+    if page.count(AMEX_CONTENT_START) != 1 or page.count(AMEX_CONTENT_END) != 1:
+        raise ValueError("La vista AMEX no contiene un fragmento único.")
+    _, _, rest = page.partition(AMEX_CONTENT_START)
+    content, separator, _ = rest.partition(AMEX_CONTENT_END)
+    if not separator:
+        raise ValueError("El fragmento AMEX está incompleto.")
+    return content
+
+
+def _page(title: str, content: str, actor: Empleado) -> str:
+    # user_routes mounts this router. Resolve presentation helpers only when
+    # rendering a request, after module initialization has completed.
+    from .user_routes import (
+        _contabilidad_subnav,
+        _gastos_breadcrumb_html,
+        _render_workspace_hero,
+        _workspace_shell_styles,
+        render_top_navigation,
+    )
+
+    styles = _workspace_shell_styles("1380px", layout="data")
+    navigation = render_top_navigation(actor, "contabilidad")
+    breadcrumbs = _gastos_breadcrumb_html(
+        [
+            ("Contabilidad", "/admin/contabilidad/coi"),
+            ("AMEX", "/admin/contabilidad/amex/estados"),
+            (title, None),
+        ]
+    )
+    hero = _render_workspace_hero(
+        eyebrow="Contabilidad · AMEX",
+        title=title,
+        description="Del estado de cuenta al informe completo y su póliza.",
+        actions_html=(
+            '<a class="button secondary" href="/admin/contabilidad/amex/estados">'
+            "Estados de cuenta</a> "
+            '<a class="button secondary" href="/admin/contabilidad/amex">'
+            "Informes aprobados</a> "
+            '<a class="button secondary" href="/admin/gastos/amex/conciliacion">'
+            "Conciliación AMEX</a>"
+        ),
+        side_html=(
+            '<div class="eyebrow">Cómo continuar</div>'
+            '<p class="lead">Carga el estado, resuelve los pendientes y confirma '
+            "cada informe completo. El vínculo bancario conserva su estado propio.</p>"
+        ),
+    )
     return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{escape(title)}</title><style>
-    body{{font-family:system-ui,sans-serif;margin:24px;color:#172b4d;background:#f7f9fc}}
-    main{{max-width:1300px;margin:auto}}table{{width:100%;border-collapse:collapse;background:white}}
-    td,th{{padding:12px;text-align:left;border-bottom:1px solid #dfe3e8}}
-    input,select,button{{padding:8px;margin:4px 0;max-width:100%}}
-    label{{display:block}}.notice{{padding:12px;background:#fff2cc;margin:12px 0}}
-    .table-shell{{overflow-x:auto}}nav{{margin-bottom:20px}}section{{margin:24px 0}}
-    .person-context{{margin-top:8px;font-size:.9rem;white-space:normal;overflow-wrap:anywhere;max-width:28rem}}
+    <title>{escape(title)}</title><style>{styles}
+    .amex-content{{min-width:0}}
+    .amex-content label{{display:block;margin:10px 0}}
+    .amex-content .notice{{padding:12px;border:1px solid #fcd34d;
+        background:#fffbeb;border-radius:14px;margin:12px 0}}
+    .amex-content section{{margin:24px 0}}
+    .person-context{{margin-top:8px;font-size:.9rem;white-space:normal;
+        overflow-wrap:anywhere;max-width:28rem}}
     .table-shell td:nth-child(2),.table-shell td:nth-child(3){{white-space:nowrap}}
     .report-beneficiary{{overflow-wrap:anywhere}}
-    @media(max-width:600px){{body{{margin:12px}}.table-shell table{{min-width:720px}}}}
-    </style></head><body><main><nav><a href="/admin/contabilidad/coi">Contabilidad COI</a>
-    · <a href="{BASE}">Revisión AMEX</a>
-    · <a href="/admin/gastos/amex/conciliacion">Conciliación AMEX</a></nav>
-    <h1>{escape(title)}</h1>{content}</main></body></html>"""
+    @media(max-width:600px){{.table-shell table{{min-width:720px}}}}
+    </style></head><body><div class="container">{navigation}
+    {_contabilidad_subnav("amex")}{breadcrumbs}{hero}
+    <main class="amex-content surface">{AMEX_CONTENT_START}{content}
+    {AMEX_CONTENT_END}</main></div></body></html>"""
 
 
 def _redirect(informe_id: UUID, message: str, *, error: bool = False):
@@ -91,12 +146,13 @@ async def amex_accounting_reports(
     documents = result.scalars().all()
     context = await load_amex_attention_context(session, documents=documents)
     visible = [
-        doc for doc in documents
+        doc
+        for doc in documents
         if context.document_decisions[cast(UUID, doc.id)].visible
     ]
     warnings = "".join(
         '<p class="notice">No se pudo verificar la exclusión por beneficiario; '
-        'las partidas permanecen visibles para revisión.</p>'
+        "las partidas permanecen visibles para revisión.</p>"
         for warning in context.warnings
     )
     attention_reasons = {
@@ -124,6 +180,7 @@ async def amex_accounting_reports(
             "en conjunto antes de confirmar el corte.</p>"
             f"<table><thead><tr><th>Informe aprobado</th><th>Acción</th></tr></thead>"
             f'<tbody>{rows or "<tr><td colspan=2>Sin informes AMEX aprobados.</td></tr>"}</tbody></table>',
+            current_empleado,
         ),
         media_type="text/html",
     )
@@ -458,6 +515,9 @@ async def amex_accounting_report_review(
     )
     reason_required = "required" if cuts or source_requires_attestation else ""
     disabled = "disabled" if preview.status == "pending" else ""
+    cut_button_label = (
+        "Generar una póliza de ajuste" if cuts else "Generar una póliza del corte"
+    )
     content = f"""<p class="report-beneficiary"><strong>Beneficiario del informe:</strong>
         {escape(beneficiary_name)}</p><p>{approval_text}</p>
         <p><strong>Total de partidas activas:</strong> {total_text}</p>
@@ -478,7 +538,8 @@ async def amex_accounting_report_review(
         </select></label>
         <label>Cuenta de deudores socios<select id="amex-batch-debtor">{account_options}</select></label>
         <label>Motivo del lote<input id="amex-batch-reason" maxlength="1000"></label>
-        <button type="button" id="amex-apply-batch">Declarar para seleccionados</button>
+        <button class="button secondary" type="button" id="amex-apply-batch">
+            Declarar para seleccionados</button>
         <p id="amex-batch-error" role="alert"></p><p id="amex-batch-summary" aria-live="polite"></p>
         </section><section><h2>{'Reclasificación del informe' if cuts else 'Corte contable del informe'}</h2>
         <form id="amex-cut-confirmation" method="POST" action="{BASE}/informes/{informe_id}/cortes">
@@ -493,13 +554,16 @@ async def amex_accounting_report_review(
             <label>Motivo de atestación o ajuste<input name="reason" maxlength="1000" {reason_required}></label>
             <label><input type="checkbox" name="confirmed" value="true" required>
                 Confirmo la fuente actual, las decisiones declaradas y el informe completo</label>
-            <button type="submit" {disabled}>{'Generar una póliza de ajuste' if cuts else 'Generar una póliza del corte'}</button>
+            <button class="button primary" type="submit" {disabled}>
+                {cut_button_label}
+            </button>
         </form></section><section><h2>Cortes guardados</h2><ul>
         {downloads or '<li>Aún no se ha generado un corte.</li>'}</ul></section>"""
     return Response(
         _page(
             f"Informe {informe.numero_referencia or ''} · AMEX",
             content + _batch_decision_script(),
+            current_empleado,
         ),
         media_type="text/html",
     )

@@ -122,7 +122,7 @@ async def render_identity_review(session, informe):
             informe.id,
             Request({"type": "http", "query_string": b""}),
             session,
-            SimpleNamespace(rol="finanzas", activo=True),
+            SimpleNamespace(rol="finanzas", activo=True, nombre="Finanzas de prueba"),
         )
 
 
@@ -377,7 +377,13 @@ async def test_context_is_only_visible_through_existing_finance_guard(
     )
     app = FastAPI()
     app.include_router(routes.router)
-    actor = SimpleNamespace(id=uuid4(), rol=role, permissions=permissions, activo=True)
+    actor = SimpleNamespace(
+        id=uuid4(),
+        rol=role,
+        permissions=permissions,
+        activo=True,
+        nombre="Finanzas de prueba",
+    )
     app.dependency_overrides[get_current_empleado] = lambda: actor
     app.dependency_overrides[get_db_session] = lambda: session
     async with httpx.AsyncClient(

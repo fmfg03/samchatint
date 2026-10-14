@@ -36,6 +36,7 @@ from .admin_amex_accounting_routes import (
     _page,
     _require_finance_actor,
     amex_accounting_report_review,
+    extract_amex_page_content,
 )
 from .dependencies import get_db_session, require_admin_finanzas
 
@@ -43,19 +44,21 @@ router = APIRouter()
 BASE = "/admin/contabilidad/amex/estados"
 
 
-def _html(title: str, content: str) -> Response:
+def _html(title: str, content: str, actor: Empleado) -> Response:
     styles = """<style>.statement-steps{display:flex;gap:12px;flex-wrap:wrap}
     .statement-steps
-    a,.button{display:inline-block;padding:10px 14px;background:#e8eef8;
-    border-radius:6px;color:#172b4d;text-decoration:none}
+    a{display:inline-block;padding:10px 14px;background:var(--shell-card);
+    border:1px solid var(--shell-line);border-radius:14px;
+    color:var(--shell-ink);text-decoration:none}
     .statement-steps [aria-current]{
-    font-weight:bold;background:#cfe0ff}.statement-meta{overflow-wrap:anywhere}
+    font-weight:bold;background:#ecfdf5}.statement-meta{overflow-wrap:anywhere}
     .statement-form{max-width:700px}.statement-form input,.statement-form select{
     box-sizing:border-box;width:100%}.statement-form input[type=checkbox]{width:auto}
     .statement-form label{margin:12px 0}.statement-table{overflow-x:auto}
-    .statement-table td{overflow-wrap:anywhere;max-width:28rem}
+    .statement-table td{overflow-wrap:anywhere;max-width:28rem;white-space:normal}
+    .statement-table td:nth-child(3){white-space:normal}
     @media(max-width:600px){.statement-table table{min-width:650px}}</style>"""
-    return Response(_page(title, styles + content), media_type="text/html")
+    return Response(_page(title, styles + content, actor), media_type="text/html")
 
 
 def _steps(import_id: UUID | None, current: int) -> str:
@@ -218,7 +221,7 @@ async def statement_dashboard(
             f'<td>{summary["imported_count"]}<br>{_totals(summary)}</td>'
             f"<td>{pending} operativos<br>{skipped} filas omitidas</td>"
             f"<td>{bank_pending} por vincular</td>"
-            f'<td>{_progress(summary)}{partial}</td><td><a class="button"'
+            f'<td>{_progress(summary)}{partial}</td><td><a class="button primary"'
             f' href="{BASE}/{statement.id}/pendientes">Continuar</a></td></tr>'
         )
     paging = (
@@ -226,19 +229,21 @@ async def statement_dashboard(
     )
     if listing["has_previous"]:
         paging += (
-            f'<a class="button" href="{BASE}?page={listing["page"] - 1}">'
+            f'<a class="button secondary" href="{BASE}?page={listing["page"] - 1}">'
             "Anterior</a>"
         )
     if listing["has_next"]:
         paging += (
-            f'<a class="button" href="{BASE}?page={listing["page"] + 1}">'
+            f'<a class="button secondary" href="{BASE}?page={listing["page"] + 1}">'
             "Siguiente</a>"
         )
     paging += "</nav>"
     return _html(
         "Estados de cuenta AMEX",
-        f'<p><a class="button" href="{BASE}/nuevo">Cargar estado de cuenta</a></p><div'
-        ' class="statement-table"><table><thead><tr><th>Tarjeta</th><th>Período'
+        f'<p><a class="button primary" href="{BASE}/nuevo">'
+        "Cargar estado de cuenta</a></p><div"
+        ' class="statement-table table-shell"><table><thead><tr><th>Tarjeta</th>'
+        "<th>Período"
         " declarado</th><th>Cargos</th><th>Pendientes"
         " operativos</th><th>Banco</th><th>Avance"
         " contable</th><th>Acción</th></tr></thead><tbody>"
@@ -248,10 +253,13 @@ async def statement_dashboard(
         + '<p><a href="/admin/gastos/amex/conciliacion">Cargos'
         " anteriores</a> · Las cargas anteriores conservan su flujo; no se"
         " reconstruye su archivo o período.</p>",
+        current_empleado,
     )
 
 
-async def _upload_form(session: AsyncSession, message: str = "") -> Response:
+async def _upload_form(
+    session: AsyncSession, actor: Empleado, message: str = ""
+) -> Response:
     cards = await list_amex_card_accounts(session)
     result = await session.execute(
         select(Empleado).where(Empleado.activo.is_(True)).order_by(Empleado.nombre)
@@ -286,9 +294,10 @@ async def _upload_form(session: AsyncSession, message: str = "") -> Response:
         <label>UUID del CFDI mensual (opcional)<input name="cfdi_uuid_mensual"></label>
         <label><input type="checkbox" name="additional_confirmed" value="true">Confirmo
         que es una carga adicional para una tarjeta y período ya cargados</label>
-        <button type="submit">Cargar y continuar</button></form>
+        <button class="button primary" type="submit">Cargar y continuar</button></form>
         <p>La carga conserva las fechas originales. No aprueba informes ni genera una
         póliza.</p>""",
+        actor,
     )
 
 
@@ -298,7 +307,7 @@ async def statement_new(
     current_empleado: Empleado = require_admin_finanzas(),
 ):
     _require_finance_actor(current_empleado)
-    return await _upload_form(session)
+    return await _upload_form(session, current_empleado)
 
 
 @router.post(BASE + "/nuevo", response_class=Response)
@@ -342,6 +351,7 @@ async def statement_upload(
             }
             return await _upload_form(
                 session,
+                current_empleado,
                 messages.get(
                     result["status"],
                     "No se cargó el estado. Revisa el archivo, tarjeta, titular y"
@@ -429,7 +439,7 @@ async def statement_pending(
         + warning
         + "<p>Todos los cargos bancarios permanecen visibles. Los informes atendidos"
         " desde Cuenta no se incluyen en la cola manual AMEX.</p>"
-        + '<div class="statement-table"><table><thead><tr><th>Fila</th>'
+        + '<div class="statement-table table-shell"><table><thead><tr><th>Fila</th>'
         "<th>Fecha</th><th>Cargo</th><th>Importe</th><th>Estado"
         " bancario</th><th>Resolver</th></tr></thead><tbody>"
         + "".join(rows)
@@ -439,8 +449,9 @@ async def statement_pending(
         " independiente del cargo.</p>"
         + '<a href="/informes-de-gastos">Abrir Cuentas de gastos</a> · <a'
         ' href="/soporte">Solicitar soporte</a></section>'
-        + f'<a class="button" href="{BASE}/{import_id}/polizas">Continuar a'
+        + f'<a class="button primary" href="{BASE}/{import_id}/polizas">Continuar a'
         " pólizas</a>",
+        current_empleado,
     )
 
 
@@ -488,7 +499,8 @@ async def statement_policies(
     La selección es explícita y no acredita conciliación bancaria.</p>
     <form method="GET" action="{BASE}/{import_id}/polizas"><label>Informe
     aprobado<select name="informe_id" required><option value="">Selecciona el
-    informe</option>{options}</select></label><button>Preparar informe completo</button>
+    informe</option>{options}</select></label>
+    <button class="button primary">Preparar informe completo</button>
     </form>"""
     for warning in view.get("warnings", []):
         content += _notice(str(warning))
@@ -501,7 +513,7 @@ async def statement_policies(
             informe_id, request, session, current_empleado
         )
         page = response.body.decode()
-        body = page.split("</h1>", 1)[1].rsplit("</main>", 1)[0]
+        body = extract_amex_page_content(page)
         old_action = f'action="/admin/contabilidad/amex/informes/{informe_id}/cortes"'
         new_action = f'action="{BASE}/{import_id}/informes/{informe_id}/confirmar"'
         body = body.replace(old_action, new_action, 1)
@@ -541,7 +553,8 @@ async def statement_policies(
                 conserva su póliza y evidencia; no cubre cambios posteriores.</p>
                 <label><input type="checkbox" name="confirmed" value="true" required>
                 Confirmo incorporar este corte existente</label>
-                <button>Incorporar corte guardado</button></form>"""
+                <button class="button secondary">Incorporar corte guardado</button>
+                </form>"""
     content += (
         "<section><h2>Descargar pólizas incorporadas</h2><p>Una póliza completa por"
         " informe. Descargar no registra importación o aceptación en COI.</p>"
@@ -554,7 +567,7 @@ async def statement_policies(
     else:
         content += "<p>Aún no hay pólizas incorporadas a este estado.</p>"
     content += "</section>"
-    return _html("Generar pólizas AMEX", content)
+    return _html("Generar pólizas AMEX", content, current_empleado)
 
 
 def _selection(value: str) -> list[UUID]:

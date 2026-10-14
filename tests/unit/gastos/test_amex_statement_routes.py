@@ -21,7 +21,7 @@ from tests.unit.gastos.test_amex_accounting_identity_context import (
 @pytest.fixture
 def workspace(monkeypatch):
     session = NS(commit=AsyncMock(), rollback=AsyncMock())
-    actor = NS(id=uuid4(), rol="finanzas", activo=True)
+    actor = NS(id=uuid4(), rol="finanzas", activo=True, nombre="Finanzas de prueba")
     statement = NS(
         id=uuid4(),
         filename="<script>bad()</script>.csv",
@@ -649,3 +649,70 @@ async def test_real_invalid_frozen_snapshot_returns_safe_409(workspace, monkeypa
     assert "conjunto completo" in response.text
     assert str(cut.id) not in response.text
     workspace.session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("screen", ["dashboard", "new", "pending", "policies"])
+async def test_amex_uses_shared_contabilidad_shell(workspace, screen):
+    workspace.actor.nombre = "Finanzas de prueba"
+    paths = {
+        "dashboard": routes.BASE,
+        "new": routes.BASE + "/nuevo",
+        "pending": f"{routes.BASE}/{workspace.statement.id}/pendientes",
+        "policies": f"{routes.BASE}/{workspace.statement.id}/polizas",
+    }
+    response = await request(workspace, "GET", paths[screen])
+    assert response.status_code == 200
+    assert 'class="container"' in response.text
+    assert 'class="workspace-hero"' in response.text
+    assert 'aria-label="Ruta de navegación"' in response.text
+    assert 'href="/logout"' in response.text
+    assert 'href="/admin/gastos/amex/conciliacion"' in response.text
+    assert "--shell-accent:#0f766e" in response.text
+
+
+@pytest.mark.asyncio
+async def test_embedded_report_uses_one_shared_frame_and_preserves_form(workspace):
+    from lxml import html
+
+    response = await request(
+        workspace,
+        "GET",
+        f"{routes.BASE}/{workspace.statement.id}/polizas?"
+        f"informe_id={workspace.informe.id}",
+    )
+    tree = html.fromstring(response.text)
+    assert (
+        len(tree.xpath('//*[contains(concat(" ", @class, " "), " container ")]')) == 1
+    )
+    assert (
+        len(tree.xpath('//*[contains(concat(" ", @class, " "), " workspace-hero ")]'))
+        == 1
+    )
+    assert len(tree.xpath('//nav[@aria-label="Ruta de navegación"]')) == 1
+    assert len(tree.xpath("//h1")) == 1
+    assert tree.xpath("//h1")[0].text_content() == "Generar pólizas AMEX"
+    scripts = [node.text_content() for node in tree.xpath("//script")]
+    assert len(scripts) == 2
+    assert sum("__samchatCustomerSuccessTracker" in code for code in scripts) == 1
+    assert sum("amex-apply-batch" in code for code in scripts) == 1
+    assert len(tree.xpath('//form[@id="amex-cut-confirmation"]')) == 1
+    assert len(tree.xpath('//input[@name="expected_versions"]')) == 1
+    assert len(tree.xpath('//input[@name="decisions"]')) == 1
+    assert len(tree.xpath('//input[@class="amex-batch-item"]')) == 2
+    assert len(tree.xpath('//nav[@aria-label="Recorrido AMEX"]/a')) == 3
+    assert "Finanzas de prueba" in response.text
+    workspace.session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        "<main>sin fragmento</main>",
+        "<!-- amex-page-content:start -->uno<!-- amex-page-content:start -->dos"
+        "<!-- amex-page-content:end -->",
+    ],
+)
+def test_fragment_requires_exactly_one_controlled_boundary(page):
+    with pytest.raises(ValueError):
+        routes.extract_amex_page_content(page)
