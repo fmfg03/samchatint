@@ -329,3 +329,28 @@ async def test_dashboard_empty_page_is_explicit_without_false_next_link():
         )
         assert not result["rows"] and not result["has_next"] and result["has_previous"]
         detail.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "change", ["no_card", "last4", "period", "reversed", "card_uuid"]
+)
+def test_invalid_context_predicate_never_falls_back_to_all_reports(change):
+    from datetime import date
+
+    card = NS(id=uuid4(), last4="5007")
+    statement = NS(
+        card_account_id=card.id,
+        period_start=date(2026, 10, 1),
+        period_end=date(2026, 10, 31),
+    )
+    if change == "no_card":
+        card = None
+    elif change == "last4":
+        card.last4 = None
+    elif change == "period":
+        statement.period_start = None
+    elif change == "reversed":
+        statement.period_end = date(2026, 9, 1)
+    elif change == "card_uuid":
+        statement.card_account_id = uuid4()
+    assert str(svc._statement_report_eligibility(statement, card)) == "false"

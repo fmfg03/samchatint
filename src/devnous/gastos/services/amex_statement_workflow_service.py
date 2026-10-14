@@ -2,11 +2,12 @@
 
 from hashlib import sha256
 from decimal import Decimal
+from datetime import date, datetime
 import json
 from typing import Any, Callable
 from uuid import UUID
 
-from sqlalchemy import exists, select
+from sqlalchemy import Date, cast, exists, false, or_, select
 
 from ..models import (
     AmexAccountingCut,
@@ -165,11 +166,71 @@ async def _list_statement_workflows(
     }
 
 
+def _statement_report_eligibility(statement: Any, card: Any) -> Any:
+    """One same-partida contextual predicate for discovery and new GET choices."""
+    if (
+        card is None
+        or card.id != statement.card_account_id
+        or not str(card.last4 or "").isdigit()
+        or len(str(card.last4)) != 4
+        or not isinstance(statement.period_start, date)
+        or not isinstance(statement.period_end, date)
+        or isinstance(statement.period_start, datetime)
+        or isinstance(statement.period_end, datetime)
+        or statement.period_end < statement.period_start
+    ):
+        return false()
+    represented_conflict = (
+        exists()
+        .where(
+            AmexRecognitionRepresentation.expense_id == ExpenseReport.id,
+            AmexRecognitionRepresentation.consumption_id
+            == AmexRecognitionConsumption.id,
+            AmexRecognitionConsumption.card_account_id != card.id,
+        )
+        .correlate(ExpenseReport)
+    )
+    anchored_conflict = (
+        exists()
+        .where(
+            or_(
+                AmexRecognitionConsumption.source_report_expense_id == ExpenseReport.id,
+                AmexRecognitionConsumption.imported_expense_id == ExpenseReport.id,
+            ),
+            AmexRecognitionConsumption.card_account_id != card.id,
+        )
+        .correlate(ExpenseReport)
+    )
+    linked = (
+        exists()
+        .where(
+            ExpenseReport.cuenta_gastos_id == Documento.cuenta_gastos_id,
+            ExpenseReport.estado_gasto != "cancelado",
+            company_amex_sql_condition(),
+            ExpenseReport.ultimos_4_digitos == card.last4,
+            cast(ExpenseReport.fecha, Date).between(
+                statement.period_start, statement.period_end
+            ),
+            ~represented_conflict,
+            ~anchored_conflict,
+        )
+        .correlate(Documento)
+    )
+    return (
+        (Documento.tipo == "INFORME")
+        & (Documento.estado == "aprobado")
+        & (Documento.cuenta_gastos_id.is_not(None))
+        & linked
+    )
+
+
 async def _statement_workflow_view(
     session: Any, import_id: UUID, *, actor: Any, selected_informe_ids: Any = ()
 ) -> dict:
     await _authorize(session, actor)
     statement = await _statement(session, import_id)
+    card = await session.get(AmexCardAccount, statement.card_account_id)
+    eligibility = _statement_report_eligibility(statement, card)
     items = list(
         (
             await session.execute(
@@ -197,27 +258,25 @@ async def _statement_workflow_view(
         else {}
     )
     # Bank items are never passed through attention filtering.
-    linked = exists().where(
-        ExpenseReport.cuenta_gastos_id == Documento.cuenta_gastos_id,
-        ExpenseReport.estado_gasto != "cancelado",
-        company_amex_sql_condition(),
-    )
     docs = list(
-        (
-            await session.execute(
-                select(Documento).where(
-                    Documento.tipo == "INFORME", Documento.estado == "aprobado", linked
-                )
-            )
-        )
-        .scalars()
-        .all()
+        (await session.execute(select(Documento).where(eligibility))).scalars().all()
     )
     context = await load_amex_attention_context(session, documents=docs)
     reports = [doc for doc in docs if context.document_decisions[doc.id].visible]
-    selected = (
-        await _sources(session, selected_informe_ids) if selected_informe_ids else []
-    )
+    selection_warning = None
+    selection_rejected = False
+    selected = []
+    if selected_informe_ids:
+        requested = _selection(selected_informe_ids)
+        available = {str(doc.id): doc for doc in reports}
+        if not set(requested).issubset(available):
+            selection_rejected = True
+            selection_warning = (
+                "El informe seleccionado ya no cumple la tarjeta, el período "
+                "o la atención de este estado. Elige una opción vigente."
+            )
+        else:
+            selected = [available[value] for value in requested]
     previews = [
         {
             "document": doc,
@@ -583,7 +642,7 @@ async def _statement_workflow_view(
             for item in items
         ),
     }
-    if not selected and selected_ids:
+    if not selected and selected_ids and not selection_rejected:
         saved = list(
             (
                 await session.execute(
@@ -634,7 +693,9 @@ async def _statement_workflow_view(
         "attention_decisions": context.document_decisions,
         "selected_reports": previews,
         "cuts": cuts,
-        "card": await session.get(AmexCardAccount, statement.card_account_id),
+        "card": card,
+        "selection_warning": selection_warning,
+        "selection_rejected": selection_rejected,
         "item_states": item_states,
         "imported_totals": totals,
         "totals_unknown_count": totals_unknown_count,
@@ -659,7 +720,12 @@ async def _statement_workflow_view(
         "selected_informe_ids": [doc.id for doc in selected],
         "linked_cut_ids": {link.cut_id for link in links},
         "links": links,
-        "warnings": list(context.warnings),
+        "warnings": list(context.warnings)
+        + (
+            ["Falta tarjeta o período declarado válido para ofrecer informes."]
+            if card is None or str(eligibility) == "false"
+            else []
+        ),
         "blockers": blockers,
     }
 

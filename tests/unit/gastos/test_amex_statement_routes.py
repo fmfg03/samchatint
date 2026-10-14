@@ -43,6 +43,7 @@ def workspace(monkeypatch):
     review_session, informe, expenses, accounts = identity_review_fixture()
     view = {
         "import": statement,
+        "card": NS(id=uuid4(), card_label="FGV <prueba>", last4="5007"),
         "items": [item],
         "reports": [informe],
         "selected_reports": [],
@@ -64,7 +65,7 @@ def workspace(monkeypatch):
             **view,
             "selected_reports": (
                 [{"document": informe, "preview": review_session.preview}]
-                if selected_informe_ids
+                if selected_informe_ids or view.get("selected_informe_ids")
                 else []
             ),
         }
@@ -504,9 +505,10 @@ async def test_resume_saved_explicit_source_after_bare_policy_get(workspace):
     )
     assert 'id="amex-cut-confirmation"' in response.text
     assert f"%3Finforme_id%3D{workspace.informe.id}" in response.text
-    assert routes.statement_workflow_view.await_args.kwargs["selected_informe_ids"] == [
-        workspace.informe.id
-    ]
+    assert (
+        routes.statement_workflow_view.await_args.kwargs["selected_informe_ids"] == []
+    )
+    routes.statement_workflow_view.assert_awaited_once()
     workspace.session.commit.assert_not_awaited()
 
 
@@ -716,3 +718,85 @@ async def test_embedded_report_uses_one_shared_frame_and_preserves_form(workspac
 def test_fragment_requires_exactly_one_controlled_boundary(page):
     with pytest.raises(ValueError):
         routes.extract_amex_page_content(page)
+
+
+@pytest.mark.asyncio
+async def test_selector_context_and_unknown_card_access_remain_when_empty(workspace):
+    from lxml import html
+
+    workspace.view["reports"] = []
+    for step in ("pendientes", "polizas"):
+        response = await request(
+            workspace, "GET", f"{routes.BASE}/{workspace.statement.id}/{step}"
+        )
+        tree = html.fromstring(response.text)
+        context = tree.xpath('//*[@aria-label="Tarjeta y período del estado"]')[0]
+        assert "••••5007" in context.text_content()
+        assert "FGV <prueba>" in context.text_content()
+        assert "2026-09-01 a 2026-09-30" in context.text_content()
+        link = tree.xpath('//a[normalize-space(.)="Partidas AMEX sin tarjeta"]')[0]
+        assert link.get("href").endswith("#sin-tarjeta")
+        assert f"%2F{step}" in link.get("href")
+        assert "no pueden atribuirse todavía" in response.text
+        if step == "polizas":
+            assert "No hay informes aprobados con una partida AMEX" in response.text
+            assert not tree.xpath('//select[@name="informe_id"]/option[@value!=""]')
+            assert "completo.</p>" in response.text
+    workspace.session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stale_explicit_get_shows_current_selector_without_new_preview(workspace):
+    rejected_id = uuid4()
+    workspace.view.update(
+        selection_rejected=True,
+        selection_warning="El informe ya no corresponde a la tarjeta y período.",
+    )
+    response = await request(
+        workspace,
+        "GET",
+        f"{routes.BASE}/{workspace.statement.id}/polizas?" f"informe_id={rejected_id}",
+    )
+    assert response.status_code == 200
+    assert "ya no corresponde a la tarjeta y período" in response.text
+    assert 'id="amex-cut-confirmation"' not in response.text
+    assert str(rejected_id) not in response.text
+    assert f'value="{workspace.informe.id}"' in response.text
+    workspace.session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_historical_source_restores_without_reentering_filtered_options(
+    workspace,
+):
+    workspace.view.update(
+        reports=[],
+        selected_informe_ids=[workspace.informe.id],
+        linked_cut_ids={uuid4()},
+    )
+    response = await request(
+        workspace, "GET", f"{routes.BASE}/{workspace.statement.id}/polizas"
+    )
+    assert response.status_code == 200
+    assert "No hay informes aprobados con una partida AMEX" in response.text
+    assert 'id="amex-cut-confirmation"' in response.text
+    assert f"/{workspace.statement.id}/exportar.xlsx" in response.text
+    routes.statement_workflow_view.assert_awaited_once()
+    assert (
+        routes.statement_workflow_view.await_args.kwargs["selected_informe_ids"] == []
+    )
+    workspace.session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_missing_catalog_card_has_no_inferred_label_or_selector_fallback(
+    workspace,
+):
+    workspace.view.update(card=None, reports=[])
+    response = await request(
+        workspace, "GET", f"{routes.BASE}/{workspace.statement.id}/polizas"
+    )
+    assert "Tarjeta no disponible" in response.text
+    assert "Identidad de tarjeta pendiente" in response.text
+    assert "••••5007" not in response.text
+    assert "Partidas AMEX sin tarjeta" in response.text

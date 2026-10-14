@@ -55,8 +55,8 @@ def _html(title: str, content: str, actor: Empleado) -> Response:
     .statement-form{max-width:700px}.statement-form input,.statement-form select{
     box-sizing:border-box;width:100%}.statement-form input[type=checkbox]{width:auto}
     .statement-form label{margin:12px 0}.statement-table{overflow-x:auto}
-    .statement-table td{overflow-wrap:anywhere;max-width:28rem;white-space:normal}
-    .statement-table td:nth-child(3){white-space:normal}
+    .amex-content .statement-table td{white-space:normal;
+    overflow-wrap:anywhere;max-width:28rem}
     @media(max-width:600px){.statement-table table{min-width:650px}}</style>"""
     return Response(_page(title, styles + content, actor), media_type="text/html")
 
@@ -102,6 +102,35 @@ def _meta(statement) -> str:
         f"{escape(str(statement.filename))} · "
         f"{escape(str(statement.period_start))} a {escape(str(statement.period_end))}"
         "</p>"
+    )
+
+
+def _card_period_context(view: dict) -> str:
+    statement = view["import"]
+    card = view.get("card")
+    label = escape(str(getattr(card, "card_label", None) or "Tarjeta no disponible"))
+    last4 = str(getattr(card, "last4", None) or "")
+    suffix = (
+        f" · ••••{last4}"
+        if len(last4) == 4 and last4.isascii() and last4.isdigit()
+        else " · Identidad de tarjeta pendiente"
+    )
+    return (
+        '<section aria-label="Tarjeta y período del estado">'
+        f"<p><strong>Tarjeta:</strong> {label}{suffix}</p>"
+        f"<p><strong>Período declarado:</strong> {statement.period_start} a "
+        f"{statement.period_end}</p></section>"
+    )
+
+
+def _missing_card_access(import_id: UUID, step: str) -> str:
+    query = urlencode({"return_to": f"{BASE}/{import_id}/{step}"})
+    return (
+        '<section aria-label="Partidas pendientes de tarjeta">'
+        "<p>Las partidas sin tarjeta no pueden atribuirse todavía a esta tarjeta. "
+        "Finanzas debe identificarlas; no se asignan por persona, importe o fecha.</p>"
+        '<a class="button secondary" href="/admin/gastos/amex/conciliacion?'
+        f'{query}#sin-tarjeta">Partidas AMEX sin tarjeta</a></section>'
     )
 
 
@@ -434,6 +463,8 @@ async def statement_pending(
         "Resolver pendientes AMEX",
         _steps(import_id, 2)
         + _meta(statement)
+        + _card_period_context(view)
+        + _missing_card_access(import_id, "pendientes")
         + _summary(view)
         + _notice(request.query_params.get("msg", ""))
         + warning
@@ -468,15 +499,12 @@ async def statement_policies(
     view = await _view(
         session, import_id, actor=current_empleado, selected_informe_ids=selected
     )
-    if informe_id is None and view.get("selected_informe_ids"):
-        # These IDs come from validated, immutable cut-link declarations.
-        informe_id = UUID(str(view["selected_informe_ids"][0]))
-        view = await _view(
-            session,
-            import_id,
-            actor=current_empleado,
-            selected_informe_ids=[informe_id],
-        )
+    if view.get("selection_rejected"):
+        informe_id = None
+    elif informe_id is None and view["selected_reports"]:
+        # The owner already validated and restored immutable cut-link sources.
+        # Revalidating them as a new GET would incorrectly discard history.
+        informe_id = UUID(str(view["selected_reports"][0]["document"].id))
     option_parts = []
     attention = view.get("attention_decisions", {})
     for report in view["reports"]:
@@ -492,16 +520,31 @@ async def statement_policies(
     content = (
         _steps(import_id, 3)
         + _meta(view["import"])
+        + _card_period_context(view)
+        + _missing_card_access(import_id, "polizas")
         + _summary(view)
         + _notice(request.query_params.get("msg", ""))
     )
-    content += f"""<p>Declara el informe que corresponde a esta carga.
-    La selección es explícita y no acredita conciliación bancaria.</p>
+    content += (
+        "<p>Informes aprobados con al menos una partida AMEX de esta tarjeta "
+        "dentro del período declarado. Al seleccionar se prepara el informe "
+        "completo.</p><p>La selección es explícita y no acredita conciliación "
+        "bancaria.</p>"
+    )
+    content += f"""
     <form method="GET" action="{BASE}/{import_id}/polizas"><label>Informe
     aprobado<select name="informe_id" required><option value="">Selecciona el
     informe</option>{options}</select></label>
     <button class="button primary">Preparar informe completo</button>
     </form>"""
+    if not view["reports"]:
+        content += _notice(
+            "No hay informes aprobados con una partida AMEX de esta tarjeta "
+            "dentro del período declarado. Revisa la identidad de tarjeta, "
+            "fecha y Cuenta del gasto; no se ofrecen informes de otros contextos."
+        )
+    if view.get("selection_warning"):
+        content += _notice(view["selection_warning"])
     for warning in view.get("warnings", []):
         content += _notice(str(warning))
     for blocker in view.get("blockers", []):
