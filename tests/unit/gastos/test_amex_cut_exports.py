@@ -98,6 +98,25 @@ def frozen_cut(adjustment=False):
     )
 
 
+def test_xlsx_rfc_cleanup_preserves_frozen_cut_and_csv():
+    cut = frozen_cut()
+    for item in cut.snapshot_json["partidas"]:
+        item["cfdi"]["rfc_emisor"] = " AAA010101AAA "
+        item["cfdi"]["rfc_receptor"] = " BBB010101BBB "
+    before = copy.deepcopy(cut.snapshot_json)
+    items = cut_expense_cfdis(cut)
+    csv_before = generate_coi_poliza_csv(items)
+    sheet = load_workbook(io.BytesIO(generate_coi_poliza_xlsx(items)))["Poliza COI"]
+    cfdis = [row for row in sheet if row[8].value == items[0].cfdi_uuid]
+    assert len(cfdis) == 2
+    assert [(row[5].value, row[6].value) for row in cfdis] == [
+        ("AAA010101AAA", "BBB010101BBB"),
+        ("AAA010101AAA", "BBB010101BBB"),
+    ]
+    assert cut.snapshot_json == before
+    assert generate_coi_poliza_csv(items) == csv_before
+
+
 def test_document_metadata_does_not_replace_frozen_amex_identity():
     cut = frozen_cut(adjustment=True)
     items = cut_expense_cfdis(cut)
