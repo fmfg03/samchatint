@@ -228,6 +228,38 @@ def generate_direction_report_xlsx(report: dict[str, Any]) -> bytes:
             case["B6"] = "=ROUND(B4*B5/100,2)"
             case["B7"] = "=B4-B6"
     layouts = report.get("layouts") or {}
+    distribution_sheet = wb.create_sheet("Distribución autorizada")
+    distribution_sheet.append(
+        [
+            "Semanas atribuidas al mes de inicio; acumulado hasta el mes de corte. Ausencia de plan no es cero."
+        ]
+    )
+    distribution_sheet.append(
+        [
+            "Torneo",
+            "Partida",
+            "Fase",
+            "Versión",
+            "Estado",
+            "Anual MXN",
+            "Mes MXN",
+            "Acumulado MXN",
+        ]
+    )
+    for tournament in report.get("tournaments") or []:
+        for row in (tournament.get("budget_distribution") or {}).get("rows") or []:
+            distribution_sheet.append(
+                [
+                    tournament["name"],
+                    row["concept"],
+                    row.get("phase"),
+                    tournament.get("version_id"),
+                    row["status"],
+                    money(row.get("authorized")),
+                    money(row.get("budget_month")),
+                    money(row.get("budget_ytd")),
+                ]
+            )
     if layouts.get("budget"):
         layout = layouts["budget"]
         budget_sheet = wb.create_sheet("Presupuesto vs Real")
@@ -464,6 +496,16 @@ def generate_direction_report_pdf(report: dict[str, Any]) -> bytes:
                 )
             story.append(drawing)
         series = row.get("monthly_execution") or {}
+        distribution = row.get("budget_distribution") or {}
+        if distribution.get("rows"):
+            story.append(p("Distribución autorizada por partida · MXN", "Heading3"))
+            story.append(p(distribution["convention"]))
+            for scheduled in distribution["rows"]:
+                story.append(
+                    p(
+                        f"{scheduled['concept']} · {scheduled['status']} · anual {format_money(scheduled['authorized'])} · mes {format_money(scheduled['budget_month'])} · acumulado {format_money(scheduled['budget_ytd'])}"
+                    )
+                )
         if series.get("status") == "available":
             story.append(p("Evolución mensual conciliada", "Heading3"))
             for point in series["rows"]:

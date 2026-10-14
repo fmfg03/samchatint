@@ -410,3 +410,25 @@ Evidence: `docs/roadmap/ctt-pilot-batch-admission.md`, scoped tests, isolated
 PostgreSQL migration verification, and independent implementation validation.
 This remains an isolated-worktree candidate; merge, deployment, migration/data
 application, authenticated UAT, and business acceptance are separate.
+
+## 18. Approved budget distribution revision rules
+
+Date: 2026-10-14. Human approval: Francisco, evidence
+`Sentinel_e34dca62ad888191ae00a160c9ee5b09`. Reason: complete the distribution
+of authorized budgets without changing their amounts or losing history.
+Evidence: `docs/roadmap/budget-distribution-20261014-candidate.md`.
+
+Una revisión de distribución puede sustituir al presupuesto activo, incluso
+congelado, únicamente al aprobarse con las mismas partidas e importes y con
+las semanas conciliadas al total. El original conserva su historial; otro
+ajuste requiere otra revisión. Cada semana se asigna al mes en que empieza;
+el acumulado incluye completo el mes seleccionado. Las 26 categorías fijas
+quedan en N/D hasta que Finanzas confirme qué partidas corresponden a cada
+una. La tabla por partidas reales sí muestra los periodos.
+
+This records approved candidate rules, not production correction or business
+acceptance. Git publication was separately authorized through
+`Sentinel_a80479c5cb1081919315d4fa293a5777`; merge and deployment are not
+authorized. Finance crosswalk, the identified incident case and authenticated
+UAT remain pending. Economic replacement and historical retirement are outside
+this distribution-only scope.

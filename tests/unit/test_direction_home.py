@@ -890,6 +890,13 @@ async def test_ar_balance_unconfigured_or_incomplete_not_zero(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_strict_ar_fails_foreign_candidates_before_loading_matches(monkeypatch):
+    from samchat.budgets import distribution
+
+    monkeypatch.setattr(
+        distribution,
+        "revision_context",
+        AsyncMock(return_value={"id": VERSION, "source": "ui_manual"}),
+    )
     monkeypatch.setattr(ar, "list_budget_lines", AsyncMock(return_value=[]))
     monkeypatch.setattr(ar, "list_monthly_plan_for_lines", AsyncMock(return_value={}))
     monkeypatch.setattr(ar, "list_budget_cfdi_income_links", AsyncMock(return_value=[]))

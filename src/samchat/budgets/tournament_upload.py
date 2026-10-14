@@ -193,6 +193,10 @@ def build_upload_plan(
         blockers.append("Edición de versión incompatible.")
     if version["status"] not in {"draft", "reforecast"}:
         blockers.append("La versión no permite modificaciones.")
+    if version.get("source") == "distribution_revision":
+        blockers.append(
+            "Esta versión sólo permite completar la distribución; no reimportar partidas."
+        )
     if not currency or not re.fullmatch(r"[A-Z]{3}", currency):
         blockers.append("Confirma moneda con código de tres letras.")
     if tax_basis not in {"includes_vat", "excludes_vat"}:

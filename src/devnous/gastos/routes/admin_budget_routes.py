@@ -37,6 +37,7 @@ from samchat.budgets.service import (
     replace_budget_line_monthly_plan,
     resolve_budget_tournament_context,
     resolve_definitive_budget_version,
+    resolve_definitive_budget_version_from_versions,
     transition_budget_version,
     update_budget_concept,
     update_budget_line,
@@ -76,6 +77,46 @@ from ..services.cfdi_income_bridge_service import (
 from ..models import CuentaContable, Tournament
 
 logger = logging.getLogger(__name__)
+
+
+def render_distribution_action(
+    version: dict, access: dict, *, is_current: bool = True
+) -> str:
+    if not is_current and version.get("status") in {"approved", "frozen"}:
+        return '<p role="status">Versión histórica. Sus importes y semanas se conservan; abre la versión vigente para preparar otra distribución.</p>'
+    if (
+        version.get("source") == "distribution_revision"
+        and version.get("status") == "closed"
+    ):
+        return (
+            '<p role="status">Revisión cerrada. No se utiliza como versión vigente.</p>'
+        )
+    if (
+        version.get("source") == "distribution_revision"
+        and version.get("status") == "submitted"
+    ):
+        return '<p role="status">Distribución enviada para aprobación. Hasta su aprobación se utiliza la versión vigente anterior.</p>'
+    if version.get("source") == "distribution_revision" and version.get(
+        "status"
+    ) not in {"approved", "frozen"}:
+        return '<p role="status">Revisión de distribución: el importe y las partidas originales se conservan. Completa las semanas y solicita aprobación; hasta entonces se usa la versión anterior.</p>'
+    if version.get("status") not in {"approved", "frozen"}:
+        return '<p role="status">La carga de importes no distribuye semanas. Completa la distribución antes de aprobar si necesitas lectura por periodos.</p>'
+    notice = '<p role="status">Versión autorizada: sus semanas no se editan directamente. Puedes preparar una revisión de distribución que conserve el importe y el historial.</p>'
+    if version.get("source") == "distribution_revision":
+        notice = '<p role="status">Distribución aprobada en uso. El autorizado y su historial se conservan. Para ajustar semanas, prepara otra revisión y solicita su aprobación.</p>'
+    if not (access.get("create") and access.get("line_update")):
+        return (
+            notice
+            + "<p>Solicita la revisión a una persona con permisos de creación y edición presupuestal.</p>"
+        )
+    return (
+        notice
+        + f"""<form method="POST" action="/admin/presupuestos/versiones/{escape_html(str(version['id']), quote=True)}/distribucion">
+      <p>Se copiarán todas las partidas de la edición {int(version['edition_year'])}; el original permanecerá activo hasta aprobar la distribución conciliada.</p>
+      <label><input type="checkbox" name="confirmed" value="true" required>Confirmo preparar una revisión de distribución, sin cambiar importes autorizados.</label>
+      <button type="submit">Completar distribución en nueva versión</button></form>"""
+    )
 
 
 def _budget_version_allows_line_edits(status: Optional[str]) -> bool:
@@ -620,7 +661,7 @@ def register_presupuestos_routes(router) -> None:
                 (item for item in versions if item["id"] == version_id), None
             )
         if selected_version is None and versions:
-            selected_version = versions[0]
+            selected_version = resolve_definitive_budget_version_from_versions(versions)
 
         snapshot = await build_budget_snapshot(
             session=session,
@@ -703,6 +744,11 @@ def register_presupuestos_routes(router) -> None:
                 )
                 actuals = await build_budget_monthly_actuals(
                     session,
+                    **(
+                        {"version_context": selected_version}
+                        if selected_version.get("source") == "distribution_revision"
+                        else {}
+                    ),
                     edition_year=resolved_year,
                     version_id=selected_version["id"],
                     tournament_id=str(item.get("tournament_id") or "") or None,
@@ -773,6 +819,20 @@ def register_presupuestos_routes(router) -> None:
             for next_status, label in status_actions.get(
                 str(row.get("status") or ""), []
             ):
+                historical_source = any(
+                    v.get("distribution_source_version_id") == row["id"]
+                    for v in versions
+                )
+                approved_revision = row.get(
+                    "source"
+                ) == "distribution_revision" and row.get("status") in {
+                    "approved",
+                    "frozen",
+                }
+                if next_status in {"reforecast", "closed"} and (
+                    historical_source or approved_revision
+                ):
+                    continue
                 can_transition = False
                 if next_status == "approved":
                     can_transition = access.get("approve", False)
@@ -801,13 +861,28 @@ def register_presupuestos_routes(router) -> None:
                 """
             )
 
+        distribution_action = (
+            render_distribution_action(
+                selected_version,
+                access,
+                is_current=(
+                    resolve_definitive_budget_version_from_versions(versions) or {}
+                ).get("id")
+                == selected_version["id"],
+            )
+            if selected_version
+            else ""
+        )
+
         tournament_cards = render_tournament_dashboard_cards(
             tournaments,
             edition_year=resolved_year,
             version_id=selected_version["id"] if selected_version else None,
             tournament_rollups=tournament_rollups,
         )
-        success_html = _render_budget_status_message(success_msg, is_error=False)
+        success_html = distribution_action + _render_budget_status_message(
+            success_msg, is_error=False
+        )
         error_html = _render_budget_status_message(error_msg, is_error=True)
         create_version_form = (
             f"""
@@ -1013,6 +1088,7 @@ def register_presupuestos_routes(router) -> None:
                 actor_empleado_id=str(current_empleado.id),
                 note=note,
             )
+
             msg = (
                 f"Versión {version.get('version_name') or ''} -> "
                 f"{version.get('status') or status}"
@@ -1020,6 +1096,11 @@ def register_presupuestos_routes(router) -> None:
             return RedirectResponse(
                 url=_presupuestos_redirect_url(success_msg=msg),
                 status_code=303,
+            )
+        except ValueError as exc:
+            await session.rollback()
+            return RedirectResponse(
+                url=_presupuestos_redirect_url(error_msg=str(exc)), status_code=303
             )
         except Exception:
             await session.rollback()
@@ -1034,6 +1115,39 @@ def register_presupuestos_routes(router) -> None:
             return RedirectResponse(
                 url=_presupuestos_redirect_url(error_msg=_OPERATION_GENERIC_ERROR),
                 status_code=303,
+            )
+
+    @router.post("/admin/presupuestos/versiones/{version_id}/distribucion")
+    async def admin_presupuestos_distribution_revision(
+        version_id: UUIDType,
+        confirmed: bool = Form(False),
+        session: AsyncSession = Depends(get_db_session),
+        current_empleado=Depends(get_current_empleado),
+    ):
+        _require_budget_access(current_empleado, "create")
+        _require_budget_access(current_empleado, "line_update")
+        try:
+            if not confirmed:
+                raise ValueError("Confirma la revisión completa de distribución")
+            from samchat.budgets.distribution import create_revision
+
+            version = await create_revision(
+                session,
+                source_version_id=str(version_id),
+                actor_empleado_id=str(current_empleado.id),
+            )
+            return RedirectResponse(
+                url=budget_dashboard_url(
+                    edition_year=version["edition_year"],
+                    version_id=version["id"],
+                    success_msg="Revisión de distribución en borrador. El original sigue activo hasta aprobar semanas conciliadas.",
+                ),
+                status_code=303,
+            )
+        except ValueError as exc:
+            await session.rollback()
+            return RedirectResponse(
+                url=budget_dashboard_url(error_msg=str(exc)), status_code=303
             )
 
     @router.post("/admin/presupuestos/versiones/{version_id}/update")
@@ -1348,6 +1462,8 @@ def register_presupuestos_routes(router) -> None:
             monthly_plan: dict[int, dict[str, float]] = {}
             if save_plan:
                 for key in form.keys():
+                    if form.get(key) in (None, ""):
+                        continue
                     key_str = str(key)
                     if key_str.startswith("month_") and (
                         key_str.endswith("_expense") or key_str.endswith("_income")
@@ -1373,6 +1489,10 @@ def register_presupuestos_routes(router) -> None:
                             ] = float(form.get(key) or 0)
                         except (TypeError, ValueError):
                             continue
+            if requested_scope == "plan" and not monthly_plan:
+                raise ValueError(
+                    "Registra al menos una semana explícita; la ausencia no es una distribución de cero"
+                )
             if not line_level_updates and not monthly_plan:
                 raise ValueError("No budget line updates were provided")
 
@@ -1433,6 +1553,7 @@ def register_presupuestos_routes(router) -> None:
                     budget_line_id=str(line_id),
                     plan=monthly_plan,
                     actor_empleado_id=str(current_empleado.id),
+                    ensure_schema=False,
                 )
                 await session.commit()
             msg = f"Línea actualizada: {line.get('concept_name') or ''}"
@@ -1622,6 +1743,11 @@ def register_presupuestos_routes(router) -> None:
             tournament_name=tournament_ctx.get("tournament_name"),
             tournament_code=tournament_ctx.get("tournament_code"),
             phase_filter=selected_phase_filter or None,
+            **(
+                {"version_context": selected_version}
+                if selected_version.get("source") == "distribution_revision"
+                else {}
+            ),
         )
         actuals_map = actuals_snapshot["monthly"]
         access = _budget_access_map(current_empleado)
@@ -1684,7 +1810,8 @@ def register_presupuestos_routes(router) -> None:
             actual_movements=actuals_snapshot["movements"],
             version_id=selected_version["id"],
             tournament_key=tournament_key,
-            can_edit=can_edit_lines,
+            can_edit=can_edit_lines
+            and selected_version.get("source") != "distribution_revision",
             show_committed=False,
             edition_year=resolved_year,
             phase_filter=selected_phase_filter or None,
@@ -1724,7 +1851,7 @@ def register_presupuestos_routes(router) -> None:
         )
         create_expense_line_form = ""
         create_income_line_form = ""
-        if can_edit_lines:
+        if can_edit_lines and selected_version.get("source") != "distribution_revision":
             create_expense_line_form = render_add_tournament_line_form(
                 version_id=str(selected_version["id"]),
                 tournament_key=tournament_key,
@@ -1765,7 +1892,7 @@ def register_presupuestos_routes(router) -> None:
             f"?edition_year={int(resolved_year)}&version_id={quote(str(selected_version['id']))}"
         )
         income_import_html = ""
-        if can_edit_lines:
+        if can_edit_lines and selected_version.get("source") != "distribution_revision":
             income_import_html = f"""
                 <form method="POST" action="/admin/presupuestos/torneo/{quote(str(tournament_key))}/ingresos/import" enctype="multipart/form-data" style="display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin:12px 0;">
                     <input type="hidden" name="edition_year" value="{int(resolved_year)}">
@@ -1784,7 +1911,21 @@ def register_presupuestos_routes(router) -> None:
                 f'href="{income_export_url}">Descargar ingresos</a></div>'
             )
 
-        success_html = _render_budget_status_message(success_msg, is_error=False)
+        success_html = render_distribution_action(
+            selected_version,
+            access,
+            is_current=(
+                resolve_definitive_budget_version_from_versions(
+                    [
+                        v
+                        for v in all_versions
+                        if int(v.get("edition_year") or 0) == int(resolved_year)
+                    ]
+                )
+                or {}
+            ).get("id")
+            == selected_version["id"],
+        ) + _render_budget_status_message(success_msg, is_error=False)
         error_html = _render_budget_status_message(error_msg, is_error=True)
         gastos_section_html = f"""
             {create_expense_line_form}
@@ -2002,15 +2143,25 @@ def register_presupuestos_routes(router) -> None:
             tournament_id=tournament_ctx.get("tournament_id"),
             tournament_name=tournament_ctx.get("tournament_name"),
             tournament_code=tournament_ctx.get("tournament_code"),
+            **(
+                {"version_context": selected_version}
+                if selected_version.get("source") == "distribution_revision"
+                else {}
+            ),
         )
+        financial_version_id = str(selected_version["id"])
+        if selected_version.get("source") == "distribution_revision":
+            from samchat.budgets.distribution import financial_context
+
+            financial_version_id, _ = await financial_context(session, selected_version)
         links = await list_budget_cfdi_income_links(
             session,
-            budget_version_id=str(selected_version["id"]),
+            budget_version_id=financial_version_id,
             tournament_id=str(tournament_ctx.get("tournament_id") or "") or None,
         )
         candidates = await list_psp_cfdi_income_candidates(
             session,
-            budget_version_id=str(selected_version["id"]),
+            budget_version_id=financial_version_id,
         )
         payload = generate_budget_income_xlsx(
             lines=income_lines,

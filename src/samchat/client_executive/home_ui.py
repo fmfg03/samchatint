@@ -90,9 +90,11 @@ def _report_panels(snapshot: dict) -> str:
             comparisons += f'<td class="numeric">{f"{value:,.2f}" if value is not None else "—"}</td>'
         comparisons += "</tr>"
     comparisons += "</tbody></table>"
+    distribution = render_budget_distribution(snapshot.get("tournaments") or [])
     return f"""<section id="budget-panel" role="tabpanel" aria-labelledby="budget-tab" hidden>
       <div class="panel report-panel"><div class="section-heading"><div><p class="eyebrow">CONTROL FINANCIERO</p><h2>Presupuesto vs Real</h2></div><span class="unit">MXN · sin escala</span></div>
       <p>Mes de corte {snapshot['period']['end'][:7]} · acumulado desde enero. Variación = presupuesto − real.</p>
+      {distribution}
       <p class="notice">{escape(budget.get('gap') or 'Fuente validada para las partidas mostradas.')}</p>
       <p class="muted">Finanzas: vincular cada partida con su concepto y plan mensual aprobado. Los hechos documentales independientes siguen disponibles en Resumen.</p>
       <p class="table-legend" id="budget-legend">26 renglones · expandir grupos para ver partidas · — = sin fuente · porcentaje sin base: N/A</p><p class="scroll-hint">↔ Desliza para ver importes</p><div class="table-wrap" tabindex="0" role="region" aria-label="Tabla de presupuesto con desplazamiento horizontal" aria-describedby="budget-legend"><table class="financial-table"><caption class="sr-only">Presupuesto vs Real</caption>
@@ -104,6 +106,36 @@ def _report_panels(snapshot: dict) -> str:
       <p class="muted">Los saldos son existencias al inicio y al cierre; no se suman como acumulados. Un pago documental no acredita movimiento bancario.</p>{detail}
       <details class="cash-detail"><summary>Periodos comparativos y fuentes</summary><p>Tres espacios mensuales y tres acumulados. Cada comparación requiere inicio y fin explícitos; no se asignan años a columnas sin identificar.</p><div class="table-wrap" tabindex="0" role="region" aria-label="Comparativos de flujo">{comparisons}</div><p>{escape(cash['source'])}</p></details>
       </div></section>"""
+
+
+def render_budget_distribution(tournaments: list[dict]) -> str:
+    rows = []
+    for tournament in tournaments:
+        distribution = tournament.get("budget_distribution") or {}
+        for row in distribution.get("rows") or []:
+            values = []
+            for key in ("authorized", "budget_month", "budget_ytd"):
+                value = amount(row.get(key))
+                values.append(
+                    f'<td class="numeric">{f"{value:,.2f}" if value is not None else "—"}</td>'
+                )
+            state = {
+                "complete": "Conciliada",
+                "missing": "Completar distribución",
+                "mismatch": "Suma pendiente de conciliar",
+                "invalid": "Revisar distribución",
+            }.get(row.get("status"), "Fuente pendiente")
+            rows.append(
+                f'<tr><th>{escape(tournament["name"])}</th><td>{escape(str(row.get("phase") or "Sin fase"))} · {escape(row["concept"])}</td>{"".join(values)}<td>{state}</td></tr>'
+            )
+    return (
+        '<h3>Distribución del presupuesto autorizado por partidas</h3><p>Cada semana se atribuye al mes en que inicia; acumulado hasta el mes de corte. Sin distribución conciliada, el periodo permanece pendiente.</p><div class="table-wrap"><table><thead><tr><th>Torneo</th><th>Partida</th><th>Anual MXN</th><th>Mes de corte MXN</th><th>Acumulado MXN</th><th>Estado</th></tr></thead><tbody>'
+        + (
+            "".join(rows)
+            or '<tr><td colspan="6">Fuente de distribución no disponible para este alcance.</td></tr>'
+        )
+        + "</tbody></table></div>"
+    )
 
 
 def _json(value: object) -> str:

@@ -2223,18 +2223,9 @@ def resolve_definitive_budget_version_from_versions(
     versions: list[dict[str, Any]],
 ) -> Optional[dict[str, Any]]:
     """Return the operational budget version from an already-loaded list."""
-    if not versions:
-        return None
+    from .distribution import select_version
 
-    def _sort_key(item: dict[str, Any]) -> tuple[int, int, str]:
-        status = _normalize_budget_status(item.get("status"))
-        return (
-            _DEFINITIVE_VERSION_STATUS_ORDER.get(status, 99),
-            -int(item.get("line_count") or 0),
-            _safe_str(item.get("updated_at")) or _safe_str(item.get("created_at")),
-        )
-
-    return sorted(versions, key=_sort_key)[0]
+    return select_version(versions)
 
 
 def _scoped_budget_concept_key(partida: str, subproyecto: str = "") -> str:
@@ -4343,6 +4334,8 @@ async def import_budget_lines_upload(
     )
     if not _editable_version_status(current.get("status")):
         raise ValueError("Only draft or reforecast versions allow line imports")
+    if current.get("source") == "distribution_revision":
+        raise ValueError("La revisión de distribución no admite reimportar partidas")
     rows = _load_tabular_upload_rows(file_bytes=file_bytes, filename=filename)
     if not rows:
         raise ValueError("El archivo no contiene líneas presupuestales.")
@@ -5600,8 +5593,7 @@ async def list_budget_versions(
     rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
                     v.id,
                     v.edition_year,
@@ -5616,18 +5608,23 @@ async def list_budget_versions(
                     COUNT(l.id) AS line_count,
                     COALESCE(SUM(l.budget_amount), 0) AS budget_total,
                     COALESCE(SUM(l.reference_amount), 0) AS reference_total,
-                    MAX(a.approved_at) AS latest_approved_at
+                    (SELECT MAX(approval.approved_at)
+                     FROM budget_approvals approval
+                     WHERE approval.budget_version_id=v.id) AS latest_approved_at,
+                    (SELECT log.payload->>'source_version_id'
+                     FROM budget_version_audit_log log
+                     WHERE log.budget_version_id=v.id
+                       AND log.event_type='distribution_revision_created'
+                     ORDER BY log.created_at DESC LIMIT 1) AS distribution_source_version_id
                 FROM budget_versions v
                 LEFT JOIN budget_lines l ON l.budget_version_id = v.id
-                LEFT JOIN budget_approvals a ON a.budget_version_id = v.id
                 {where_clause}
                 GROUP BY
                     v.id, v.edition_year, v.version_name, v.status, v.source,
                     v.notes, v.artifact_path, v.created_by_empleado_id,
                     v.created_at, v.updated_at
                 ORDER BY v.edition_year DESC, v.updated_at DESC, v.created_at DESC
-                """
-                ),
+                """),
                 params,
             )
         )
@@ -5641,6 +5638,7 @@ async def list_budget_versions(
             "version_name": _safe_str(row["version_name"]),
             "status": _safe_str(row["status"]),
             "source": _safe_str(row["source"]),
+            "distribution_source_version_id": row.get("distribution_source_version_id"),
             "notes": _safe_str(row["notes"]) or None,
             "artifact_path": _safe_str(row["artifact_path"]) or None,
             "created_by_empleado_id": _safe_str(row["created_by_empleado_id"]) or None,
@@ -5689,6 +5687,8 @@ async def create_budget_line(
     )
     if not _editable_version_status(current.get("status")):
         raise ValueError("Only draft or reforecast versions allow line creation")
+    if current.get("source") == "distribution_revision":
+        raise ValueError("La revisión de distribución conserva las partidas originales")
 
     clean_direction = normalize_budget_line_direction(line_direction)
     clean_concept = _safe_str(concept_name)
@@ -5822,14 +5822,12 @@ async def transition_budget_version(
     current = (
         (
             await session.execute(
-                text(
-                    """
-                SELECT id, status
+                text("""
+                SELECT id, status, source, edition_year
                 FROM budget_versions
                 WHERE id = :version_id
-                LIMIT 1
-                """
-                ),
+                FOR UPDATE
+                """),
                 {"version_id": version_id},
             )
         )
@@ -5848,6 +5846,56 @@ async def transition_budget_version(
         raise ValueError(
             f"Invalid budget status transition: {from_status} -> {to_status}"
         )
+
+    from .distribution import guard_source_transition
+
+    if (
+        current.get("source") == "distribution_revision"
+        and from_status in {"approved", "frozen"}
+        and to_status in {"reforecast", "closed"}
+    ):
+        raise ValueError(
+            "La distribución aprobada conserva su historial; prepara otra revisión para ajustar semanas"
+        )
+    await guard_source_transition(session, version_id, to_status)
+
+    if to_status in {"approved", "frozen"}:
+        from .distribution import revision_context, validate_revision, schedule_state
+
+        if current.get("source") == "distribution_revision":
+            context = await revision_context(session, version_id)
+            await validate_revision(session, context)
+        else:
+            lines = (
+                (
+                    await session.execute(
+                        text("""
+                SELECT id::text AS id, budget_amount,
+                       COALESCE(line_direction, 'expense') AS line_direction
+                FROM budget_lines WHERE budget_version_id=CAST(:id AS uuid)
+                FOR UPDATE
+            """),
+                        {"id": version_id},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            plans = await list_monthly_plan_for_lines(
+                session, line_ids=[l["id"] for l in lines], ensure_schema=False
+            )
+            for line in lines:
+                if line.get(
+                    "line_direction", "expense"
+                ) == "expense" and schedule_state(line, plans.get(line["id"], {}))[
+                    "status"
+                ] in {
+                    "invalid",
+                    "mismatch",
+                }:
+                    raise ValueError(
+                        "La distribución existente no concilia con el autorizado; completa o corrige las semanas"
+                    )
 
     await session.execute(
         text(
@@ -6077,8 +6125,7 @@ async def update_budget_line(
     current = (
         (
             await session.execute(
-                text(
-                    """
+                text("""
                 SELECT
                     l.id,
                     l.tournament_id,
@@ -6098,13 +6145,13 @@ async def update_budget_line(
                     l.criteria_note,
                     l.observations,
                     l.metadata,
-                    v.status AS version_status
+                    v.status AS version_status,
+                    v.source AS version_source
                 FROM budget_lines l
                 JOIN budget_versions v ON v.id = l.budget_version_id
                 WHERE l.id = :line_id
-                LIMIT 1
-                """
-                ),
+                FOR UPDATE OF l, v
+                """),
                 {"line_id": line_id},
             )
         )
@@ -6134,6 +6181,20 @@ async def update_budget_line(
     }
     if not requested_fields:
         raise ValueError("No editable budget line fields were provided")
+    if current.get("version_source") == "distribution_revision":
+        if (
+            extra_metadata
+            or any(key != "budget_amount" for key in requested_fields)
+            or (
+                "budget_amount" in requested_fields
+                and _safe_decimal(requested_fields["budget_amount"])
+                != _safe_decimal(current["budget_amount"])
+            )
+        ):
+            raise ValueError(
+                "Esta revisión permite sólo distribuir el importe autorizado original"
+            )
+        return dict(current)
 
     concept = None
     if "budget_concept_id" in requested_fields:
@@ -6277,16 +6338,7 @@ async def _select_budget_version(
         for version in versions:
             if version["id"] == version_id:
                 return version
-    if not versions:
-        return None
-    latest_by_priority = sorted(versions, key=_budget_version_sort_key)
-    preferred_status = _safe_str(latest_by_priority[0].get("status"))
-    same_status_versions = [
-        version
-        for version in versions
-        if _safe_str(version.get("status")) == preferred_status
-    ]
-    return same_status_versions[0] if same_status_versions else latest_by_priority[0]
+    return resolve_definitive_budget_version_from_versions(versions)
 
 
 async def _build_budget_finance_comparison(
@@ -6596,6 +6648,7 @@ async def build_budget_snapshot(
             await session.execute(
                 text(f"""
                 SELECT
+                    l.id,
                     l.tournament_id,
                     l.tournament_code,
                     l.tournament_name,
@@ -6896,6 +6949,22 @@ async def build_budget_snapshot(
         if executive_read and tournament_id
         else None
     )
+    distribution = None
+    if executive_read:
+        from .distribution import period_projection
+
+        distribution_lines = [dict(row) for row in rows if row.get("id")]
+        plan = await list_monthly_plan_for_lines(
+            session,
+            line_ids=[str(row["id"]) for row in distribution_lines],
+            ensure_schema=False,
+        )
+        distribution = period_projection(
+            distribution_lines,
+            plan,
+            edition_year,
+            date_to or date(edition_year, 12, 31),
+        )
     return {
         "ok": True,
         "source": "budget_db",
@@ -6903,6 +6972,7 @@ async def build_budget_snapshot(
             {
                 "executive_quality_gaps": sorted(set(quality_gaps)),
                 "executive_monthly_actuals": executive_monthly,
+                "budget_distribution": distribution,
                 "executive_concepts": _finalize_breakdown_store(
                     by_concept_store, limit=None
                 ),
@@ -7264,11 +7334,11 @@ async def upsert_budget_line_for_concept(
         (
             await session.execute(
                 text("""
-                SELECT id
-                FROM budget_lines
-                WHERE budget_version_id = :version_id
-                  AND budget_concept_id = :budget_concept_id
-                  AND COALESCE(line_direction, 'expense') = :line_direction
+                SELECT l.id, v.source AS version_source
+                FROM budget_lines l JOIN budget_versions v ON v.id=l.budget_version_id
+                WHERE l.budget_version_id = :version_id
+                  AND l.budget_concept_id = :budget_concept_id
+                  AND COALESCE(l.line_direction, 'expense') = :line_direction
                 LIMIT 1
                 """),
                 {
@@ -7285,6 +7355,10 @@ async def upsert_budget_line_for_concept(
     metadata = (
         concept.get("metadata") if isinstance(concept.get("metadata"), dict) else {}
     )
+    if existing and existing.get("version_source") == "distribution_revision":
+        raise ValueError(
+            "La revisión de distribución no altera partidas ni conciliaciones financieras"
+        )
     phase_labels = metadata.get("applicable_phase_labels") or []
     resolved_phase = _safe_str(phase) or (
         str(phase_labels[0]).strip() if phase_labels else None
@@ -7393,6 +7467,7 @@ async def assign_budget_movement_to_line(
               AND l.budget_version_id=CAST(:version_id AS uuid)
               AND l.budget_concept_id=CAST(:concept_id AS uuid)
               AND COALESCE(l.line_direction, 'expense')='expense'
+              AND v.source <> 'distribution_revision'
             """),
         {
             "line_id": _safe_str(budget_line_id),
@@ -7664,27 +7739,28 @@ async def replace_budget_line_monthly_plan(
     budget_line_id: str,
     plan: dict[int, dict[str, Any]],
     actor_empleado_id: Optional[str] = None,
+    ensure_schema: bool = True,
 ) -> list[dict[str, Any]]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     clean_line_id = _safe_str(budget_line_id)
     if not clean_line_id:
         raise ValueError("Budget line id is required")
     current = (
         (
             await session.execute(
-                text(
-                    """
+                text("""
                 SELECT
                     l.budget_version_id,
                     l.budget_amount,
                     COALESCE(l.line_direction, 'expense') AS line_direction,
-                    v.status AS version_status
+                    v.status AS version_status,
+                    v.source AS version_source
                 FROM budget_lines l
                 JOIN budget_versions v ON v.id = l.budget_version_id
                 WHERE l.id = :budget_line_id
-                LIMIT 1
-                """
-                ),
+                FOR UPDATE OF l, v
+                """),
                 {"budget_line_id": clean_line_id},
             )
         )
@@ -7695,14 +7771,42 @@ async def replace_budget_line_monthly_plan(
         raise ValueError("Budget line not found")
     if not _editable_version_status(current.get("version_status")):
         raise ValueError("Only draft or reforecast versions allow line edits")
+    if (
+        current.get("version_source") == "distribution_revision"
+        and normalize_budget_line_direction(current.get("line_direction")) != "expense"
+    ):
+        raise ValueError(
+            "Esta revisión completa sólo la distribución del gasto autorizado"
+        )
+    from .distribution import money
+
+    for week, values in plan.items():
+        if not 1 <= int(week) <= BUDGET_WEEK_COUNT:
+            raise ValueError("Semana fuera de 1–52")
+        money(values.get("budget_expense_amount", 0))
+        money(values.get("expected_income_amount", 0))
     if normalize_budget_line_direction(current.get("line_direction")) == "expense":
         validate_budget_expense_plan_total(
             plan,
             budget_amount=current.get("budget_amount"),
         )
     before_plan = (
-        await list_monthly_plan_for_lines(session, line_ids=[clean_line_id])
+        await list_monthly_plan_for_lines(
+            session, line_ids=[clean_line_id], ensure_schema=False
+        )
     ).get(clean_line_id, {})
+    if current.get("version_source") == "distribution_revision":
+        plan = {week: dict(values) for week, values in plan.items()}
+        for week in set(plan) | set(before_plan):
+            income = before_plan.get(week, {}).get("expected_income_amount", 0)
+            if "expected_income_amount" in plan.get(week, {}) and money(
+                plan[week]["expected_income_amount"]
+            ) != money(income):
+                raise ValueError("Esta revisión no cambia ingresos esperados")
+            if week in plan or income:
+                plan.setdefault(week, {"budget_expense_amount": 0})[
+                    "expected_income_amount"
+                ] = income
     await session.execute(
         text(
             """
@@ -7752,8 +7856,11 @@ async def replace_budget_line_monthly_plan(
         session,
         budget_line_id=clean_line_id,
         allocations=expense_allocations,
+        ensure_schema=False,
     )
-    rows = await list_monthly_plan_for_lines(session, line_ids=[clean_line_id])
+    rows = await list_monthly_plan_for_lines(
+        session, line_ids=[clean_line_id], ensure_schema=False
+    )
     line_plan = rows.get(clean_line_id, {})
     await _audit_budget_event(
         session,
@@ -7948,6 +8055,7 @@ async def build_budget_actuals_snapshot(
     tournament_name: Optional[str] = None,
     tournament_code: Optional[str] = None,
     phase_filter: Optional[str] = None,
+    version_context: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Return budget actuals backed by balanced accounting result lines.
 
@@ -7956,6 +8064,30 @@ async def build_budget_actuals_snapshot(
     commitments. Terminal documents without a result posting are surfaced as
     pending accounting instead of being converted into an estimated tax base.
     """
+    if version_context and version_context.get("source") == "distribution_revision":
+        from .distribution import financial_context
+
+        financial_id, line_map = await financial_context(session, version_context)
+        snapshot = await build_budget_actuals_snapshot(
+            session,
+            edition_year=edition_year,
+            version_id=financial_id,
+            tournament_id=tournament_id,
+            tournament_name=tournament_name,
+            tournament_code=tournament_code,
+            phase_filter=phase_filter,
+        )
+        snapshot["monthly"] = {
+            line_map.get(key, key): values
+            for key, values in snapshot["monthly"].items()
+        }
+        for movement in snapshot["movements"]:
+            old_id = movement.get("budget_line_id")
+            if old_id in line_map:
+                movement["financial_budget_line_id"] = old_id
+                movement["budget_line_id"] = line_map[old_id]
+        snapshot["financial_version_id"] = financial_id
+        return snapshot
     tournament_scope_requested = bool(
         _safe_str(tournament_name) or _safe_str(tournament_code)
     )
@@ -8882,6 +9014,7 @@ async def build_budget_monthly_actuals(
     tournament_name: Optional[str] = None,
     tournament_code: Optional[str] = None,
     phase_filter: Optional[str] = None,
+    version_context: Optional[dict[str, Any]] = None,
 ) -> dict[str, dict[int, dict[str, float]]]:
     snapshot = await build_budget_actuals_snapshot(
         session,
@@ -8891,6 +9024,7 @@ async def build_budget_monthly_actuals(
         tournament_name=tournament_name,
         tournament_code=tournament_code,
         phase_filter=phase_filter,
+        **({"version_context": version_context} if version_context else {}),
     )
     return snapshot["monthly"]
 

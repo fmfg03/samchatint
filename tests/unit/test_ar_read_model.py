@@ -24,6 +24,16 @@ def no_active_collection_matches():
         yield
 
 
+@pytest.fixture(autouse=True)
+def ordinary_version_context(monkeypatch):
+    from samchat.budgets import distribution
+
+    async def context(_session, version_id):
+        return {"id": version_id, "source": "ui_manual"}
+
+    monkeypatch.setattr(distribution, "revision_context", context)
+
+
 @pytest.mark.asyncio
 async def test_ar_read_model_groups_expected_income_lines():
     session = object()
