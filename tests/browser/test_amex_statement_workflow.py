@@ -162,3 +162,62 @@ def test_dashboard_history_pages_are_navigable(page, workspace):
         )
         assert routes.list_statement_workflows.await_args.kwargs["page"] == 2
         workspace.session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        {"name": "desktop", "width": 1440, "height": 1000},
+        {"name": "mobile", "width": 390, "height": 844},
+    ],
+    indirect=True,
+)
+def test_contextual_empty_stale_selector_and_visible_identity_pending(page, workspace):
+    long_description = "Comercio de prueba " * 25
+    workspace.view["reports"] = []
+    workspace.view["expenses"] = {
+        workspace.item.imported_expense_id: SimpleNamespace(concepto=long_description)
+    }
+    with live_app(workspace.app) as base_url:
+        page.goto(f"{base_url}{routes.BASE}/{workspace.statement.id}/pendientes")
+        assert "••••5007" in page.locator("main").inner_text()
+        identity = page.get_by_role(
+            "link", name="Partidas AMEX sin tarjeta", exact=True
+        )
+        assert identity.is_visible()
+        assert identity.get_attribute("href").endswith("#sin-tarjeta")
+        description = page.locator(".statement-table tbody td").nth(2)
+        assert long_description.strip() in description.inner_text()
+        assert description.evaluate("el => getComputedStyle(el).whiteSpace") == "normal"
+        assert description.evaluate("el => el.scrollWidth <= el.clientWidth")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.get_by_role("link", name="Continuar a pólizas", exact=True).click()
+        assert (
+            "No hay informes aprobados con una partida AMEX"
+            in page.locator("main").inner_text()
+        )
+        assert (
+            page.locator(
+                'select[name="informe_id"] option[value]:not([value=""])'
+            ).count()
+            == 0
+        )
+        assert page.get_by_role(
+            "link", name="Partidas AMEX sin tarjeta", exact=True
+        ).is_visible()
+        workspace.view.update(
+            selection_rejected=True,
+            selection_warning="El informe ya no corresponde a la tarjeta y período.",
+        )
+        page.goto(
+            f"{base_url}{routes.BASE}/{workspace.statement.id}/polizas?"
+            f"informe_id={uuid4()}"
+        )
+        assert (
+            "ya no corresponde a la tarjeta y período"
+            in page.locator("main").inner_text()
+        )
+        assert page.locator("#amex-cut-confirmation").count() == 0
+        assert page.locator("script").count() == 1
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        workspace.session.commit.assert_not_awaited()

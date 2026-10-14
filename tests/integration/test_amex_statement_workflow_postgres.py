@@ -503,3 +503,187 @@ async def test_report_first_bridge_cancellation_guard_is_preserved(pg):
         assert next(iter(view["item_states"].values()))["status"] == "vinculado"
         assert len(view["links"]) == 1
     assert await _journal_count(pg) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case,eligible",
+    [
+        ("middle", True),
+        ("start", True),
+        ("end_evening", True),
+        ("before", False),
+        ("after", False),
+        ("other_card", False),
+        ("missing_card", False),
+        ("cancelled", False),
+        ("not_amex", False),
+        ("unapproved", False),
+        ("missing_account", False),
+        ("cross_year", True),
+    ],
+)
+async def test_contextual_selector_real_sql_boundaries(pg, case, eligible):
+    from datetime import datetime
+
+    data = await setup_report(pg)
+    statement_id = await statement(pg, data)
+    async with pg.factory.begin() as session:
+        expense = await session.get(models.ExpenseReport, data.reports[0].id)
+        doc = await session.get(models.Documento, data.informe.id)
+        if case == "start":
+            expense.fecha = datetime(2026, 10, 1)
+        elif case == "end_evening":
+            expense.fecha = datetime(2026, 10, 31, 23, 59, 59)
+        elif case == "before":
+            expense.fecha = datetime(2026, 9, 30, 23, 59, 59)
+        elif case == "after":
+            expense.fecha = datetime(2026, 11, 1)
+        elif case == "other_card":
+            expense.ultimos_4_digitos = "6007"
+        elif case == "missing_card":
+            expense.ultimos_4_digitos = None
+        elif case == "cancelled":
+            expense.estado_gasto = "cancelado"
+        elif case == "not_amex":
+            expense.pagado_con_amex_empresa = False
+        elif case == "unapproved":
+            doc.estado = "borrador"
+        elif case == "missing_account":
+            expense.cuenta_gastos_id = None
+        elif case == "cross_year":
+            # Original import declaration is immutable; test the same SQL owner
+            # predicate with an explicit alternative read context, not a rewrite.
+            expense.fecha = datetime(2027, 1, 2, 23, 59)
+    async with pg.factory() as session:
+        actor = await session.get(models.Empleado, pg.actor)
+        if case == "cross_year":
+            from types import SimpleNamespace
+
+            card = await session.get(models.AmexCardAccount, data.card.id)
+            predicate = service._statement_report_eligibility(
+                SimpleNamespace(
+                    card_account_id=card.id,
+                    period_start=date(2026, 12, 31),
+                    period_end=date(2027, 1, 2),
+                ),
+                card,
+            )
+            reports = (
+                await session.scalars(select(models.Documento).where(predicate))
+            ).all()
+        else:
+            view = await service.statement_workflow_view(
+                session,
+                statement_id,
+                actor=actor,
+                selected_informe_ids=[data.informe.id],
+            )
+            reports = view["reports"]
+            assert view["selection_rejected"] is (not eligible)
+            assert bool(view["selected_reports"]) is eligible
+            assert bool(view["selection_warning"]) is (not eligible)
+            assert len(view["items"]) == 1 and view["imported_total"] == 116
+        assert (data.informe.id in {doc.id for doc in reports}) is eligible
+
+
+@pytest.mark.asyncio
+async def test_contextual_selector_same_partida_and_complete_preview(pg):
+    from datetime import datetime
+
+    data = await setup_report(pg, count=3)
+    statement_id = await statement(pg, data)
+    async with pg.factory.begin() as session:
+        first = await session.get(models.ExpenseReport, data.reports[0].id)
+        first.fecha = datetime(2026, 9, 30)
+        second = await session.get(models.ExpenseReport, data.reports[1].id)
+        second.ultimos_4_digitos = "6007"
+        third = await session.get(models.ExpenseReport, data.reports[2].id)
+        third.fecha = datetime(2026, 11, 1)
+    async with pg.factory() as session:
+        actor = await session.get(models.Empleado, pg.actor)
+        view = await service.statement_workflow_view(session, statement_id, actor=actor)
+        assert not view["reports"]  # Card and period on different rows never combine.
+    async with pg.factory.begin() as session:
+        third = await session.get(models.ExpenseReport, data.reports[2].id)
+        third.fecha = datetime(2026, 10, 31, 23, 59)
+    async with pg.factory() as session:
+        actor = await session.get(models.Empleado, pg.actor)
+        view = await service.statement_workflow_view(
+            session, statement_id, actor=actor, selected_informe_ids=[data.informe.id]
+        )
+        assert [doc.id for doc in view["reports"]] == [data.informe.id]
+        preview = view["selected_reports"][0]["preview"]
+        assert {row.id for row in preview.expenses} == {row.id for row in data.reports}
+        assert sum(row.gasto_cantidad for row in preview.expenses) == 348
+
+
+@pytest.mark.asyncio
+async def test_contextual_selector_recognized_card_uuid_conflict(pg):
+    from devnous.gastos.services import amex_recognition_service as recognition
+
+    data = await setup_report(pg)
+    statement_id = await statement(pg, data)
+    async with pg.factory.begin() as session:
+        second_card = models.AmexCardAccount(
+            id=uuid4(),
+            last4="6007",
+            active=True,
+            card_label="Other",
+            cardholder_key="empresa",
+            liability_cuenta_contable_id=data.liability.id,
+        )
+        session.add(second_card)
+        await session.flush()
+        bound = await recognition.bind_amex_consumption(
+            session,
+            imported_expense_id=data.imports[0].id,
+            report_expense_ids=[data.reports[0].id],
+            actor_id=pg.actor,
+        )
+        assert bound.status == "bound", bound.reason
+        # Existing legacy identities may be inconsistent. Its actual guard permits
+        # this unposted update; no disabling trigger or fabricated bank match.
+        bound.consumption.card_account_id = second_card.id
+    async with pg.factory() as session:
+        actor = await session.get(models.Empleado, pg.actor)
+        view = await service.statement_workflow_view(
+            session, statement_id, actor=actor, selected_informe_ids=[data.informe.id]
+        )
+        assert not view["reports"] and view["selection_rejected"]
+        assert len(view["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_contextual_selector_preserves_saved_outside_context_cut_and_export(pg):
+    data = await setup_report(pg)
+    statement_id = await statement(pg, data)
+    preview = await prepare(pg, data)
+    async with pg.factory.begin() as session:
+        actor = await session.get(models.Empleado, pg.actor)
+        result = await service.confirm_statement_informe(
+            session,
+            import_id=statement_id,
+            actor=actor,
+            selected_informe_ids=[data.informe.id],
+            **payload(data, preview),
+        )
+        cut_id = result.cut.id
+        # Editing discovery context is not authority to erase frozen evidence.
+        card = await session.get(models.AmexCardAccount, data.card.id)
+        card.last4 = "6007"
+    async with pg.factory() as session:
+        actor = await session.get(models.Empleado, pg.actor)
+        view = await service.statement_workflow_view(session, statement_id, actor=actor)
+        assert not view["reports"]
+        assert view["selected_reports"][0]["document"].id == data.informe.id
+        assert {cut.id for cut in view["cuts"]} == {cut_id}
+        explicit = await service.statement_workflow_view(
+            session, statement_id, actor=actor, selected_informe_ids=[data.informe.id]
+        )
+        assert explicit["selection_rejected"] and not explicit["selected_reports"]
+        assert {cut.id for cut in explicit["cuts"]} == {cut_id}
+        assert await service.export_statement(
+            session, import_id=statement_id, actor=actor, export_format="csv"
+        )
+    assert await _journal_count(pg) == 1
