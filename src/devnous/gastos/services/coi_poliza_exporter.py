@@ -611,7 +611,10 @@ def generate_coi_poliza_xlsx(
     policy_header_rows = [row for row in rows if row[0] == "Eg"]
     for row, group in zip(policy_header_rows, groups, strict=True):
         row[2] = _safe_cell_text(_coi_policy_xlsx_description(group))
-    for row in rows:
+    for index, row in enumerate(rows):
+        if index and rows[index - 1][:3] == ["", "", "INICIO_CFDI"]:
+            for column in (5, 6):
+                row[column] = _safe_cell_text(str(row[column] or "").strip())
         ws.append(row[:COI_COLUMNS])
     _style_coi_import_sheet(ws)
 
