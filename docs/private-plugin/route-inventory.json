@@ -1,6 +1,6 @@
 {
   "baseline": "6cd122f1030ab39631d77e706a9f5a1a7192231d",
-  "source_file_count": 453,
+  "source_file_count": 454,
   "exclusions": [
     "Private plugin integration package excluded from business-source inventory; baseline pinned deliberately, source hashes detect changes",
     "Active frontend is not versioned here; UI function/profile parity remains UNPROVEN",
@@ -4111,11 +4111,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "c65356f821ae",
+      "id": "3d4a12b43587",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 595,
+      "line": 636,
       "handler": "admin_presupuestos_dashboard",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "GET",
       "paths": [
         "/admin/presupuestos"
@@ -4179,7 +4179,7 @@
         "build_budget_snapshot"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_dashboard",
-      "proposed_tool": "budgets_admin_presupuestos_dashboard_get_c65356",
+      "proposed_tool": "budgets_admin_presupuestos_dashboard_get_3d4a12",
       "scope_proposal": "budgets:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -4203,11 +4203,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "af57930e3ee7",
+      "id": "096825a3db0e",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 895,
+      "line": 970,
       "handler": "admin_presupuestos_export_xlsx",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "GET",
       "paths": [
         "/admin/presupuestos/export.xlsx"
@@ -4268,7 +4268,7 @@
         "build_budget_snapshot"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_export_xlsx",
-      "proposed_tool": "budgets_admin_presupuestos_export_xlsx_get_af5793",
+      "proposed_tool": "budgets_admin_presupuestos_export_xlsx_get_096825",
       "scope_proposal": "budgets:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -4287,11 +4287,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "1b541b73aa08",
+      "id": "569ab8255e10",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 956,
+      "line": 1031,
       "handler": "admin_presupuestos_create_version",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/versiones/create"
@@ -4348,7 +4348,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_create_version",
-      "proposed_tool": "budgets_admin_presupuestos_create_version_post_1b541b",
+      "proposed_tool": "budgets_admin_presupuestos_create_version_post_569ab8",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "version_name",
@@ -4372,11 +4372,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "bf8ef70df4f0",
+      "id": "8e95bdac0550",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 994,
+      "line": 1069,
       "handler": "admin_presupuestos_transition_version",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/versiones/{version_id}/transition"
@@ -4435,7 +4435,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_transition_version",
-      "proposed_tool": "budgets_admin_presupuestos_transition_version_post_bf8ef7",
+      "proposed_tool": "budgets_admin_presupuestos_transition_version_post_8e95bd",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "version_id",
@@ -4459,11 +4459,96 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "aa8c73c73a5d",
+      "id": "883138d4dc40",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 1040,
+      "line": 1121,
+      "handler": "admin_presupuestos_distribution_revision",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "method": "POST",
+      "paths": [
+        "/admin/presupuestos/versiones/{version_id}/distribucion"
+      ],
+      "declared_path": "/admin/presupuestos/versiones/{version_id}/distribucion",
+      "declared_methods": [
+        "POST"
+      ],
+      "router": "router",
+      "mount_chain": [
+        {
+          "prefix": "",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:28057",
+          "status": "registration_function_static; runtime execution unverified"
+        }
+      ],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [
+        {
+          "key": "admin.root",
+          "roles": [
+            "admin",
+            "superadmin",
+            "super_admin"
+          ],
+          "actions": [
+            "ver"
+          ],
+          "evidence": "src/devnous/gastos/services/access_control_service.py:125"
+        },
+        {
+          "key": "presupuestos.ingresos",
+          "roles": [
+            "finanzas",
+            "admin",
+            "superadmin",
+            "super_admin"
+          ],
+          "actions": [
+            "ver",
+            "crear",
+            "editar",
+            "exportar"
+          ],
+          "evidence": "src/devnous/gastos/services/access_control_service.py:221"
+        }
+      ],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "budgets",
+      "mount_evidence": "live_entrypoint_static",
+      "profile_evidence": [
+        "_require_budget_access(current_empleado, 'create')",
+        "_require_budget_access(current_empleado, 'line_update')"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_distribution_revision",
+      "proposed_tool": "budgets_admin_presupuestos_distribution_revision_post_883138",
+      "scope_proposal": "budgets:write; never grants business authority",
+      "object_parameters": [
+        "version_id",
+        "confirmed",
+        "current_empleado"
+      ],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "write_or_effect_candidate",
+      "confirmation": "trusted human approval of exact draft/version/amount/currency/destination/digest; recheck at commit",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity",
+        "exact confirmation/version",
+        "retry/crash/no duplicates",
+        "verified receipt"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "d15f425558b8",
+      "source": "src/devnous/gastos/routes/admin_budget_routes.py",
+      "line": 1154,
       "handler": "admin_presupuestos_update_version",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/versiones/{version_id}/update"
@@ -4520,7 +4605,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_update_version",
-      "proposed_tool": "budgets_admin_presupuestos_update_version_post_aa8c73",
+      "proposed_tool": "budgets_admin_presupuestos_update_version_post_d15f42",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "version_id",
@@ -4544,11 +4629,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "b4f6b09b1e2b",
+      "id": "81555e6423f1",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 1082,
+      "line": 1196,
       "handler": "admin_presupuestos_create_line",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/versiones/{version_id}/lineas/create"
@@ -4605,7 +4690,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_create_line",
-      "proposed_tool": "budgets_admin_presupuestos_create_line_post_b4f6b0",
+      "proposed_tool": "budgets_admin_presupuestos_create_line_post_81555e",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "version_id",
@@ -4645,11 +4730,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "3f98144a7eaa",
+      "id": "b941e57da075",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 1175,
+      "line": 1289,
       "handler": "admin_presupuestos_assign_existing_line",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/versiones/{version_id}/lineas/assign-existing"
@@ -4708,7 +4793,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_assign_existing_line",
-      "proposed_tool": "budgets_admin_presupuestos_assign_existing_line_post_3f9814",
+      "proposed_tool": "budgets_admin_presupuestos_assign_existing_line_post_b941e5",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "version_id",
@@ -4738,11 +4823,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "9601963912fc",
+      "id": "29718fc66eb3",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 1260,
+      "line": 1374,
       "handler": "admin_presupuestos_update_line",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/lineas/{line_id}/update"
@@ -4804,7 +4889,7 @@
         "validate_budget_expense_plan_total"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_update_line",
-      "proposed_tool": "budgets_admin_presupuestos_update_line_post_960196",
+      "proposed_tool": "budgets_admin_presupuestos_update_line_post_29718f",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "line_id",
@@ -4842,11 +4927,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "1833387e70b0",
+      "id": "e2ea8e27560a",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 1488,
+      "line": 1609,
       "handler": "admin_presupuestos_tournament_detail",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "GET",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}"
@@ -4908,7 +4993,7 @@
         "build_budget_monthly_plan_rollups"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_tournament_detail",
-      "proposed_tool": "budgets_admin_presupuestos_tournament_detail_get_183338",
+      "proposed_tool": "budgets_admin_presupuestos_tournament_detail_get_e2ea8e",
       "scope_proposal": "budgets:read; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -4936,11 +5021,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "73ed14747a35",
+      "id": "36c5c7ec1921",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 1882,
+      "line": 2023,
       "handler": "admin_presupuestos_import_income_lines",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/ingresos/import"
@@ -4997,7 +5082,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_import_income_lines",
-      "proposed_tool": "budgets_admin_presupuestos_import_income_lines_post_73ed14",
+      "proposed_tool": "budgets_admin_presupuestos_import_income_lines_post_36c5c7",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -5022,11 +5107,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "63840863876c",
+      "id": "1c58667ae013",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 1944,
+      "line": 2085,
       "handler": "admin_presupuestos_export_income_xlsx",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "GET",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/ingresos/export.xlsx"
@@ -5086,7 +5171,7 @@
         "build_budget_monthly_actuals"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_export_income_xlsx",
-      "proposed_tool": "budgets_admin_presupuestos_export_income_xlsx_get_638408",
+      "proposed_tool": "budgets_admin_presupuestos_export_income_xlsx_get_1c5866",
       "scope_proposal": "budgets:read; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -5107,11 +5192,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "1f8ef3fb55aa",
+      "id": "dc3c98d39672",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2042,
+      "line": 2193,
       "handler": "admin_presupuestos_cfdi_income_redirect",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "GET",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos"
@@ -5168,7 +5253,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_cfdi_income_redirect",
-      "proposed_tool": "budgets_admin_presupuestos_cfdi_income_redirect_get_1f8ef3",
+      "proposed_tool": "budgets_admin_presupuestos_cfdi_income_redirect_get_dc3c98",
       "scope_proposal": "budgets:read; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -5187,11 +5272,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "947db1d185d9",
+      "id": "0f7e1fc875cf",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2056,
+      "line": 2207,
       "handler": "admin_presupuestos_link_cfdi_income",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/link"
@@ -5248,7 +5333,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_link_cfdi_income",
-      "proposed_tool": "budgets_admin_presupuestos_link_cfdi_income_post_947db1",
+      "proposed_tool": "budgets_admin_presupuestos_link_cfdi_income_post_0f7e1f",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -5276,11 +5361,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "917e1e4e7aca",
+      "id": "c6321424ece9",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2120,
+      "line": 2271,
       "handler": "admin_presupuestos_decide_cfdi_income",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/{link_id}/decision"
@@ -5337,7 +5422,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_decide_cfdi_income",
-      "proposed_tool": "budgets_admin_presupuestos_decide_cfdi_income_post_917e1e",
+      "proposed_tool": "budgets_admin_presupuestos_decide_cfdi_income_post_c63214",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -5364,11 +5449,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "73c387422afe",
+      "id": "467f07c833bb",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2153,
+      "line": 2304,
       "handler": "admin_presupuestos_confirm_cfdi_income_collection",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/{link_id}/collection"
@@ -5425,7 +5510,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_confirm_cfdi_income_collection",
-      "proposed_tool": "budgets_admin_presupuestos_confirm_cfdi_income_collectio_73c387",
+      "proposed_tool": "budgets_admin_presupuestos_confirm_cfdi_income_collectio_467f07",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -5451,11 +5536,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "1a70f39f38b9",
+      "id": "7c6a1bffaed1",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2185,
+      "line": 2336,
       "handler": "admin_presupuestos_upload_link_cfdi_income",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/upload-link"
@@ -5512,7 +5597,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_upload_link_cfdi_income",
-      "proposed_tool": "budgets_admin_presupuestos_upload_link_cfdi_income_post_1a70f3",
+      "proposed_tool": "budgets_admin_presupuestos_upload_link_cfdi_income_post_7c6a1b",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -5541,11 +5626,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "6edb55cf5ed3",
+      "id": "1bf8e9d6c30e",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2257,
+      "line": 2408,
       "handler": "admin_presupuestos_unlink_cfdi_income",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/{link_id}/unlink"
@@ -5602,7 +5687,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_unlink_cfdi_income",
-      "proposed_tool": "budgets_admin_presupuestos_unlink_cfdi_income_post_6edb55",
+      "proposed_tool": "budgets_admin_presupuestos_unlink_cfdi_income_post_1bf8e9",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -5627,11 +5712,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "1a3649547baa",
+      "id": "ec427be0f8b9",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2301,
+      "line": 2452,
       "handler": "admin_presupuestos_copy_forward",
-      "source_sha256": "6043c15e1230f2aacc3cc79d48c11da8ae503a237b5e62d14ad42d7bc9eb7156",
+      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/versiones/copy-forward"
@@ -5688,7 +5773,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_copy_forward",
-      "proposed_tool": "budgets_admin_presupuestos_copy_forward_post_1a3649",
+      "proposed_tool": "budgets_admin_presupuestos_copy_forward_post_ec427b",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "source_version_id",

@@ -239,3 +239,13 @@ diff. Antes de cualquier release: obtener su autorización específica,
 confirmar el crosswalk si se desea la plantilla fija, revisar el diff y
 efectuar validación con el torneo/versión concretos. Ninguno de esos efectos
 se deduce de la aprobación del cierre del candidato.
+
+## Seguimiento de publicación y CI
+
+PR #487, primer head `07998cc71ad561f1fd0bdac5bd7d5ac3f607be93`.
+La primera ejecución de CI detectó inventario estático desactualizado:
+453→454 archivos fuente y 590→591 rutas. Se regeneran JSON/CSV con
+`python scripts/private_plugin/inventory.py`; únicamente cambian las rutas
+de `admin_budget_routes.py`, sus líneas/hashes y evidencias derivadas.
+No cambia el catálogo de 44 acciones ni se habilitan herramientas del plugin.
+Workflow, gates y baselines de fallos permanecen intactos.
