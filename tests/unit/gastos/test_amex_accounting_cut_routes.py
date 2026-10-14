@@ -59,10 +59,24 @@ async def test_reports_empty_and_escaped_reference(monkeypatch):
     ):
         response = await routes.amex_accounting_reports(
             session=session_with(documents),
-            current_empleado=SimpleNamespace(rol="finanzas", activo=True),
+            current_empleado=SimpleNamespace(
+                rol="finanzas", activo=True, nombre="Finanzas de prueba"
+            ),
         )
         html = response.body.decode()
-        assert "<script>" not in html
+        from lxml import html as html_parser
+
+        from devnous.gastos.services.customer_success_usage import (
+            render_customer_success_usage_tracker_script,
+        )
+
+        scripts = html_parser.fromstring(html).xpath("//script")
+        trusted = html_parser.fromstring(
+            render_customer_success_usage_tracker_script()
+        ).xpath("//script")[0]
+        assert len(scripts) == 1
+        assert scripts[0].text_content().strip() == trusted.text_content().strip()
+        assert "<script>x</script>" not in html
         assert ("Sin informes" if not documents else "&lt;script&gt;") in html
 
 
@@ -116,7 +130,10 @@ async def test_review_form_consolidated_choices_versions_and_adjustment_download
         {"type": "http", "query_string": b"msg=%3Cscript%3Ex%3C%2Fscript%3E"}
     )
     response = await routes.amex_accounting_report_review(
-        informe.id, request, session, SimpleNamespace(rol="finanzas", activo=True)
+        informe.id,
+        request,
+        session,
+        SimpleNamespace(rol="finanzas", activo=True, nombre="Finanzas de prueba"),
     )
     html = response.body.decode()
     assert "<script>bad</script>" not in html
@@ -143,7 +160,10 @@ async def test_review_missing_or_wrong_document(monkeypatch, document):
     )
     with pytest.raises(HTTPException) as exc:
         await routes.amex_accounting_report_review(
-            uuid4(), None, session, SimpleNamespace(rol="finanzas", activo=True)
+            uuid4(),
+            None,
+            session,
+            SimpleNamespace(rol="finanzas", activo=True, nombre="Finanzas de prueba"),
         )
     assert exc.value.status_code == 404
 
@@ -288,7 +308,9 @@ async def test_real_permission_dependency_and_uuid_validation(
     )
     app = FastAPI()
     app.include_router(routes.router)
-    actor = SimpleNamespace(id=uuid4(), rol=role, permisos=[], activo=True)
+    actor = SimpleNamespace(
+        id=uuid4(), rol=role, permisos=[], activo=True, nombre="Finanzas de prueba"
+    )
     app.dependency_overrides[get_current_empleado] = lambda: actor
     app.dependency_overrides[get_db_session] = lambda: session_with([])
     async with httpx.AsyncClient(
