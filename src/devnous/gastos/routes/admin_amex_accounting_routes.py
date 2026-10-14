@@ -89,7 +89,9 @@ def _page(title: str, content: str, actor: Empleado) -> str:
             '<a class="button secondary" href="/admin/contabilidad/amex/estados">'
             "Estados de cuenta</a> "
             '<a class="button secondary" href="/admin/contabilidad/amex">'
-            "Informes aprobados</a>"
+            "Informes aprobados</a> "
+            '<a class="button secondary" href="/admin/gastos/amex/conciliacion">'
+            "Conciliación AMEX</a>"
         ),
         side_html=(
             '<div class="eyebrow">Cómo continuar</div>'

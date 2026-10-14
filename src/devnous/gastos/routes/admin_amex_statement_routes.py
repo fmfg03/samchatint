@@ -55,7 +55,8 @@ def _html(title: str, content: str, actor: Empleado) -> Response:
     .statement-form{max-width:700px}.statement-form input,.statement-form select{
     box-sizing:border-box;width:100%}.statement-form input[type=checkbox]{width:auto}
     .statement-form label{margin:12px 0}.statement-table{overflow-x:auto}
-    .statement-table td{overflow-wrap:anywhere;max-width:28rem}
+    .statement-table td{overflow-wrap:anywhere;max-width:28rem;white-space:normal}
+    .statement-table td:nth-child(3){white-space:normal}
     @media(max-width:600px){.statement-table table{min-width:650px}}</style>"""
     return Response(_page(title, styles + content, actor), media_type="text/html")
 

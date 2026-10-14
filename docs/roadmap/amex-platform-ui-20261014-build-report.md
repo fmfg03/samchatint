@@ -23,3 +23,7 @@ Cuatro fixtures inicialmente omitían el nombre del actor requerido por la naveg
 Sin desviaciones financieras ni expansión de alcance. El selector del paso 3 conserva su filtro existente: informes aprobados con partidas AMEX activas y atención manual visible; no filtra automáticamente por tarjeta/período. Publicación y aceptación visual productiva pendientes.
 
 **Canon unchanged:** esta reparación aplica presentación compartida al recorrido ya aprobado; no cambia arquitectura, reglas financieras, autoridad ni contratos. Los tres hashes coinciden con el registro. No se requiere migración.
+
+## Correcciones de revisión PR #483
+
+Se conserva un acceso directo «Conciliación AMEX» en el encabezado compartido. Las descripciones largas de cargos ajustan línea con una regla específica que prevalece sobre el nowrap del informe canónico. Nuevas regresiones reprodujeron la ausencia del acceso (3 FAIL) y nowrap indebido (2 FAIL); repetición final: 466 unitarias y 6 browser PASS. El primer override CSS tuvo prioridad insuficiente, corregido y revalidado en navegador. Validación independiente sin hallazgos pendientes; inventario regenerado con fuentes finales. Sin cambios financieros.

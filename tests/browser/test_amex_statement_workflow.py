@@ -48,6 +48,9 @@ def live_app(app):
     indirect=True,
 )
 def test_actual_forms_three_steps_confirmation_and_download(page, workspace):
+    workspace.view["items"][0].normalized_json["description"] += (
+        " Descripción extensa del comercio con varios conceptos" * 30
+    )
     async def confirm(*args, **kwargs):
         workspace.view["linked_cut_ids"] = {uuid4()}
         workspace.view["financial_progress"] = {
@@ -84,6 +87,8 @@ def test_actual_forms_three_steps_confirmation_and_download(page, workspace):
         assert "Pendientes operativos: 1" in page.locator("main").inner_text()
         assert "Banco por vincular: 1" in page.locator("main").inner_text()
         assert page.locator("img").count() == 0
+        cargo = page.locator(".statement-table tbody td").nth(2)
+        assert cargo.evaluate("el => getComputedStyle(el).whiteSpace") == "normal"
         scripts = page.locator("script")
         assert scripts.count() == 1
         assert "__samchatCustomerSuccessTracker" in scripts.inner_text()

@@ -667,6 +667,7 @@ async def test_amex_uses_shared_contabilidad_shell(workspace, screen):
     assert 'class="workspace-hero"' in response.text
     assert 'aria-label="Ruta de navegación"' in response.text
     assert 'href="/logout"' in response.text
+    assert 'href="/admin/gastos/amex/conciliacion"' in response.text
     assert "--shell-accent:#0f766e" in response.text
 
 
