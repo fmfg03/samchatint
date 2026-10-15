@@ -16327,8 +16327,8 @@ async def panel(
         ("admin.contabilidad", "/admin/contabilidad/coi", "Vista contable", "Revisa pólizas COI y el detalle de sus cuentas."),
         ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Revisa el vínculo por UUID con empleado y proyecto operativo."),
         ("admin.gastos.cfdi_carga", "/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CSV por UUID para alimentar la revisión de matching."),
-        ("admin.gastos.amex", "/admin/contabilidad/amex/estados", "AMEX",
-         "Carga el estado, resuelve pendientes y prepara las pólizas del informe."),
+        ("admin.gastos.amex", "/admin/contabilidad/amex/estados/directo", "AMEX",
+         "Carga el estado, revisa CFDI y prepara la póliza de la tarjeta."),
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "Prepara CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
     ], visible_tool_keys)
     if is_superadmin_role(getattr(current_empleado, "rol", None)):
@@ -20416,7 +20416,7 @@ async def carga_masiva_amex_get(
             </div>
         """
     hero_actions_html = """
-        <a href="/admin/contabilidad/amex/estados" class="button primary">
+        <a href="/admin/contabilidad/amex/estados/directo" class="button primary">
             Abrir recorrido AMEX</a>
         <a href="/admin/gastos/amex/conciliacion" class="button secondary">Ver conciliación AMEX</a>
         <a href="/admin/gastos" class="button secondary">Volver a finanzas</a>
