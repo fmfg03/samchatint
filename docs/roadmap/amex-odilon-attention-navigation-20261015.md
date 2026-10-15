@@ -93,3 +93,51 @@ Verdict: no blocking findings discovered in the reviewed correction. Read-only r
 ## Promotion authorization
 
 The user answered “aprobado” to the explicit final question approving this exact correction and authorizing commit, push, PR, merge and production deployment. Story/spec and reviewed source scope are unchanged. The test container was stopped after verification. Origin/main and the active serving release were both independently reverified at929fe1b4729f07b6b486e9a7eede966f827169de before publication. No migration or financial/data repair is needed. Runtime configuration of Plataforma Sports, five cards, four Finance operators and Juan Pablo CP must be preserved during deployment. CI, exact merge and serving receipts will record actual promotion results separately; approval does not turn local checks into remote or business acceptance.
+
+
+## PR489 review correction: explicit direct-workflow denial
+
+The first published commit ee13e55f1 correctly fixed Odilon and the normal navigation destination. GitHub review thread PRRT_kwDORuojeM6s3wd4 identified a real boundary missed by initial validation: legacy AMEX visibility could still render a direct link for an actor explicitly denied amex_direct/ver. This follow-up enforces the already approved authority invariant and does not require a new business rule or scope approval.
+
+A shared destination helper uses active Finance identity and the existing route-delegation check for GET. Missing explicit allow remains eligible for the real direct owner; empty default_roles is never misused as a denial. Explicit read denial or failed authorization lookup retains the previous statement destination and its original access checks. Both generic entrypoints call the same helper. No allow rule, role, scope, config or financial authority changes.
+
+Reproduction against the exact immutable published head with actual persisted PostgreSQL AccessControlRule:1failed/1passed, `/tmp/amex-pr489-direct-denial-pg-red-boundary.log`; denied case incorrectly pointed direct. The first trial failed earlier because unrelated Direction position tables are absent in the AMEX fixture; the final boundary test isolates only Direction/approval helpers, leaving real access rules and AMEX owner/rendering untouched. That harness setup failure was caused by test preparation and is superseded. Worker unit red8failed then green159affected cases; report `/tmp/amex-pr489-direct-entry-denial-fix.md`.
+
+Final frozen-source checks: **832unit PASS25.97s**, **35PostgreSQL PASS83.63s**, **9inventory PASS22.61s**; logs `/tmp/amex-pr489-review-final-{unit,pg,inventory}.log`. Two additional PostgreSQL cases verify actual rule denial and no-rule behavior through both real rendered handlers. Coverage against original base929fe1b47: **35/35=100%** (13entry-helper statements and22attention-policy statements), using only final fresh unit/PG files. Script and receipt `/tmp/amex-pr489-review-changed-coverage.py` and `.json`. New PG/entry tests format/lint and diff hygiene pass; no broad formatting of the legacy owner. Inventory refreshed for changed source hash/line positions, topology and permissions unchanged.
+
+Initial CI results on ee13e55f1 are historical evidence only; the follow-up commit must pass its own checks before merge. Read-only independent revalidation follows. User authorization remains valid for this correction within the same approved final change and PR. No production effects have yet occurred for PR489. Canon unchanged for the same approved identity/navigation/authority contract.
+
+
+---
+
+# Independent incremental validation — PR489 persisted direct-read denial
+
+Date: 2026-10-15. Read-only review of `/root/samchat/.worktrees/amex-odilon-linked-beneficiary-20261015`, incremental working diff against published head `ee13e55f1e9a06cdf0ae640b1b1c35a4fa3b598d`, with original approved Odilón/AMEX scope preserved.
+
+## Critical findings
+
+None.
+
+## Important findings
+
+None.
+
+## Minor findings
+
+None.
+
+## Evidence and conclusion
+
+Independently reviewed shared `_amex_entry_destination`, both real UI callsites, canonical `can_defer_path_authorization_to_route_guard`, `explicit_tool_decision` and `_load_rule`, actual direct route Finance predicate, unit and PostgreSQL regression tests, prior-head failure and final green receipts. The previously bootstrapped canons remain unchanged and their hashes still match the register.
+
+The helper first requires active real Finance identity, then uses the existing canonical GET/ver delegation helper. Explicit persisted direct-read denial or authority lookup failure selects the existing legacy statement route; absent explicit allow preserves route-owned authorization rather than incorrectly treating intentionally empty default roles as a blanket denial. Real Finance/scope/action checks remain owned by the direct endpoint. Both generic entries retain inherited legacy visibility controls. Ineligible actors never obtain a direct destination, regardless of visibility rules. All destination strings are fixed internal paths. No new permission, context scope, redirect, financial effect, data repair, dependency, schema change or configuration mutation was introduced.
+
+The PostgreSQL regression writes only synthetic AccessControlRule fixtures, then runs actual panel and batch handlers inside a READ ONLY transaction with real access rule reads. The two boundary cases show no explicit rule -> direct and explicit denial -> legacy while preserving reconciliation/form links. Only unrelated Direction/approval-position lookups are stubbed because those catalogs are outside the AMEX fixture. Published-head red receipt proves the denied case fails and permitted case passes; final implementation passes both. Eight handler-render decision cases additionally cover False/None/True/lookup-error for both entrypoints through real rule lookup logic; four inactive/non-Finance cases ensure no authority lookup occurs.
+
+Final verification receipts independently read: 832 unit tests passed (25.97s), 35 isolated PostgreSQL tests passed (83.63s), changed executable coverage 35/35 = 100% (13 helper +22 existing policy). Coordinator reports nine inventory tests passed (22.61s). New tests' Black/isort/flake8 checks passed, and working diff whitespace check passed. No current source findings remain from thread `PRRT_kwDORuojeM6s3wd4`.
+
+## Residual risks
+
+Remote CI must pass the exact follow-up commit before protected merge. Publication, deployment, runtime screen verification and authenticated Finance UAT remain separate evidence. Selecting the legacy route intentionally preserves its own authority checks; the helper never grants access to either endpoint. Existing direct company/project/edition configuration remains validated by the direct owner after navigation. Existing warnings and unrelated repository lint/type debt are not claimed resolved.
+
+Canon unchanged: this corrects navigation to respect the already approved direct workflow authority boundary. Review completed without source, test, Git, PR, database, configuration or production changes; only this `/tmp` validation artifact was written. Verdict: no blocking findings.

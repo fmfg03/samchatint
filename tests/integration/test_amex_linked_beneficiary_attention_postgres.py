@@ -115,3 +115,61 @@ async def test_linked_employee_provider_in_all_real_report_queues(
         assert report.beneficiario_proveedor_cliente_id == provider_id
         assert expense.estado_gasto == "activo"
         await session.rollback()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("denied", [False, True])
+async def test_amex_entry_navigation_obeys_real_direct_read_rule(
+    pg, monkeypatch, denied
+):
+    from starlette.requests import Request
+
+    from devnous.gastos.routes import client_executive_routes, user_routes
+
+    # Direction and approval-position catalogs are outside this AMEX fixture.
+    # Access rules and the AMEX destination owner remain real PostgreSQL reads.
+    monkeypatch.setattr(
+        client_executive_routes,
+        "direction_entry_visible",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        user_routes, "_can_review_pending_approvals", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr(user_routes, "_is_budget_control_user", lambda *_: False)
+    monkeypatch.setattr(user_routes, "_is_configuration_panel_user", lambda *_: False)
+
+    if denied:
+        async with pg.factory.begin() as session:
+            session.add(
+                models.AccessControlRule(
+                    tool_key="amex_direct",
+                    action_key="ver",
+                    role_key="finanzas",
+                    area_key="",
+                    allowed=False,
+                    active=True,
+                )
+            )
+    expected = (
+        "/admin/contabilidad/amex/estados"
+        if denied
+        else "/admin/contabilidad/amex/estados/directo"
+    )
+    forbidden = (
+        "/admin/contabilidad/amex/estados/directo"
+        if denied
+        else "/admin/contabilidad/amex/estados"
+    )
+    async with pg.factory() as session:
+        await session.execute(text("SET TRANSACTION READ ONLY"))
+        actor = await session.get(models.Empleado, pg.actor)
+        request = Request({"type": "http", "query_string": b"", "session": {}})
+        panel = await user_routes.panel(request, session, actor)
+        batch = await user_routes.carga_masiva_amex_get(request, session, actor)
+        for html in [panel, batch]:
+            assert f'href="{expected}"' in html
+            assert f'href="{forbidden}"' not in html
+        assert 'action="/gastos/carga-masiva-amex"' in batch
+        assert 'href="/admin/gastos/amex/conciliacion"' in batch
+        await session.rollback()
