@@ -30,6 +30,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from devnous.gastos import models
+from devnous.gastos.amex_schema_policy import AMEX_DIRECT_OWNER_MIGRATION_TABLES
 from devnous.gastos.services import amex_accounting_cut_service as cuts
 from devnous.gastos.services import amex_accounting_posting_service as service
 from devnous.gastos.services import amex_recognition_service as recognition
@@ -52,6 +53,8 @@ async def pg(monkeypatch):
     )
     copied = MetaData()
     for table in models.Base.metadata.tables.values():
+        if table.name in AMEX_DIRECT_OWNER_MIGRATION_TABLES:
+            continue
         clone = table.to_metadata(copied)
         if not table.name.startswith("amex_"):
             for constraint in list(clone.constraints):

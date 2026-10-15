@@ -1063,7 +1063,7 @@ def _render_budget_movement_details(
         concept_key = str(movement.get("concept_key") or "__unassigned__")
         if (
             str(movement.get("budget_line_id") or "") not in line_ids
-            or movement.get("kind") == "pending_accounting"
+            or movement.get("kind") in {"pending_accounting", "pending_fiscal_evidence"}
         ):
             visible.append(movement)
     if not visible:
@@ -1088,6 +1088,13 @@ def _render_budget_movement_details(
             diagnostics.append("Sin presupuesto autorizado en esta versión")
         if kind == "pending_accounting":
             diagnostics.append("Pendiente de contabilización")
+        if kind == "pending_fiscal_evidence":
+            diagnostics.append("Base fiscal pendiente de evidencia")
+        amount_display = (
+            "Pendiente fiscal"
+            if movement.get("amount") is None
+            else f"${float(movement['amount']):,.2f}"
+        )
         status = " · ".join(diagnostics) or "Requiere conciliación"
         budget_concept_name = str(
             movement.get("budget_concept_name") or "Sin concepto presupuestal"
@@ -1100,7 +1107,12 @@ def _render_budget_movement_details(
         movement_key = str(movement.get("movement_key") or "") or budget_movement_key(
             movement
         )
-        if (
+        if movement.get("source_kind") == "amex_direct":
+            action = (
+                '<a href="/documentos/control-presupuestal/amex-directo">'
+                'Revisar partida AMEX en Control Presupuestal</a>'
+            )
+        elif (
             can_edit
             and has_existing_concept
             and movement_key
@@ -1143,7 +1155,7 @@ def _render_budget_movement_details(
                 <td style="padding:8px;min-width:180px;">{escape(str(movement.get('movement_concept') or '—'))}</td>
                 <td style="padding:8px;white-space:nowrap;">{escape(budget_account)}</td>
                 <td style="padding:8px;white-space:nowrap;">{escape(accounting_account)}</td>
-                <td style="padding:8px;text-align:right;white-space:nowrap;font-weight:800;">${float(movement.get('amount') or 0):,.2f}</td>
+                <td style="padding:8px;text-align:right;white-space:nowrap;font-weight:800;">{escape(amount_display)}</td>
                 <td style="padding:8px;white-space:nowrap;">{escape(poliza)}<br><span style="color:#64748b;font-size:11px;">{escape(str(poliza_date)[:10])}</span></td>
                 <td style="padding:8px;min-width:190px;"><strong>{escape(status)}</strong><br><span style="color:#64748b;font-size:11px;">{escape(str(movement.get('reason') or ''))}</span></td>
                 <td style="padding:8px;">{action}</td>

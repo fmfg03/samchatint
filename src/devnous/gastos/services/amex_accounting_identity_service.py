@@ -8,7 +8,12 @@ from typing import Any
 from sqlalchemy import exists, select
 from sqlalchemy.sql.elements import ColumnElement
 
-from ..models import AmexRecognitionConsumption
+from ..models import (
+    AmexRecognitionConsumption,
+    AmexStatementImport,
+    AmexStatementImportItem,
+    ExpenseReport,
+)
 
 
 def amex_bank_header_condition(expense_model: Any) -> ColumnElement[bool]:
@@ -35,3 +40,30 @@ def accounting_expense_sql(alias: str = "e") -> str:
         WHERE amex_identity.imported_expense_id = {alias}.id
           AND amex_identity.source_kind = 'statement'
           AND amex_identity.binding_mode = 'report_bridge')"""
+
+
+def direct_amex_expense_condition(expense_model: Any) -> ColumnElement[bool]:
+    """Only a real direct receipt assigns an expense to the direct owner."""
+    return exists(
+        select(AmexStatementImportItem.id)
+        .join(
+            AmexStatementImport,
+            AmexStatementImport.id == AmexStatementImportItem.import_id,
+        )
+        .where(
+            AmexStatementImportItem.imported_expense_id == expense_model.id,
+            AmexStatementImportItem.workflow_mode == "direct",
+            AmexStatementImport.workflow_mode == "direct",
+        )
+    ).correlate(expense_model)
+
+
+async def is_direct_amex_expense(session: Any, expense_id: Any) -> bool:
+    """Read source ownership before a legacy fiscal mutation."""
+    return bool(
+        await session.scalar(
+            select(direct_amex_expense_condition(ExpenseReport)).where(
+                ExpenseReport.id == expense_id
+            )
+        )
+    )

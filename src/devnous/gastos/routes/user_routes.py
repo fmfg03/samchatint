@@ -142,6 +142,10 @@ from ..services.amex_cfdi_matching_service import (
     validate_amex_cfdi_suggestion,
     validate_pase_monthly_cfdi_suggestion,
 )
+from ..services.amex_accounting_identity_service import (
+    direct_amex_expense_condition,
+    is_direct_amex_expense,
+)
 from ..services.amex_recognition_service import (
     activation_reason,
     assign_missing_amex_card,
@@ -21331,7 +21335,12 @@ async def amex_conciliacion_link_cfdi(
         .where(ExpenseReport.id == expense_uuid)
     )
     expense = result.scalar_one_or_none()
-    if not expense or expense.origen != "amex_batch" or expense.estado_gasto != "activo":
+    if (
+        not expense
+        or expense.origen != "amex_batch"
+        or expense.estado_gasto != "activo"
+        or await is_direct_amex_expense(session, expense_uuid)
+    ):
         return RedirectResponse(
             url=redirect_base + "&error_msg=" + quote("El cargo AMEX ya no está disponible para vinculación.") + redirect_anchor,
             status_code=303,
@@ -21407,6 +21416,7 @@ async def amex_conciliacion_link_cfdi_bulk(
             or expense.origen != "amex_batch"
             or expense.estado_gasto != "activo"
             or expense.cfdi_report_id
+            or await is_direct_amex_expense(session, expense_uuid)
         ):
             skipped_count += 1
             continue
@@ -21473,6 +21483,16 @@ async def amex_conciliacion_link_pase_monthly_cfdi(
     ):
         return RedirectResponse(
             url=redirect_base + "&error_msg=" + quote("Los cargos PASE ya no están disponibles para vinculación mensual."),
+            status_code=303,
+        )
+
+    if any(
+        [await is_direct_amex_expense(session, exp.id) for exp in expenses_to_link]
+    ):
+        return RedirectResponse(
+            url=redirect_base
+            + "&error_msg="
+            + quote("El cargo pertenece al recorrido AMEX directo."),
             status_code=303,
         )
 
@@ -21785,6 +21805,7 @@ async def amex_conciliacion_view(
         .where(
             and_(
                 ExpenseReport.origen == "amex_batch",
+                ~direct_amex_expense_condition(ExpenseReport),
                 ExpenseReport.estado_gasto == "activo",
                 ExpenseReport.fecha >= start_dt,
                 ExpenseReport.fecha < end_dt,

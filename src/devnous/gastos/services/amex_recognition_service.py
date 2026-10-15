@@ -624,6 +624,27 @@ async def fiscal_lines(
     return rows, total, None
 
 
+async def direct_statement_source(session: Any, expense_ids: list[UUID]) -> bool:
+    """New direct receipts belong exclusively to their accounting owner."""
+    from ..models import AmexStatementImport, AmexStatementImportItem
+
+    return bool(
+        (
+            await session.execute(
+                select(AmexStatementImportItem.id)
+                .join(
+                    AmexStatementImport,
+                    AmexStatementImport.id == AmexStatementImportItem.import_id,
+                )
+                .where(
+                    AmexStatementImportItem.imported_expense_id.in_(expense_ids),
+                    AmexStatementImport.workflow_mode == "direct",
+                )
+            )
+        ).first()
+    )
+
+
 async def bind_amex_consumption(
     session: AsyncSession,
     *,
@@ -656,6 +677,8 @@ async def bind_amex_consumption(
     ids = [imported_expense_id, *report_expense_ids]
     if len(set(ids)) != len(ids):
         return AmexRecognitionResult("pending", "duplicate_amex_representation")
+    if await direct_statement_source(session, ids):
+        return AmexRecognitionResult("pending", "direct_statement_owner_required")
     expenses = await load_expenses(session, ids)
     if len(expenses) != len(ids):
         return AmexRecognitionResult("pending", "missing_amex_representation")
@@ -824,6 +847,8 @@ async def bind_amex_report_bank_consumptions(
         }
     ):
         return AmexRecognitionResult("pending", "unauthorized_amex_accounting_actor")
+    if await direct_statement_source(session, [imported_expense_id]):
+        return AmexRecognitionResult("pending", "direct_statement_owner_required")
     if not report_consumption_ids or len(set(report_consumption_ids)) != len(
         report_consumption_ids
     ):

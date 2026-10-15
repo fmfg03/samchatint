@@ -12,6 +12,9 @@ import asyncpg
 import pytest
 import pytest_asyncio
 from sqlalchemy.engine import make_url
+from test_amex_statement_import_postgres import pg as _current_owner_pg_fixture
+
+current_owner_pg = _current_owner_pg_fixture
 
 ROOT = Path(__file__).resolve().parents[2]
 DDL = ROOT / "database/migrations/20261013_amex_approved_informe_recognition.sql"
@@ -603,22 +606,18 @@ async def test_cross_owner_race_serializes_on_real_source_row(schema):
 
 
 @pytest.mark.asyncio
-async def test_metadata_only_readonly_schema_health_after_owner_upgrade(schema):
-    from sqlalchemy.ext.asyncio import create_async_engine
-
+async def test_metadata_only_readonly_schema_health_after_owner_upgrade(
+    current_owner_pg,
+):
     from devnous.gastos.amex_schema_policy import inspect_approved_informe_schema
 
-    engine = create_async_engine(
-        os.environ["TEST_AMEX_DATABASE_URL"],
-        connect_args={"server_settings": {"search_path": schema.name}},
-    )
-    try:
-        async with engine.begin() as connection:
-            await connection.exec_driver_sql("SET TRANSACTION READ ONLY")
-            result = await inspect_approved_informe_schema(connection)
-        assert result == {"ready": True, "missing_columns": {}, "missing_triggers": []}
-    finally:
-        await engine.dispose()
+    # Current runtime admission uses the complete current owner chain. The
+    # other tests intentionally retain the historical migration-stage fixture.
+    engine = current_owner_pg.factory.kw["bind"]
+    async with engine.begin() as connection:
+        await connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+        result = await inspect_approved_informe_schema(connection)
+    assert result == {"ready": True, "missing_columns": {}, "missing_triggers": []}
 
 
 @pytest.mark.asyncio

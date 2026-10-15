@@ -7378,46 +7378,86 @@ async def assign_budget_movement_to_line(
     movement_key: str,
     actor_empleado_id: Optional[str],
     ensure_schema: bool = True,
+    source_kind: Optional[str] = None,
 ) -> None:
     """Persist an explicit, per-movement assignment for a budget version."""
     clean_key = _safe_str(movement_key)
     if not clean_key or ":" not in clean_key:
         raise ValueError("Budget movement key is required")
+    if source_kind not in {None, "amex_direct"}:
+        raise ValueError("Unsupported budget movement source")
+    if source_kind == "amex_direct" and ensure_schema:
+        raise ValueError("AMEX direct assignments require owner-installed schema")
     if ensure_schema:
         await ensure_budget_schema(session)
-    target_result = await session.execute(
-        text("""SELECT l.tournament_id::text AS tournament_id, v.edition_year,
+    target_sql = """SELECT l.tournament_id::text AS tournament_id, v.edition_year,
                       v.status AS version_status
             FROM budget_lines l JOIN budget_versions v ON v.id=l.budget_version_id
             WHERE l.id=CAST(:line_id AS uuid)
               AND l.budget_version_id=CAST(:version_id AS uuid)
               AND l.budget_concept_id=CAST(:concept_id AS uuid)
               AND COALESCE(l.line_direction, 'expense')='expense'
-            """),
-        {
-            "line_id": _safe_str(budget_line_id),
-            "version_id": _safe_str(budget_version_id),
-            "concept_id": _safe_str(budget_concept_id),
-        },
-    )
+            """
+    target_params = {
+        "line_id": _safe_str(budget_line_id),
+        "version_id": _safe_str(budget_version_id),
+        "concept_id": _safe_str(budget_concept_id),
+    }
+    target_result = await session.execute(text(target_sql), target_params)
     target = target_result.mappings().first()
-    if target is None or not _editable_version_status(target["version_status"]):
+    if target is None:
         raise ValueError("Partida inválida para esta versión o concepto presupuestal.")
-    snapshot = await build_budget_actuals_snapshot(
-        session,
-        edition_year=int(target["edition_year"]),
-        version_id=_safe_str(budget_version_id),
-        tournament_id=target["tournament_id"],
-    )
-    candidates = [
-        movement
-        for movement in snapshot["movements"]
-        if budget_movement_key(movement) == clean_key
-        or (
-            movement.get("document_id")
-            and clean_key == f"document:{movement['document_id']}"
+    if source_kind == "amex_direct":
+        from devnous.gastos.services.amex_direct_budget_service import (
+            budget_assignment_source,
         )
-    ]
+
+        movement, permitted_version = await budget_assignment_source(
+            session,
+            movement_key=clean_key,
+            tournament_id=target["tournament_id"],
+            edition_year=int(target["edition_year"]),
+            budget_concept_id=_safe_str(budget_concept_id),
+            version_status=target["version_status"],
+            actor_empleado_id=actor_empleado_id,
+        )
+        if not permitted_version or budget_movement_key(movement) != clean_key:
+            raise ValueError("Fuente AMEX o versión presupuestal no autorizada.")
+        # Source proof acquires import/global locks first. Lock the actual line
+        # and version afterwards and reject changes made while waiting.
+        locked_result = await session.execute(
+            text(target_sql + " FOR UPDATE OF l,v"), target_params
+        )
+        locked_target = locked_result.mappings().first()
+        if locked_target is None or dict(locked_target) != dict(target):
+            raise ValueError("La partida o versión cambió; recarga el contexto AMEX")
+        candidates = [movement]
+    else:
+        if not _editable_version_status(target["version_status"]):
+            raise ValueError(
+                "Partida inválida para esta versión o concepto presupuestal."
+            )
+        snapshot = await build_budget_actuals_snapshot(
+            session,
+            edition_year=int(target["edition_year"]),
+            version_id=_safe_str(budget_version_id),
+            tournament_id=target["tournament_id"],
+        )
+        candidates = [
+            movement
+            for movement in snapshot["movements"]
+            if budget_movement_key(movement) == clean_key
+            or (
+                movement.get("document_id")
+                and clean_key == f"document:{movement['document_id']}"
+            )
+        ]
+    if source_kind is None and any(
+        movement.get("source_kind") == "amex_direct"
+        or movement.get("origen") == "amex_direct"
+        for movement in candidates
+    ):
+        raise ValueError("El origen AMEX directo requiere su autoridad presupuestal")
     if not candidates or any(
         _safe_str(movement.get("concept_key")) != _safe_str(budget_concept_id)
         for movement in candidates
@@ -7492,7 +7532,8 @@ async def _apply_explicit_movement_assignments(
         (
             await session.execute(
                 text("""
-                    SELECT movement_key, budget_concept_id::text AS budget_concept_id,
+                    SELECT id::text AS assignment_id, movement_key,
+                           budget_concept_id::text AS budget_concept_id,
                            budget_line_id::text AS budget_line_id
                     FROM budget_movement_assignments
                     WHERE budget_version_id = CAST(:budget_version_id AS uuid)
@@ -7554,9 +7595,16 @@ async def _apply_explicit_movement_assignments(
         if movement.get("document_id"):
             candidate_keys.append(f"document:{movement['document_id']}")
         line_id = None
+        is_direct = movement.get("source_kind") == "amex_direct"
         for candidate_key in candidate_keys:
             assignment = assignments.get(candidate_key)
             if assignment is None:
+                continue
+            if is_direct and (
+                not movement.get("budget_assignment_id")
+                or _safe_str(assignment.get("assignment_id"))
+                != _safe_str(movement["budget_assignment_id"])
+            ):
                 continue
             assigned_line = _safe_str(assignment["budget_line_id"])
             if (
@@ -7565,7 +7613,7 @@ async def _apply_explicit_movement_assignments(
             ):
                 line_id = assigned_line
                 break
-        if not line_id and concept_id not in activated_concepts:
+        if not line_id and not is_direct and concept_id not in activated_concepts:
             line_id = legacy_lines.get(concept_id)
         movement["movement_key"] = movement_key or None
         movement["budget_line_id"] = line_id or None
@@ -7939,6 +7987,126 @@ async def _load_paid_report_reimbursement_dates(
     return dates
 
 
+async def _append_direct_budget_movements(
+    session: AsyncSession,
+    *,
+    edition_year: int,
+    version_id: str,
+    tournament_id: Optional[str],
+    tournament_scope_requested: bool,
+    aliases: list[str],
+    phase_filter: Optional[str],
+    movements: list[dict[str, Any]],
+    store: dict[str, dict[int, dict[str, float]]],
+) -> None:
+    """Project evidenced direct commitments once, without estimating fiscal base."""
+    from devnous.gastos.services.amex_direct_budget_service import (
+        list_budget_direct_movements,
+    )
+
+    rows = await list_budget_direct_movements(
+        session,
+        edition_year=edition_year,
+        version_id=version_id,
+        tournament_id=tournament_id,
+        phase_filter=phase_filter,
+    )
+    seen_expenses = {
+        _safe_str(row.get("expense_id")) for row in movements if row.get("expense_id")
+    }
+    for original in rows:
+        row = dict(original)
+        expense_id = _safe_str(row.get("expense_id"))
+        if not expense_id or expense_id in seen_expenses:
+            continue
+        if tournament_id:
+            if _safe_str(row.get("tournament_id")) != _safe_str(tournament_id):
+                continue
+        elif tournament_scope_requested:
+            row_aliases = budget_alias_candidates(
+                _safe_str(row.get("tournament_name")),
+                _safe_str(row.get("tournament_code")),
+            )
+            if not set(aliases).intersection(row_aliases):
+                continue
+        movement_date = row.get("movement_date")
+        if not _date_in_edition_year(movement_date, edition_year):
+            raise ValueError("Fuente AMEX directa sin fecha económica en la edición")
+        kind = row.get("kind")
+        if kind not in {"commitment", "pending_fiscal_evidence"}:
+            raise ValueError("Proyección AMEX directa incompatible")
+        amount = row.get("amount")
+        if kind == "commitment" and (amount is None or amount < 0):
+            raise ValueError("Compromiso AMEX sin base fiscal evidenciada")
+        if kind == "pending_fiscal_evidence" and amount is not None:
+            raise ValueError("Pendiente fiscal AMEX con base inventada")
+        week = _budget_week_number(movement_date, edition_year)
+        concept_key = _safe_str(row.get("concept_key"))
+        if not concept_key:
+            raise ValueError("Fuente AMEX directa sin categoría presupuestal")
+        if kind == "commitment":
+            _merge_monthly_actual(
+                store,
+                concept_key=concept_key,
+                month_number=week,
+                committed_unpaid=_safe_decimal(amount),
+            )
+        row["month_number"] = week
+        row["source_kind"] = "amex_direct"
+        movements.append(row)
+        seen_expenses.add(expense_id)
+
+
+async def _scope_direct_ledger_to_budget_version(
+    session: AsyncSession,
+    *,
+    ledger_rows: list[Any],
+    version_id: str,
+) -> list[Any]:
+    """Retain direct costs only in their evidenced assignment's budget version."""
+    direct_rows = [row for row in ledger_rows if row.get("origen") == "amex_direct"]
+    if not direct_rows:
+        return ledger_rows
+    assignment_ids = sorted(
+        {
+            _safe_str((row.get("source_metadata") or {}).get("budget_assignment_id"))
+            for row in direct_rows
+        }
+        - {""}
+    )
+    assignments = {}
+    if assignment_ids:
+        result = await session.execute(
+            text(
+                """
+                SELECT id::text AS assignment_id, movement_key,
+                       budget_concept_id::text AS concept_id
+                FROM budget_movement_assignments
+                WHERE budget_version_id = CAST(:version_id AS uuid)
+                  AND id::text = ANY(CAST(:assignment_ids AS text[]))
+                """
+            ),
+            {"version_id": version_id, "assignment_ids": assignment_ids},
+        )
+        assignments = {row["assignment_id"]: row for row in result.mappings().all()}
+    scoped = []
+    for row in ledger_rows:
+        if row.get("origen") != "amex_direct":
+            scoped.append(row)
+            continue
+        assignment_id = _safe_str(
+            (row.get("source_metadata") or {}).get("budget_assignment_id")
+        )
+        assignment = assignments.get(assignment_id)
+        if (
+            assignment is not None
+            and assignment["movement_key"] == f"expense:{row.get('expense_id')}"
+            and assignment["concept_id"] == row.get("concept_key")
+        ):
+            scoped.append(row)
+    return scoped
+
+
 async def build_budget_actuals_snapshot(
     session: AsyncSession,
     *,
@@ -8188,6 +8356,7 @@ async def build_budget_actuals_snapshot(
                         scoped.poliza_id::text AS poliza_id,
                         scoped.numero_poliza,
                         scoped.origen,
+                        scoped.raw_row_json AS source_metadata,
                         scoped.fecha_poliza,
                         scoped.cuenta_codigo,
                         scoped.effective_document_id::text AS document_id,
@@ -8281,6 +8450,9 @@ async def build_budget_actuals_snapshot(
         .all()
     )
 
+    ledger_rows = await _scope_direct_ledger_to_budget_version(
+        session, ledger_rows=ledger_rows, version_id=version_id
+    )
     reimbursement_dates = await _load_paid_report_reimbursement_dates(
         session,
         report_ids=list(
@@ -8299,6 +8471,11 @@ async def build_budget_actuals_snapshot(
     included_document_ids: set[str] = set()
     for raw_row in ledger_rows:
         row = dict(raw_row)
+        if row.get("origen") == "amex_direct":
+            row["source_kind"] = "amex_direct"
+            row["budget_assignment_id"] = (
+                row.get("source_metadata") or {}
+            ).get("budget_assignment_id")
         if row.get("settlement_at") is None:
             row["settlement_at"] = reimbursement_dates.get(
                 _safe_str(row.get("document_id"))
@@ -8814,6 +8991,18 @@ async def build_budget_actuals_snapshot(
             month_number=week,
             real_income=_safe_decimal(row["income_total"]),
         )
+
+    await _append_direct_budget_movements(
+        session,
+        edition_year=edition_year,
+        version_id=version_id,
+        tournament_id=tournament_id,
+        tournament_scope_requested=tournament_scope_requested,
+        aliases=aliases,
+        phase_filter=phase_filter,
+        movements=movements,
+        store=store,
+    )
 
     await _apply_explicit_movement_assignments(
         session,
