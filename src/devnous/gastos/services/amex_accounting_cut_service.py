@@ -292,6 +292,10 @@ async def create_amex_accounting_cut(
     expenses: list[Any] = await load_expenses(
         session, list(query_result_1.scalars().all())
     )
+    from .amex_recognition_service import direct_statement_source
+
+    if await direct_statement_source(session, [e.id for e in expenses]):
+        return AmexCutResult("pending", "direct_statement_owner_required")
     if not expenses:
         return AmexCutResult("pending", "empty_amex_accounting_cut")
     if finance_evidence is not None:

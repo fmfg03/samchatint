@@ -61,7 +61,9 @@ def extract_amex_page_content(page: str) -> str:
     return content
 
 
-def _page(title: str, content: str, actor: Empleado) -> str:
+def _page(
+    title: str, content: str, actor: Empleado, *, workflow: str = "report"
+) -> str:
     # user_routes mounts this router. Resolve presentation helpers only when
     # rendering a request, after module initialization has completed.
     from .user_routes import (
@@ -74,30 +76,61 @@ def _page(title: str, content: str, actor: Empleado) -> str:
 
     styles = _workspace_shell_styles("1380px", layout="data")
     navigation = render_top_navigation(actor, "contabilidad")
+    direct = workflow == "direct"
     breadcrumbs = _gastos_breadcrumb_html(
         [
             ("Contabilidad", "/admin/contabilidad/coi"),
-            ("AMEX", "/admin/contabilidad/amex/estados"),
+            (
+                "AMEX directo" if direct else "AMEX",
+                (
+                    "/admin/contabilidad/amex/estados/directo"
+                    if direct
+                    else "/admin/contabilidad/amex/estados"
+                ),
+            ),
             (title, None),
         ]
     )
-    hero = _render_workspace_hero(
-        eyebrow="Contabilidad · AMEX",
-        title=title,
-        description="Del estado de cuenta al informe completo y su póliza.",
-        actions_html=(
+    if direct:
+        description = (
+            "Del estado original a la conciliación fiscal, presupuesto y póliza."
+        )
+        actions_html = '<a class="button secondary" href="/admin/contabilidad/amex/estados/directo">Estados directos</a>'
+        if (
+            bool(getattr(actor, "activo", False))
+            and str(getattr(actor, "rol", "")).strip().lower() in FINANCE_AMEX_ROLES
+        ):
+            actions_html += (
+                '<a class="button secondary" href="/admin/contabilidad/amex/estados/directo/nuevo">Cargar estado directo</a> '
+                '<a class="button secondary" href="/admin/gastos/amex/conciliacion">Programar pago de AMEX</a>'
+            )
+        side_html = (
+            '<div class="eyebrow">Cómo continuar</div><p class="lead">'
+            "Carga el estado y revisa su evidencia fiscal. Contabilidad clasifica, "
+            "Control Presupuestal asigna la partida y Finanzas confirma el corte "
+            "completo. Programar la tarjeta no registra un pago.</p>"
+        )
+    else:
+        description = "Del estado de cuenta al informe completo y su póliza."
+        actions_html = (
             '<a class="button secondary" href="/admin/contabilidad/amex/estados">'
             "Estados de cuenta</a> "
             '<a class="button secondary" href="/admin/contabilidad/amex">'
             "Informes aprobados</a> "
             '<a class="button secondary" href="/admin/gastos/amex/conciliacion">'
             "Conciliación AMEX</a>"
-        ),
-        side_html=(
+        )
+        side_html = (
             '<div class="eyebrow">Cómo continuar</div>'
             '<p class="lead">Carga el estado, resuelve los pendientes y confirma '
             "cada informe completo. El vínculo bancario conserva su estado propio.</p>"
-        ),
+        )
+    hero = _render_workspace_hero(
+        eyebrow="Contabilidad · AMEX",
+        title=title,
+        description=description,
+        actions_html=actions_html,
+        side_html=side_html,
     )
     return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">

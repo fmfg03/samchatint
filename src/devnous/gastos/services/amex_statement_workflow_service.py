@@ -55,7 +55,7 @@ async def _authorize(session: Any, actor: Any) -> Any:
 
 
 async def _statement(session: Any, import_id: UUID, *, locked: bool = False) -> Any:
-    query = select(AmexStatementImport).where(AmexStatementImport.id == import_id)
+    query = select(AmexStatementImport).where(AmexStatementImport.id == import_id, AmexStatementImport.workflow_mode == "legacy")
     if locked:
         query = query.with_for_update()
     result = (await session.execute(query)).scalar_one_or_none()
@@ -119,6 +119,7 @@ async def _list_statement_workflows(
         (
             await session.execute(
                 select(AmexStatementImport)
+                .where(AmexStatementImport.workflow_mode == "legacy")
                 .order_by(
                     AmexStatementImport.created_at.desc(), AmexStatementImport.id.desc()
                 )

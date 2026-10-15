@@ -36,10 +36,25 @@ AMEX_STATEMENT_OWNER_MIGRATION_TABLES = frozenset(
     }
 )
 
+AMEX_DIRECT_OWNER_MIGRATION_TABLES = frozenset(
+    {
+        "amex_statement_source_files",
+        "amex_statement_direct_contexts",
+        "amex_statement_direct_state",
+        "amex_merchant_identity_aliases",
+        "amex_cfdi_status_receipts",
+        "amex_direct_items",
+        "amex_direct_events",
+        "amex_direct_accounting_cuts",
+        "amex_direct_cut_items",
+    }
+)
+
 OWNER_MIGRATION_TABLES = (
     AMEX_OWNER_MIGRATION_TABLES
     | CTT_OWNER_MIGRATION_TABLES
     | AMEX_STATEMENT_OWNER_MIGRATION_TABLES
+    | AMEX_DIRECT_OWNER_MIGRATION_TABLES
 )
 
 
@@ -65,28 +80,27 @@ def _catalog_check(value: str) -> str:
 # Exact owner-DDL checks as PostgreSQL renders them. Preserve parentheses and
 # boolean operators: an identically named weaker CHECK must fail admission.
 _APPROVED_CHECKS = {
-    "ck_amex_consumption_source_anchor": (
-        "CHECK (((((source_kind)::text = 'statement'::text) AND "
-        "(imported_expense_id IS NOT NULL) AND "
-        "(source_report_expense_id IS NULL) AND ((binding_mode)::text = ANY "
-        "((ARRAY['legacy'::character varying, 'report_bridge'::character varying])"
-        "::text[]))) OR (((source_kind)::text = 'report'::text) AND "
-        "(imported_expense_id IS NULL) AND "
-        "(source_report_expense_id IS NOT NULL) AND "
-        "((binding_mode)::text = 'report'::text))))"
-    ),
-    "ck_amex_bridge_never_posted": (
-        "CHECK ((((binding_mode)::text <> 'report_bridge'::text) OR "
-        "(accounting_poliza_id IS NULL)))"
-    ),
-    "ck_amex_source_evidence_origin": (
-        "CHECK (((((kind)::text = 'operational_approval'::text) AND "
-        "(approval_id IS NOT NULL) AND (decisions_json IS NULL) AND "
-        "(request_payload_hash IS NULL)) OR "
-        "(((kind)::text = 'finance_confirmation'::text) AND "
-        "(approval_id IS NULL) AND (decisions_json IS NOT NULL) AND "
-        "(request_payload_hash IS NOT NULL))))"
-    ),
+    "ck_amex_consumption_source_anchor": "CHECK (((((source_kind)::text = "
+    "'statement'::text) AND (imported_expense_id IS "
+    "NOT NULL) AND (source_report_expense_id IS "
+    "NULL) AND ((binding_mode)::text = ANY "
+    "((ARRAY['legacy'::character varying, "
+    "'report_bridge'::character varying, "
+    "'direct'::character varying])::text[]))) OR "
+    "(((source_kind)::text = 'report'::text) AND "
+    "(imported_expense_id IS NULL) AND "
+    "(source_report_expense_id IS NOT NULL) AND "
+    "((binding_mode)::text = 'report'::text))))",
+    "ck_amex_bridge_never_posted": "CHECK ((((binding_mode)::text <> "
+    "'report_bridge'::text) OR (accounting_poliza_id IS "
+    "NULL)))",
+    "ck_amex_source_evidence_origin": "CHECK (((((kind)::text = "
+    "'operational_approval'::text) AND (approval_id IS "
+    "NOT NULL) AND (decisions_json IS NULL) AND "
+    "(request_payload_hash IS NULL)) OR (((kind)::text "
+    "= 'finance_confirmation'::text) AND (approval_id "
+    "IS NULL) AND (decisions_json IS NOT NULL) AND "
+    "(request_payload_hash IS NOT NULL))))",
 }
 
 

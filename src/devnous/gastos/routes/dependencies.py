@@ -16,6 +16,7 @@ from ..models import Empleado
 from ..services.access_control_service import (
     can_access_path,
     can_defer_path_authorization_to_route_guard,
+    is_amex_direct_path,
     visible_tools_for,
 )
 from ..services.payment_run_service import can_access_payment_run
@@ -59,7 +60,8 @@ def _uses_route_owned_authorization(path: str) -> bool:
     """
     normalized_path = (path or "").rstrip("/") or "/"
     return (
-        normalized_path in ROUTE_OWNED_AUTHORIZATION_PATHS
+        is_amex_direct_path(normalized_path)
+        or normalized_path in ROUTE_OWNED_AUTHORIZATION_PATHS
         or normalized_path.startswith(ROUTE_OWNED_AUTHORIZATION_PREFIXES)
     )
 
@@ -67,7 +69,10 @@ def _uses_route_owned_authorization(path: str) -> bool:
 def _requires_explicit_decision_check(path: str) -> bool:
     """Return whether a route-owned path must preserve a tool denial."""
     normalized_path = (path or "").rstrip("/") or "/"
-    return normalized_path in ROUTE_OWNED_AUTHORIZATION_PATHS
+    return (
+        is_amex_direct_path(normalized_path)
+        or normalized_path in ROUTE_OWNED_AUTHORIZATION_PATHS
+    )
 
 
 def set_db_session_maker(session_maker):

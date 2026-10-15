@@ -138,8 +138,9 @@ class MountEvidenceTest(unittest.TestCase):
 
     def test_profile_defaults_are_evidence_and_direction_not_role_grant(self):
         catalog = {entry["key"]: entry for entry in self.data["access_profile_catalog"]}
-        self.assertEqual(len(catalog), 36)
+        self.assertEqual(len(catalog), 37)
         self.assertEqual(catalog["direccion.tableros_ejecutivos"]["default_roles"], [])
+        self.assertEqual(catalog["amex_direct"]["default_roles"], [])
         self.assertTrue(
             all("DEFAULT_POLICY_ONLY" in t["status"] for t in catalog.values())
         )

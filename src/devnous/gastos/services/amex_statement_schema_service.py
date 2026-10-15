@@ -13,21 +13,29 @@ from ..amex_schema_policy import (
 
 _APPROVED_CHECKS = {
     "ck_amex_statement_period": "CHECK ((period_end >= period_start))",
-    "ck_amex_statement_counts": (
-        "CHECK (((imported_count > 0) AND (skipped_count >= 0) AND "
-        "(total_rows = (imported_count + skipped_count))))"
-    ),
+    "ck_amex_statement_counts": "CHECK (((((workflow_mode)::text = 'legacy'::text) AND "
+    "(imported_count > 0) AND (skipped_count >= 0) AND "
+    "(credit_count = 0) AND (unknown_count = 0) AND "
+    "(total_rows = (imported_count + skipped_count))) OR "
+    "(((workflow_mode)::text = 'direct'::text) AND "
+    "(total_rows > 0) AND (imported_count >= 0) AND "
+    "(skipped_count >= 0) AND (credit_count >= 0) AND "
+    "(unknown_count >= 0) AND (total_rows = (((imported_count "
+    "+ skipped_count) + credit_count) + unknown_count)))))",
     "ck_amex_statement_hash": "CHECK ((length((file_sha256)::text) = 64))",
     "ck_amex_statement_row_number": "CHECK ((row_number >= 2))",
-    "ck_amex_statement_item_status": (
-        "CHECK (((((status)::text = 'imported'::text) AND (imported"
-        "_expense_id IS NOT NULL) AND (reason_code IS NULL)) OR ((("
-        "status)::text = 'skipped'::text) AND (imported_expense_id "
-        "IS NULL) AND (reason_code IS NOT NULL))))"
-    ),
-    "ck_amex_statement_link_hash": (
-        "CHECK ((length((request_payload_hash)::text) = 64))"
-    ),
+    "ck_amex_statement_item_status": "CHECK (((((status)::text = 'imported'::text) AND "
+    "(imported_expense_id IS NOT NULL) AND (reason_code "
+    "IS NULL)) OR (((status)::text = 'skipped'::text) "
+    "AND (imported_expense_id IS NULL) AND (reason_code "
+    "IS NOT NULL)) OR (((workflow_mode)::text = "
+    "'direct'::text) AND ((status)::text = "
+    "'credit'::text) AND (imported_expense_id IS NULL)) "
+    "OR (((workflow_mode)::text = 'direct'::text) AND "
+    "((status)::text = 'unknown'::text) AND "
+    "(imported_expense_id IS NULL) AND (reason_code IS "
+    "NOT NULL))))",
+    "ck_amex_statement_link_hash": "CHECK ((length((request_payload_hash)::text) = 64))",
 }
 
 
@@ -39,7 +47,7 @@ _APPROVED_FUNCTION_HASHES = {
         "6f331f3aa95bbf32a3fdfe7a994669b8" "424d2d50eda499f786b5706d39560b05"
     ),
     "amex_statement_counts": (
-        "f3e30f0c67f003e6337870ec5651d344" "9ec1843efa88afc208ad67a9e9add841"
+        "61908a151671fd663d09bb2a6bacfad0" "e6aee84a80835c8c0a86e173cc9dd4ee"
     ),
     "amex_statement_expense_owner": (
         "99ddc5bcd7d09652095cb0b297336d93" "8ce353fe6790931ca1f9d464ad0267a2"

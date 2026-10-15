@@ -4,11 +4,13 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, cast
 
-from ..models import AmexAccountingCut
+from ..models import AmexAccountingCut, AmexDirectAccountingCut
 from .coi_poliza_exporter import ExpenseCFDI, validate_coi_poliza
 
 
-def cut_expense_cfdis(cut: AmexAccountingCut) -> list[ExpenseCFDI]:
+def cut_expense_cfdis(
+    cut: AmexAccountingCut | AmexDirectAccountingCut,
+) -> list[ExpenseCFDI]:
     """Reject malformed evidence before any export instead of returning a 500."""
     try:
         return _cut_expense_cfdis(cut)
@@ -16,8 +18,11 @@ def cut_expense_cfdis(cut: AmexAccountingCut) -> list[ExpenseCFDI]:
         raise ValueError("El corte contiene evidencia incompleta o inválida.") from exc
 
 
-def _cut_expense_cfdis(cut: AmexAccountingCut) -> list[ExpenseCFDI]:
+def _cut_expense_cfdis(
+    cut: AmexAccountingCut | AmexDirectAccountingCut,
+) -> list[ExpenseCFDI]:
     """Use frozen movements; never recompute from mutable expense classification."""
+    is_direct = isinstance(cut, AmexDirectAccountingCut)
     snapshot = cut.snapshot_json
     metadata = snapshot.get("coi_metadata") or {}
     items = snapshot.get("partidas") or []
@@ -81,9 +86,18 @@ def _cut_expense_cfdis(cut: AmexAccountingCut) -> list[ExpenseCFDI]:
                 receptor_uso_cfdi=cfdi.get("uso_cfdi"),
                 allows_missing_cfdi=True,
                 missing_cfdi_warning="El corte conserva la evidencia del cargo AMEX.",
-                poliza_group_key=f"amex-cut:{cut.id}",
+                poliza_group_key=(
+                    f"amex-direct-cut:{cut.id}" if is_direct else f"amex-cut:{cut.id}"
+                ),
                 poliza_reference=str(cut.id),
-                poliza_description=f"Corte AMEX {cut.kind} · {snapshot.get('informe_reference', cut.informe_id)}",
+                poliza_description=(
+                    f"Corte AMEX directo · Estado {cut.import_id}"
+                    if is_direct
+                    else (
+                        f"Corte AMEX {cut.kind} · "
+                        f"{snapshot.get('informe_reference', cut.informe_id)}"
+                    )
+                ),
                 poliza_document_id=metadata.get("document_id"),
                 poliza_operation_reference=metadata.get("operation_reference"),
                 poliza_party_name=metadata.get("party_name"),
