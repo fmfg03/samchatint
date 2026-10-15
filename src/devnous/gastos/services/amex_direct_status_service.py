@@ -28,6 +28,8 @@ from .amex_direct_matching_service import (
     reconcile_direct_statement,
 )
 
+REUSABLE_STATUSES = frozenset({"vigente", "cancelado"})
+
 MAX_QUERIES = 50
 MAX_CONCURRENCY = 2
 EXTERNAL_BUDGET_SECONDS = 30
@@ -76,6 +78,8 @@ async def _status_candidates(
             if money(identity["total"]) != money(expense.gasto_cantidad):
                 continue
             receipt = await current_status_receipt(session, cfdi)
+            if receipt and receipt.observed_status not in REUSABLE_STATUSES:
+                receipt = None
             candidates[str(cfdi.id)] = {
                 "cfdi_id": str(cfdi.id),
                 "identity": identity,
@@ -94,7 +98,7 @@ def _observed_request_matches(
     if not isinstance(request, dict):
         return False
     try:
-        return (
+        return bool(
             str(UUID(str(request["uuid"]))).upper() == identity["uuid"]
             and normalize_rfc(request["rfc_emisor"]) == identity["rfc_emisor"]
             and normalize_rfc(request["rfc_receptor"]) == identity["rfc_receptor"]
@@ -134,15 +138,31 @@ async def consult_direct_statement_status(
                     source_version=state.source_version,
                     progress=prior,
                 )
+        items = await load_items(session, import_id)
+        candidates = await _status_candidates(session, statement, context, items)
         if (
             prior.get("request_key") == request_key
             and prior.get("source_version") == state.source_version
             and prior.get("context_id") == str(context.id)
         ):
             progress = dict(prior)
+            # A completed cursor is not an everlasting status receipt. Reuse
+            # only the current exact XML/status proof in the same ordered slot.
+            old_candidates = prior.get("candidates") or []
+            progress["completed"] = {
+                str(index): {"receipt_id": candidate["receipt_id"], "outcome": "cached"}
+                for index, candidate in enumerate(candidates)
+                if candidate.get("receipt_id")
+                and str(index) in prior.get("completed", {})
+                and index < len(old_candidates)
+                and candidate["cfdi_id"] == old_candidates[index]["cfdi_id"]
+                and candidate["request_hash"] == old_candidates[index]["request_hash"]
+            }
+            cursor = 0
+            while str(cursor) in progress["completed"]:
+                cursor += 1
+            progress.update(candidates=candidates, cursor=cursor, total=len(candidates))
         else:
-            items = await load_items(session, import_id)
-            candidates = await _status_candidates(session, statement, context, items)
             progress = {
                 "request_key": request_key,
                 "context_id": str(context.id),
@@ -219,6 +239,7 @@ async def consult_direct_statement_status(
                 state.progress_json = updated
         raise
     observed = {}
+    attempts = {}
     for index, candidate, response, outcome in sorted(observations):
         receipt_id = candidate.get("receipt_id")
         if response is not None:
@@ -264,10 +285,15 @@ async def consult_direct_statement_status(
                     session.add(receipt)
                     await session.flush()
                     receipt_id = str(receipt.id)
-        if outcome in {"observed", "cached"}:
-            observed[str(index)] = {"receipt_id": receipt_id, "outcome": outcome}
-        elif outcome in {"error", "invalid_observed_request"}:
-            observed[str(index)] = {"receipt_id": None, "outcome": outcome}
+        terminal = outcome == "cached" or (
+            response is not None and response.get("status") in REUSABLE_STATUSES
+        )
+        attempt = {"receipt_id": receipt_id, "outcome": outcome}
+        if response is not None:
+            attempt["status"] = str(response.get("status") or "unknown")
+        attempts[str(index)] = attempt
+        if terminal and receipt_id:
+            observed[str(index)] = attempt
     async with factory.begin() as session:
         statement, state, context, config = await load_statement(
             session, actor_id, import_id, "vigencia", locked=True, finance=True
@@ -290,7 +316,10 @@ async def consult_direct_statement_status(
         next_cursor = cursor
         while str(next_cursor) in completed:
             next_cursor += 1
+        history = list(progress.get("attempts") or [])
+        history.append({"started_at": started.isoformat(), "outcomes": attempts})
         progress.update(
+            attempts=history,
             completed=completed,
             cursor=next_cursor,
             running=False,

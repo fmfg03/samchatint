@@ -15,6 +15,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import CFDIReport, ExpenseReport
+from .amex_accounting_identity_service import is_direct_amex_expense
 
 
 @dataclass(frozen=True)
@@ -231,6 +232,8 @@ async def suggest_amex_cfdi_matches(
         return []
     if getattr(expense, "origen", None) != "amex_batch":
         return []
+    if await is_direct_amex_expense(session, expense.id):
+        return []
     amount = _to_float(getattr(expense, "gasto_cantidad", 0))
     exp_date = getattr(expense, "fecha", None)
     if amount <= 0 or not exp_date:
@@ -340,6 +343,11 @@ async def suggest_pase_monthly_cfdi_matches(
         and getattr(exp, "origen", None) == "amex_batch"
         and is_pase_expense(exp)
     ]
+    pase_expenses = [
+        exp
+        for exp in pase_expenses
+        if not await is_direct_amex_expense(session, exp.id)
+    ]
     if not pase_expenses:
         return []
     amex_total = round(
@@ -373,6 +381,9 @@ async def validate_pase_monthly_cfdi_suggestion(
     expenses: Iterable[ExpenseReport],
     cfdi_report_id: object,
 ) -> Optional[PaseMonthlyCFDIMatchSuggestion]:
+    expenses = list(expenses)
+    if any([await is_direct_amex_expense(session, exp.id) for exp in expenses]):
+        return None
     result = await session.execute(
         select(CFDIReport).where(CFDIReport.id == cfdi_report_id)
     )
@@ -390,6 +401,8 @@ async def validate_amex_cfdi_suggestion(
     expense: ExpenseReport,
     cfdi_report_id: object,
 ) -> Optional[AmexCFDIMatchSuggestion]:
+    if await is_direct_amex_expense(session, expense.id):
+        return None
     result = await session.execute(
         select(CFDIReport).where(CFDIReport.id == cfdi_report_id)
     )

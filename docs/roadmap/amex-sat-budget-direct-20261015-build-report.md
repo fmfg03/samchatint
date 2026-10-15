@@ -178,3 +178,33 @@ El primer ciclo remoto del commit938942fbb pasó política, seguridad, asistente
 La regresión ampliada encontró fixtures históricos que copiaban por ORM las9tablas directas owner-run o instalaban sólo DDL anterior y luego solicitaban admisión actual. Se corrigió exclusivamente la preparación en cuatro archivos: `test_amex_shared_recognition_postgres.py`, `test_amex_statement_import_postgres.py`, `test_amex_statement_workflow_postgres.py` y el test puntual de salud actual en `test_amex_approved_informe_schema_postgres.py`. Se excluyen tablas owner, se ejecuta la cadena real actual y el rollback respeta dependencias; no se relaja admisión, no se añade CASCADE ni se modifica código/SQL productivo o assertions de negocio. Los demás tests de migraciones históricas conservan su fixture original.
 
 Verificación: **246 pruebas PostgreSQL históricas distintas aprobadas**:131en las3suites principales,80en otras5suites dependientes y35de esquema aprobado. Hubo1fallo previo de salud por CHECK histórico, corregido y revalidado con las35pruebas del archivo y1focal final. Logs `/tmp/amex-direct-legacy-fixtures-full.log`, `/tmp/amex-direct-legacy-dependent-fixtures-full.log`, `/tmp/amex-direct-legacy-current-health-after.log`, `/tmp/amex-direct-legacy-current-health-final.log`; reporte `/tmp/amex-direct-legacy-fixture-build-report.md`. Black/Flake8 cuatro archivos y diff-check pasan. Isort de workflow conserva exactamente la deuda de HEAD; los otros3pasan. El código productivo y su cobertura90.65% no cambiaron en este ajuste.
+
+
+## Correcciones de revisión PR #488 — código final v2
+
+Los cinco hilos de revisión detectaron problemas reales del cambio y fueron corregidos dentro de los invariantes aprobados:
+
+- El conciliador legacy podía mutar CFDI de fuentes directas. Ahora listado y handlers single/bulk/PASE y matcher excluyen o rechazan únicamente pertenencia directa canónica: receipt de importación real, header/item direct y expense exacto. Sin heurística por origen, sin fallback permisivo ni cambios al pago.
+- Error SAT, request inválido, respuesta error/desconocida, XML cambiado o TTL vencido no quedan completados definitivamente. La misma request key reintenta candidatos actuales; sólo receipts frescos y exactos de vigente/cancelado completan slots. Se conservan receipts e historial de intentos, límites 50/2/30s y SOAP fuera de transacciones.
+- Un gasto directo contabilizado de versión A aparecía indebidamente en B. La proyección exige assignment congelado de la versión seleccionada, expense y concepto exactos antes de agregar. No añade consultas para fuentes legacy ni modifica asignaciones históricas.
+- El formulario fiscal dependía indebidamente del permiso clasificar. Las opciones fiscales usan contexto+Finance+scope propios y los formularios se deshabilitan independientemente. GET puro, POST/CSRF/consentimiento conservados.
+- El titular enviado se valida contra employee_ids de la configuración exacta tarjeta/entidad/receptor, antes de DDL o escrituras. La unión de opciones de otros contextos no concede permiso.
+
+Reproducción: ocho fallos backend, uno de opciones fiscales y uno presupuestal antes de corregir. El primer guard consultó tablas directas ausentes en el fixture histórico del selector; ese fallo fue causado por el cambio y se resolvió utilizando el receipt canónico ya respaldado por los invariantes SQL. El fixture del selector se conserva sin cambios adicionales. No se cambiaron SQL owner, dependencias, arquitectura, reglas de negocio ni datos productivos. Canon unchanged para esta corrección incremental: completa las garantías ya aprobadas; las enmiendas aprobadas de producto/ingeniería del PR permanecen intactas y verificadas.
+
+Resultados sobre fuente final v2, ejecutados en procesos propios con Python del repo y PostgreSQL sintético loopback:
+
+- 782 unitarias AMEX/presupuesto/RFC PASS22.54s: `/tmp/amex-pr488-final-unit-v2.log`.
+- 33 aceptación/versión presupuestal PostgreSQL PASS77.47s: `/tmp/amex-pr488-final-pg-v2.log`.
+- 99 backend/regresiones de revisión/source/matcher PASS100.46s: `/tmp/amex-pr488-final-backend-v2.log`.
+- 14 focales PostgreSQL v2, incluido selector histórico original, PASS37.21s: `/tmp/amex-review-backend-source-v2-tests.log`; cuatro assertions reforzadas de auditoría SAT PASS9.50s.
+- 4 Chromium PASS10.83s: `/tmp/amex-pr488-final-browser-v2.log`.
+- 9 inventario reproducible PASS22.78s: `/tmp/amex-pr488-review-inventory.log`; 600rutas,573live_static,44acciones,0parsegaps. Se regeneraron artefactos después de versionar los archivos; cambios de líneas/hashes de los routers se reflejan sin alterar permisos o montaje.
+- Cobertura de código modificado contra base d8c9fda23: **2110/2302=91.66%**, JSON versionado actualizado. El script de Coverage API/difflib combina exclusivamente cinco archivos post-v2: final-unit-v2, final-pg-v2, final-browser-v2, final-backend-v2 y backend-source-v2. No combina cobertura anterior con líneas desplazadas. Los conteos se solapan, no son un total de casos únicos.
+- Black de12archivos tocados PASS; chequeos de formato/lint/tipos focales documentados por lanes; diff-check de trabajo e índice PASS. Permanece deuda preexistente: 46errores Mypy en budget owner,3en UI compartida y warning float(object) del matcher, además de tres hallazgos Flake8 heredados del owner. No se afirma calidad global limpia.
+
+Archivos incrementales: dos routers, cinco servicios AMEX, owner de presupuesto, seis archivos de tests (tres nuevos), inventario/matriz y reportes/coverage. Lista exacta reproducible: `git diff --name-only 601bac905`. Comandos: mismos PYTHONPATH/venv y flags de cobertura del bloque reproducible anterior; para99 se ejecutaron `test_amex_direct_backend_postgres.py`, `test_amex_direct_review_regressions_postgres.py`, `test_amex_direct_source_service.py` y `test_amex_cfdi_matching_service.py`; para33 `test_amex_sat_budget_direct_postgres.py` y `test_amex_direct_budget_versions_postgres.py`. Browser se mantiene en proceso separado.
+
+El commit anterior601bac905 terminó CI remoto sin fallos:5505unitarias,400integración/5skips y gate/cobertura/browser/policy/security. Esa ejecución no acredita el nuevo código: el siguiente commit debe completar sus propios checks antes del merge. No se eluden branch protections ni se cierran observaciones sin verificar su corrección. Aprobación vigente autoriza commit/push/PR/merge; migración, configuración productiva, despliegue y UAT siguen pendientes y no ejecutados.
+
+Cierre local de esta revisión: contenedor sintético `samchat-amex-direct-tests-20261015` detenido nuevamente después de todas las pruebas. Main remoto sigue d8c9fda23 y los tres hashes canon coinciden con registro. Ningún servicio productivo fue reiniciado.

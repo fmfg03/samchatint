@@ -92,3 +92,77 @@ None introduced. Existing workflow-test import ordering debt is documented as id
 - `git diff HEAD --check`:PASS. Scope verified exactly six files. No production effects or publication actions executed by this validator.
 
 This review supports publishing the scoped correction under the user's existing authorization. It does not substitute for remote CI completion or authorize production migration/deployment.
+
+
+---
+
+# PR488 review findings — independent read-only revalidation
+
+Date:2026-10-15. Worktree `/root/samchat/.worktrees/amex-sat-budget-direct-20261015`. Reviewed follow-up delta against HEAD `601bac905`, final source version2 frozen by coordinator. Result: **all five targeted findings corrected; no unresolved findings in this pass**. This validator edited no source, tests, inventory, Git state or PR threads; this report is its only write.
+
+The earlier validation missed these five cross-surface/resumption boundaries. Its green tests were insufficient evidence for them. This pass reads the actual final guards and examines new actual-boundary regressions rather than relying on the previous approval or CI status. The approved story/spec and business contract remain unchanged; corrections enforce their existing requirements.
+
+## Critical findings
+
+None unresolved.
+
+## Important findings
+
+None unresolved. Disposition of the five reviewed issues:
+
+### 1. Legacy fiscal discovery and mutation bypass
+
+`direct_amex_expense_condition` uses actual statement header/item membership, requiring both workflow modes to be direct. It does not classify all `amex_batch` expenses as direct or infer ownership from description, employee, card label or CFDI. The legacy AMEX reconciliation query excludes such receipts; its single, bulk and PASE link handlers reject them before the legacy fiscal validator/mutation. Legacy suggestion/validation services independently reject direct ownership. Authorized direct owner behavior remains available through its own current actor/context/status guards.
+
+Actual PostgreSQL tests call the original legacy single/bulk/PASE handlers against a real unrecognized direct bank expense and leave `cfdi_report_id` null. A validator spy that would otherwise approve the link is not called. Actual discovery predicates and the legacy suggestion/validation services reject the same receipt. The original legacy card selector passes with the final helper.
+
+A transient implementation queried `amex_direct_items` directly and failed the historical legacy selector with UndefinedTable. Final code instead uses canonical statement header/item membership, preserving that legacy fixture without adding tables, relaxing schema admission or applying DDL. This change-caused failure is resolved and retained in `/tmp/amex-review-legacy-selector.log` and `-after.log`.
+
+### 2. Failed SAT observations incorrectly completed the continuation cursor
+
+Only observed terminal usable statuses (`vigente`/`cancelado`) with real receipt IDs enter completed progress. Transport failures, malformed request identities and transient observed statuses remain retryable; attempt outcomes remain recorded. Same-key continuation rebuilds the candidate universe and revalidates actual current receipt identity and freshness, matching candidate CFDI/hash before preserving completion. A stored candidate pointer cannot extend TTL or apply an old XML status indefinitely.
+
+Actual PostgreSQL tests retry the exact same request key after transport failure, invalid request, observed error and desconocido responses; a later real observed stub response is queried and matches. Other tests change XML or advance the matching clock past24h and prove the completed same key re-queries. No fake receipt is created for an unobserved response. Existing50-query, concurrency2, total30s, server cursor and no-SOAP-inside-transaction tests remain in the backend suite. GET behavior and download boundaries are unchanged.
+
+### 3. Intake employee selection lacked server-side context enforcement
+
+After exact card/company/receiver configuration and actor authorization, intake now validates `employee_id` against that selected context's configured `employee_ids` before schema/business writes. It does not accept the union of employees allowed by other fiscal contexts. Omitted employee restrictions retain the existing explicit-active-person behavior; a configured empty list permits nobody. The operator receives an explicit context-denied explanation.
+
+Tests exercise both the real owner and a real multipart POST with session CSRF, supplying an active employee allowed only in another context. The POST is rejected and statement imports, original source files and bank expenses remain zero. The UI list is no longer the only boundary.
+
+### 4. Classification denial incorrectly removed fiscal-context choices
+
+`list_direct_context_options` authorizes Finance's `contexto` action and resolves actual statement/card/context scope independently of `clasificar` and `cargar`. Classification denial disables only classification controls; context denial disables only context controls. Explicit denials remain authoritative and no broader catalog fallback appears.
+
+Actual PostgreSQL permission rules deny both clasificar and cargar while context choices remain available. HTTP tests cover context GET/POST with and without explicit SAT consent and rejection of denied context writes. A real Chromium test submits the context correction while classification is disabled. Unit tests cover wrong-card choices, empty scope and propagation of authorization/source errors.
+
+### 5. Posted budget expense leaked into a different budget version
+
+`_scope_direct_ledger_to_budget_version` runs before any ledger accumulation. A direct row survives only if its frozen assignment UUID resolves in the requested actual budget version and the assignment movement key and concept match the real expense anchor. Legacy rows remain unchanged and do not incur the new assignment query. This prevents display rebucketing from including an expense in another version's totals before final movement assignment.
+
+The actual PostgreSQL red/green regression creates two approved versions for the same tournament/category. Before recognition, the pending fiscal base100 appears only in assigned versionA; after recognition, exactly one ledger expense100 appears only inA, with no source movement or monthly amount inB. Unit negatives cover missing proof, wrong source anchor and wrong concept. No plan, assignment, journal or date is rewritten. This directly addresses review thread4284534280 without inventing a new version selection rule.
+
+## Minor findings
+
+None unresolved. The new employee-scope denial has a specific operator explanation. Generated route inventory is refreshed and its tests pass. No changes to migration SQL, production services, dependencies, credentials, business actor configuration or canon were introduced by this follow-up.
+
+## Residual risks
+
+- Remote CI for the subsequent follow-up commit remains a separate gate; earlier green CI on601bac905 does not prove an uncommitted/staged correction. This report does not resolve GitHub threads or perform publication/merge itself.
+- Existing shared type/lint debt remains explicitly classified against baseline; broad lint/type cleanliness is not claimed. Coordinator records budget-only Mypy46 inherited errors (49 across the two shared owners) and three inherited lint findings, with no new errors. Black12 and diff hygiene passed for the follow-up scope.
+- PostgreSQL evidence is synthetic with real owners/SQL; external SAT transport is stubbed. Chromium uses synthetic owner boundaries. Migration/deployment, production configuration, authenticated Finance/CP UAT, real COI import and actual payment remain separate. No production effects occurred here.
+- Review scope is the five reported boundaries and their focused regressions, not a claim that every repository permission or legacy expense surface has been exhaustively audited.
+
+## Final evidence inspected
+
+- `/tmp/amex-pr488-final-unit-v2.log`:782 passed,22.54s.
+- `/tmp/amex-pr488-final-pg-v2.log`:33 passed,77.47s (32 acceptance plus the actual two-version regression).
+- `/tmp/amex-pr488-final-backend-v2.log`:99 passed,100.46s.
+- `/tmp/amex-review-backend-source-v2-tests.log`:14 passed,37.21s, including final canonical-header/item helper and legacy selector.
+- `/tmp/amex-pr488-final-browser-v2.log`:four passed,10.83s.
+- `/tmp/amex-pr488-review-inventory.log`:nine passed,22.78s.
+- `/tmp/amex-pr488-budget-version-red.log` and `-green.log`:initial real cross-version leak reproduced;71 focused PG/unit cases pass after correction,7.60s.
+- `/tmp/amex-direct-changed-coverage.json`:2110/2302 changed executable statements, **91.66%**. Read the calculation script: only final post-version2 unit/PG/browser/backend and targeted backend coverage inputs are merged, compared against exact original PR baseline `d8c9fda23ed1b1bb1a68a08bc524fedbdb6d4e5f`. Independently compared changed implementation file list with coverage results:28 expected,28 reported, zero unmeasured. No stale pre-correction coverage used.
+- `git diff HEAD --check`:PASS. Canon SHA values reverified unchanged from approved register: product70627560…, engineeringbd011d2d…, sweep2c55cc80….
+
+Test lanes overlap and must not be summed as distinct totals. The coordinator can use these concrete results to answer and resolve the five targeted review threads after recording the final correction commit; no thread should be resolved merely because older CI was green. Read-only validation supplies evidence, not new user approval or production authority.

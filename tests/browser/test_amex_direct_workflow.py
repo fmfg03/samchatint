@@ -125,3 +125,27 @@ def test_cp_browser_selects_line_only_and_owner_denies_unscoped(
     kwargs = w.routes.budget.assign_direct_budget_line.await_args.kwargs
     assert kwargs["budget_line_id"] == w.item.budget_line_id
     assert "budget_concept_id" not in kwargs and "project_code" not in kwargs
+
+
+def test_finance_can_correct_context_when_classification_is_denied(
+    page, complete_direct_workspace
+):
+    w = complete_direct_workspace
+    w.routes.context.list_direct_classification_options.side_effect = PermissionError(
+        "classification denied"
+    )
+    with live_app(w.app) as base:
+        page.goto(base + statements.BASE + f"/{w.statement.id}/directo")
+        classification = page.locator('form[action$="/clasificar"]')
+        assert classification.locator('select[name="budget_concept_id"]').is_disabled()
+        context = page.locator('form[action$="/contexto"]')
+        context.locator('[name="company_code"]').select_option("TEST")
+        context.locator('[name="receiver_rfc"]').select_option("AAA010101AAA")
+        context.locator('[name="currency"]').select_option("MXN")
+        context.locator('[name="reason"]').fill("Corrección fiscal autorizada")
+        context.locator('[name="confirmed"]').check()
+        context.get_by_role("button", name="Guardar revisión de contexto").click()
+        page.wait_for_url("**/directo?msg=**")
+    w.routes.context.set_direct_context.assert_awaited_once()
+    w.routes.budget.classify_direct_items.assert_not_awaited()
+    w.routes.status.consult_direct_statement_status.assert_not_awaited()

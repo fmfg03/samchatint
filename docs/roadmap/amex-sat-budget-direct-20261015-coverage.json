@@ -1,7 +1,7 @@
 {
-  "total": 2215,
-  "covered": 2008,
-  "percent": 90.65,
+  "total": 2302,
+  "covered": 2110,
+  "percent": 91.66,
   "files": [
     {
       "file": "scripts/check_amex_direct_schema.py",
@@ -35,9 +35,9 @@
     },
     {
       "file": "src/devnous/gastos/routes/admin_amex_direct_routes.py",
-      "total": 442,
-      "covered": 424,
-      "percent": 95.93
+      "total": 455,
+      "covered": 437,
+      "percent": 96.04
     },
     {
       "file": "src/devnous/gastos/routes/admin_amex_statement_routes.py",
@@ -58,6 +58,12 @@
       "percent": 100.0
     },
     {
+      "file": "src/devnous/gastos/routes/user_routes.py",
+      "total": 4,
+      "covered": 4,
+      "percent": 100.0
+    },
+    {
       "file": "src/devnous/gastos/services/access_control_service.py",
       "total": 10,
       "covered": 9,
@@ -68,6 +74,18 @@
       "total": 3,
       "covered": 3,
       "percent": 100.0
+    },
+    {
+      "file": "src/devnous/gastos/services/amex_accounting_identity_service.py",
+      "total": 5,
+      "covered": 5,
+      "percent": 100.0
+    },
+    {
+      "file": "src/devnous/gastos/services/amex_cfdi_matching_service.py",
+      "total": 9,
+      "covered": 8,
+      "percent": 88.89
     },
     {
       "file": "src/devnous/gastos/services/amex_cut_export_service.py",
@@ -84,8 +102,8 @@
     {
       "file": "src/devnous/gastos/services/amex_direct_budget_service.py",
       "total": 246,
-      "covered": 211,
-      "percent": 85.77
+      "covered": 212,
+      "percent": 86.18
     },
     {
       "file": "src/devnous/gastos/services/amex_direct_common.py",
@@ -95,21 +113,21 @@
     },
     {
       "file": "src/devnous/gastos/services/amex_direct_context_service.py",
-      "total": 144,
-      "covered": 133,
-      "percent": 92.36
+      "total": 163,
+      "covered": 152,
+      "percent": 93.25
     },
     {
       "file": "src/devnous/gastos/services/amex_direct_intake_service.py",
-      "total": 177,
-      "covered": 165,
-      "percent": 93.22
+      "total": 179,
+      "covered": 167,
+      "percent": 93.3
     },
     {
       "file": "src/devnous/gastos/services/amex_direct_matching_service.py",
       "total": 269,
-      "covered": 214,
-      "percent": 79.55
+      "covered": 220,
+      "percent": 81.78
     },
     {
       "file": "src/devnous/gastos/services/amex_direct_schema_contract.py",
@@ -125,9 +143,9 @@
     },
     {
       "file": "src/devnous/gastos/services/amex_direct_status_service.py",
-      "total": 151,
-      "covered": 124,
-      "percent": 82.12
+      "total": 166,
+      "covered": 143,
+      "percent": 86.14
     },
     {
       "file": "src/devnous/gastos/services/amex_recognition_service.py",
@@ -149,9 +167,9 @@
     },
     {
       "file": "src/samchat/budgets/service.py",
-      "total": 69,
-      "covered": 63,
-      "percent": 91.3
+      "total": 89,
+      "covered": 88,
+      "percent": 98.88
     }
   ],
   "missing": {
@@ -159,30 +177,33 @@
       42
     ],
     "src/devnous/gastos/routes/admin_amex_direct_routes.py": [
-      282,
-      412,
-      541,
-      593,
-      626,
+      283,
+      413,
+      542,
+      594,
       627,
-      645,
-      691,
-      701,
-      751,
-      904,
-      918,
-      1045,
-      1059,
-      1123,
-      1174,
-      1191,
-      1245
+      628,
+      646,
+      692,
+      702,
+      718,
+      766,
+      923,
+      937,
+      1064,
+      1142,
+      1193,
+      1210,
+      1264
     ],
     "src/devnous/gastos/routes/admin_amex_statement_routes.py": [
       370
     ],
     "src/devnous/gastos/services/access_control_service.py": [
       727
+    ],
+    "src/devnous/gastos/services/amex_cfdi_matching_service.py": [
+      346
     ],
     "src/devnous/gastos/services/amex_direct_accounting_service.py": [
       58,
@@ -245,7 +266,6 @@
       632,
       654,
       679,
-      685,
       693,
       701,
       709,
@@ -266,31 +286,31 @@
       414
     ],
     "src/devnous/gastos/services/amex_direct_context_service.py": [
-      68,
-      71,
+      70,
       73,
       75,
-      89,
-      96,
-      108,
-      399,
-      427,
-      466,
-      500
+      77,
+      91,
+      98,
+      110,
+      444,
+      472,
+      511,
+      545
     ],
     "src/devnous/gastos/services/amex_direct_intake_service.py": [
       47,
       130,
       218,
-      222,
       224,
-      230,
-      235,
-      279,
-      290,
-      418,
-      436,
-      441
+      226,
+      232,
+      237,
+      281,
+      292,
+      420,
+      438,
+      443
     ],
     "src/devnous/gastos/services/amex_direct_matching_service.py": [
       50,
@@ -324,12 +344,6 @@
       482,
       503,
       504,
-      506,
-      510,
-      515,
-      516,
-      517,
-      525,
       554,
       575,
       576,
@@ -350,41 +364,32 @@
       769
     ],
     "src/devnous/gastos/services/amex_direct_status_service.py": [
-      47,
-      62,
-      72,
-      73,
-      119,
-      126,
-      129,
+      49,
+      64,
+      74,
+      75,
+      123,
       130,
-      131,
-      175,
-      187,
-      190,
-      205,
-      206,
-      207,
-      208,
-      209,
-      210,
-      213,
-      217,
-      218,
-      219,
-      220,
-      235,
+      133,
+      134,
+      135,
+      195,
+      225,
+      226,
+      227,
+      228,
+      229,
+      230,
+      233,
       237,
-      269,
-      270
+      238,
+      239,
+      240,
+      256,
+      258
     ],
     "src/samchat/budgets/service.py": [
-      7437,
-      7602,
-      8421,
-      8422,
-      8423,
-      8942
+      7437
     ]
   }
 }

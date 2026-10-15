@@ -125,6 +125,7 @@ def _reason(code: str | None) -> str:
         "invalid_utf8": "El CSV requiere texto UTF-8; revisa el archivo antes de cargarlo.",
         "no_statement_rows": "El archivo no contiene movimientos; no se creó una póliza.",
         "inactive_context": "Finanzas debe revisar la tarjeta o titular activos de esta carga.",
+        "employee_context_denied": "Finanzas debe elegir un titular autorizado para esta tarjeta y contexto fiscal antes de cargar el estado.",
         "row_outside_declared_period": "La fecha original queda fuera del período declarado. Finanzas debe revisar el archivo y período.",
         "invalid_date": "Falta una fecha válida en la fila original; Finanzas debe revisar el CSV.",
         "missing_description": "Falta la descripción original del movimiento; Finanzas debe revisar el CSV.",
@@ -702,6 +703,20 @@ async def direct_statement(
         classification_allowed = False
         options = {}
 
+    context_allowed = False
+    fiscal_options = {}
+    if finance:
+        try:
+            fiscal_options = await _call(
+                context.list_direct_context_options(
+                    session, actor_id=_actor_id(actor), import_id=import_id
+                )
+            )
+            context_allowed = True
+        except HTTPException as exc:
+            if exc.status_code != 403:
+                raise
+
     preview = await _call(
         accounting.preview_direct_accounting(
             session, actor_id=_actor_id(actor), import_id=import_id
@@ -764,13 +779,17 @@ async def direct_statement(
         body += "</fieldset>"
     if not finance:
         body += "<p>Finanzas atiende contexto fiscal, conciliación, vigencia y confirmación contable.</p><fieldset disabled>"
+    if finance and not context_allowed:
+        body += "<p>No tienes autorización para corregir el contexto fiscal.</p><fieldset disabled>"
     body += _context_form(
         request,
         import_id,
         _source_version(view),
-        options.get("contexts", []),
+        fiscal_options.get("contexts", []),
         getattr(ctx, "profile", None) or (view.items[0].profile if view.items else ""),
     )
+    if finance and not context_allowed:
+        body += "</fieldset>"
     body += (
         _open(request, import_id, "conciliar", _source_version(view))
         + _submit("Conciliar con evidencia vigente")

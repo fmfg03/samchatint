@@ -176,6 +176,7 @@ def complete_direct_workspace(direct_workspace, monkeypatch):
                 }
             ],
             "list_direct_classification_options": catalogs,
+            "list_direct_context_options": {"contexts": catalogs["contexts"]},
             "set_direct_context": w.success,
         },
         "intake": {
@@ -1289,3 +1290,91 @@ def test_new_accounting_blockers_explain_owner_and_required_evidence(code, expec
     explanation = direct._reason(code)
     assert expected in explanation
     assert "Contabilidad" in explanation
+
+
+@pytest.mark.parametrize("consented", [False, True])
+@pytest.mark.asyncio
+async def test_finance_context_choices_survive_classification_denial(
+    complete_direct_workspace, consented
+):
+    from lxml import html
+
+    w = complete_direct_workspace
+    w.routes.context.list_direct_classification_options.side_effect = PermissionError(
+        "classification denied"
+    )
+    async with await _client(w) as client:
+        response = await client.get(f"{statements.BASE}/{w.statement.id}/directo")
+        assert response.status_code == 200
+        tree = html.fromstring(response.text)
+        form = tree.xpath('//form[contains(@action,"/contexto")]')[0]
+        assert form.xpath('.//select[@name="company_code"]/option[@value="TEST"]')
+        assert form.xpath(
+            './/select[@name="receiver_rfc"]/option[@value="AAA010101AAA"]'
+        )
+        assert not form.xpath("ancestor::fieldset[@disabled]")
+        assert tree.xpath(
+            '//fieldset[@disabled]//form[contains(@action,"/clasificar")]'
+        )
+        token = form.xpath('.//input[@name="_csrf_token"]/@value')[0]
+        data = {**_payload(w, "contexto"), "_csrf_token": token}
+        if consented:
+            data["sat_consented"] = "true"
+        result = await client.post(
+            f"{statements.BASE}/{w.statement.id}/directo/contexto", data=data
+        )
+        assert result.status_code == 303
+    w.routes.context.set_direct_context.assert_awaited_once()
+    w.routes.context.list_direct_intake_options.assert_not_awaited()
+    w.routes.budget.classify_direct_items.assert_not_awaited()
+    if consented:
+        w.routes.status.consult_direct_statement_status.assert_awaited_once()
+        assert (
+            w.routes.status.consult_direct_statement_status.await_args.kwargs[
+                "consented"
+            ]
+            is True
+        )
+    else:
+        w.routes.status.consult_direct_statement_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_context_denial_disables_only_context_not_classification(
+    complete_direct_workspace,
+):
+    from lxml import html
+
+    w = complete_direct_workspace
+    w.routes.context.list_direct_context_options.side_effect = PermissionError(
+        "context denied"
+    )
+    w.routes.context.set_direct_context.side_effect = PermissionError("context denied")
+    async with await _client(w) as client:
+        response = await client.get(f"{statements.BASE}/{w.statement.id}/directo")
+        assert response.status_code == 200
+        tree = html.fromstring(response.text)
+        assert tree.xpath('//fieldset[@disabled]//form[contains(@action,"/contexto")]')
+        form = tree.xpath('//form[contains(@action,"/clasificar")]')[0]
+        assert not form.xpath("ancestor::fieldset[@disabled]")
+        token = form.xpath('.//input[@name="_csrf_token"]/@value')[0]
+        response = await client.post(
+            f"{statements.BASE}/{w.statement.id}/directo/contexto",
+            data={
+                **_payload(w, "contexto"),
+                "sat_consented": "true",
+                "_csrf_token": token,
+            },
+        )
+        assert response.status_code == 403
+    w.session.commit.assert_not_awaited()
+    w.routes.status.consult_direct_statement_status.assert_not_awaited()
+
+
+def test_employee_context_denial_explains_the_required_authorized_selection():
+    from devnous.gastos.routes import admin_amex_direct_routes as direct
+
+    explanation = direct._reason("employee_context_denied")
+    assert "Finanzas" in explanation
+    assert "titular autorizado" in explanation
+    assert "tarjeta y contexto fiscal" in explanation

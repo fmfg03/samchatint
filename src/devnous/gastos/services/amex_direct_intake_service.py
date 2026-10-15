@@ -217,6 +217,8 @@ async def import_direct_statement(
     if config is None:
         return DirectResult("pending", "contexto_fiscal_pendiente")
     await authorize(session, actor_id, "cargar", config=config, finance=True)
+    if "employee_ids" in config and str(employee_id) not in config["employee_ids"]:
+        return DirectResult("pending", "employee_context_denied")
     await require_amex_direct_schema(session)
     if not confirmed or not idempotency_key:
         return DirectResult("pending", "source_confirmation_required")

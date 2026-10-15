@@ -72,3 +72,8 @@ Medición final: **32 passed, 80,28 s**, exit0 con umbral individual desactivado
 ## Complemento de coordinación tras el cierre independiente
 
 2026-10-15: el cierre global registra113HTTP y3Chromium aprobados,40ownerSQL aprobados,132backend+aceptación aprobados y767unitarios de AMEX/presupuesto aprobados (conteos solapados). Los límites SAT50/2/timeout/cursor se ejercitaron en la lane backend. Validación final sin hallazgos abiertos y cobertura modificada consolidada90.65%, con artefactos versionados en los reportes `amex-sat-budget-direct-20261015-build-report.md`, `-validation.md` y `-coverage.json`. Este complemento no transforma la lane independiente en pruebas de escenarios que no ejecutó ni acredita UAT productivo.
+
+
+## PR488 regression acceptance v2
+
+Five review findings have red/green evidence and focused negative tests. Final source: 782 unit,33 PostgreSQL acceptance/budget,99 backend,14 focused PostgreSQL and4 Chromium passed; counts overlap. Coverage2110/2302=91.66%. Nine inventory tests pass. Detailed commands, failures, attribution and production boundaries are in the build report. No production migration, deployment, real SAT or authenticated UAT was performed.

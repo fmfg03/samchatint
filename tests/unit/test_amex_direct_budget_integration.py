@@ -2,6 +2,7 @@
 
 from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -19,6 +20,9 @@ class Result:
 
     def first(self):
         return self.rows[0] if self.rows else None
+
+    def all(self):
+        return self.rows
 
 
 class Session:
@@ -350,3 +354,66 @@ async def test_direct_assignment_history_cannot_be_reused_as_current(current_poi
     )
     key = "l" if current_pointer == "current" else "__unassigned__"
     assert store[key][1]["committed_unpaid"] == 100
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "proof,visible",
+    [
+        ({"assignment_id": "a", "movement_key": "expense:e", "concept_id": "c"}, True),
+        (
+            {"assignment_id": "a", "movement_key": "expense:other", "concept_id": "c"},
+            False,
+        ),
+        (
+            {"assignment_id": "a", "movement_key": "expense:e", "concept_id": "other"},
+            False,
+        ),
+        (
+            {"assignment_id": "other", "movement_key": "expense:e", "concept_id": "c"},
+            False,
+        ),
+        (None, False),
+    ],
+)
+async def test_direct_ledger_needs_current_version_and_exact_assignment_identity(
+    proof, visible
+):
+    execute = AsyncMock(return_value=Result([proof] if proof else []))
+    legacy = {"origen": "existing", "expense_id": "legacy"}
+    direct = {
+        "origen": "amex_direct",
+        "expense_id": "e",
+        "concept_key": "c",
+        "source_metadata": {"budget_assignment_id": "a"},
+    }
+    result = await budgets._scope_direct_ledger_to_budget_version(
+        SimpleNamespace(execute=execute), ledger_rows=[legacy, direct], version_id="v"
+    )
+    assert result == ([legacy, direct] if visible else [legacy])
+    assert execute.await_args.args[1] == {"version_id": "v", "assignment_ids": ["a"]}
+
+
+@pytest.mark.asyncio
+async def test_direct_ledger_without_assignment_does_not_invent_version_membership():
+    execute = AsyncMock(side_effect=AssertionError("no invented assignment query"))
+    result = await budgets._scope_direct_ledger_to_budget_version(
+        SimpleNamespace(execute=execute),
+        ledger_rows=[{"origen": "amex_direct", "source_metadata": {}}],
+        version_id="v",
+    )
+    assert result == []
+    execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_legacy_ledger_does_not_require_direct_assignment_schema():
+    execute = AsyncMock(
+        side_effect=AssertionError("legacy source must not query direct")
+    )
+    rows = [{"origen": "existing"}]
+    result = await budgets._scope_direct_ledger_to_budget_version(
+        SimpleNamespace(execute=execute), ledger_rows=rows, version_id="v"
+    )
+    assert result is rows
+    execute.assert_not_awaited()

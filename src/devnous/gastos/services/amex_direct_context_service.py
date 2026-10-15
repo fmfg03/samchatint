@@ -21,6 +21,8 @@ from ..models import (
     Tournament,
 )
 from .amex_direct_common import (
+    DirectAccessError,
+    DirectConflict,
     DirectResult,
     actor_scope,
     authorize,
@@ -295,6 +297,49 @@ async def list_direct_statement(
             ),
             progress=state.progress_json or {},
         )
+
+
+async def list_direct_context_options(
+    session: Any, *, actor_id: UUID, import_id: UUID
+) -> dict[str, Any]:
+    """Fiscal choices require context authority, independently of classification."""
+    with session.no_autoflush:
+        await authorize(session, actor_id, "contexto", finance=True)
+        configs = [
+            row for row in configured_scopes() if actor_scope(row, actor_id) is not None
+        ]
+        choices = []
+        statement = None
+        for config in configs:
+            if (
+                statement is not None
+                and str(statement.card_account_id) not in config["card_account_ids"]
+            ):
+                continue
+            try:
+                statement, _, _, _ = await load_statement(
+                    session,
+                    actor_id,
+                    import_id,
+                    "contexto",
+                    finance=True,
+                    requested_company_code=config["company_code"],
+                    requested_receiver_rfc=config["receiver_rfc"],
+                )
+            except DirectConflict as exc:
+                if str(exc) != "contexto_fiscal_pendiente":
+                    raise
+                continue
+            choices.append(
+                {
+                    "company_code": config["company_code"],
+                    "receiver_rfc": config["receiver_rfc"],
+                    "currency": "MXN",
+                }
+            )
+        if statement is None:
+            raise DirectAccessError("actor_scope_denied")
+        return {"contexts": choices}
 
 
 async def list_direct_classification_options(

@@ -8057,6 +8057,56 @@ async def _append_direct_budget_movements(
         seen_expenses.add(expense_id)
 
 
+async def _scope_direct_ledger_to_budget_version(
+    session: AsyncSession,
+    *,
+    ledger_rows: list[Any],
+    version_id: str,
+) -> list[Any]:
+    """Retain direct costs only in their evidenced assignment's budget version."""
+    direct_rows = [row for row in ledger_rows if row.get("origen") == "amex_direct"]
+    if not direct_rows:
+        return ledger_rows
+    assignment_ids = sorted(
+        {
+            _safe_str((row.get("source_metadata") or {}).get("budget_assignment_id"))
+            for row in direct_rows
+        }
+        - {""}
+    )
+    assignments = {}
+    if assignment_ids:
+        result = await session.execute(
+            text(
+                """
+                SELECT id::text AS assignment_id, movement_key,
+                       budget_concept_id::text AS concept_id
+                FROM budget_movement_assignments
+                WHERE budget_version_id = CAST(:version_id AS uuid)
+                  AND id::text = ANY(CAST(:assignment_ids AS text[]))
+                """
+            ),
+            {"version_id": version_id, "assignment_ids": assignment_ids},
+        )
+        assignments = {row["assignment_id"]: row for row in result.mappings().all()}
+    scoped = []
+    for row in ledger_rows:
+        if row.get("origen") != "amex_direct":
+            scoped.append(row)
+            continue
+        assignment_id = _safe_str(
+            (row.get("source_metadata") or {}).get("budget_assignment_id")
+        )
+        assignment = assignments.get(assignment_id)
+        if (
+            assignment is not None
+            and assignment["movement_key"] == f"expense:{row.get('expense_id')}"
+            and assignment["concept_id"] == row.get("concept_key")
+        ):
+            scoped.append(row)
+    return scoped
+
+
 async def build_budget_actuals_snapshot(
     session: AsyncSession,
     *,
@@ -8400,6 +8450,9 @@ async def build_budget_actuals_snapshot(
         .all()
     )
 
+    ledger_rows = await _scope_direct_ledger_to_budget_version(
+        session, ledger_rows=ledger_rows, version_id=version_id
+    )
     reimbursement_dates = await _load_paid_report_reimbursement_dates(
         session,
         report_ids=list(
