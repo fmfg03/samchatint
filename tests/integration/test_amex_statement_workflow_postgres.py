@@ -32,11 +32,7 @@ legacy_pg = legacy_pg_fixture
 @pytest_asyncio.fixture
 async def pg(approved_pg):
     engine = approved_pg.factory.kw["bind"]
-    ddl = (
-        Path(__file__).resolve().parents[2]
-        / "database/migrations/20261013_amex_statement_workflow.sql"
-    ).read_text()
-    ddl = re.sub(r"(?m)^(BEGIN|COMMIT);\s*$", "", ddl)
+    migrations = Path(__file__).resolve().parents[2] / "database/migrations"
     async with engine.begin() as connection:
         for table in [
             "amex_statement_cut_links",
@@ -44,6 +40,26 @@ async def pg(approved_pg):
             "amex_statement_imports",
         ]:
             await connection.execute(text("DROP TABLE " + table))
+        raw = await connection.get_raw_connection()
+        for filename in (
+            "20261001_amex_shared_recognition.sql",
+            "20261013_amex_approved_informe_recognition.sql",
+            "20261013_amex_statement_workflow.sql",
+        ):
+            ddl = re.sub(
+                r"(?m)^(BEGIN|COMMIT);\s*$", "", (migrations / filename).read_text()
+            )
+            await raw.driver_connection.execute(ddl)
+    from samchat.budgets.service import ensure_budget_schema
+
+    async with approved_pg.factory.begin() as fixture_session:
+        await ensure_budget_schema(fixture_session)
+    async with engine.begin() as connection:
+        ddl = re.sub(
+            r"(?m)^(BEGIN|COMMIT);\s*$",
+            "",
+            (migrations / "20261014_amex_sat_budget_direct.sql").read_text(),
+        )
         raw = await connection.get_raw_connection()
         await raw.driver_connection.execute(ddl)
     return approved_pg

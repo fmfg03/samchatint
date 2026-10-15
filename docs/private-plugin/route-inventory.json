@@ -1,6 +1,6 @@
 {
   "baseline": "6cd122f1030ab39631d77e706a9f5a1a7192231d",
-  "source_file_count": 453,
+  "source_file_count": 464,
   "exclusions": [
     "Private plugin integration package excluded from business-source inventory; baseline pinned deliberately, source hashes detect changes",
     "Active frontend is not versioned here; UI function/profile parity remains UNPROVEN",
@@ -3717,6 +3717,452 @@
         "revoked/expired",
         "isolation",
         "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "6973f7c8886e",
+      "source": "src/devnous/gastos/routes/admin_amex_direct_routes.py",
+      "line": 405,
+      "handler": "direct_dashboard",
+      "source_sha256": "4c04ccd33eafe36e16e14ec94219cb4708ea0f96f4cf4b82b2e69004afc9d2e2",
+      "method": "GET",
+      "paths": [],
+      "declared_path": "DYNAMIC:BASE + '/directo'",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_amex_direct_routes.py:direct_dashboard",
+      "proposed_tool": "documents_and_other_direct_dashboard_get_6973f7",
+      "scope_proposal": "documents_and_other:read; never grants business authority",
+      "object_parameters": [
+        "actor"
+      ],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "35bfe1008466",
+      "source": "src/devnous/gastos/routes/admin_amex_direct_routes.py",
+      "line": 447,
+      "handler": "direct_new",
+      "source_sha256": "4c04ccd33eafe36e16e14ec94219cb4708ea0f96f4cf4b82b2e69004afc9d2e2",
+      "method": "GET",
+      "paths": [],
+      "declared_path": "DYNAMIC:BASE + '/directo/nuevo'",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_amex_direct_routes.py:direct_new",
+      "proposed_tool": "documents_and_other_direct_new_get_35bfe1",
+      "scope_proposal": "documents_and_other:read; never grants business authority",
+      "object_parameters": [
+        "actor"
+      ],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "fa476d1fb843",
+      "source": "src/devnous/gastos/routes/admin_amex_direct_routes.py",
+      "line": 457,
+      "handler": "direct_new_upload",
+      "source_sha256": "4c04ccd33eafe36e16e14ec94219cb4708ea0f96f4cf4b82b2e69004afc9d2e2",
+      "method": "POST",
+      "paths": [],
+      "declared_path": "DYNAMIC:BASE + '/directo/nuevo'",
+      "declared_methods": [
+        "POST"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_amex_direct_routes.py:direct_new_upload",
+      "proposed_tool": "documents_and_other_direct_new_upload_post_fa476d",
+      "scope_proposal": "documents_and_other:write; never grants business authority",
+      "object_parameters": [
+        "actor"
+      ],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "write_or_effect_candidate",
+      "confirmation": "trusted human approval of exact draft/version/amount/currency/destination/digest; recheck at commit",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity",
+        "exact confirmation/version",
+        "retry/crash/no duplicates",
+        "verified receipt"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "2b255b84e74e",
+      "source": "src/devnous/gastos/routes/admin_amex_direct_routes.py",
+      "line": 508,
+      "handler": "direct_csv_preview",
+      "source_sha256": "4c04ccd33eafe36e16e14ec94219cb4708ea0f96f4cf4b82b2e69004afc9d2e2",
+      "method": "POST",
+      "paths": [],
+      "declared_path": "DYNAMIC:BASE + '/directo/previsualizar'",
+      "declared_methods": [
+        "POST"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "_require_finance_actor(actor)",
+        "require_admin_finanzas()"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_amex_direct_routes.py:direct_csv_preview",
+      "proposed_tool": "documents_and_other_direct_csv_preview_post_2b255b",
+      "scope_proposal": "documents_and_other:write; never grants business authority",
+      "object_parameters": [
+        "actor"
+      ],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "write_or_effect_candidate",
+      "confirmation": "trusted human approval of exact draft/version/amount/currency/destination/digest; recheck at commit",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity",
+        "exact confirmation/version",
+        "retry/crash/no duplicates",
+        "verified receipt"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "653fea907701",
+      "source": "src/devnous/gastos/routes/admin_amex_direct_routes.py",
+      "line": 675,
+      "handler": "direct_statement",
+      "source_sha256": "4c04ccd33eafe36e16e14ec94219cb4708ea0f96f4cf4b82b2e69004afc9d2e2",
+      "method": "GET",
+      "paths": [],
+      "declared_path": "DYNAMIC:BASE + '/{import_id}/directo'",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_amex_direct_routes.py:direct_statement",
+      "proposed_tool": "documents_and_other_direct_statement_get_653fea",
+      "scope_proposal": "documents_and_other:read; never grants business authority",
+      "object_parameters": [
+        "import_id",
+        "actor"
+      ],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "4c7fd4c7c64b",
+      "source": "src/devnous/gastos/routes/admin_amex_direct_routes.py",
+      "line": 895,
+      "handler": "direct_action",
+      "source_sha256": "4c04ccd33eafe36e16e14ec94219cb4708ea0f96f4cf4b82b2e69004afc9d2e2",
+      "method": "POST",
+      "paths": [],
+      "declared_path": "DYNAMIC:BASE + '/{import_id}/directo/{action}'",
+      "declared_methods": [
+        "POST"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "_require_finance_actor(actor)"
+      ],
+      "service_candidates": [
+        "session.commit"
+      ],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_amex_direct_routes.py:direct_action",
+      "proposed_tool": "documents_and_other_direct_action_post_4c7fd4",
+      "scope_proposal": "documents_and_other:write; never grants business authority",
+      "object_parameters": [
+        "import_id",
+        "action",
+        "actor"
+      ],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "write_or_effect_candidate",
+      "confirmation": "trusted human approval of exact draft/version/amount/currency/destination/digest; recheck at commit",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity",
+        "exact confirmation/version",
+        "retry/crash/no duplicates",
+        "verified receipt"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "3417be6a4935",
+      "source": "src/devnous/gastos/routes/admin_amex_direct_routes.py",
+      "line": 1079,
+      "handler": "direct_original",
+      "source_sha256": "4c04ccd33eafe36e16e14ec94219cb4708ea0f96f4cf4b82b2e69004afc9d2e2",
+      "method": "GET",
+      "paths": [],
+      "declared_path": "DYNAMIC:BASE + '/{import_id}/directo/original'",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "require_admin_finanzas()"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_amex_direct_routes.py:direct_original",
+      "proposed_tool": "documents_and_other_direct_original_get_3417be",
+      "scope_proposal": "documents_and_other:read; never grants business authority",
+      "object_parameters": [
+        "import_id",
+        "actor"
+      ],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "8a5988fc8a94",
+      "source": "src/devnous/gastos/routes/admin_amex_direct_routes.py",
+      "line": 1089,
+      "handler": "direct_export",
+      "source_sha256": "4c04ccd33eafe36e16e14ec94219cb4708ea0f96f4cf4b82b2e69004afc9d2e2",
+      "method": "GET",
+      "paths": [],
+      "declared_path": "DYNAMIC:BASE + '/{import_id}/directo/exportar.{export_format}'",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "require_admin_finanzas()"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_amex_direct_routes.py:direct_export",
+      "proposed_tool": "documents_and_other_direct_export_get_8a5988",
+      "scope_proposal": "documents_and_other:read; never grants business authority",
+      "object_parameters": [
+        "import_id",
+        "export_format",
+        "actor"
+      ],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "d40a709d1a9e",
+      "source": "src/devnous/gastos/routes/admin_amex_direct_routes.py",
+      "line": 1151,
+      "handler": "direct_budget_queue",
+      "source_sha256": "4c04ccd33eafe36e16e14ec94219cb4708ea0f96f4cf4b82b2e69004afc9d2e2",
+      "method": "GET",
+      "paths": [],
+      "declared_path": "DYNAMIC:QUEUE",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_amex_direct_routes.py:direct_budget_queue",
+      "proposed_tool": "documents_and_other_direct_budget_queue_get_d40a70",
+      "scope_proposal": "documents_and_other:read; never grants business authority",
+      "object_parameters": [
+        "actor"
+      ],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "db9605f085d0",
+      "source": "src/devnous/gastos/routes/admin_amex_direct_routes.py",
+      "line": 1197,
+      "handler": "direct_budget_action",
+      "source_sha256": "4c04ccd33eafe36e16e14ec94219cb4708ea0f96f4cf4b82b2e69004afc9d2e2",
+      "method": "POST",
+      "paths": [],
+      "declared_path": "DYNAMIC:QUEUE + '/{item_id}/{action}'",
+      "declared_methods": [
+        "POST"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [
+        "budget.reject_direct_budget_item",
+        "session.commit"
+      ],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_amex_direct_routes.py:direct_budget_action",
+      "proposed_tool": "documents_and_other_direct_budget_action_post_db9605",
+      "scope_proposal": "documents_and_other:write; never grants business authority",
+      "object_parameters": [
+        "item_id",
+        "action",
+        "actor"
+      ],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "write_or_effect_candidate",
+      "confirmation": "trusted human approval of exact draft/version/amount/currency/destination/digest; recheck at commit",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity",
+        "exact confirmation/version",
+        "retry/crash/no duplicates",
+        "verified receipt"
       ],
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },

@@ -1,6 +1,6 @@
 # AMEX directo SAT → presupuesto → póliza: reporte de construcción
 
-Fecha: 2026-10-15. Estado: implementación y verificación técnica terminadas; revisión independiente sin hallazgos abiertos. Pendiente aprobación humana final. No autoriza promoción.
+Fecha: 2026-10-15. Estado: implementación y verificación técnica terminadas; revisión independiente sin hallazgos abiertos. Aprobación humana de commit/push/PR/merge recibida; PR #488 en validación remota. Migración y despliegue no autorizados por esta aprobación.
 
 ## Autorización y alcance
 
@@ -58,8 +58,12 @@ Historia y especificación aprobadas por el usuario, junto con el texto exacto d
 - `src/samchat/budgets/service.py`
 - `tests/acceptance/test_amex_sat_budget_direct_postgres.py`
 - `tests/browser/test_amex_direct_workflow.py`
+- `tests/integration/test_amex_approved_informe_schema_postgres.py`
 - `tests/integration/test_amex_direct_backend_postgres.py`
 - `tests/integration/test_amex_direct_schema_postgres.py`
+- `tests/integration/test_amex_shared_recognition_postgres.py`
+- `tests/integration/test_amex_statement_import_postgres.py`
+- `tests/integration/test_amex_statement_workflow_postgres.py`
 - `tests/unit/gastos/test_amex_direct_access_policy.py`
 - `tests/unit/gastos/test_amex_direct_budget_display.py`
 - `tests/unit/gastos/test_amex_direct_routes.py`
@@ -83,7 +87,7 @@ Historia y especificación aprobadas por el usuario, junto con el texto exacto d
 | Inventario y navegación | **11 PASS**, 64.46s | `/tmp/amex-direct-inventory-tests.log` |
 | Cobertura modificada consolidada actual | **90.65% = 2008/2215** instrucciones modificadas; 25 archivos Python, cero sin medir | `amex-sat-budget-direct-20261015-coverage.json` |
 | Todos los módulos nuevos | Black/isort/Flake8/Mypy **PASS**, 12 archivos | `/tmp/amex-direct-new-source-quality-final.log` |
-| Inventario rutas regenerado | 590 rutas, 573 live static, 44 acciones, cero parse gaps | `docs/private-plugin/route-inventory.json`, `route-matrix.csv` |
+| Inventario rutas regenerado tras versionar archivos | 600 rutas, 573 live static, 44 acciones, cero parse gaps | `docs/private-plugin/route-inventory.json`, `route-matrix.csv` |
 | Validación independiente final | **0 Critical / 0 Important / 0 Minor abiertos** | `amex-sat-budget-direct-20261015-validation.md` |
 
 Los conteos de lanes se solapan; no constituyen suma de casos únicos. PostgreSQL16 efímero local puerto55471, schemas sintéticos UUID, SQL real de owners. Transporte SAT sustituido por pruebas; sin consulta productiva ni XML/filas de negocio reales. Browser usa owners sintéticos. El pago verifica servicios existentes, no una transferencia bancaria real ni UAT.
@@ -166,3 +170,11 @@ Se verificó que los hashes de canon coinciden con el registro. `git diff --chec
 El usuario respondió «aprobado» el2026-10-15 a la solicitud explícita de aprobar este cambio final y autorizar commit, push, PR y merge. La autorización conserva el alcance de historia/spec/canon ya revisados y no incluye migración productiva ni despliegue. Se verificó nuevamente integridad de canon y que origin/main sigue en la base d8c9fda23 antes de publicar. Los resultados remotos y el merge se acreditarán por sus receipts, sin anticiparlos.
 
 Precommit: el chequeo del índice incluyó por primera vez el SQL nuevo y detectó espacios finales en el DDL generado. Se retiraron sin cambiar ningún cuerpo de función (`$$...$$` byte a byte idénticos), contrato, línea lógica ni objeto de esquema. El SQL de la ejecución40PASS tenía SHA `2ae3c138d07f5c0b6e0642d355c7c33a543261a6593bd3c0e10b441872edbf16`; el hash final tras esta limpieza se registra arriba. El guard de admisión conserva sus hashes y CI verificará de nuevo el archivo publicado.
+
+## Corrección de compatibilidad durante publicación del PR #488
+
+El primer ciclo remoto del commit938942fbb pasó política, seguridad, asistente y browser, pero falló la reproducción del inventario en la suite aislada private-plugin. El generador usa `git ls-files`: la preparación anterior al commit había omitido11archivos fuente aún no versionados. Tras versionarlos, se regeneraron ambos artefactos:464fuentes y600rutas. Las590rutas anteriores permanecen sin alteraciones ni retiros; se agregan10de AMEX directo, sin cambiar44acciones,37capabilities, permisos ni evidencia de montaje. La limitación estática del generador para probar el montaje anidado permanece explícita; no se inventa evidencia live. Reproducción/navegación:11PASS25.27s. Este fallo fue causado por la preparación del cambio, no por infraestructura.
+
+La regresión ampliada encontró fixtures históricos que copiaban por ORM las9tablas directas owner-run o instalaban sólo DDL anterior y luego solicitaban admisión actual. Se corrigió exclusivamente la preparación en cuatro archivos: `test_amex_shared_recognition_postgres.py`, `test_amex_statement_import_postgres.py`, `test_amex_statement_workflow_postgres.py` y el test puntual de salud actual en `test_amex_approved_informe_schema_postgres.py`. Se excluyen tablas owner, se ejecuta la cadena real actual y el rollback respeta dependencias; no se relaja admisión, no se añade CASCADE ni se modifica código/SQL productivo o assertions de negocio. Los demás tests de migraciones históricas conservan su fixture original.
+
+Verificación: **246 pruebas PostgreSQL históricas distintas aprobadas**:131en las3suites principales,80en otras5suites dependientes y35de esquema aprobado. Hubo1fallo previo de salud por CHECK histórico, corregido y revalidado con las35pruebas del archivo y1focal final. Logs `/tmp/amex-direct-legacy-fixtures-full.log`, `/tmp/amex-direct-legacy-dependent-fixtures-full.log`, `/tmp/amex-direct-legacy-current-health-after.log`, `/tmp/amex-direct-legacy-current-health-final.log`; reporte `/tmp/amex-direct-legacy-fixture-build-report.md`. Black/Flake8 cuatro archivos y diff-check pasan. Isort de workflow conserva exactamente la deuda de HEAD; los otros3pasan. El código productivo y su cobertura90.65% no cambiaron en este ajuste.
