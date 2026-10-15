@@ -102,3 +102,138 @@ def test_unambiguous_provider_is_visible_without_ambiguous_label():
         ).reason
         == "amex_attention_beneficiary_conflict"
     )
+
+
+LINKED_PROVIDER = UUID("c79ed5bd-4dec-4343-908d-d714937eaa50")
+
+
+def test_linked_employee_and_provider_are_one_explicit_beneficiary():
+    result = classify_amex_attention(
+        row(ODILON, LINKED_PROVIDER),
+        row(ODILON, LINKED_PROVIDER),
+        policy=POLICY,
+        provider_employee_ids={LINKED_PROVIDER: ODILON},
+    )
+    assert result.visible is False
+    assert result.beneficiary_id == ODILON
+    assert result.reason == "amex_attention_by_account"
+
+
+@pytest.mark.parametrize(
+    "document,account,links,count,reason",
+    [
+        (row(ODILON, LINKED_PROVIDER), row(ODILON), {}, 1, "ambiguous_beneficiary"),
+        (
+            row(ODILON, LINKED_PROVIDER),
+            row(ODILON),
+            {LINKED_PROVIDER: uuid4()},
+            1,
+            "ambiguous_beneficiary",
+        ),
+        (
+            row(ODILON, LINKED_PROVIDER),
+            row(ODILON),
+            {LINKED_PROVIDER: None},
+            1,
+            "ambiguous_beneficiary",
+        ),
+        (
+            row(ODILON, LINKED_PROVIDER),
+            row(ODILON),
+            {LINKED_PROVIDER: "invalid"},
+            1,
+            "ambiguous_beneficiary",
+        ),
+        (
+            row(ODILON, LINKED_PROVIDER),
+            row(ODILON),
+            {uuid4(): ODILON},
+            1,
+            "ambiguous_beneficiary",
+        ),
+        (
+            row(ODILON, LINKED_PROVIDER, beneficiario_alterno_tipo="proveedor"),
+            row(ODILON),
+            {LINKED_PROVIDER: ODILON},
+            1,
+            "ambiguous_beneficiary",
+        ),
+        (
+            row(ODILON, LINKED_PROVIDER),
+            row(uuid4()),
+            {LINKED_PROVIDER: ODILON},
+            1,
+            "beneficiary_conflict",
+        ),
+        (
+            row(ODILON, LINKED_PROVIDER),
+            row(ODILON),
+            {LINKED_PROVIDER: ODILON},
+            2,
+            "multiple_or_missing_informes",
+        ),
+        (
+            None,
+            row(ODILON, LINKED_PROVIDER),
+            {LINKED_PROVIDER: ODILON},
+            0,
+            "multiple_or_missing_informes",
+        ),
+        (
+            row(provider=LINKED_PROVIDER),
+            row(provider=LINKED_PROVIDER),
+            {LINKED_PROVIDER: ODILON},
+            1,
+            "provider",
+        ),
+        (
+            row(ODILON, "invalid"),
+            row(ODILON),
+            {LINKED_PROVIDER: ODILON},
+            1,
+            "ambiguous_beneficiary",
+        ),
+    ],
+)
+def test_provider_link_cannot_hide_ambiguous_or_conflicting_beneficiaries(
+    document, account, links, count, reason
+):
+    result = classify_amex_attention(
+        document,
+        account,
+        candidate_count=count,
+        policy=POLICY,
+        provider_employee_ids=links,
+    )
+    assert result.visible is True
+    assert result.reason == f"amex_attention_{reason}"
+
+
+@pytest.mark.parametrize(
+    "document,account",
+    [
+        (row(ODILON, LINKED_PROVIDER), row(ODILON)),
+        (row(ODILON), row(ODILON, LINKED_PROVIDER)),
+        (row(), row(ODILON, LINKED_PROVIDER)),
+    ],
+)
+def test_linked_dual_identity_remains_compatible_with_same_employee(document, account):
+    assert not classify_amex_attention(
+        document,
+        account,
+        policy=POLICY,
+        provider_employee_ids={LINKED_PROVIDER: ODILON},
+    ).visible
+
+
+def test_linked_different_employee_keeps_normal_attention():
+    other = uuid4()
+    result = classify_amex_attention(
+        row(other, LINKED_PROVIDER),
+        row(other),
+        policy=POLICY,
+        provider_employee_ids={LINKED_PROVIDER: other},
+    )
+    assert result.visible is True
+    assert result.beneficiary_id == other
+    assert result.reason == "amex_attention_normal"

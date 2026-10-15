@@ -2152,8 +2152,8 @@ def test_panel_exposes_accounting_operations_outside_configuration_gate():
     assert "empleado y proyecto operativo" in accounting
     assert "Carga masiva CFDI" in accounting
     assert "CSV por UUID para alimentar la revisión de matching" in accounting
-    assert '"/admin/contabilidad/amex/estados", "AMEX"' in accounting
-    assert "Carga el estado, resuelve pendientes y prepara las pólizas del informe." in accounting
+    assert '"admin.gastos.amex", amex_entry_destination, "AMEX"' in accounting
+    assert "Carga el estado, revisa CFDI y prepara la póliza de la tarjeta." in accounting
     assert "Limpieza contable" in accounting
     assert '"configuracion.control_accesos"' not in accounting
     assert "{operacion_contable_section}" in panel

@@ -176,6 +176,8 @@ from ..services.access_control_service import (
     ACCESS_TOOLS,
     ALL_ROLES,
     NON_CONFIGURABLE_GATEWAY_TOOL_KEYS,
+    AccessControlLookupError,
+    can_defer_path_authorization_to_route_guard,
     filter_cards_by_tools,
     is_catalog_admin_user,
     is_superadmin_role,
@@ -16148,6 +16150,23 @@ async def panel_operaciones_console(
     return html
 
 
+async def _amex_entry_destination(session: AsyncSession, actor: Empleado) -> str:
+    """Prefer the direct owner without overriding persisted read restrictions."""
+    legacy = "/admin/contabilidad/amex/estados"
+    direct = legacy + "/directo"
+    if not bool(getattr(actor, "activo", False)) or (
+        str(getattr(actor, "rol", "")).strip().lower() not in FINANCE_AMEX_ROLES
+    ):
+        return legacy
+    try:
+        allowed = await can_defer_path_authorization_to_route_guard(
+            session, actor, direct, "GET"
+        )
+    except AccessControlLookupError:
+        return legacy
+    return direct if allowed else legacy
+
+
 @router.get("/panel", response_class=HTMLResponse)
 async def panel(
     request: Request,
@@ -16323,12 +16342,17 @@ async def panel(
             </section>
         """
 
+    amex_entry_destination = (
+        await _amex_entry_destination(session, current_empleado)
+        if "admin.gastos.amex" in visible_tool_keys
+        else "/admin/contabilidad/amex/estados"
+    )
     operacion_contable_cards = filter_cards_by_tools([
         ("admin.contabilidad", "/admin/contabilidad/coi", "Vista contable", "Revisa pólizas COI y el detalle de sus cuentas."),
         ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Revisa el vínculo por UUID con empleado y proyecto operativo."),
         ("admin.gastos.cfdi_carga", "/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CSV por UUID para alimentar la revisión de matching."),
-        ("admin.gastos.amex", "/admin/contabilidad/amex/estados", "AMEX",
-         "Carga el estado, resuelve pendientes y prepara las pólizas del informe."),
+        ("admin.gastos.amex", amex_entry_destination, "AMEX",
+         "Carga el estado, revisa CFDI y prepara la póliza de la tarjeta."),
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "Prepara CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
     ], visible_tool_keys)
     if is_superadmin_role(getattr(current_empleado, "rol", None)):
@@ -20415,8 +20439,9 @@ async def carga_masiva_amex_get(
                 <strong>Éxito:</strong> {escape(success_msg)}
             </div>
         """
-    hero_actions_html = """
-        <a href="/admin/contabilidad/amex/estados" class="button primary">
+    amex_entry_destination = await _amex_entry_destination(session, current_empleado)
+    hero_actions_html = f"""
+        <a href="{amex_entry_destination}" class="button primary">
             Abrir recorrido AMEX</a>
         <a href="/admin/gastos/amex/conciliacion" class="button secondary">Ver conciliación AMEX</a>
         <a href="/admin/gastos" class="button secondary">Volver a finanzas</a>

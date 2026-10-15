@@ -5,13 +5,13 @@ This policy never changes bank rows or accounting/fiscal eligibility.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import raiseload
 
-from ..models import CuentaDeGastos, Documento, Empleado
+from ..models import CuentaDeGastos, Documento, Empleado, ProveedorCliente
 
 POLICY_VERSION = "2026-10-13"
 EXCLUDED_EMPLOYEE_IDS = ("f9aebcf3-ef28-423c-8a77-f41c9e4e885a",)
@@ -58,13 +58,26 @@ def validate_attention_policy(
     return AttentionPolicy(True, ids)
 
 
-def _beneficiary(value: Any) -> tuple[str, UUID | None]:
+def _beneficiary(
+    value: Any, provider_employee_ids: Mapping[UUID, UUID]
+) -> tuple[str, UUID | None]:
     if value is None:
         return "missing", None
     employee = getattr(value, "beneficiario_empleado_id", None)
     provider = getattr(value, "beneficiario_proveedor_cliente_id", None)
     alternate = getattr(value, "beneficiario_alterno_tipo", None)
-    if employee and (provider or str(alternate or "").strip()):
+    if employee and provider:
+        if str(alternate or "").strip():
+            return "ambiguous", None
+        try:
+            employee_id = UUID(str(employee))
+            provider_id = UUID(str(provider))
+        except (ValueError, TypeError, AttributeError):
+            return "ambiguous", None
+        if provider_employee_ids.get(provider_id) != employee_id:
+            return "ambiguous", None
+        return "employee", employee_id
+    if employee and str(alternate or "").strip():
         return "ambiguous", None
     if provider:
         try:
@@ -87,14 +100,16 @@ def classify_amex_attention(
     *,
     candidate_count: int = 1,
     policy: AttentionPolicy,
+    provider_employee_ids: Mapping[UUID, UUID] | None = None,
 ) -> AttentionDecision:
     """Resolve explicit document/account beneficiaries; never use capturer."""
     if not policy.valid:
         return AttentionDecision(True, "amex_attention_configuration_disabled")
     if candidate_count != 1:
         return AttentionDecision(True, "amex_attention_multiple_or_missing_informes")
-    doc_kind, doc_id = _beneficiary(document)
-    acc_kind, acc_id = _beneficiary(account)
+    links = provider_employee_ids or {}
+    doc_kind, doc_id = _beneficiary(document, links)
+    acc_kind, acc_id = _beneficiary(account, links)
     if doc_kind == "ambiguous" or acc_kind == "ambiguous":
         return AttentionDecision(True, "amex_attention_ambiguous_beneficiary")
     if doc_id and acc_id and (doc_id != acc_id or doc_kind != acc_kind):
@@ -172,11 +187,39 @@ async def _load_amex_attention_context(
             .all()
         ):
             candidates.setdefault(row.cuenta_gastos_id, []).append(row)
+    # A provider may explicitly represent the same employee. Load only exact
+    # persisted links referenced by this read; never infer identity from names.
+    provider_ids = {
+        row.beneficiario_proveedor_cliente_id
+        for row in (
+            documents
+            + list(accounts.values())
+            + [report for reports in candidates.values() for report in reports]
+        )
+        if getattr(row, "beneficiario_proveedor_cliente_id", None) is not None
+    }
+    provider_employee_ids = {}
+    if provider_ids:
+        provider_employee_ids = {
+            provider_id: employee_id
+            for provider_id, employee_id in (
+                await session.execute(
+                    select(ProveedorCliente.id, ProveedorCliente.empleado_id).where(
+                        ProveedorCliente.id.in_(provider_ids),
+                        ProveedorCliente.empleado_id.is_not(None),
+                    )
+                )
+            ).all()
+        }
     for document in documents:
         account_id = getattr(document, "cuenta_gastos_id", None)
         count = len(candidates.get(account_id, [])) if account_id else 1
         context.document_decisions[document.id] = classify_amex_attention(
-            document, accounts.get(account_id), candidate_count=count, policy=policy
+            document,
+            accounts.get(account_id),
+            candidate_count=count,
+            policy=policy,
+            provider_employee_ids=provider_employee_ids,
         )
     for expense in expenses:
         # Imported bank rows remain visible regardless of their declared holder.
@@ -190,6 +233,7 @@ async def _load_amex_attention_context(
             accounts.get(account_id),
             candidate_count=len(reports),
             policy=policy,
+            provider_employee_ids=provider_employee_ids,
         )
     return context
 
