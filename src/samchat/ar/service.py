@@ -282,6 +282,25 @@ async def build_ar_read_model(
         ensure_schema=ensure_schema,
     )
     line_ids = [_safe_str(line.get("id")) for line in income_lines if line.get("id")]
+    financial_ids = {
+        line.get("metadata", {}).get("distribution_financial_version_id")
+        for line in income_lines
+        if line.get("metadata", {}).get("distribution_financial_version_id")
+    }
+    if len(financial_ids) > 1:
+        raise ValueError(
+            "Fuentes financieras contradictorias en revisión de distribución"
+        )
+    financial_version_id = next(iter(financial_ids), clean_version_id)
+    if financial_ids or not income_lines:
+        from samchat.budgets.distribution import revision_context, financial_context
+
+        context = await revision_context(session, clean_version_id)
+        financial_version_id, _ = await financial_context(session, context)
+        if financial_ids and financial_ids != {financial_version_id}:
+            raise ValueError(
+                "La fuente financiera no coincide con el linaje acreditado"
+            )
     monthly_plan = await list_monthly_plan_for_lines(
         session,
         line_ids=line_ids,
@@ -289,13 +308,13 @@ async def build_ar_read_model(
     )
     links = await list_budget_cfdi_income_links(
         session,
-        budget_version_id=clean_version_id,
+        budget_version_id=financial_version_id,
         tournament_id=clean_tournament_id,
         approved_only=True,
     )
     proposed_links = await list_budget_cfdi_income_links(
         session,
-        budget_version_id=clean_version_id,
+        budget_version_id=financial_version_id,
         tournament_id=clean_tournament_id,
         approved_only=False,
     )
@@ -306,7 +325,7 @@ async def build_ar_read_model(
     ]
     candidates = await list_psp_cfdi_income_candidates(
         session,
-        budget_version_id=clean_version_id,
+        budget_version_id=financial_version_id,
         limit=min(row_limit, 500),
         ensure_schema=ensure_schema,
         **(
@@ -337,7 +356,7 @@ async def build_ar_read_model(
             raise ValueError("AR CFDI assignments escaped tournament scope")
     collection_matches = await list_ar_collection_matches(
         session,
-        budget_version_id=clean_version_id,
+        budget_version_id=financial_version_id,
         include_reversed=False,
         ensure_schema=ensure_schema,
         **(
@@ -388,14 +407,16 @@ async def build_ar_read_model(
             if monthly_rows
             else _safe_float(line.get("budget_amount"))
         )
-        line_links = linked_by_line.get(line_id, [])
+        financial_line_id = (line.get("metadata") or {}).get(
+            "distribution_financial_line_id"
+        ) or line_id
+        line_links = linked_by_line.get(financial_line_id, [])
         linked_total = sum(_safe_float(link.get("amount")) for link in line_links)
         expected_income.append(
             {
-                "ar_item_id": f"expected:{line_id}",
-                "budget_version_id": _safe_str(line.get("budget_version_id"))
-                or clean_version_id,
-                "budget_line_id": line_id,
+                "ar_item_id": f"expected:{financial_line_id}",
+                "budget_version_id": financial_version_id,
+                "budget_line_id": financial_line_id,
                 "budget_concept_id": _safe_str(line.get("budget_concept_id")) or None,
                 "tournament_id": _safe_str(line.get("tournament_id")) or None,
                 "tournament_code": _safe_str(line.get("tournament_code")) or None,
@@ -431,7 +452,11 @@ async def build_ar_read_model(
                 )
             )
 
-    known_line_ids = {line_id for line_id in line_ids if line_id}
+    known_line_ids = {
+        (line.get("metadata") or {}).get("distribution_financial_line_id")
+        or str(line["id"])
+        for line in income_lines
+    }
     for link in links:
         link_id = _safe_str(link.get("id")) or _safe_str(link.get("cfdi_report_id"))
         item_id = f"linked:{link_id}"

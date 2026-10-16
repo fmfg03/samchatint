@@ -22820,6 +22820,13 @@ async def contabilidad_cuentas_por_cobrar_view(
                 </div>
             """
         else:
+            financial_version_id = str(selected_version["id"])
+            if selected_version.get("source") == "distribution_revision":
+                from samchat.budgets.distribution import financial_context
+
+                financial_version_id, _ = await financial_context(
+                    session, selected_version
+                )
             tournament_ctx = await resolve_budget_tournament_context(
                 session, tournament_key=selected_torneo_id
             )
@@ -22837,7 +22844,7 @@ async def contabilidad_cuentas_por_cobrar_view(
                 return_to = f"{return_to}?{request.url.query}"
             unassigned_candidates = await list_psp_cfdi_income_candidates(
                 session,
-                budget_version_id=str(selected_version["id"]),
+                budget_version_id=financial_version_id,
                 unassigned_only=True,
                 limit=250,
             )
@@ -22913,13 +22920,13 @@ async def contabilidad_cuentas_por_cobrar_view(
                 lines=income_lines,
                 candidates=await list_psp_cfdi_income_candidates(
                     session,
-                    budget_version_id=str(selected_version["id"]),
+                    budget_version_id=financial_version_id,
                     tournament_id=(tournament_ctx or {}).get("tournament_id"),
                     assigned_only=True,
                 ),
                 links=await list_budget_cfdi_income_links(
                     session,
-                    budget_version_id=str(selected_version["id"]),
+                    budget_version_id=financial_version_id,
                     tournament_id=(tournament_ctx or {}).get("tournament_id"),
                 ),
                 can_edit=_cxc_can_assign_income_cfdi(current_empleado),

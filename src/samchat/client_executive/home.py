@@ -911,6 +911,7 @@ async def build_home(
             "id": tournament["id"],
             "name": tournament["name"],
             "version_id": version or None,
+            "budget_distribution": snapshot.get("budget_distribution"),
             "documentary_evidence": {
                 **factual,
                 "source": FACT_SOURCE,

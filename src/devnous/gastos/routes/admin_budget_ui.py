@@ -243,16 +243,9 @@ def _clean_budget_period(value: Optional[str]) -> str:
 
 
 def _budget_week_bounds(edition_year: int, week_number: int) -> tuple[date, date]:
-    week = max(1, min(BUDGET_WEEK_COUNT, int(week_number)))
-    jan1 = date(int(edition_year), 1, 1)
-    dec31 = date(int(edition_year), 12, 31)
-    if week == 1:
-        start = jan1
-    else:
-        days_to_next_monday = 7 if jan1.isoweekday() == 1 else 8 - jan1.isoweekday()
-        start = jan1 + timedelta(days=days_to_next_monday + ((week - 2) * 7))
-    end = min(start + timedelta(days=6), dec31)
-    return start, end
+    from samchat.budgets.distribution import week_bounds
+
+    return week_bounds(int(edition_year), int(week_number))
 
 
 def _budget_period_bucket(edition_year: int, week_number: int, period: str) -> tuple[str, str]:
@@ -321,6 +314,17 @@ def _sum_budget_line_periods(
     budget_view: str,
 ) -> list[dict[str, Any]]:
     buckets: OrderedDict[str, dict[str, Any]] = OrderedDict()
+    from samchat.budgets.distribution import schedule_state
+
+    plan_known = all(
+        bool(plan_map.get(str(line.get("id"))))
+        and (
+            budget_view == "income"
+            or "budget_amount" not in line
+            or schedule_state(line, plan_map[str(line["id"])])["status"] == "complete"
+        )
+        for line in lines
+    )
     unbudgeted_actuals = _unbudgeted_expense_actuals(lines, actuals_map)
     for week in range(1, BUDGET_WEEK_COUNT + 1):
         bucket_key, bucket_label = _budget_period_bucket(edition_year, week, period)
@@ -330,6 +334,7 @@ def _sum_budget_line_periods(
                 "budget": 0.0,
                 "real": 0.0,
                 "committed": 0.0,
+                "plan_known": plan_known,
             }
         bucket = buckets[bucket_key]
         for line in lines:
@@ -428,6 +433,8 @@ def render_budget_executive_dashboard(
         budget_view=clean_view,
     )
     total_budget = sum(float(item["budget"] or 0) for item in buckets)
+    if clean_view == "expenses" and all("budget_amount" in line for line in lines):
+        total_budget = sum(float(line["budget_amount"]) for line in lines)
     total_real = sum(float(item["real"] or 0) for item in buckets)
     total_committed = sum(float(item["committed"] or 0) for item in buckets)
     available = total_budget - total_real - (total_committed if clean_view == "expenses" else 0)
@@ -445,18 +452,16 @@ def render_budget_executive_dashboard(
         committed = float(item["committed"] or 0)
         period_available = budget - real - (committed if clean_view == "expenses" else 0)
         period_execution = ((real + (committed if clean_view == "expenses" else 0)) / budget * 100) if budget else 0.0
-        rows.append(
-            f"""
+        rows.append(f"""
             <tr>
                 <td style="padding:10px;border-bottom:1px solid #e2e8f0;font-weight:800;color:#0f172a;">{escape(str(item['label']))}</td>
-                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;">${budget:,.2f}</td>
+                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;">{f"${budget:,.2f}" if item.get('plan_known', True) else 'Pendiente'}</td>
                 <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;">${real:,.2f}</td>
                 <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;">{('$' + format(committed, ',.2f')) if clean_view == 'expenses' else '—'}</td>
-                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;{_budget_available_style(period_available, income_view=clean_view == "income")}">${period_available:,.2f}</td>
-                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;{_budget_execution_style(period_execution)}">{period_execution:.1f}%</td>
+                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;{_budget_available_style(period_available, income_view=clean_view == "income")}">{f"${period_available:,.2f}" if item.get('plan_known', True) else '—'}</td>
+                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;{_budget_execution_style(period_execution)}">{f"{period_execution:.1f}%" if item.get('plan_known', True) else '—'}</td>
             </tr>
-            """
-        )
+            """)
     if not rows:
         rows.append(
             '<tr><td colspan="6" style="padding:14px;color:#64748b;">Sin partidas para los filtros actuales.</td></tr>'
@@ -505,6 +510,7 @@ def render_budget_executive_dashboard(
             <div class="meta-card"><span>% utilizado</span><strong>{execution:.1f}%</strong></div>
         </div>
         <div style="overflow-x:auto;margin-top:14px;">
+            {'<p role="status">Distribución pendiente: los periodos requieren un plan conciliado; el autorizado anual se conserva.</p>' if any(not item.get('plan_known', True) for item in buckets) else ''}
             <div class="workspace-section-title" style="font-size:14px;margin-bottom:8px;">Lectura por periodo</div>
             <table style="width:100%;border-collapse:collapse;font-size:13px;">
                 <thead>
@@ -872,15 +878,16 @@ def _render_budget_aggregate_matrix(
         *,
         color: str = "#475569",
     ) -> str:
+        known = all(item.get(key) is not None for item in values.values())
         total = sum(float(item.get(key) or 0) for item in values.values())
         cells = [
             f'<td style="padding:8px 10px;font-weight:800;color:{color};position:sticky;left:0;background:#fff;z-index:1;min-width:170px;">{escape(label)}</td>',
-            f'<td style="padding:8px 10px;text-align:right;font-weight:900;position:sticky;left:170px;background:#fff;z-index:1;min-width:110px;">${total:,.2f}</td>',
+            f'<td style="padding:8px 10px;text-align:right;font-weight:900;position:sticky;left:170px;background:#fff;z-index:1;min-width:110px;">{f"${total:,.2f}" if known else "Pendiente"}</td>',
         ]
         for item in values.values():
             amount = float(item.get(key) or 0)
             cells.append(
-                f'<td style="padding:8px;text-align:right;color:{color};">${amount:,.2f}</td>'
+                f'<td style="padding:8px;text-align:right;color:{color};">{f"${amount:,.2f}" if item.get(key) is not None else "—"}</td>'
             )
         return f"<tr>{''.join(cells)}</tr>"
 
@@ -905,6 +912,16 @@ def _render_budget_aggregate_matrix(
                 ),
             )
             rows = []
+            from samchat.budgets.distribution import schedule_state
+
+            known = bool(plan_map.get(line_id)) and (
+                clean_view == "income"
+                or "budget_amount" not in line
+                or schedule_state(line, plan_map[line_id])["status"] == "complete"
+            )
+            if not known:
+                for value in values.values():
+                    value["budget"] = None
             if clean_view == "income":
                 rows.append(_metric_row("Ingreso esperado", values, "budget"))
                 rows.append(_metric_row("Ingreso real", values, "real"))
@@ -1214,7 +1231,11 @@ def render_budget_partida_matrix(
             tournament_key=tournament_key,
             edition_year=effective_year,
             phase_filter=phase_filter,
-            can_edit=can_edit,
+            can_edit=can_edit
+            and not any(
+                (l.get("metadata") or {}).get("distribution_source_line_id")
+                for l in lines
+            ),
         )
         if clean_mode in {"full", "expenses"}
         else ""
@@ -1283,6 +1304,20 @@ def render_budget_partida_matrix(
             line_id = str(line.get("id") or "")
             concept_id = str(line.get("budget_concept_id") or "")
             plan = plan_map.get(line_id, {})
+            distribution_only = bool(
+                (line.get("metadata") or {}).get("distribution_source_line_id")
+            )
+            from samchat.budgets.distribution import schedule_state
+
+            distribution_state = (
+                schedule_state(line, plan) if clean_mode != "income" else None
+            )
+            distribution_notice = {
+                "missing": "Distribución pendiente: el autorizado anual todavía no tiene semanas registradas.",
+                "mismatch": "Distribución incompleta: la suma de semanas no concilia con el autorizado.",
+                "invalid": "Distribución inválida: revisa importes y semanas.",
+                "complete": "Distribución conciliada con el importe autorizado.",
+            }.get((distribution_state or {}).get("status"), "")
             actuals = _actuals_for_budget_line(
                 actuals_map, line_id if clean_mode != "income" else concept_id
             )
@@ -1290,7 +1325,7 @@ def render_budget_partida_matrix(
             cuenta_field_html = _render_matrix_cuenta_field(
                 line_id,
                 line,
-                can_edit=can_edit,
+                can_edit=can_edit and not distribution_only,
             )
             budget_amount_value = float(line.get("budget_amount") or 0)
             budget_amount_label_html = (
@@ -1304,9 +1339,9 @@ def render_budget_partida_matrix(
                 'position:sticky;left:150px;background:#f8fafc;z-index:2;'
                 'min-width:96px;">Monto autorizado</th>'
             )
-            html_parts.append(
-                f"""
+            html_parts.append(f"""
                 <div class="budget-excel-line-card" style="border:1px solid #dbe2ea;border-radius:14px;background:#fff;padding:12px;margin-bottom:12px;">
+                    <p role="status">{escape(distribution_notice)}</p>
                     <form method="POST" action="/admin/presupuestos/lineas/{escape(line_id)}/update" style="margin-top:0;">
                         <div style="display:grid;grid-template-columns:minmax(240px,1.2fr) minmax(180px,.6fr) minmax(280px,1fr) auto;gap:10px;align-items:end;margin-bottom:10px;">
                             <div>
@@ -1315,11 +1350,11 @@ def render_budget_partida_matrix(
                             </div>
                             <div>
                                 {budget_amount_label_html}
-                                <input id="budget-amount-{escape(line_id)}" class="budget-line-total" type="number" step="0.01" min="0" name="budget_amount" value="{budget_amount_value:.2f}" data-line-id="{escape(line_id)}" style="width:100%;padding:9px 10px;border:1px solid #cbd5e1;border-radius:8px;font-weight:800;box-sizing:border-box;"{disabled}>
+                                <input id="budget-amount-{escape(line_id)}" class="budget-line-total" type="number" step="0.01" min="0" name="budget_amount" value="{budget_amount_value:.2f}" data-line-id="{escape(line_id)}" style="width:100%;padding:9px 10px;border:1px solid #cbd5e1;border-radius:8px;font-weight:800;box-sizing:border-box;"{disabled}{' readonly' if distribution_only else ''}>
                             </div>
                             <div>{cuenta_field_html if can_edit else _render_matrix_cuenta_field(line_id, line, can_edit=False)}</div>
                             <div>
-                                {f'<button type="button" class="budget-spread-evenly" data-line-id="{escape(line_id)}" data-budget-target-kind="{"income" if clean_mode == "income" else "expense"}" style="background:#e0f2fe;color:#075985;border:1px solid #bae6fd;border-radius:999px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap;">Distribuir total</button>' if can_edit else ''}
+                                {f'<button type="button" class="budget-spread-evenly" data-line-id="{escape(line_id)}" data-budget-target-kind="{"income" if clean_mode == "income" else "expense"}" style="background:#e0f2fe;color:#075985;border:1px solid #bae6fd;border-radius:999px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap;">Distribuir total</button>' if can_edit and not distribution_only else ''}
                             </div>
                         </div>
                         <input type="hidden" name="version_id" value="{escape(version_id)}">
@@ -1338,8 +1373,7 @@ def render_budget_partida_matrix(
                                 </tr>
                             </thead>
                             <tbody>
-                """
-            )
+                """)
 
             def _row(label: str, row_kind: str, *, editable: bool = False) -> str:
                 cells = [f'<td style="padding:6px 10px;font-weight:700;color:#475569;position:sticky;left:0;background:#fff;z-index:1;min-width:150px;">{escape(label)}</td>']
@@ -1349,15 +1383,20 @@ def render_budget_partida_matrix(
                     month_actual = actuals.get(month, {})
                     if row_kind == "expense_plan":
                         value = float(month_plan.get("budget_expense_amount") or 0)
+                        period_known = (
+                            month in plan
+                            or (distribution_state or {}).get("status") == "complete"
+                        )
+                        display = f"{value:.2f}" if period_known else ""
                         if editable:
                             cells.append(
                                 f'<td style="padding:4px;"><input type="number" step="0.01" min="0" '
-                                f'name="month_{month}_expense" value="{value:.2f}" data-budget-week-input="{escape(line_id)}" data-budget-week-kind="expense" '
+                                f'name="month_{month}_expense" value="{display}" data-budget-week-input="{escape(line_id)}" data-budget-week-kind="expense" '
                                 f'style="width:76px;padding:5px;border:1px solid #cbd5e1;border-radius:6px;text-align:right;"{disabled}></td>'
                             )
                         else:
                             cells.append(
-                                f'<td style="padding:6px;text-align:right;">${value:,.2f}</td>'
+                                f'<td style="padding:6px;text-align:right;">{f"${value:,.2f}" if period_known else "—"}</td>'
                             )
                     elif row_kind == "income_plan":
                         value = float(month_plan.get("expected_income_amount") or 0)
@@ -1392,7 +1431,19 @@ def render_budget_partida_matrix(
                         value = 0.0
                         cells.append('<td style="padding:6px;text-align:right;">—</td>')
                     total += value
-                cells.insert(1, f'<td style="padding:6px 10px;text-align:right;font-weight:800;position:sticky;left:150px;background:#fff;z-index:1;min-width:96px;">${total:,.2f}</td>')
+                total_known = (
+                    bool(plan)
+                    if row_kind == "income_plan"
+                    else (
+                        (distribution_state or {}).get("status") == "complete"
+                        if row_kind == "expense_plan"
+                        else True
+                    )
+                )
+                cells.insert(
+                    1,
+                    f'<td style="padding:6px 10px;text-align:right;font-weight:800;position:sticky;left:150px;background:#fff;z-index:1;min-width:96px;">{f"${total:,.2f}" if total_known else "Pendiente"}</td>',
+                )
                 return f"<tr>{''.join(cells)}</tr>"
 
             if clean_mode in {"full", "expenses"}:
@@ -1424,8 +1475,8 @@ def render_budget_partida_matrix(
                 button_label = "Guardar ingreso por semanas"
             elif clean_mode == "expenses":
                 summary_html = (
-                    f'<span>Presupuesto gasto: <strong>${plan_expense_total:,.2f}</strong></span>'
-                    f'<span>Gasto presupuestal: <strong>${real_expense_total:,.2f}</strong></span>'
+                    f'<span>Presupuesto gasto: <strong>{f"${plan_expense_total:,.2f}" if (distribution_state or {}).get("status") == "complete" else "Pendiente"}</strong></span>'
+                    f"<span>Gasto presupuestal: <strong>${real_expense_total:,.2f}</strong></span>"
                 )
                 button_label = "Guardar monto autorizado y semanas"
             else:
@@ -1448,19 +1499,19 @@ def render_budget_partida_matrix(
                 'padding:8px 14px;font-weight:700;cursor:pointer;">'
                 f"{button_label}</button></div>"
             )
-            html_parts.append(
-                f"""
+            if distribution_only:
+                action_controls_html = '<button type="submit" name="save_scope" value="plan" class="button">Guardar semanas; conservar autorizado</button>'
+            html_parts.append(f"""
                             </tbody>
                         </table>
                         </div>
                         <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:#475569;">
                             {summary_html}
                         </div>
-                        {action_controls_html if can_edit else '<div style="margin-top:8px;color:#64748b;">Sin permiso para editar.</div>'}
+                        {action_controls_html if can_edit else '<div style="margin-top:8px;color:#64748b;">Edición disponible sólo en borrador o reforecast y con permiso presupuestal.</div>'}
                     </form>
                 </div>
-                """
-            )
+                """)
         html_parts.append("</div>")
 
     unbudgeted_actuals = _unbudgeted_expense_actuals(lines, actuals_map)

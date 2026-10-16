@@ -22,12 +22,13 @@ canon edits silently.
 
 | Protected source path | SHA-256 at Line 0 baseline |
 | --- | --- |
-| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `d8212a74b5391e6ab3b5c268d3e750fcf10a760d74d277bb30a1b4674110ef03` |
+| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `3f92bc667e2b152334a500f2cf9427cebdd4ed9c0b9b10538e075596842f435a` |
 | `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `2c55cc807c464d5462bca3e9d092fcefe6f5f2f66f4498231d72a7b57d795985` |
-| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `3c49855d65fb7e177d1629748724e9f947ebaa007213cb1d6023fa182a8431f4` |
+| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `b98ba82dade2cc148b06b787c9b0415479a4c68e8109bf6c5f2402dcbe5228e1` |
 
 | Canon amendment date | Affected sources | Reason and evidence | Evidence state |
 | --- | --- | --- | --- |
+| 2026-10-14 | Product and Engineering canons | Explicit human approval of distribution revision rules (`Sentinel_e34dca62ad888191ae00a160c9ee5b09`); Git publication authorized separately (`Sentinel_a80479c5cb1081919315d4fa293a5777`). Preserve financial lines, amounts and history; approved reconciled successor, week-start month, full-month YTD, fixed categories N/D pending Finance. Evidence: `docs/roadmap/budget-distribution-20261014-candidate.md`. Sweep unchanged: historical inventory, no production observation. | Approved candidate and publication; CI, merge, deployment, identified-case UAT and Finance crosswalk remain pending. |
 | 2026-09-11 | Product and Engineering canons | This amendment governs the pending correction to #314/#315 from an external-client interpretation to internal Direction, position-scoped boards and reports. Production remains at `81335f8ddd7e103839719f62235a14d11bb2bd47` with the incorrect client-based interpretation; the correction is only an uncommitted isolated-worktree diff with focused authorization/reporting tests and route-contract validation. | `repo_live` only after merge; `deployed_verified` only after a new release plus authenticated smoke. UAT and real scope configuration remain pending; not `business_accepted`. |
 | 2026-09-12 | Product and Engineering canons | Human-approved expansion of `/direccion/tableros` to cross-domain, read-only Operations, Finance, and Marketing visibility inside assigned Direction portfolio/tournament scope. Evidence: scoped budget and tournament SOUL/entity-dossier integration, explicit gap inventory, aggregate age handling, focused tests, lint and diff validation. | Worktree implementation under review; not merged, deployed, UAT-validated, or business accepted. |
 | 2026-09-19 | Engineering canon | Human-approved correction for PR #350: its required CI gate replaces the obsolete Python 3.11/3.12 and non-blocking-security description with the Python 3.12-only direct-suite, exact pytest/Bandit baselines, changed-code coverage, and aggregate-gate contract. Evidence: focused contract tests, exact Bandit baseline verification, and diff hygiene in the isolated worktree. | Worktree implementation under review; not merged, deployed, or business accepted. |

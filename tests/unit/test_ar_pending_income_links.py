@@ -6,6 +6,16 @@ from samchat.ar import service
 from samchat.ar.admin_ui import render_ar_read_model_html
 
 
+@pytest.fixture(autouse=True)
+def ordinary_version_context(monkeypatch):
+    from samchat.budgets import distribution
+
+    async def context(_session, version_id):
+        return {"id": version_id, "source": "ui_manual"}
+
+    monkeypatch.setattr(distribution, "revision_context", context)
+
+
 @pytest.mark.asyncio
 async def test_pending_invoice_remains_visible_until_approved_without_financial_recognition(monkeypatch):
     link = {

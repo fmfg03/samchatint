@@ -421,3 +421,24 @@ application, authenticated UAT, and business acceptance are separate.
 Fecha: 2026-10-15. Texto y especificación técnica aprobados explícitamente por el usuario con «aprobada». Razón: corregir cargos omitidos por período conservando fuentes y controles financieros. Evidencia: `docs/roadmap/amex-qa-remediation-20261015-spec.md`, sección 9, y assessment QA asociado. Candidato aprobado para implementación; migración, aplicación productiva, promoción y UAT mantienen sus propios checkpoints.
 
 Contabilidad puede corregir explícitamente la cobertura temporal declarada de un estado directo todavía no reconocido cuando el archivo original demuestra cargos omitidos únicamente por estar fuera del período capturado. La recuperación preserva el original y sus recibos, conserva los cargos ya creados y agrega sólo los cargos faltantes mediante evidencia auditada e idempotente. No cambia identidad fiscal, no crea informes, no aprueba gastos ni modifica fuentes reconocidas. La fecha contable sigue siendo una declaración explícita dentro de la cobertura efectiva confirmada y un período abierto.
+## 18. Approved budget distribution revision rules
+
+Date: 2026-10-14. Human approval: Francisco, evidence
+`Sentinel_e34dca62ad888191ae00a160c9ee5b09`. Reason: complete the distribution
+of authorized budgets without changing their amounts or losing history.
+Evidence: `docs/roadmap/budget-distribution-20261014-candidate.md`.
+
+Una revisión de distribución puede sustituir al presupuesto activo, incluso
+congelado, únicamente al aprobarse con las mismas partidas e importes y con
+las semanas conciliadas al total. El original conserva su historial; otro
+ajuste requiere otra revisión. Cada semana se asigna al mes en que empieza;
+el acumulado incluye completo el mes seleccionado. Las 26 categorías fijas
+quedan en N/D hasta que Finanzas confirme qué partidas corresponden a cada
+una. La tabla por partidas reales sí muestra los periodos.
+
+This records approved candidate rules, not production correction or business
+acceptance. Git publication was separately authorized through
+`Sentinel_a80479c5cb1081919315d4fa293a5777`; merge and deployment are not
+authorized. Finance crosswalk, the identified incident case and authenticated
+UAT remain pending. Economic replacement and historical retirement are outside
+this distribution-only scope.

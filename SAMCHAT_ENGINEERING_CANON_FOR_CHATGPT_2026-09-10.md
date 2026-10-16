@@ -531,3 +531,25 @@ business acceptance.
 Fecha: 2026-10-15. Texto y especificación técnica aprobados explícitamente por el usuario con «aprobada». Razón: corregir cargos omitidos por período conservando fuentes y controles financieros. Evidencia: `docs/roadmap/amex-qa-remediation-20261015-spec.md`, sección 9, y assessment QA asociado. Candidato aprobado para implementación; migración, aplicación productiva, promoción y UAT mantienen sus propios checkpoints.
 
 La recuperación acotada de período utiliza revisiones y recibos append-only vinculados a las filas originales omitidas, con una única relación de fuente efectiva compartida por Python y guards SQL. Los headers, originales, membresía física y anclas existentes permanecen inmutables; sólo se crean anclas para cargos demostrados antes no importados. Matching, vigencia, presupuesto, reconocimiento, unicidad fiscal y freeze resuelven la misma fuente efectiva. El corte conserva cobertura total y evidencia de la revisión. Versiones, locks y constraints rechazan correcciones concurrentes incompatibles, fuentes ajenas, doble reconocimiento y recuperación después de un corte. El esquema se instala mediante migración owner-run explícita y no permite downgrade operativo a código que ignore recuperaciones existentes.
+## 21. Approved budget distribution revision rules
+
+Date: 2026-10-14. Human approval: Francisco, evidence
+`Sentinel_e34dca62ad888191ae00a160c9ee5b09`. Reason: reconcile weekly planning
+and executive period reads while preserving authorized budget history.
+Evidence: `docs/roadmap/budget-distribution-20261014-candidate.md`.
+
+Una revisión de distribución puede sustituir al presupuesto activo, incluso
+congelado, únicamente al aprobarse con las mismas partidas e importes y con
+las semanas conciliadas al total. El original conserva su historial; otro
+ajuste requiere otra revisión. Cada semana se asigna al mes en que empieza;
+el acumulado incluye completo el mes seleccionado. Las 26 categorías fijas
+quedan en N/D hasta que Finanzas confirme qué partidas corresponden a cada
+una. La tabla por partidas reales sí muestra los periodos.
+
+The candidate keeps the owning budgets services and existing permissions;
+approved successor selection is explicit rather than an arbitrary replacement
+of a frozen source. Missing planning evidence stays missing. No production
+write, merge, deployment or business acceptance follows from these rules.
+Git publication is separately authorized by
+`Sentinel_a80479c5cb1081919315d4fa293a5777`. Finance crosswalk and authenticated
+UAT remain pending; economic replacement and retirement need separate design.

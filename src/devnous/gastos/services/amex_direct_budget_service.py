@@ -241,7 +241,8 @@ async def send_direct_items_to_budget(
 async def _line(
     session: Any, line_id: UUID, *, locked: bool = False
 ) -> dict[str, Any] | None:
-    sql = """SELECT l.*, v.edition_year, v.status AS version_status, v.version_name
+    sql = """SELECT l.*, v.edition_year, v.status AS version_status,
+        v.source AS version_source, v.version_name
         FROM budget_lines l JOIN budget_versions v ON v.id=l.budget_version_id
         WHERE l.id=:line_id"""
     if locked:
@@ -258,6 +259,7 @@ def _line_matches(item: Any, line: dict[str, Any], config: dict[str, Any]) -> bo
     )
     return (
         allowed
+        and line.get("version_source") != "distribution_revision"
         and line["budget_concept_id"] == item.budget_concept_id
         and line.get("line_direction") == "expense"
         and line.get("tournament_id") == item.tournament_id
@@ -583,7 +585,7 @@ async def list_direct_budget_lines(
                 await session.execute(
                     text(
                         """SELECT l.*,v.edition_year,v.status AS version_status,
-            v.version_name
+            v.source AS version_source, v.version_name
             FROM budget_lines l JOIN budget_versions v ON v.id=l.budget_version_id
             WHERE l.budget_concept_id=:concept
             ORDER BY v.version_name,l.concept_name,l.id"""
