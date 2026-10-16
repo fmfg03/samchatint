@@ -130,3 +130,7 @@ Open `/admin/contabilidad/amex/estados`, upload the original and declare a perio
 ## Cierre para revisión humana
 
 Implementación, aceptación y validación independiente terminadas. Candidato de 69 archivos preparado en el índice del worktree aislado; diff completo revisable en `/tmp/samchat-amex-qa-remediation-20261015.patch`. No hay commit, push, PR, merge ni despliegue de esta corrección. Se eliminó únicamente la base temporal propia después de verificar cero conexiones pendientes; se conservaron los recibos, hashes y archivos de prueba.
+
+## Actualización de publicación y medición — 2026-10-16
+
+Tras la aprobación final y autorización de publicación, el candidato se publicó como commit `3170b73a2` en PR #491. El cierre anterior describe el punto de control previo a esa autorización. La primera ejecución CI reveló descubrimiento incompleto de aceptación e instrumentación sin greenlet. El seguimiento acotado incorpora 39 casos originales a integración, tres casos HTTP y configuración explícita de concurrencia; no cambia las 40 huellas originales de código/pruebas. La medición histórica de85.51% queda sustituida por **594/642 (92.52%)**, obtenida exclusivamente de datos frescos correctamente instrumentados: **839 pruebas aprobadas**, más **5 de navegador**. Validación independiente del seguimiento: **CLEAN_WITH_NOTES**, sin hallazgos. Véanse los reportes `amex-qa-remediation-20261016-ci-followup.md` y `amex-qa-remediation-20261016-ci-validation.md`. Nueva ejecución de GitHub pendiente. Sin migración, recuperación ni despliegue productivo.

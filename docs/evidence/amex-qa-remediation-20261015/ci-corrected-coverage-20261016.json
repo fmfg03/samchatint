@@ -1,0 +1,190 @@
+{
+  "changed_statements": 642,
+  "covered": 594,
+  "percent": 92.52,
+  "files": [
+    {
+      "path": "src/devnous/gastos/amex_direct_models.py",
+      "changed_statements": 42,
+      "covered": 42,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/amex_schema_policy.py",
+      "changed_statements": 0,
+      "covered": 0,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/models.py",
+      "changed_statements": 0,
+      "covered": 0,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/routes/admin_amex_direct_routes.py",
+      "changed_statements": 175,
+      "covered": 162,
+      "missing": [
+        780,
+        988,
+        1000,
+        1010,
+        1013,
+        1352,
+        1354,
+        1355,
+        1356,
+        1380,
+        1466,
+        1578,
+        1579
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/routes/user_routes.py",
+      "changed_statements": 0,
+      "covered": 0,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/access_control_service.py",
+      "changed_statements": 0,
+      "covered": 0,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_accounting_identity_service.py",
+      "changed_statements": 16,
+      "covered": 16,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_cut_export_service.py",
+      "changed_statements": 5,
+      "covered": 5,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_accounting_service.py",
+      "changed_statements": 19,
+      "covered": 16,
+      "missing": [
+        403,
+        404,
+        866
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_budget_service.py",
+      "changed_statements": 24,
+      "covered": 18,
+      "missing": [
+        635,
+        644,
+        719,
+        720,
+        733,
+        790
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_cfdi_search_service.py",
+      "changed_statements": 78,
+      "covered": 73,
+      "missing": [
+        44,
+        51,
+        54,
+        114,
+        115
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_common.py",
+      "changed_statements": 11,
+      "covered": 11,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_context_service.py",
+      "changed_statements": 4,
+      "covered": 4,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_effective_source_service.py",
+      "changed_statements": 37,
+      "covered": 37,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_intake_service.py",
+      "changed_statements": 18,
+      "covered": 16,
+      "missing": [
+        206,
+        338
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_matching_service.py",
+      "changed_statements": 20,
+      "covered": 18,
+      "missing": [
+        664,
+        732
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_recovery_service.py",
+      "changed_statements": 128,
+      "covered": 117,
+      "missing": [
+        91,
+        93,
+        96,
+        117,
+        137,
+        156,
+        169,
+        181,
+        183,
+        251,
+        388
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_schema_contract.py",
+      "changed_statements": 6,
+      "covered": 6,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_schema_service.py",
+      "changed_statements": 4,
+      "covered": 4,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_status_service.py",
+      "changed_statements": 49,
+      "covered": 44,
+      "missing": [
+        378,
+        381,
+        428,
+        429,
+        437
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_recognition_service.py",
+      "changed_statements": 6,
+      "covered": 5,
+      "missing": [
+        843
+      ]
+    }
+  ]
+}

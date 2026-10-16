@@ -1,0 +1,49 @@
+{
+  "date": "2026-10-16",
+  "pr": 491,
+  "initial_commit": "3170b73a2e3e3b2644166416483f120483cf336f",
+  "initial_40_reviewed_hashes_unchanged": true,
+  "discovery": {
+    "previously_omitted_acceptance_cases": 39,
+    "integration_http_cases": 3,
+    "integration_collection": 42
+  },
+  "postgres_version": 15,
+  "scoped_correct_instrumentation_run": {
+    "passed": 839,
+    "warnings": 1271,
+    "seconds": 132.98,
+    "coverage_config": ".github/coverage-repository.ini",
+    "includes": "797 AMEX units +39 original acceptance assertions +3 real HTTP cases"
+  },
+  "browser_affected_file": {
+    "passed": 5,
+    "seconds": 7.04
+  },
+  "accurate_changed_statement_coverage": {
+    "covered": 594,
+    "total": 642,
+    "percent": 92.52,
+    "data_file": "/tmp/amex-pr491-correct-instrumentation.coverage",
+    "only_fresh_correctly_instrumented_data": true
+  },
+  "quality_gate_contract": "PASS",
+  "independent_validation": "CLEAN_WITH_NOTES",
+  "production_writes": 0,
+  "source_sha256": {
+    ".github/coverage-repository.ini": "1caee0f3749a6219e9da2cd26217a08afe2778af39b4ef5b6be6339bea7c370f",
+    ".github/workflows/test.yml": "3d54cb41e2b88bc212fb1163d99b0c48d9cb007c2476410ed09fdb9d17b95c32",
+    "tests/browser/test_amex_direct_workflow.py": "452fc6d2868ac84b13a2402d8e06b5bfeb957b75a999f86e4e44240e92d58993",
+    "tests/integration/test_amex_qa_remediation_postgres.py": "7f1a4bb1dfd9aaa53e056c7c550272ddf366082ec738017842e802b3e966e4ae",
+    "tests/integration/test_amex_qa_direct_http_postgres.py": "578714aaffe7a03f70212da438f94a818f60de45050b2b58764047d2db0b87f8"
+  },
+  "original_ci_failures": {
+    "run_id": 38919707838,
+    "coverage_reported_percent": 63,
+    "cause": "39 required acceptance cases undiscovered; missing greenlet concurrency caused incorrect attribution",
+    "browser_run": 38919707725,
+    "browser_result": "1 failed89passed: assignment test used already-assigned fixture while new UI is return-only"
+  },
+  "original_local_coverage_superseded": true,
+  "canonical_product_behavior_changed": false
+}

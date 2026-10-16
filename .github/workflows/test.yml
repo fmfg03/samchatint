@@ -97,6 +97,7 @@ jobs:
         run: |
           set +e
           python -m pytest tests/unit \
+            --cov-config=.github/coverage-repository.ini \
             --ignore=tests/unit/private_plugin \
             --ignore=tests/unit/readonly_gateway \
             --cov=src \
@@ -223,6 +224,7 @@ jobs:
           TEST_AMEX_DATABASE_URL: postgresql+asyncpg://test_user:test_password@127.0.0.1:55471/devnous_test
         run: |
           python -m pytest tests/integration \
+            --cov-config=.github/coverage-repository.ini \
             --ignore=tests/integration/private_plugin \
             --cov=src \
             --cov=copa_telmex_dashboard \
