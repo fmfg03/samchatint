@@ -1,7 +1,10 @@
 """Anonymous PDF layouts exercise extraction through quick-expense validation."""
 
 import ast
+import json
 import re
+import shutil
+import subprocess
 from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
@@ -348,3 +351,127 @@ def test_explicit_zero_subtotal_remains_zero_in_autofill():
     assert fields.total == "0.00"
     with pytest.raises(ValueError, match="TOTAL debe ser mayor a cero"):
         capture(parsed)
+
+
+@pytest.mark.parametrize(
+    "rows,tax",
+    [
+        ("IVA 16% 16.00\nIVA 0% 0.00", 16),
+        ("IVA 8% 8.00\nIVA 16% 16.00", 24),
+        ("IVA 8% 8.00\nIVA 16% 8.00", 16),
+    ],
+)
+def test_distinct_explicit_iva_rate_rows_are_added(rows, tax):
+    parsed = pdf_reader._parse_from_text(
+        HEADER + f"Subtotal 200.00\n{rows}\nTotal {200 + tax:.2f}"
+    )
+    assert parsed["total_impuestos_trasladados"] == tax
+    assert capture(parsed)["total"] == Decimal(200 + tax)
+    parsed["total"] += 1
+    with pytest.raises(ValueError, match="TOTAL del PDF no coincide"):
+        capture(parsed)
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        "IVA 16% 16.00\nIVA 16.00% 20.00",
+        "IVA 16% 16.00\nIVA 0% 0.00\nIVA 100.00",
+        "IVA 16% 16.00\nIVA 0% 0.00\nTrasladado 100.00",
+        "IVA 16% 16.00 detalle\nIVA 0% 0.00",
+        "IVA 16% 16.00\nIVA 0% 0.00\nRetencion IVA 4.00",
+        "IVA 16% 16.00\nIVA 16% 16.00\nIVA 0% 0.00",
+    ],
+)
+def test_iva_rows_do_not_hide_conflicting_or_unclassified_candidates(rows):
+    parsed = pdf_reader._parse_from_text(
+        HEADER + f"Subtotal 100.00\n{rows}\nTotal 116.00"
+    )
+    assert "traslados" in parsed["_pdf_ambiguous_fields"]
+    with pytest.raises(ValueError, match="importes ambiguos"):
+        capture(parsed)
+
+
+def test_explicit_tax_summary_still_precedes_rate_rows():
+    parsed = pdf_reader._parse_from_text(
+        HEADER + "Subtotal 200.00\nIVA 16% 16.00\nIVA 0% 0.00\n"
+        "Total impuestos trasladados 24.00\nTotal 224.00"
+    )
+    assert parsed["total_impuestos_trasladados"] == 24
+    assert capture(parsed)["total"] == Decimal("224.00")
+
+
+@pytest.mark.parametrize("missing", ["optional", "all", "none"])
+def test_actual_autofill_js_replaces_previous_amounts(missing):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node required to execute the actual autofill function")
+    ui = ROUTE_PATH.with_name("solicitud_transferencia_ui.py").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(
+        r"(?ms)^def render_cfdi_quick_expense_autofill_script\(.*?(?=^def |\Z)", ui
+    )
+    scope = {"json": json}
+    exec(compile(match.group(), "cfdi_autofill_ui", "exec"), scope)
+    rendered = scope["render_cfdi_quick_expense_autofill_script"]()
+    function = re.search(
+        r"(?s)function applyAutofill\(payload\).*?(?=\s*async function)", rendered
+    ).group()
+    update_total = re.search(
+        r"(?s)function updateTotal\(\).*?(?=\s*\[subtotal,)", rendered
+    ).group()
+    sync_tip = re.search(
+        r"(?s)function syncTipVisibility\(\).*?(?=\s*function updateTotal)", rendered
+    ).group()
+    input_listeners = re.search(
+        r"(?s)\[subtotal, descuento, impuestosYRetenciones\].*?(?=\s*if \(tipInput\))",
+        rendered,
+    ).group()
+    parsed = pdf_reader._parse_from_text(
+        HEADER
+        + ("" if missing == "all" else "Subtotal 100.00\nTotal 100.00\n")
+        + ("Descuento 0.00\nIVA 0.00" if missing == "none" else "")
+    )
+    fields = autofill.autofill_quick_expense_from_parsed_cfdi(parsed)
+    script = (
+        """
+const fecha = {value:''}, numeroFactura = {value:''}, subtotal = {value:'200.00'};
+const descuento = {value:'10.00'}, impuestosYRetenciones = {value:'30.40'};
+const total = {value:'220.40'};
+let xmlTotal = 220.40;
+let fiscalTotalMissing = false;
+const tipColumns = [], tipInput = {value:'0'};
+const money = Number;
+function isFoodContext() {return false;}
+const listeners = [];
+[subtotal, descuento, impuestosYRetenciones].forEach(el => {
+  el.addEventListener = (_event, callback) => listeners.push(callback);
+});
+"""
+        + update_total
+        + sync_tip
+        + function
+        + input_listeners
+        + """
+applyAutofill(JSON.parse(process.argv[1]));
+updateTotal();
+const populated = [
+  subtotal.value, descuento.value, impuestosYRetenciones.value, total.value
+];
+subtotal.value = '120.00';
+listeners[0]();
+console.log(JSON.stringify({populated, manuallyCalculated: total.value}));
+"""
+    )
+    result = subprocess.run(
+        [node, "-e", script, json.dumps(vars(fields))],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    optional = "0.00" if missing == "none" else ""
+    required = "" if missing == "all" else "100.00"
+    actual = json.loads(result.stdout)
+    assert actual["populated"] == [required, optional, optional, required]
+    assert actual["manuallyCalculated"] == "120.00"

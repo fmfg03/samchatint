@@ -10,6 +10,7 @@ import io
 import logging
 import re
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from devnous.document_parsing import parse_document_bytes
@@ -236,10 +237,43 @@ def _field_amount_candidates(text: str, key: str) -> set[float]:
     if key in {"subtotal", "traslados", "retenciones"}:
         # Summary labels are synonyms. A generic Base or individual tax is
         # only a fallback when no summary exists, not a competing total.
-        return _labeled_amount_candidates(text, patterns[:2]) or (
-            _labeled_amount_candidates(text, patterns[2:])
-        )
+        summary = _labeled_amount_candidates(text, patterns[:2])
+        if summary:
+            return summary
+        fallback = _labeled_amount_candidates(text, patterns[2:])
+        if key == "traslados" and fallback:
+            combined = _explicit_iva_rate_total(text, patterns[2:])
+            if combined is not None:
+                return {combined}
+        return fallback
     return _labeled_amount_candidates(text, patterns)
+
+
+def _explicit_iva_rate_total(text: str, patterns: List[str]) -> Optional[float]:
+    # Only complete, explicitly rated IVA rows can be combined. Every fallback
+    # amount must belong to one of those rows; never balance against the total.
+    rows = list(
+        re.finditer(
+            rf"(?im)^[ \t]*IVA[ \t]+(\d{{1,2}}(?:\.\d+)?)%[ \t]*"
+            rf"[:\-]?[ \t]*{_MONEY_PREFIX}[ \t]*{_AMOUNT_CAPTURE}"
+            rf"[ \t]*(?:MXN)?[ \t]*\r?$",
+            text,
+        )
+    )
+    candidates = {
+        match.span(1) for pattern in patterns for match in re.finditer(pattern, text)
+    }
+    if len(rows) < 2 or candidates != {row.span(2) for row in rows}:
+        return None
+    by_rate: Dict[Decimal, Decimal] = {}
+    for row in rows:
+        rate = Decimal(row.group(1))
+        amount = Decimal(row.group(2).replace(",", ""))
+        if rate in by_rate:
+            # Repeated rates can be detail rows or duplicate summaries.
+            return None
+        by_rate[rate] = amount
+    return float(sum(by_rate.values()))
 
 
 def _find_labeled_amount(text: str, labels: List[str]) -> Optional[float]:
