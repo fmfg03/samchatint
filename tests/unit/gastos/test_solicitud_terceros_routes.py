@@ -754,7 +754,7 @@ def test_quick_expense_cfdi_autofill_keeps_xml_total_as_authority():
 
     assert "if (concepto && payload.concepto)" not in script
     assert "CFDI leido. Se precargaron fecha, folio, montos e impuestos" in script
-    assert "if (total && payload.total)" in script
+    assert "if (total && payload.total !== undefined)" in script
     assert "total.value = payload.total" in script
     assert "tipInput" in script
     assert "&& (!subtotal || !subtotal.value)" not in script

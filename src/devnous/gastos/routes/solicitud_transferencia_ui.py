@@ -1057,6 +1057,7 @@ def render_cfdi_quick_expense_autofill_script(
             const notice = document.getElementById({json.dumps(notice_id)});
             let autofillRequestId = 0;
             let xmlTotal = null;
+            let fiscalTotalMissing = false;
 
             function money(value) {{
                 const parsed = Number.parseFloat(value || '0');
@@ -1101,6 +1102,10 @@ def render_cfdi_quick_expense_autofill_script(
 
             function updateTotal() {{
                 if (!total) return;
+                if (fiscalTotalMissing) {{
+                    total.value = '';
+                    return;
+                }}
                 const baseTotal = xmlTotal !== null
                     ? xmlTotal
                     : (
@@ -1116,6 +1121,7 @@ def render_cfdi_quick_expense_autofill_script(
                 if (!el) return;
                 el.addEventListener('input', function() {{
                     xmlTotal = null;
+                    fiscalTotalMissing = false;
                     updateTotal();
                 }});
             }});
@@ -1150,21 +1156,21 @@ def render_cfdi_quick_expense_autofill_script(
                 if (numeroFactura && payload.numero_factura) {{
                     numeroFactura.value = payload.numero_factura;
                 }}
-                if (subtotal && payload.subtotal) {{
+                if (subtotal && payload.subtotal !== undefined) {{
                     subtotal.value = payload.subtotal;
                 }}
-                if (descuento && payload.descuento !== undefined && payload.descuento !== '') {{
+                if (descuento && payload.descuento !== undefined) {{
                     descuento.value = payload.descuento;
                 }}
                 if (
                     impuestosYRetenciones
                     && payload.impuestos_y_retenciones !== undefined
-                    && payload.impuestos_y_retenciones !== ''
                 ) {{
                     impuestosYRetenciones.value = payload.impuestos_y_retenciones;
                 }}
-                if (total && payload.total) {{
-                    xmlTotal = money(payload.total);
+                if (total && payload.total !== undefined) {{
+                    fiscalTotalMissing = payload.total === '';
+                    xmlTotal = fiscalTotalMissing ? null : money(payload.total);
                     total.value = payload.total;
                 }}
                 syncTipVisibility();

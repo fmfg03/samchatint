@@ -295,6 +295,7 @@ async def _capture_with_supplement(
     monkeypatch, prefix, primary_shared, supplement_shared
 ):
     from devnous.gastos.routes import user_routes
+    from devnous.gastos.services.cfdi_upload_resolver import ResolvedCfdiUpload
 
     # This fixture isolates shared fiscal amounts; real mapping is covered by
     # test_finance_budget_tax_regressions using actual ExpenseReport creation.
@@ -378,10 +379,12 @@ async def _capture_with_supplement(
         if kwargs["xml_bytes"] is None:
             return None, None
         return (
-            SimpleNamespace(
+            ResolvedCfdiUpload(
                 parsed=(
                     fiscal if kwargs["xml_bytes"] == b"primary" else supplement_fiscal
-                )
+                ),
+                xml_text=kwargs["xml_bytes"].decode("utf-8"),
+                from_uploaded_xml=True,
             ),
             None,
         )
