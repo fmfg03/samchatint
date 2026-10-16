@@ -110,9 +110,9 @@ def test_text_other_local_tax_is_not_inferred_as_ish():
     assert quick_expense_tax_components_from_parsed(parsed).ish == 0
 
 
-def test_text_explicit_ish_is_not_inferred_into_federal_tax_when_iva_absent():
+def test_text_missing_iva_is_not_invented_from_the_total_difference():
     parsed = _parse_from_text(TEXT.replace("IVA 16% 704.00\n", ""))
-    assert parsed["total_impuestos_trasladados"] == 704
+    assert parsed["total_impuestos_trasladados"] is None
     assert parsed["impuestos_detalle"]["locales"][0]["importe"] == 176
 
 

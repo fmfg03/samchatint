@@ -8,7 +8,7 @@ import re
 import unicodedata
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Dict, Optional, Tuple
 
 
@@ -251,7 +251,11 @@ def quick_expense_tax_components_from_parsed(
     )
     total = _decimal_money(parsed.get("total"))
 
-    if total == 0 and subtotal > 0:
+    if (
+        parsed.get("total") in (None, "")
+        and subtotal > 0
+        and "_pdf_explicit_fields" not in parsed
+    ):
         total = compute_quick_expense_total(
             subtotal,
             descuento,
@@ -311,7 +315,18 @@ def autofill_quick_expense_from_parsed_cfdi(
     descuento = f"{taxes.descuento:.2f}" if taxes.descuento else "0.00"
     impuestos_y_retenciones = f"{taxes.impuestos_y_retenciones:.2f}"
     total = f"{taxes.total:.2f}" if taxes.total else ""
-    if not total and subtotal:
+    is_text_pdf = "_pdf_explicit_fields" in parsed
+    if is_text_pdf:
+        subtotal = (
+            "" if parsed.get("subtotal") is None else f"{taxes.subtotal_captura:.2f}"
+        )
+        descuento = "" if parsed.get("descuento") is None else f"{taxes.descuento:.2f}"
+        total = "" if parsed.get("total") is None else f"{taxes.total:.2f}"
+        if parsed.get("total_impuestos_trasladados") is None and not any(
+            (parsed.get("impuestos_detalle") or {}).values()
+        ):
+            impuestos_y_retenciones = ""
+    if not is_text_pdf and not total and subtotal and parsed.get("total") in (None, ""):
         computed = taxes.calculated_total
         if computed > 0:
             total = f"{computed:.2f}"
@@ -334,8 +349,8 @@ def autofill_quick_expense_from_parsed_cfdi(
         fecha=fecha,
         numero_factura=numero_factura,
         subtotal=subtotal,
-        descuento=descuento or "0.00",
-        impuestos_y_retenciones=impuestos_y_retenciones or "0.00",
+        descuento=descuento,
+        impuestos_y_retenciones=impuestos_y_retenciones,
         total=total,
     )
 

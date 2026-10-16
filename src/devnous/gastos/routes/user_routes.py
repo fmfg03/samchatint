@@ -44389,6 +44389,7 @@ def _quick_expense_values(
     propina_no_deducible: Optional[str] = None,
     xml_data: Optional[Dict[str, Any]] = None,
     factura_compartida: bool = False,
+    cfdi_source: Optional[str] = None,
 ) -> Dict[str, Any]:
     xml_data = xml_data or {}
     concepto_final = (concepto or "").strip()
@@ -44398,6 +44399,26 @@ def _quick_expense_values(
         required=False,
     )
     if xml_data:
+        source = (
+            "PDF"
+            if cfdi_source == "PDF" or "_pdf_explicit_fields" in xml_data
+            else "XML"
+        )
+        if xml_data.get("_pdf_ambiguous_fields"):
+            raise ValueError(
+                "El PDF contiene importes ambiguos. "
+                "Revisa el PDF o adjunta el CFDI XML original."
+            )
+        missing = [
+            label
+            for key, label in (("subtotal", "Sub total"), ("total", "TOTAL"))
+            if xml_data.get(key) in (None, "")
+        ]
+        if missing:
+            raise ValueError(
+                f"No se pudo leer {', '.join(missing)} del {source} de la factura. "
+                f"Revisa el {source} o adjunta el CFDI XML original."
+            )
         fecha_xml = xml_data.get("fecha")
         fecha_final = fecha_xml.strftime("%Y-%m-%d") if fecha_xml else (fecha or "").strip()
         numero_final = (xml_data.get("cfdi_uuid") or numero_factura or "").strip()
@@ -44420,11 +44441,11 @@ def _quick_expense_values(
         )
         if abs(calculated_total - xml_total) > Decimal("0.01"):
             raise ValueError(
-                "El TOTAL del XML no coincide con Sub total - Descuento + "
-                f"Impuestos y retenciones. TOTAL XML: ${xml_total:,.2f}; "
+                f"El TOTAL del {source} no coincide con Sub total - Descuento + "
+                f"Impuestos y retenciones. TOTAL {source}: ${xml_total:,.2f}; "
                 f"total calculado: ${calculated_total:,.2f}. Diferencia: "
                 f"${abs(xml_total - calculated_total):,.2f}. "
-                "Revisa el XML de la factura."
+                f"Revisa el {source} de la factura."
             )
         if factura_compartida:
             subtotal_amount = _quick_expense_decimal(subtotal, "Sub total aplicado")
@@ -44697,6 +44718,9 @@ async def crear_gasto_rapido_en_informe(
             propina_no_deducible=propina_no_deducible,
             xml_data=xml_data,
             factura_compartida=_form_checkbox_checked(cfdi_compartido_confirmado),
+            cfdi_source=(
+                "XML" if resolved_cfdi and resolved_cfdi.from_uploaded_xml else "PDF"
+            ),
         )
         if no_deducible_material:
             values["numero_factura"] = "no facturable"
@@ -44918,6 +44942,11 @@ async def crear_gasto_rapido_en_informe(
                 propina_no_deducible="0",
                 xml_data=supplement_cfdi.parsed if supplement_cfdi else {},
                 factura_compartida=_form_checkbox_checked(shared_confirmed),
+                cfdi_source=(
+                    "XML"
+                    if supplement_cfdi and supplement_cfdi.from_uploaded_xml
+                    else "PDF"
+                ),
             )
             supplement_expense = await create_expense_from_data(
                 session=session,
