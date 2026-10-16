@@ -29,3 +29,13 @@ Runner final: `PYTHONPATH=src:.:/tmp/samchat-amex-source-testdeps /root/samchat/
 ## Riesgos y límites
 
 Sin desviación de las reglas aprobadas. Se conserva la plantilla fija de26 categorías como N/D hasta que Finanzas apruebe su crosswalk. Torneo/versión del incidente real, datos productivos, despliegue y UAT autenticada permanecen separados. Este PR no requiere migración. El cierre técnico no acredita aceptación de negocio ni corrige datos históricos por sí mismo.
+
+## Compatibilidad del selector AMEX — seguimiento previo a merge
+
+La comprobación final del módulo AMEX incorporado por `main` detectó un segundo lector incompatible con el guard financiero ya aprobado. El selector de Control Presupuestal listaba líneas de revisiones de distribución porque no leía su `source`; al enviarlas, el owner canónico las rechazaba correctamente. Se deshabilitó el merge automático mientras se corrigió esta oferta de opciones inválidas.
+
+`amex_direct_budget_service.py` ahora proyecta `v.source AS version_source` en las dos lecturas de partida y excluye `distribution_revision` en el predicado compartido del selector y la asignación bajo lock. Originales financieros, estados ordinarios, alcance, concepto, dirección, edición y política draft permanecen intactos. No cambia el guard canónico ni el ownership. `test_amex_direct_budget_display.py` añade doce casos: copias approved/frozen no ofrecidas, originales disponibles, envío directo de copia rechazado sin owner/evento/mutación y ocho políticas ordinarias conservadas.
+
+137 pruebas específicas PASS; Black, isort, Flake8, mypy y diff check PASS. Validador independiente ejecutó14 pruebas PASS y declaró CLEAN_WITH_NOTES sin hallazgos. La continuidad de aprobación se mantiene: hace cumplir el guard financiero existente, sin regla nueva ni nuevo texto canónico. La corrida conjunta y cobertura frescas se registran en el recibo de compatibilidad; la evidencia anterior de634 casos corresponde a `b11648411`.
+
+Resultado final integrado de compatibilidad: **648 PASS**,70 warnings heredados,134.40s;36 targets, nueve casos PostgreSQL15 (siete de distribución y dos de catálogo/retorno AMEX). Cobertura fresca: **323/377 (85.68%)**; predicado AMEX1/1 y lectores P1 4/4 cada uno. Huellas de los dos archivos verificadas independientemente; CLEAN_WITH_NOTES sin hallazgos. Recibos: `compatibility-verification-summary.json` y `compatibility-source-coverage.json`. Nuevos checks requeridos sobre el head corregido antes de merge.
