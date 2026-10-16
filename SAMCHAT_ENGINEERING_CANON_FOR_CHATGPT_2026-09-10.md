@@ -524,3 +524,10 @@ Evidence: `docs/roadmap/ctt-pilot-batch-admission.md`, focused unit and regressi
 tests, and isolated PostgreSQL migration/constraint/rollback tests. This remains
 repository evidence under review, not deployment, data admission, UAT, or
 business acceptance.
+
+
+### AMEX directo: recuperación auditada de cobertura temporal
+
+Fecha: 2026-10-15. Texto y especificación técnica aprobados explícitamente por el usuario con «aprobada». Razón: corregir cargos omitidos por período conservando fuentes y controles financieros. Evidencia: `docs/roadmap/amex-qa-remediation-20261015-spec.md`, sección 9, y assessment QA asociado. Candidato aprobado para implementación; migración, aplicación productiva, promoción y UAT mantienen sus propios checkpoints.
+
+La recuperación acotada de período utiliza revisiones y recibos append-only vinculados a las filas originales omitidas, con una única relación de fuente efectiva compartida por Python y guards SQL. Los headers, originales, membresía física y anclas existentes permanecen inmutables; sólo se crean anclas para cargos demostrados antes no importados. Matching, vigencia, presupuesto, reconocimiento, unicidad fiscal y freeze resuelven la misma fuente efectiva. El corte conserva cobertura total y evidencia de la revisión. Versiones, locks y constraints rechazan correcciones concurrentes incompatibles, fuentes ajenas, doble reconocimiento y recuperación después de un corte. El esquema se instala mediante migración owner-run explícita y no permite downgrade operativo a código que ignore recuperaciones existentes.

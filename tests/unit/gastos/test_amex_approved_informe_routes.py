@@ -438,6 +438,10 @@ def test_statement_only_requires_explicit_exception_reason(monkeypatch):
 
 
 async def bank_page(monkeypatch, *, bound=False):
+    # Source-schema admission is covered independently on owner PostgreSQL.
+    monkeypatch.setattr(
+        user_routes, "effective_direct_sources_available", AsyncMock(return_value=False)
+    )
     charge = SimpleNamespace(
         id=uuid4(),
         fecha=datetime(2026, 10, 5),

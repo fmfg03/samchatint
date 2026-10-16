@@ -40,11 +40,14 @@ async def _status_candidates(
 ) -> list[dict[str, Any]]:
     from datetime import timedelta
 
+    from .amex_direct_effective_source_service import effective_source_for_item
+
     candidates = {}
     for item in items:
-        if item.movement_kind != "debit" or item.accounting_status == "recognized":
+        source = await effective_source_for_item(session, item)
+        if source.movement_kind != "debit" or item.accounting_status == "recognized":
             continue
-        expense = await session.get(ExpenseReport, item.imported_expense_id)
+        expense = await session.get(ExpenseReport, source.imported_expense_id)
         if expense is None or expense.fecha is None:
             continue
         merchant, _ = await _merchant(session, item, context, statement.card_account_id)
@@ -339,3 +342,117 @@ async def consult_direct_statement_status(
         state.progress_json = progress
         matched.progress = progress
         return matched
+
+
+async def consult_selected_direct_cfdi_status(
+    factory: Any,
+    *,
+    actor_id: UUID,
+    import_id: UUID,
+    item_id: UUID,
+    cfdi_id: UUID,
+    expected_source_version: int,
+    expected_item_version: int,
+    expected_identity_hash: str,
+    request_key: str,
+    consented: bool,
+    status_service: Any = None,
+) -> DirectResult:
+    """Observe exactly one explicit choice, without linking or widening matching."""
+    from .amex_direct_common import require_unfrozen
+    from .amex_direct_effective_source_service import effective_source_for_item
+
+    if not consented or not request_key:
+        return DirectResult("pending", "sat_consent_required")
+
+    async def validate(session):
+        statement, state, context, _ = await load_statement(
+            session, actor_id, import_id, "vigencia", locked=True, finance=True
+        )
+        await require_unfrozen(session, import_id)
+        if context is None or state.source_version != expected_source_version:
+            raise DirectConflict("stale_source_version")
+        items = await load_items(session, import_id, locked=True)
+        item = next((row for row in items if row.id == item_id), None)
+        if item is None or item.source_version != expected_item_version:
+            raise DirectConflict("stale_item_version")
+        source = await effective_source_for_item(session, item)
+        if source.movement_kind != "debit" or item.accounting_status == "recognized":
+            raise DirectConflict("item_context_mismatch")
+        cfdi = await session.get(CFDIReport, cfdi_id, populate_existing=True)
+        # Do not expose or consult a document outside the receiver context.
+        if (
+            cfdi is None
+            or str(cfdi.receptor_rfc or "").upper().strip() != context.receiver_rfc
+        ):
+            raise DirectConflict("cfdi_missing")
+        identity = cfdi_identity(cfdi)
+        if digest(identity) != expected_identity_hash:
+            raise DirectConflict("fiscal_identity_changed")
+        source_hash = digest(
+            [
+                str(context.id),
+                context.version,
+                source.source_json,
+                str(source.imported_expense_id),
+                item.source_version,
+            ]
+        )
+        return state, cfdi, identity, source_hash
+
+    async with factory.begin() as session:
+        state, cfdi, identity, source_hash = await validate(session)
+        receipt = await current_status_receipt(session, cfdi)
+        if receipt and receipt.observed_status in REUSABLE_STATUSES:
+            return DirectResult(
+                "observed",
+                source_version=state.source_version,
+                progress={
+                    "status": receipt.observed_status,
+                    "receipt_id": str(receipt.id),
+                    "cached": True,
+                },
+            )
+    # No database transaction or lock survives the external request.
+    service = status_service or SATCFDIStatusService()
+    try:
+        response = await asyncio.wait_for(
+            service.consult_status(
+                uuid=identity["uuid"],
+                rfc_emisor=identity["rfc_emisor"],
+                rfc_receptor=identity["rfc_receptor"],
+                total=identity["total"],
+            ),
+            timeout=EXTERNAL_BUDGET_SECONDS,
+        )
+    except (asyncio.TimeoutError, OSError, ValueError):
+        return DirectResult("pending", "sat_status_pending")
+    if not isinstance(response, dict) or not _observed_request_matches(
+        response, identity
+    ):
+        return DirectResult("pending", "invalid_observed_request")
+    async with factory.begin() as session:
+        state, cfdi, current_identity, current_source_hash = await validate(session)
+        if current_source_hash != source_hash or current_identity != identity:
+            return DirectResult("pending", "sat_progress_source_changed")
+        receipt = AmexCFDIStatusReceipt(
+            cfdi_id=cfdi.id,
+            fiscal_uuid=identity["uuid"],
+            issuer_rfc=identity["rfc_emisor"],
+            receiver_rfc=identity["rfc_receptor"],
+            amount=identity["total"],
+            xml_hash=identity["xml_hash"],
+            request_hash=digest(identity),
+            observed_status=str(response.get("status") or "unknown").lower(),
+            response_json=response,
+            response_hash=digest(response),
+            actor_id=actor_id,
+            observed_at=datetime.now(timezone.utc),
+        )
+        session.add(receipt)
+        await session.flush()
+        return DirectResult(
+            "observed",
+            source_version=state.source_version,
+            progress={"status": receipt.observed_status, "receipt_id": str(receipt.id)},
+        )

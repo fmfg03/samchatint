@@ -11,6 +11,7 @@ from devnous.gastos.amex_schema_policy import AMEX_DIRECT_OWNER_MIGRATION_TABLES
 from devnous.gastos.models import Base
 from devnous.gastos.services.amex_direct_schema_contract import (
     EXPECTED_CHECKS,
+    EXPECTED_EFFECTIVE_VIEW_DEFINITION,
     EXPECTED_FUNCTION_HASHES,
     EXPECTED_INDEXES,
     EXPECTED_KEYS,
@@ -71,6 +72,7 @@ def catalog():
         "20261013_amex_approved_informe_recognition.sql",
         "20261013_amex_statement_workflow.sql",
         "20261014_amex_sat_budget_direct.sql",
+        "20261015_amex_direct_period_recovery.sql",
     ]:
         source = (ROOT / "database/migrations" / file).read_text()
         bodies.update(
@@ -104,6 +106,9 @@ async def inspect(parts):
         result.all.return_value = rows
         result.scalar_one.return_value = "owner_schema"
         results.append(result)
+    view_result = MagicMock()
+    view_result.scalar_one_or_none.return_value = EXPECTED_EFFECTIVE_VIEW_DEFINITION
+    results.append(view_result)
     session.execute.side_effect = results
     answer = await inspect_amex_direct_schema(session)
     queries = [str(call.args[0]).lower() for call in session.execute.call_args_list]

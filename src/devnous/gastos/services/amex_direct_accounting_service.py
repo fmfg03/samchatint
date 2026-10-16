@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, text
@@ -37,6 +37,10 @@ from .amex_direct_common import (
     load_statement,
     money,
     record_event,
+)
+from .amex_direct_effective_source_service import (
+    effective_source_for_item,
+    load_effective_sources,
 )
 from .amex_direct_matching_service import (
     _available,
@@ -124,7 +128,8 @@ async def validate_direct_match(session: Any, item: Any) -> str | None:
 
     if item.match_status != "matched" or not item.cfdi_id or not item.match_proof:
         return item.match_reason or "fiscal_match_required"
-    expense = await session.get(ExpenseReport, item.imported_expense_id)
+    source = await effective_source_for_item(session, item)
+    expense = await session.get(ExpenseReport, source.imported_expense_id)
     context = await session.get(AmexStatementDirectContext, item.context_id)
     cfdi = await session.get(CFDIReport, item.cfdi_id, populate_existing=True)
     if not expense or not context or not cfdi or expense.estado_gasto != "activo":
@@ -139,7 +144,7 @@ async def validate_direct_match(session: Any, item: Any) -> str | None:
         return "fiscal_identity_changed"
     if (
         item.match_proof.get("source_hash")
-        != fiscal_source_hash(item, context, expense)
+        != fiscal_source_hash(item, context, expense, source)
         or expense.cfdi_report_id != item.cfdi_id
     ):
         return "fiscal_source_changed"
@@ -189,6 +194,7 @@ async def _prepare(
         )
     ).scalar_one_or_none()
     items = await load_items(session, import_id, locked=locked)
+    sources = await load_effective_sources(session, import_id)
     card = await session.get(
         AmexCardAccount,
         statement.card_account_id,
@@ -211,7 +217,11 @@ async def _prepare(
     expenses = (
         await load_expenses(
             session,
-            [item.imported_expense_id for item in items if item.imported_expense_id],
+            [
+                cast(UUID, sources[item.id].imported_expense_id)
+                for item in items
+                if sources[item.id].imported_expense_id
+            ],
         )
         if locked
         else list(
@@ -226,9 +236,9 @@ async def _prepare(
                     .where(
                         ExpenseReport.id.in_(
                             [
-                                item.imported_expense_id
+                                sources[item.id].imported_expense_id
                                 for item in items
-                                if item.imported_expense_id
+                                if sources[item.id].imported_expense_id
                             ]
                         )
                     )
@@ -238,7 +248,7 @@ async def _prepare(
             .all()
         )
     )
-    by_id = {expense.id: expense for expense in expenses if expense}
+    by_id: dict[Any, Any] = {expense.id: expense for expense in expenses if expense}
     liability = (
         await session.get(
             CuentaContable,
@@ -250,6 +260,7 @@ async def _prepare(
         else None
     )
     reasons = []
+    issues = []
     proofs = {}
     journal = []
     facts = []
@@ -265,22 +276,30 @@ async def _prepare(
     ):
         reasons.append("invalid_amex_liability")
     for item in items:
-        expense = by_id.get(item.imported_expense_id)
+        first_reason = len(reasons)
+        expense = by_id.get(sources[item.id].imported_expense_id)
         receipt = await session.get(AmexStatementImportItem, item.import_item_id)
         fact = {
             "item_id": item.id,
             "source_hash": item.source_hash,
             "source_version": item.source_version,
             "row": receipt.normalized_json if receipt else None,
+            "effective_source": sources[item.id].source_json,
+            "recovery_revision_id": sources[item.id].recovery_revision_id,
+            "recovery_proof_hash": sources[item.id].recovery_proof_hash,
+            "effective_period": (
+                sources[item.id].period_start,
+                sources[item.id].period_end,
+            ),
         }
         if item.context_id != (
             context.id if context else None
         ) or item.context_version != (context.version if context else None):
             reasons.append("stale_item_context")
-        if item.movement_kind == "credit":
+        if sources[item.id].movement_kind == "credit":
             if not item.credit_excluded:
                 reasons.append("credit_exclusion_required")
-        elif item.movement_kind != "debit" or not expense:
+        elif sources[item.id].movement_kind != "debit" or not expense:
             reasons.append("statement_row_unresolved")
         else:
             proof = await covered_source_proof(session, expense)
@@ -380,6 +399,23 @@ async def _prepare(
                     ),
                 )
                 new.append(expense)
+        for code in dict.fromkeys(reasons[first_reason:]):
+            budget_issue = code.startswith("budget_")
+            issues.append(
+                {
+                    "item_id": str(item.id),
+                    "row_number": sources[item.id].source_json.get("row_number"),
+                    "reason": code,
+                    "responsible": (
+                        "Control Presupuestal" if budget_issue else "Contabilidad"
+                    ),
+                    "next_action": (
+                        "Revisar clasificación y asignación de partida presupuestal"
+                        if budget_issue
+                        else "Revisar evidencia y resolver el bloqueo del cargo"
+                    ),
+                }
+            )
         facts.append(fact)
     if new:
         reason = await activation_reason(session, new)
@@ -393,14 +429,14 @@ async def _prepare(
                 assert liability is not None
                 journal = list(lines or [])
                 item_by_expense = {
-                    str(i.imported_expense_id): i
+                    str(sources[i.id].imported_expense_id): i
                     for i in items
-                    if i.imported_expense_id
+                    if sources[i.id].imported_expense_id
                 }
                 for line in journal:
                     metadata = line.get("raw_row_json") or {}
                     item = item_by_expense[metadata["expense_id"]]
-                    expense = by_id[item.imported_expense_id]
+                    expense = by_id[sources[item.id].imported_expense_id]
                     line["raw_row_json"] = {
                         **metadata,
                         "source_kind": "amex_direct",
@@ -462,10 +498,33 @@ async def _prepare(
     result.reason = reasons[0] if reasons else None
     result.progress = {
         "exceptions": list(dict.fromkeys(reasons)),
+        "issues": issues,
+        "global_issues": [
+            {
+                "reason": code,
+                "responsible": "Contabilidad",
+                "next_action": "Revisar configuración y evidencia del estado",
+            }
+            for code in dict.fromkeys(reasons)
+            if code not in {issue["reason"] for issue in issues}
+        ],
+        "original_period_start": statement.period_start,
+        "original_period_end": statement.period_end,
+        "effective_period_start": (
+            min(v.period_start for v in sources.values())
+            if sources
+            else statement.period_start
+        ),
+        "effective_period_end": (
+            max(v.period_end for v in sources.values())
+            if sources
+            else statement.period_end
+        ),
         "new_count": len(new),
         "prior_count": sum(bool(v) for v in proofs.values()),
         "lines": _freeze_lines(journal),
     }
+    result._sources = sources
     result._expenses = by_id
     result._proofs = proofs
     result._lines = journal
@@ -503,6 +562,7 @@ async def confirm_direct_accounting(
     result = await _prepare(
         session, actor_id=actor_id, import_id=import_id, locked=True
     )
+    sources = result._sources
     if result.cut:
         if result.cut.payload_hash == digest(payload):
             return result
@@ -517,9 +577,9 @@ async def confirm_direct_accounting(
     ):
         return DirectResult("pending", "stale_direct_source")
     if (
-        not result.statement.period_start
+        not min(source.period_start for source in sources.values())
         <= accounting_date
-        <= result.statement.period_end
+        <= max(source.period_end for source in sources.values())
     ):
         return DirectResult("pending", "accounting_date_outside_statement")
     from samchat.budgets.service import _date_in_edition_year
@@ -527,7 +587,7 @@ async def confirm_direct_accounting(
     if any(
         not _date_in_edition_year(accounting_date, item.edition_year)
         for item in result.items
-        if item.movement_kind == "debit" and not result._proofs.get(item.id)
+        if sources[item.id].movement_kind == "debit" and not result._proofs.get(item.id)
     ):
         return DirectResult("pending", "accounting_date_outside_budget_edition")
     periods = list(
@@ -562,11 +622,11 @@ async def confirm_direct_accounting(
         memberships = []
         partidas = []
         for item in result.items:
-            expense = result._expenses.get(item.imported_expense_id)
+            expense = result._expenses.get(sources[item.id].imported_expense_id)
             prior = result._proofs.get(item.id)
             coverage = (
                 "credit_exclusion"
-                if item.movement_kind == "credit"
+                if sources[item.id].movement_kind == "credit"
                 else "prior" if prior else "new"
             )
             consumption = prior
@@ -607,7 +667,7 @@ async def confirm_direct_accounting(
                 line
                 for line in result._lines
                 if (line.get("raw_row_json") or {}).get("expense_id")
-                == str(item.imported_expense_id)
+                == str(sources[item.id].imported_expense_id)
             ]
             retention_proof = []
             if expense and coverage == "new":
@@ -656,15 +716,19 @@ async def confirm_direct_accounting(
                     str(consumption.accounting_poliza_id) if consumption else None
                 ),
                 "direct_item_id": str(item.id),
-                "expense_id": str(item.imported_expense_id) if expense else None,
+                "expense_id": (
+                    str(sources[item.id].imported_expense_id) if expense else None
+                ),
                 "amount": str(money(expense.gasto_cantidad)) if expense else None,
                 "bank_signed_amount": (
-                    str(item.raw_signed_amount)
-                    if item.raw_signed_amount is not None
+                    str(sources[item.id].raw_signed_amount)
+                    if sources[item.id].raw_signed_amount is not None
                     else None
                 ),
                 "concepto": (
-                    expense.concepto if expense else item.source_json.get("description")
+                    expense.concepto
+                    if expense
+                    else sources[item.id].source_json.get("description")
                 ),
                 "coverage_kind": coverage,
                 "consumption_id": str(consumption.id) if consumption else None,
@@ -674,7 +738,13 @@ async def confirm_direct_accounting(
                     else None
                 ),
                 "journal_lines": _freeze_lines(lines),
-                "source": item.source_json,
+                "source": sources[item.id].source_json,
+                "recovery_revision_id": (
+                    str(sources[item.id].recovery_revision_id)
+                    if sources[item.id].recovery_revision_id
+                    else None
+                ),
+                "recovery_proof_hash": sources[item.id].recovery_proof_hash,
                 "context_id": str(result.context.id),
                 "budget_assignment_id": (
                     str(item.budget_assignment_id)
@@ -702,6 +772,23 @@ async def confirm_direct_accounting(
                 "partidas": partidas,
                 "lines": _freeze_lines(result._lines),
                 "request": payload,
+                "original_period": {
+                    "start": str(result.statement.period_start),
+                    "end": str(result.statement.period_end),
+                },
+                "effective_period": {
+                    "start": str(
+                        min(source.period_start for source in sources.values())
+                    ),
+                    "end": str(max(source.period_end for source in sources.values())),
+                },
+                "recovery_revision_ids": sorted(
+                    {
+                        str(source.recovery_revision_id)
+                        for source in sources.values()
+                        if source.recovery_revision_id
+                    }
+                ),
                 "context": {
                     c.name: str(getattr(result.context, c.name))
                     for c in result.context.__table__.columns
@@ -716,7 +803,7 @@ async def confirm_direct_accounting(
                     cut_id=cut.id,
                     direct_item_id=item.id,
                     import_item_id=item.import_item_id,
-                    imported_expense_id=item.imported_expense_id,
+                    imported_expense_id=sources[item.id].imported_expense_id,
                     consumption_id=consumption.id if consumption else None,
                     accounting_poliza_id=(
                         consumption.accounting_poliza_id if consumption else None
@@ -776,4 +863,4 @@ async def export_direct_cut(
         if format not in generators:
             raise DirectConflict("unsupported_export_format")
         generate, mime = generators[format]
-        return generate(rows), f"AMEX_directo_{cut.id}.{format}", mime
+        return cast(Any, generate)(rows), f"AMEX_directo_{cut.id}.{format}", mime

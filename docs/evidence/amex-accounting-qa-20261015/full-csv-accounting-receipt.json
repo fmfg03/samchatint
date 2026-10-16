@@ -1,0 +1,82 @@
+{
+  "label": "FULL ORIGINAL148ROWS,145synthetic CFDI/budget dependencies, initial cross-month CONTROL not actualstate repair",
+  "source_sha256": "ab641fa6ccafcfc046bf213764f41a61a969d05ce022899d217aa8ab3ea3cd4c",
+  "source_unchanged": true,
+  "control_period": [
+    "2026-08-31",
+    "2026-09-30"
+  ],
+  "counts": {
+    "polizas": 1,
+    "consumptions": 145,
+    "recognized": 145,
+    "assignments": 145,
+    "excluded_credits": 3,
+    "receipts": 145,
+    "synthetic_aliases": 47,
+    "synthetic_cfdis": 145
+  },
+  "journal_balanced": true,
+  "global_lines": 290,
+  "flattened_lines": 290,
+  "ordered_identity_equal": false,
+  "multiset_identity_equal": true,
+  "partidas_count": 148,
+  "cut_confirmation_replay_same": true,
+  "export_xlsx": "FAILED_VALUE_ERROR_INCOMPLETE_JOURNAL_BREAKDOWN",
+  "xlsx_file_created": false,
+  "pytest_seconds": 288.71,
+  "pytest_status": "1FAILED_export_1ERROR_teardown",
+  "teardown_error_attribution": "Isolated test observer and DROP SCHEMA deadlock. Separate infrastructure issue; does not cause earlier export ValueError.",
+  "actions": [
+    {
+      "action": "automatic_match",
+      "n": 80,
+      "first_event": "2026-10-15 17:16:09.115307+00:00",
+      "last_event": "2026-10-15 17:18:12.809573+00:00"
+    },
+    {
+      "action": "budget_assignment",
+      "n": 145,
+      "first_event": "2026-10-15 17:20:21.431650+00:00",
+      "last_event": "2026-10-15 17:20:32.129953+00:00"
+    },
+    {
+      "action": "budget_submission",
+      "n": 145,
+      "first_event": "2026-10-15 17:20:20.527197+00:00",
+      "last_event": "2026-10-15 17:20:20.527197+00:00"
+    },
+    {
+      "action": "classification",
+      "n": 145,
+      "first_event": "2026-10-15 17:20:19.378606+00:00",
+      "last_event": "2026-10-15 17:20:19.378606+00:00"
+    },
+    {
+      "action": "context_revision",
+      "n": 148,
+      "first_event": "2026-10-15 17:16:05.219355+00:00",
+      "last_event": "2026-10-15 17:16:05.219355+00:00"
+    },
+    {
+      "action": "credit_exclusion",
+      "n": 3,
+      "first_event": "2026-10-15 17:20:17.981127+00:00",
+      "last_event": "2026-10-15 17:20:18.919829+00:00"
+    },
+    {
+      "action": "manual_match",
+      "n": 65,
+      "first_event": "2026-10-15 17:19:13.455777+00:00",
+      "last_event": "2026-10-15 17:20:17.056956+00:00"
+    },
+    {
+      "action": "match_pending",
+      "n": 174,
+      "first_event": "2026-10-15 17:16:09.115307+00:00",
+      "last_event": "2026-10-15 17:18:12.809573+00:00"
+    }
+  ],
+  "production_writes": 0
+}

@@ -815,13 +815,13 @@ EXPECTED_FUNCTION_HASHES = {
         "41e6192896a8ee053b778a252f9e8285" "1954822a15da79d71813b0f43c1a7140"
     ),
     "amex_direct_cfdi_usage_guard": (
-        "780c54824b031f94b33510a62f123887" "6774d623f24e425a618dc5f9af35dce9"
+        "aadcfa56bfbc38bc774ea6cc2c8cefb0" "ea707154ec97a151d9b4674385c2abfa"
     ),
     "amex_direct_check_cut": (
-        "2413b680fd115158b48dcd140af3f543" "0bbe9f419d6e68fecbe591784e5e7860"
+        "adfe33b032bb53508c8b674be498dc1f" "aa6c2a2fe605dec56451c34241ac86a3"
     ),
     "amex_direct_consumption_guard": (
-        "d461dcb36c1ce4d79cd7827fe8d1ff33" "49197e6fa2d65c156024ecddcbc01fd6"
+        "44629a1116f9f3d8b9c81bc8d990f768" "6e477d657553c1aba0c861eab8f73412"
     ),
     "amex_direct_context_guard": (
         "edd8ecae4065e2997c8db7d0fe0026a0" "09f1b68182c6f5be7d312689721bd69f"
@@ -830,10 +830,10 @@ EXPECTED_FUNCTION_HASHES = {
         "21914c9ab6b91482a660a084b102a79e" "0a128a5b7c020de30695e655d6a91bf8"
     ),
     "amex_direct_cut_insert_guard": (
-        "1180c7ac44798ad902dd547fad202ddb" "30058bc06367af9f9405d9e2ec99e99d"
+        "11d5c838caa35d90fc51a0d862d42ccc" "1bb7bdbd991a5c1db867835ca2f3970d"
     ),
     "amex_direct_cut_item_guard": (
-        "7b2a873cc3659a4a76f550852852d9ae" "924437a43fb010d9263200d12aced98f"
+        "55b26999de22c099b7e26aab5e79d7b4" "8aaeda4fc41b59630bc91ab306ca4f83"
     ),
     "amex_direct_event_guard": (
         "7ecfee81aa04b3ff3513410a5896c1f1" "22e6f1fad4e66e772e810c69162be1ce"
@@ -845,7 +845,16 @@ EXPECTED_FUNCTION_HASHES = {
         "f70e00d6f2465f80e9884c296e885d6a" "23344632a74a63933ac9b41af2cca8f7"
     ),
     "amex_direct_projection_guard": (
-        "515bc3e8f2bfc1d6183b570a15ff49e4" "873df923f3454e6fbb1090b70323b733"
+        "6765ba536f1dacdd227198bcec87be4c" "8c6714c65aefaa8c67d8960a42dbf053"
+    ),
+    "amex_direct_recovered_expense_guard": (
+        "8c676b15767b2df35d58d9ce782135e5" "62742b2ec84bacb0e15376b2d8b0aa11"
+    ),
+    "amex_direct_recovery_guard": (
+        "b3b8e62e3ab1aba682e906d645deefc3" "59581e768c786b0ccfd75e140d040754"
+    ),
+    "amex_direct_recovery_seal": (
+        "6b11e1f4881affb83426506235145d18" "1e94a0a4ccdddcd4e23cde67756830b3"
     ),
     "amex_direct_representation_guard": (
         "e37f3861a7e5cae509edaf27be8adcaa" "788dfc116e2cc502956adf1633a2ef1b"
@@ -904,3 +913,206 @@ EXPECTED_INDEXES = {
         "card_account_id, descriptor) WHERE active",
     ),
 }
+
+
+# Recovery is append-only, exact membership must seal at transaction commit.
+EXPECTED_TRIGGERS.update(
+    {
+        "ad_recovery_revision": (
+            "amex_direct_coverage_revisions",
+            "amex_direct_recovery_guard",
+            7,
+            False,
+            False,
+        ),
+        "ad_recovery_row": (
+            "amex_direct_recovered_rows",
+            "amex_direct_recovery_guard",
+            7,
+            False,
+            False,
+        ),
+        "ad_immutable_amex_direct_coverage_revisions": (
+            "amex_direct_coverage_revisions",
+            "amex_direct_immutable",
+            27,
+            False,
+            False,
+        ),
+        "ad_immutable_amex_direct_recovered_rows": (
+            "amex_direct_recovered_rows",
+            "amex_direct_immutable",
+            27,
+            False,
+            False,
+        ),
+        "ad_recovery_seal_revision": (
+            "amex_direct_coverage_revisions",
+            "amex_direct_recovery_seal",
+            5,
+            True,
+            True,
+        ),
+        "ad_recovery_seal_row": (
+            "amex_direct_recovered_rows",
+            "amex_direct_recovery_seal",
+            5,
+            True,
+            True,
+        ),
+    }
+)
+
+# PostgreSQL-rendered owner constraints; weaker same-name checks fail closed.
+EXPECTED_CHECKS.update(
+    {
+        (
+            "amex_direct_coverage_revisions",
+            "amex_direct_coverage_revisions_check",
+        ): (
+            "CHECK (((period_start <= original_period_start) AN"
+            "D (period_end >= original_period_end)))"
+        ),
+        (
+            "amex_direct_coverage_revisions",
+            "amex_direct_coverage_revisions_expected_count_check",
+        ): "CHECK ((expected_count > 0))",
+        (
+            "amex_direct_coverage_revisions",
+            "amex_direct_coverage_revisions_expected_source_version_check",
+        ): "CHECK ((expected_source_version > 0))",
+        (
+            "amex_direct_coverage_revisions",
+            "amex_direct_coverage_revisions_membership_digest_check",
+        ): "CHECK ((length((membership_digest)::text) = 64))",
+        (
+            "amex_direct_coverage_revisions",
+            "amex_direct_coverage_revisions_preview_hash_check",
+        ): "CHECK ((length((preview_hash)::text) = 64))",
+        (
+            "amex_direct_coverage_revisions",
+            "amex_direct_coverage_revisions_reason_check",
+        ): "CHECK ((length(TRIM(BOTH FROM reason)) > 0))",
+        (
+            "amex_direct_coverage_revisions",
+            "amex_direct_coverage_revisions_request_hash_check",
+        ): "CHECK ((length((request_hash)::text) = 64))",
+        (
+            "amex_direct_recovered_rows",
+            "amex_direct_recovered_rows_currency_check",
+        ): "CHECK (((currency)::text = 'MXN'::text))",
+        (
+            "amex_direct_recovered_rows",
+            "amex_direct_recovered_rows_movement_kind_check",
+        ): "CHECK (((movement_kind)::text = 'debit'::text))",
+        (
+            "amex_direct_recovered_rows",
+            "amex_direct_recovered_rows_proof_hash_check",
+        ): "CHECK ((length((proof_hash)::text) = 64))",
+        (
+            "amex_direct_recovered_rows",
+            "amex_direct_recovered_rows_raw_signed_amount_check",
+        ): "CHECK ((raw_signed_amount <> (0)::numeric))",
+    }
+)
+EXPECTED_KEYS = tuple(EXPECTED_KEYS) + (
+    ("amex_direct_coverage_revisions", "f", ("actor_id",), "empleados", ("id",), "r"),
+    (
+        "amex_direct_coverage_revisions",
+        "f",
+        ("import_id",),
+        "amex_statement_imports",
+        ("id",),
+        "r",
+    ),
+    ("amex_direct_coverage_revisions", "u", ("import_id",)),
+    ("amex_direct_coverage_revisions", "p", ("id",)),
+    (
+        "amex_direct_coverage_revisions",
+        "f",
+        ("source_file_id",),
+        "amex_statement_source_files",
+        ("id",),
+        "r",
+    ),
+    (
+        "amex_direct_recovered_rows",
+        "f",
+        ("direct_item_id",),
+        "amex_direct_items",
+        ("id",),
+        "r",
+    ),
+    ("amex_direct_recovered_rows", "u", ("direct_item_id",)),
+    (
+        "amex_direct_recovered_rows",
+        "f",
+        ("import_item_id",),
+        "amex_statement_import_items",
+        ("id",),
+        "r",
+    ),
+    ("amex_direct_recovered_rows", "u", ("import_item_id",)),
+    (
+        "amex_direct_recovered_rows",
+        "f",
+        ("imported_expense_id",),
+        "expense_reports",
+        ("id",),
+        "r",
+    ),
+    ("amex_direct_recovered_rows", "u", ("imported_expense_id",)),
+    ("amex_direct_recovered_rows", "p", ("id",)),
+    (
+        "amex_direct_recovered_rows",
+        "f",
+        ("revision_id",),
+        "amex_direct_coverage_revisions",
+        ("id",),
+        "r",
+    ),
+)
+EXPECTED_EFFECTIVE_VIEW_HASH = (
+    "fc3b15179a2eacd6e82b0944139941ca6d58fcb920195ca0938c4fd3260c9b7b"
+)
+
+EXPECTED_TRIGGERS["ad_recovered_expense_identity"] = (
+    "expense_reports",
+    "amex_direct_recovered_expense_guard",
+    27,
+    False,
+    False,
+)
+EXPECTED_EFFECTIVE_VIEW_DEFINITION = (
+    " SELECT d.id,\n    d.import_id,\n    d.import_item_i"
+    "d,\n    COALESCE(rr.imported_expense_id, d.imported"
+    "_expense_id) AS imported_expense_id,\n    COALESCE("
+    "rr.movement_kind, d.movement_kind) AS movement_kin"
+    "d,\n    COALESCE(rr.raw_signed_amount, d.raw_signed"
+    "_amount) AS raw_signed_amount,\n    COALESCE(rr.raw"
+    "_amount, d.raw_amount) AS raw_amount,\n    COALESCE"
+    "(rr.amount_column, d.amount_column) AS amount_colu"
+    "mn,\n    COALESCE(rr.profile, d.profile) AS profile"
+    ",\n    d.profile_version,\n    COALESCE(rr.effective"
+    "_source_json, d.source_json) AS source_json,\n    d"
+    ".context_id,\n    d.context_version,\n    d.source_v"
+    "ersion,\n    d.source_hash,\n    d.match_status,\n   "
+    " d.match_reason,\n    d.match_proof,\n    d.cfdi_id,"
+    "\n    d.status_receipt_id,\n    d.merchant_alias_id,"
+    "\n    d.declared_uuid,\n    d.issuer_rfc,\n    d.tour"
+    "nament_id,\n    d.project_code,\n    d.edition_year,"
+    "\n    d.budget_concept_id,\n    d.budget_line_id,\n  "
+    "  d.budget_version_id,\n    d.budget_assignment_id,"
+    "\n    d.budget_status,\n    d.accounting_status,\n   "
+    " d.credit_excluded,\n    d.updated_at,\n    rr.id AS"
+    " recovery_id,\n    rr.revision_id AS recovery_revis"
+    "ion_id,\n    rr.proof_hash AS recovery_proof_hash,\n"
+    "    COALESCE(cr.period_start, h.period_start) AS p"
+    "eriod_start,\n    COALESCE(cr.period_end, h.period_"
+    "end) AS period_end\n   FROM amex_direct_items d\n   "
+    "  JOIN amex_statement_imports h ON h.id = d.import"
+    "_id\n     LEFT JOIN amex_direct_recovered_rows rr O"
+    "N rr.direct_item_id = d.id\n     LEFT JOIN amex_dir"
+    "ect_coverage_revisions cr ON cr.import_id = d.impo"
+    "rt_id;"
+)

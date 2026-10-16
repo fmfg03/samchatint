@@ -67,6 +67,7 @@ ACCESS_TOOLS: tuple[AccessTool, ...] = (
             "alias",
             "conciliar",
             "vigencia",
+            "corregir_periodo",
             "clasificar",
             "enviar_presupuesto",
             "asignar_partida",

@@ -34,6 +34,7 @@ async def inspect_amex_direct_schema(
     from ..models import Base
     from .amex_direct_schema_contract import (
         EXPECTED_CHECKS,
+        EXPECTED_EFFECTIVE_VIEW_HASH,
         EXPECTED_FUNCTION_HASHES,
         EXPECTED_INDEXES,
         EXPECTED_KEYS,
@@ -182,7 +183,7 @@ async def inspect_amex_direct_schema(
             {"names": sorted(EXPECTED_FUNCTION_HASHES)},
         )
     ).all()
-    installed_functions = dict(functions)
+    installed_functions = {name: body for name, body in functions}
     for name, digest in EXPECTED_FUNCTION_HASHES.items():
         body = installed_functions.get(name)
         if body is None or hashlib.sha256(body.encode()).hexdigest() != digest:
@@ -210,6 +211,27 @@ async def inspect_amex_direct_schema(
             expected[1]
         ):
             errors.append(f"{name}: incompatible unique index predicate")
+    view = (
+        await session.execute(
+            text(
+                "SELECT pg_get_viewdef(c.oid,true) FROM pg_class c "
+                "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE "
+                "n.nspname=current_schema() "
+                "AND c.relname='amex_direct_effective_sources' "
+                "AND c.relkind='v'"
+            )
+        )
+    ).scalar_one_or_none()
+    if (
+        view is None
+        or hashlib.sha256(
+            _catalog_check(view.replace(schema + ".", "")).encode()
+        ).hexdigest()
+        != EXPECTED_EFFECTIVE_VIEW_HASH
+    ):
+        errors.append(
+            "amex_direct_effective_sources: incompatible owner view definition"
+        )
     result = {
         "ready": not missing and not missing_triggers and not errors,
         "missing_columns": missing,

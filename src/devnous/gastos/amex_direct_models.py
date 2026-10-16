@@ -219,3 +219,53 @@ class AmexDirectCutItem(Base):
     coverage_kind = Column(String(30), nullable=False)
     source_hash = Column(String(64), nullable=False)
     snapshot_json = Column(JSONB, nullable=False)
+
+
+class AmexDirectCoverageRevision(Base):
+    """Append-only correction of declared coverage, never original intake."""
+
+    __tablename__ = "amex_direct_coverage_revisions"
+    id = identifier()
+    import_id = reference("amex_statement_imports", unique=True)
+    source_file_id = reference("amex_statement_source_files")
+    file_sha256 = Column(String(64), nullable=False)
+    parser_version = Column(String(30), nullable=False)
+    profile = Column(String(30), nullable=False)
+    original_period_start = Column(Date, nullable=False)
+    original_period_end = Column(Date, nullable=False)
+    period_start = Column(Date, nullable=False)
+    period_end = Column(Date, nullable=False)
+    original_counts = Column(JSONB, nullable=False)
+    effective_counts = Column(JSONB, nullable=False)
+    expected_item_ids = Column(JSONB, nullable=False)
+    expected_count = Column(Integer, nullable=False)
+    expected_source_version = Column(Integer, nullable=False)
+    actor_id = reference("empleados")
+    reason = Column(Text, nullable=False)
+    idempotency_key = Column(String(200), nullable=False)
+    request_hash = Column(String(64), nullable=False)
+    preview_hash = Column(String(64), nullable=False)
+    membership_digest = Column(String(64), nullable=False)
+    created_at = timestamp()
+
+
+class AmexDirectRecoveredRow(Base):
+    """Material proof for one omitted debit and its newly-created bank anchor."""
+
+    __tablename__ = "amex_direct_recovered_rows"
+    id = identifier()
+    revision_id = reference("amex_direct_coverage_revisions")
+    direct_item_id = reference("amex_direct_items", unique=True)
+    import_item_id = reference("amex_statement_import_items", unique=True)
+    imported_expense_id = reference("expense_reports", unique=True)
+    row_number = Column(Integer, nullable=False)
+    movement_kind = Column(String(20), nullable=False)
+    economic_date = Column(Date, nullable=False)
+    currency = Column(String(3), nullable=False)
+    raw_signed_amount = Column(Numeric(18, 2), nullable=False)
+    raw_amount = Column(Text, nullable=False)
+    amount_column = Column(String(100), nullable=False)
+    profile = Column(String(30), nullable=False)
+    effective_source_json = Column(JSONB, nullable=False)
+    proof_hash = Column(String(64), nullable=False)
+    created_at = timestamp()

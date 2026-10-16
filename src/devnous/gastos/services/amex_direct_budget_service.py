@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -29,6 +29,11 @@ from .amex_direct_common import (
     record_event,
     require_unfrozen,
     resolve_item_import,
+)
+from .amex_direct_effective_source_service import (
+    effective_source_for_item,
+    effective_sources_select,
+    load_effective_sources,
 )
 from .amex_recognition_service import load_expenses
 from .budget_concept_account_service import apply_budget_concept_cuenta_mapping
@@ -106,8 +111,9 @@ async def classify_direct_items(
     items = _selected(
         await load_items(session, import_id, locked=True), item_ids, expected_versions
     )
+    sources = await load_effective_sources(session, import_id)
     if any(
-        i.movement_kind != "debit"
+        sources[i.id].movement_kind != "debit"
         or i.context_id != context.id
         or i.accounting_status == "recognized"
         or i.budget_status in {"sent", "assigned"}
@@ -127,9 +133,11 @@ async def classify_direct_items(
         or (not tournament_id and concept.tournament_code != project_code)
     ):
         return DirectResult("pending", "budget_category_context_mismatch")
-    expenses = {
+    expenses: dict[Any, Any] = {
         e.id: e
-        for e in await load_expenses(session, [i.imported_expense_id for i in items])
+        for e in await load_expenses(
+            session, [cast(UUID, sources[i.id].imported_expense_id) for i in items]
+        )
     }
     from samchat.budgets.service import _date_in_edition_year
 
@@ -139,7 +147,7 @@ async def classify_direct_items(
     ):
         return DirectResult("pending", "expense_date_outside_budget_edition")
     for item in items:
-        expense = expenses[item.imported_expense_id]
+        expense = expenses[sources[item.id].imported_expense_id]
         from .amex_direct_accounting_service import covered_source_proof
 
         if await covered_source_proof(session, expense):
@@ -156,7 +164,7 @@ async def classify_direct_items(
         item.budget_concept_id = budget_concept_id
         item.edition_year = edition_year
         item.budget_status = "classified"
-        expense = expenses[item.imported_expense_id]
+        expense = expenses[sources[item.id].imported_expense_id]
         expense.proyecto = tournament.name if tournament else project_code
         expense.edicion = edition_year
         expense.budget_concept_id = budget_concept_id
@@ -329,7 +337,10 @@ async def assign_direct_budget_line(
         return DirectResult("pending", "stale_item_version")
     if item.context_id != context.id or item.budget_status != "sent":
         return DirectResult("pending", "budget_submission_required")
-    expense = (await load_expenses(session, [item.imported_expense_id]))[0]
+    source = await effective_source_for_item(session, item)
+    expense = (await load_expenses(session, [cast(UUID, source.imported_expense_id)]))[
+        0
+    ]
     line = await _line(session, budget_line_id, locked=True)
     if line is None or not _line_matches(item, line, config):
         return DirectResult("pending", "budget_line_context_mismatch")
@@ -500,11 +511,12 @@ async def budget_assignment_source(
         expense_id=expense_id,
         budget=True,
     )
+    sources_view = effective_sources_select()
     item = (
         await session.execute(
-            select(AmexDirectItem).where(
-                AmexDirectItem.imported_expense_id == expense_id
-            )
+            select(AmexDirectItem)
+            .join(sources_view, sources_view.c.id == AmexDirectItem.id)
+            .where(sources_view.c.imported_expense_id == expense_id)
         )
     ).scalar_one()
     statement, state, context, config = await load_statement(
@@ -616,9 +628,20 @@ async def list_direct_budget_queue(session: Any, *, actor_id: UUID) -> list[Any]
             ),
             None,
         )
-        if config is None:
+        if config is None or result.cut is not None:
             continue
         for item in result.items:
+            if item.accounting_status == "recognized":
+                continue
+            from .amex_direct_accounting_service import covered_source_proof
+
+            expense = (
+                await session.get(ExpenseReport, item.expense_id)
+                if item.expense_id
+                else None
+            )
+            if await covered_source_proof(session, expense):
+                continue
             if item.budget_status in {"sent", "assigned"}:
                 try:
                     _scope(
@@ -630,6 +653,8 @@ async def list_direct_budget_queue(session: Any, *, actor_id: UUID) -> list[Any]
                     )
                 except DirectAccessError:
                     continue
+                item.can_assign = item.budget_status == "sent"
+                item.can_return = True
                 item.statement_id = entry["statement"].id
                 views.append(item)
     return views
@@ -691,7 +716,8 @@ async def list_budget_direct_movements(
         )
         if not state or item.context_id != state.context_id:
             continue
-        expense = await session.get(ExpenseReport, item.imported_expense_id)
+        source = await effective_source_for_item(session, item)
+        expense = await session.get(ExpenseReport, source.imported_expense_id)
         if (
             expense is None
             or expense.estado_gasto != "activo"
@@ -704,7 +730,7 @@ async def list_budget_direct_movements(
             if item.tournament_id
             else None
         )
-        phase = item.source_json.get("phase")
+        phase = source.source_json.get("phase")
         if phase_filter and phase_filter != phase:
             continue
         amount = None
@@ -733,7 +759,7 @@ async def list_budget_direct_movements(
                 "tournament_name": tournament.name if tournament else item.project_code,
                 "phase": phase,
                 "project": expense.proyecto,
-                "concept": item.source_json.get("description"),
+                "concept": source.source_json.get("description"),
                 "amount": amount,
                 "kind": (
                     "commitment" if amount is not None else "pending_fiscal_evidence"
@@ -756,11 +782,12 @@ async def release_direct_budget_mapping(
     session: Any, item: Any, card_id: UUID
 ) -> dict[str, Any]:
     """Release only this unposted projection's recorded mapping on explicit return."""
-    if not item.budget_assignment_id or not item.imported_expense_id:
+    source = await effective_source_for_item(session, item)
+    if not item.budget_assignment_id or not source.imported_expense_id:
         return {}
     from .amex_direct_accounting_service import covered_source_proof
 
-    expense = (await load_expenses(session, [item.imported_expense_id]))[0]
+    expense: Any = (await load_expenses(session, [source.imported_expense_id]))[0]
     if await covered_source_proof(session, expense):
         raise DirectConflict("recognized_source_context_locked")
     concept = await session.get(BudgetConcept, item.budget_concept_id)

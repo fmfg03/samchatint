@@ -20,6 +20,10 @@ spec.loader.exec_module(fixture_module)
 direct_pg = fixture_module.direct_pg
 DDL = ROOT / "database/migrations/20261014_amex_sat_budget_direct.sql"
 ROLLBACK = ROOT / "database/migrations/20261014_amex_sat_budget_direct_rollback.sql"
+RECOVERY_DDL = ROOT / "database/migrations/20261015_amex_direct_period_recovery.sql"
+RECOVERY_ROLLBACK = (
+    ROOT / "database/migrations/20261015_amex_direct_period_recovery_rollback.sql"
+)
 
 
 async def intake(pg, kind="credit", content=b"original", bad_hash=False, mode="direct"):
@@ -88,6 +92,10 @@ async def intake(pg, kind="credit", content=b"original", bad_hash=False, mode="d
 
 @pytest.mark.asyncio
 async def test_migration_replay_preserves_guard_definition(direct_pg):
+    # The shared fixture installs the complete current chain. Unwind only the
+    # empty later migration before testing the older migration's own replay;
+    # replaying old guard bodies over a newer contract is not a valid upgrade.
+    await direct_pg.conn.execute(RECOVERY_ROLLBACK.read_text())
     before = await direct_pg.conn.fetchval(
         "SELECT pg_get_functiondef('amex_guard_bank_association()'::regprocedure)"
     )
@@ -98,6 +106,16 @@ async def test_migration_replay_preserves_guard_definition(direct_pg):
         )
         == before
     )
+    # Restore the current chain and prove that the final owner contract admits
+    # its actual guards/view, rather than silently leaving old function bodies.
+    await direct_pg.conn.execute(RECOVERY_DDL.read_text())
+    from devnous.gastos.services.amex_direct_schema_service import (
+        inspect_amex_direct_schema,
+    )
+
+    async with direct_pg.factory() as session:
+        result = await inspect_amex_direct_schema(session)
+    assert result["ready"], result
 
 
 @pytest.mark.asyncio
@@ -215,6 +233,10 @@ async def test_rollback_refuses_persisted_evidence(direct_pg):
 
 @pytest.mark.asyncio
 async def test_empty_rollback_restores_old_check(direct_pg):
+    # Dependency order matters: remove the empty effective-source extension
+    # before dropping the original direct owner. Both rollbacks retain their
+    # populated-evidence refusal and RESTRICT behavior.
+    await direct_pg.conn.execute(RECOVERY_ROLLBACK.read_text())
     await direct_pg.conn.execute(ROLLBACK.read_text())
     assert (
         await direct_pg.conn.fetchval("SELECT to_regclass('amex_direct_items')") is None

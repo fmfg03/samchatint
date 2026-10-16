@@ -31,6 +31,7 @@ from .amex_direct_common import (
     load_statement,
 )
 from .amex_direct_schema_service import require_amex_direct_schema
+from .amex_recognition_service import lock_recognition
 from .amex_statement_import_service import _DATE_FORMATS
 from .expense_service import create_expense_from_data
 
@@ -189,6 +190,47 @@ def parse_direct_csv(
     return rows
 
 
+def evaluate_direct_period(
+    content: bytes,
+    profile: str | None,
+    currency: str | None,
+    period_start: date,
+    period_end: date,
+) -> dict[str, Any]:
+    """Evaluate declared coverage without altering parsed source rows."""
+    if (
+        not isinstance(period_start, date)
+        or not isinstance(period_end, date)
+        or period_end < period_start
+    ):
+        raise DirectConflict("invalid_statement_period")
+    rows = parse_direct_csv(content, profile, currency)
+    dates = [row["date"].date() for row in rows if row["date"] is not None]
+    outside = [
+        {
+            "row_number": row["row_number"],
+            "date": row["date"].date(),
+            "reason": "row_outside_declared_period",
+        }
+        for row in rows
+        if row["date"] is not None
+        and not period_start <= row["date"].date() <= period_end
+    ]
+    return {
+        "rows": rows,
+        "period_start": period_start,
+        "period_end": period_end,
+        "min_date": min(dates) if dates else None,
+        "max_date": max(dates) if dates else None,
+        "outside_rows": outside,
+        "outside_count": len(outside),
+        "counts": {
+            kind: sum(row["movement_kind"] == kind for row in rows)
+            for kind in ("debit", "credit", "unknown", "skipped")
+        },
+    }
+
+
 async def import_direct_statement(
     session: Any,
     *,
@@ -230,7 +272,10 @@ async def import_direct_statement(
         or period_end < period_start
     ):
         return DirectResult("pending", "invalid_statement_period")
-    rows = parse_direct_csv(content, profile, currency)
+    coverage = evaluate_direct_period(
+        content, profile, currency, period_start, period_end
+    )
+    rows = coverage["rows"]
     card = await session.get(AmexCardAccount, card_account_id)
     employee = await session.get(Empleado, employee_id)
     if card is None or not card.active or employee is None or not employee.activo:
@@ -287,14 +332,10 @@ async def import_direct_statement(
                 await session.get(AmexStatementDirectState, same.id)
             ).source_version,
         )
-    for row in rows:
-        if row["date"] and not period_start <= row["date"].date() <= period_end:
-            row.update(
-                status="skipped",
-                movement_kind="skipped",
-                reason="row_outside_declared_period",
-                amount=None,
-            )
+    # Existing exact-context replays above remain available; a new incomplete
+    # declaration must never create receipts or debit anchors.
+    if coverage["outside_count"]:
+        return DirectResult("pending", "statement_period_mismatch", progress=coverage)
     counts = {
         kind: sum(row["movement_kind"] == kind for row in rows)
         for kind in ("debit", "credit", "unknown", "skipped")
@@ -303,7 +344,7 @@ async def import_direct_statement(
         :200
     ]
     async with session.begin_nested():
-        statement = AmexStatementImport(
+        statement: Any = AmexStatementImport(
             id=uuid4(),
             workflow_mode="direct",
             card_account_id=card_account_id,
@@ -327,7 +368,7 @@ async def import_direct_statement(
         )
         session.add(statement)
         await session.flush()
-        state = AmexStatementDirectState(import_id=statement.id, source_version=1)
+        state: Any = AmexStatementDirectState(import_id=statement.id, source_version=1)
         session.add(state)
         session.add(
             AmexStatementSourceFile(
@@ -340,8 +381,12 @@ async def import_direct_statement(
                 actor_id=actor_id,
             )
         )
+        # The statement/state owner precedes global recognition, which must
+        # precede the expense owner's folio advisory lock (also used by recovery).
+        await session.flush()
+        await lock_recognition(session)
         for row in rows:
-            expense = None
+            expense: Any = None
             if row["movement_kind"] == "debit":
                 expense = await create_expense_from_data(
                     session=session,
@@ -376,7 +421,7 @@ async def import_direct_statement(
             )
             session.add(receipt)
             await session.flush()
-            item = AmexDirectItem(
+            item: Any = AmexDirectItem(
                 id=uuid4(),
                 import_id=statement.id,
                 import_item_id=receipt.id,

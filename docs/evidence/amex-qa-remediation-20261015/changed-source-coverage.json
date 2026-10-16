@@ -1,0 +1,233 @@
+{
+  "changed_statements": 642,
+  "covered": 549,
+  "percent": 85.51,
+  "files": [
+    {
+      "path": "src/devnous/gastos/amex_direct_models.py",
+      "changed_statements": 42,
+      "covered": 42,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/amex_schema_policy.py",
+      "changed_statements": 0,
+      "covered": 0,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/models.py",
+      "changed_statements": 0,
+      "covered": 0,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/routes/admin_amex_direct_routes.py",
+      "changed_statements": 175,
+      "covered": 111,
+      "missing": [
+        780,
+        988,
+        1010,
+        1013,
+        1234,
+        1235,
+        1281,
+        1282,
+        1283,
+        1298,
+        1305,
+        1315,
+        1316,
+        1320,
+        1325,
+        1330,
+        1331,
+        1346,
+        1351,
+        1352,
+        1353,
+        1354,
+        1355,
+        1356,
+        1362,
+        1377,
+        1380,
+        1382,
+        1425,
+        1441,
+        1442,
+        1451,
+        1452,
+        1466,
+        1488,
+        1489,
+        1490,
+        1491,
+        1492,
+        1503,
+        1504,
+        1509,
+        1510,
+        1519,
+        1520,
+        1526,
+        1532,
+        1541,
+        1547,
+        1548,
+        1557,
+        1558,
+        1559,
+        1560,
+        1561,
+        1562,
+        1565,
+        1576,
+        1577,
+        1578,
+        1579,
+        1582,
+        1583,
+        1584
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/routes/user_routes.py",
+      "changed_statements": 0,
+      "covered": 0,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/access_control_service.py",
+      "changed_statements": 0,
+      "covered": 0,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_accounting_identity_service.py",
+      "changed_statements": 16,
+      "covered": 16,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_cut_export_service.py",
+      "changed_statements": 5,
+      "covered": 5,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_accounting_service.py",
+      "changed_statements": 19,
+      "covered": 19,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_budget_service.py",
+      "changed_statements": 24,
+      "covered": 22,
+      "missing": [
+        635,
+        644
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_cfdi_search_service.py",
+      "changed_statements": 78,
+      "covered": 68,
+      "missing": [
+        44,
+        48,
+        51,
+        54,
+        59,
+        100,
+        102,
+        104,
+        114,
+        115
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_common.py",
+      "changed_statements": 11,
+      "covered": 11,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_context_service.py",
+      "changed_statements": 4,
+      "covered": 4,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_effective_source_service.py",
+      "changed_statements": 37,
+      "covered": 37,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_intake_service.py",
+      "changed_statements": 18,
+      "covered": 17,
+      "missing": [
+        206
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_matching_service.py",
+      "changed_statements": 20,
+      "covered": 19,
+      "missing": [
+        664
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_recovery_service.py",
+      "changed_statements": 128,
+      "covered": 118,
+      "missing": [
+        91,
+        93,
+        96,
+        117,
+        137,
+        156,
+        169,
+        181,
+        183,
+        388
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_schema_contract.py",
+      "changed_statements": 6,
+      "covered": 6,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_schema_service.py",
+      "changed_statements": 4,
+      "covered": 4,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_direct_status_service.py",
+      "changed_statements": 49,
+      "covered": 44,
+      "missing": [
+        378,
+        381,
+        428,
+        429,
+        437
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/services/amex_recognition_service.py",
+      "changed_statements": 6,
+      "covered": 6,
+      "missing": []
+    }
+  ]
+}

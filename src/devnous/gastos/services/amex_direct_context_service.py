@@ -36,6 +36,9 @@ from .amex_direct_common import (
     record_event,
     require_unfrozen,
 )
+from .amex_direct_effective_source_service import (
+    load_effective_sources,
+)
 
 
 async def set_direct_context(
@@ -97,13 +100,14 @@ async def set_direct_context(
     if old and not reason.strip():
         return DirectResult("pending", "context_correction_reason_required")
     items = await load_items(session, import_id, locked=True)
+    sources = await load_effective_sources(session, import_id)
     if old:
         from .amex_direct_accounting_service import covered_source_proof
 
         for item in items:
             expense = (
-                await session.get(ExpenseReport, item.imported_expense_id)
-                if item.imported_expense_id
+                await session.get(ExpenseReport, sources[item.id].imported_expense_id)
+                if sources[item.id].imported_expense_id
                 else None
             )
             if await covered_source_proof(session, expense):
@@ -208,11 +212,12 @@ async def list_direct_statement(
             if budget
             else await load_items(session, import_id)
         )
+        sources = await load_effective_sources(session, import_id)
         views = []
         for item in items:
             expense = (
-                await session.get(ExpenseReport, item.imported_expense_id)
-                if item.imported_expense_id
+                await session.get(ExpenseReport, sources[item.id].imported_expense_id)
+                if sources[item.id].imported_expense_id
                 else None
             )
             cfdi = await session.get(CFDIReport, item.cfdi_id) if item.cfdi_id else None
@@ -246,16 +251,24 @@ async def list_direct_statement(
                 for column in item.__table__.columns
             }
             facts.update(
-                row_number=item.source_json["row_number"],
-                fecha=expense.fecha if expense else item.source_json.get("date"),
-                descriptor=item.source_json.get("description"),
+                movement_kind=sources[item.id].movement_kind,
+                imported_expense_id=sources[item.id].imported_expense_id,
+                source_json=sources[item.id].source_json,
+                recovery_revision_id=sources[item.id].recovery_revision_id,
+                row_number=sources[item.id].source_json["row_number"],
+                fecha=(
+                    expense.fecha
+                    if expense
+                    else sources[item.id].source_json.get("date")
+                ),
+                descriptor=sources[item.id].source_json.get("description"),
                 amount=(
-                    Decimal(item.source_json["amount"])
-                    if item.source_json.get("amount") is not None
+                    Decimal(sources[item.id].source_json["amount"])
+                    if sources[item.id].source_json.get("amount") is not None
                     else None
                 ),
-                currency=item.source_json.get("currency"),
-                expense_id=item.imported_expense_id,
+                currency=sources[item.id].source_json.get("currency"),
+                expense_id=sources[item.id].imported_expense_id,
                 cfdi_uuid=cfdi.cfdi_uuid if cfdi else None,
                 sat_status=status.observed_status if status else None,
                 status_observed_at=status.observed_at if status else None,
@@ -295,7 +308,28 @@ async def list_direct_statement(
                     "items": [v.source_hash for v in items],
                 }
             ),
-            progress=state.progress_json or {},
+            progress={
+                **(state.progress_json or {}),
+                "original_period_start": statement.period_start,
+                "original_period_end": statement.period_end,
+                "effective_period_start": (
+                    min(v.period_start for v in sources.values())
+                    if sources
+                    else statement.period_start
+                ),
+                "effective_period_end": (
+                    max(v.period_end for v in sources.values())
+                    if sources
+                    else statement.period_end
+                ),
+                "recovery_revision_ids": sorted(
+                    {
+                        str(v.recovery_revision_id)
+                        for v in sources.values()
+                        if v.recovery_revision_id
+                    }
+                ),
+            },
         )
 
 
@@ -550,8 +584,9 @@ async def list_direct_statements(
                 if budget
                 else await load_items(session, statement.id)
             )
+            sources = await load_effective_sources(session, statement.id)
             counts = {
-                kind: sum(i.movement_kind == kind for i in items)
+                kind: sum(sources[i.id].movement_kind == kind for i in items)
                 for kind in ("debit", "credit", "unknown", "skipped")
             }
             counts.update(

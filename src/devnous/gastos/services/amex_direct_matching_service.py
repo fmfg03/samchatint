@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
@@ -32,6 +32,11 @@ from .amex_direct_common import (
     normalize_rfc,
     record_event,
     require_unfrozen,
+)
+from .amex_direct_effective_source_service import (
+    effective_source_for_item,
+    effective_sources_select,
+    load_effective_sources,
 )
 from .cfdi_expense_link_service import link_expense_to_cfdi_if_manual_uuid_set
 from .cfdi_ingestion_service import (
@@ -112,10 +117,17 @@ async def current_status_receipt(
     return receipt
 
 
-def fiscal_source_hash(item: Any, context: Any, expense: Any) -> str:
+def fiscal_source_hash(
+    item: Any, context: Any, expense: Any, source: Any = None
+) -> str:
     return digest(
         {
-            "row": item.source_json,
+            "row": source.source_json if source is not None else item.source_json,
+            **(
+                {"recovery_proof_hash": source.recovery_proof_hash}
+                if source is not None and source.recovery_id
+                else {}
+            ),
             "context_id": str(context.id),
             "context_version": context.version,
             "expense_id": str(expense.id),
@@ -134,6 +146,7 @@ async def _merchant(
 ) -> tuple[str | None, Any]:
     if item.issuer_rfc:
         return normalize_rfc(item.issuer_rfc), None
+    source = await effective_source_for_item(session, item)
     aliases = list(
         (
             await session.execute(
@@ -141,7 +154,7 @@ async def _merchant(
                     AmexMerchantIdentityAlias.entity_code == context.entity_code,
                     AmexMerchantIdentityAlias.card_account_id == card_id,
                     AmexMerchantIdentityAlias.descriptor
-                    == descriptor_key(item.source_json["description"]),
+                    == descriptor_key(source.source_json["description"]),
                     AmexMerchantIdentityAlias.active.is_(True),
                 )
             )
@@ -157,8 +170,9 @@ async def _merchant(
 async def eligible_candidates(
     session: Any, item: Any, context: Any, statement: Any, expense: Any
 ) -> list[tuple[Any, Any, Any]]:
+    source = await effective_source_for_item(session, item)
     if (
-        item.movement_kind != "debit"
+        source.movement_kind != "debit"
         or expense is None
         or expense.estado_gasto != "activo"
         or str(expense.currency).upper() != "MXN"
@@ -230,13 +244,16 @@ async def _available(
 async def _reverse_unique(session: Any, item: Any, cfdi: Any) -> bool:
     # No candidate LIMIT and no cursor supplied by clients: the policy universe
     # includes every active current direct source, not only the displayed import.
+    sources_view = effective_sources_select()
+    source = await effective_source_for_item(session, item)
     others = list(
         (
             await session.execute(
                 select(AmexDirectItem)
+                .join(sources_view, sources_view.c.id == AmexDirectItem.id)
                 .where(
                     AmexDirectItem.id != item.id,
-                    AmexDirectItem.movement_kind == "debit",
+                    sources_view.c.movement_kind == "debit",
                     AmexDirectItem.accounting_status != "recognized",
                 )
                 .order_by(AmexDirectItem.id)
@@ -246,24 +263,25 @@ async def _reverse_unique(session: Any, item: Any, cfdi: Any) -> bool:
         .all()
     )
     for other in others:
+        other_source = await effective_source_for_item(session, other)
         state = await session.get(AmexStatementDirectState, other.import_id)
         if not state or not state.context_id or other.context_id != state.context_id:
             # A potentially competing same-descriptor source without context is
             # incomplete evidence, not an authorized zero-candidate universe.
             if descriptor_key(
-                other.source_json.get("description", "")
+                other_source.source_json.get("description", "")
             ) == descriptor_key(
-                item.source_json.get("description", "")
-            ) and other.source_json.get(
+                source.source_json.get("description", "")
+            ) and other_source.source_json.get(
                 "amount"
-            ) == item.source_json.get(
+            ) == source.source_json.get(
                 "amount"
             ):
                 return False
             continue
         context = await session.get(AmexStatementDirectContext, state.context_id)
         statement = await session.get(AmexStatementImport, other.import_id)
-        expense = await session.get(ExpenseReport, other.imported_expense_id)
+        expense = await session.get(ExpenseReport, other_source.imported_expense_id)
         if context.receiver_rfc != str(cfdi.receptor_rfc).strip().upper():
             continue
         if any(
@@ -281,9 +299,9 @@ async def _reverse_unique(session: Any, item: Any, cfdi: Any) -> bool:
                 select(ExpenseReport).where(
                     ExpenseReport.origen == "amex_batch",
                     ExpenseReport.estado_gasto == "activo",
-                    ExpenseReport.id != item.imported_expense_id,
-                    ~select(AmexDirectItem.id)
-                    .where(AmexDirectItem.imported_expense_id == ExpenseReport.id)
+                    ExpenseReport.id != source.imported_expense_id,
+                    ~select(sources_view.c.id)
+                    .where(sources_view.c.imported_expense_id == ExpenseReport.id)
                     .exists(),
                     ~select(AmexRecognitionRepresentation.id)
                     .where(AmexRecognitionRepresentation.expense_id == ExpenseReport.id)
@@ -297,7 +315,7 @@ async def _reverse_unique(session: Any, item: Any, cfdi: Any) -> bool:
     for expense in legacy:
         if money(expense.gasto_cantidad) == money(cfdi.total) and descriptor_key(
             expense.concepto or ""
-        ) == descriptor_key(item.source_json.get("description", "")):
+        ) == descriptor_key(source.source_json.get("description", "")):
             return False
     return True
 
@@ -442,6 +460,7 @@ async def _link(
     item.merchant_alias_id = alias.id if alias else None
     item.match_status = "matched"
     item.match_reason = None
+    source = await effective_source_for_item(session, item)
     item.match_proof = {
         "policy": POLICY_VERSION,
         "manual": manual,
@@ -450,7 +469,7 @@ async def _link(
         "tip_amount": str(tip),
         "context_id": str(context.id),
         "context_version": context.version,
-        "source_hash": fiscal_source_hash(item, context, expense),
+        "source_hash": fiscal_source_hash(item, context, expense, source),
         "cfdi_hash": receipt.request_hash,
         "alias_id": str(alias.id) if alias else None,
         "alias_version": alias.version if alias else None,
@@ -484,16 +503,25 @@ async def reconcile_direct_statement(
             "stale_source_version" if context else "contexto_fiscal_pendiente",
         )
     items = await load_items(session, import_id, locked=True)
-    expenses = {
+    sources = await load_effective_sources(session, import_id)
+    expenses: dict[Any, Any] = {
         e.id: e
         for e in await load_expenses(
-            session, [i.imported_expense_id for i in items if i.imported_expense_id]
+            session,
+            [
+                cast(UUID, sources[i.id].imported_expense_id)
+                for i in items
+                if sources[i.id].imported_expense_id
+            ],
         )
     }
     for item in items:
-        if item.movement_kind != "debit" or item.accounting_status == "recognized":
+        if (
+            sources[item.id].movement_kind != "debit"
+            or item.accounting_status == "recognized"
+        ):
             continue
-        expense = expenses[item.imported_expense_id]
+        expense = expenses[sources[item.id].imported_expense_id]
         if item.match_status == "matched" and item.cfdi_id:
             current = await session.get(CFDIReport, item.cfdi_id)
             try:
@@ -543,7 +571,7 @@ async def reconcile_direct_statement(
                 and latest.id == item.status_receipt_id
                 and item.match_proof
                 and item.match_proof["source_hash"]
-                == fiscal_source_hash(item, context, expense)
+                == fiscal_source_hash(item, context, expense, sources[item.id])
             ):
                 continue
         candidates = await eligible_candidates(
@@ -632,9 +660,14 @@ async def link_direct_cfdi_manual(
     item = await session.get(
         AmexDirectItem, item_id, populate_existing=True, with_for_update=True
     )
-    if item is None or item.import_id != import_id or item.movement_kind != "debit":
+    if item is None or item.import_id != import_id:
         raise DirectConflict("item_context_mismatch")
-    expense = (await load_expenses(session, [item.imported_expense_id]))[0]
+    source = await effective_source_for_item(session, item)
+    if source.movement_kind != "debit":
+        raise DirectConflict("item_context_mismatch")
+    expense = (await load_expenses(session, [cast(UUID, source.imported_expense_id)]))[
+        0
+    ]
     cfdi = await session.get(
         CFDIReport, cfdi_id, populate_existing=True, with_for_update=True
     )
@@ -696,9 +729,10 @@ async def release_direct_application(
 ) -> None:
     from ..models import Aprobacion
 
+    source = await effective_source_for_item(session, item)
     expense = await session.get(
         ExpenseReport,
-        item.imported_expense_id,
+        source.imported_expense_id,
         populate_existing=True,
         with_for_update=True,
     )

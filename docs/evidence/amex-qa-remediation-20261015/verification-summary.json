@@ -1,0 +1,43 @@
+{
+  "base": "a983be79e1ad8a6b5aa56affe27a945160ac8166",
+  "production_writes": 0,
+  "publication_performed": false,
+  "unit": {
+    "passed": 797,
+    "seconds": 23.06
+  },
+  "postgresql": {
+    "passed": 404,
+    "seconds": 1032.39,
+    "files": 18,
+    "serial": true
+  },
+  "inventory": {
+    "passed": 9,
+    "seconds": 23.36
+  },
+  "browser_accounting": {
+    "passed": 1,
+    "seconds": 19.32
+  },
+  "browser_recovery": {
+    "passed": 1,
+    "seconds": 13.5
+  },
+  "full_original_csv": {
+    "passed": 1,
+    "seconds": 325.62,
+    "synthetic_fiscal_budget_evidence": true,
+    "original_file_uncommitted": true
+  },
+  "changed_source_statement_coverage": {
+    "covered": 549,
+    "total": 642,
+    "percent": 85.51,
+    "failed_interrupted_coverage_excluded": true
+  },
+  "independent_final_validation": "CLEAN_WITH_NOTES; no Critical/Important/Minor findings",
+  "production_uat": false,
+  "independent_acceptance": "PASS AC1-AC8",
+  "temporary_database_cleaned_up": true
+}

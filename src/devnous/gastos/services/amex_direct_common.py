@@ -60,6 +60,7 @@ class DirectResult:
     _proofs: dict[Any, Any] = field(default_factory=dict, repr=False)
     _lines: list[dict[str, Any]] = field(default_factory=list, repr=False)
     _liability: Any = field(default=None, repr=False)
+    _sources: dict[Any, Any] = field(default_factory=dict, repr=False)
 
 
 def digest(value: Any) -> str:
@@ -282,41 +283,49 @@ async def require_unfrozen(session: Any, import_id: UUID) -> None:
         raise DirectConflict("direct_cut_immutable")
 
 
-def item_hash(item: Any) -> str:
-    return digest(
-        {
-            key: getattr(item, key, None)
-            for key in (
-                "import_id",
-                "import_item_id",
-                "imported_expense_id",
-                "movement_kind",
-                "raw_signed_amount",
-                "profile",
-                "profile_version",
-                "source_json",
-                "context_id",
-                "context_version",
-                "source_version",
-                "cfdi_id",
-                "status_receipt_id",
-                "merchant_alias_id",
-                "declared_uuid",
-                "issuer_rfc",
-                "match_status",
-                "match_proof",
-                "tournament_id",
-                "project_code",
-                "edition_year",
-                "budget_concept_id",
-                "budget_line_id",
-                "budget_version_id",
-                "budget_assignment_id",
-                "budget_status",
-                "credit_excluded",
-            )
+def item_hash(item: Any, effective_source: Any = None) -> str:
+    facts = {
+        key: getattr(item, key, None)
+        for key in (
+            "import_id",
+            "import_item_id",
+            "imported_expense_id",
+            "movement_kind",
+            "raw_signed_amount",
+            "profile",
+            "profile_version",
+            "source_json",
+            "context_id",
+            "context_version",
+            "source_version",
+            "cfdi_id",
+            "status_receipt_id",
+            "merchant_alias_id",
+            "declared_uuid",
+            "issuer_rfc",
+            "match_status",
+            "match_proof",
+            "tournament_id",
+            "project_code",
+            "edition_year",
+            "budget_concept_id",
+            "budget_line_id",
+            "budget_version_id",
+            "budget_assignment_id",
+            "budget_status",
+            "credit_excluded",
+        )
+    }
+    if effective_source is not None and effective_source.recovery_id:
+        facts["effective_source"] = {
+            "expense_id": effective_source.imported_expense_id,
+            "movement_kind": effective_source.movement_kind,
+            "source": effective_source.source_json,
+            "recovery_id": effective_source.recovery_id,
+            "revision_id": effective_source.recovery_revision_id,
+            "proof_hash": effective_source.recovery_proof_hash,
         }
-    )
+    return digest(facts)
 
 
 async def record_event(
@@ -332,7 +341,10 @@ async def record_event(
     if bump:
         item.source_version += 1
         state.source_version += 1
-    item.source_hash = item_hash(item)
+    from .amex_direct_effective_source_service import effective_source_for_item
+
+    source = await effective_source_for_item(session, item)
+    item.source_hash = item_hash(item, source)
     item.updated_at = datetime.now(timezone.utc)
     state.updated_at = item.updated_at
     await session.flush()
@@ -374,6 +386,7 @@ async def resolve_item_import(
 ) -> UUID:
     """Resolve only a declared scoped source after actor/action authorization."""
     from ..models import AmexDirectItem
+    from .amex_direct_effective_source_service import effective_sources_select
 
     await authorize(session, actor_id, action, budget=budget)
     configs = [c for c in configured_scopes() if actor_scope(c, actor_id) is not None]
@@ -382,8 +395,10 @@ async def resolve_item_import(
     for config in configs:
         await authorize(session, actor_id, action, config=config, budget=budget)
     await require_amex_direct_schema(session)
+    sources = effective_sources_select()
     query = (
         select(AmexDirectItem.import_id)
+        .join(sources, sources.c.id == AmexDirectItem.id)
         .join(AmexStatementImport, AmexStatementImport.id == AmexDirectItem.import_id)
         .where(
             AmexStatementImport.workflow_mode == "direct",
@@ -395,7 +410,7 @@ async def resolve_item_import(
     query = (
         query.where(AmexDirectItem.id == item_id)
         if item_id
-        else query.where(AmexDirectItem.imported_expense_id == expense_id)
+        else query.where(sources.c.imported_expense_id == expense_id)
     )
     parent = (await session.execute(query)).scalar_one_or_none()
     if parent is None:

@@ -627,7 +627,20 @@ async def fiscal_lines(
 async def direct_statement_source(session: Any, expense_ids: list[UUID]) -> bool:
     """New direct receipts belong exclusively to their accounting owner."""
     from ..models import AmexStatementImport, AmexStatementImportItem
+    from .amex_accounting_identity_service import effective_direct_sources_available
+    from .amex_direct_effective_source_service import effective_sources_select
 
+    if await effective_direct_sources_available(session):
+        sources = effective_sources_select()
+        return bool(
+            (
+                await session.execute(
+                    select(sources.c.id).where(
+                        sources.c.imported_expense_id.in_(expense_ids)
+                    )
+                )
+            ).first()
+        )
     return bool(
         (
             await session.execute(
@@ -827,11 +840,11 @@ async def bind_amex_report_bank_consumptions(
 ) -> AmexRecognitionResult:
     """Attach an explicit complete bank charge to existing report receipts only."""
     from ..models import AmexReportBankAssociation
+    from .amex_accounting_posting_service import ALLOWED_AMEX_LIABILITY_CODES, _money
     from .amex_report_evidence_service import (
         build_amex_report_source_snapshot,
         load_amex_report_attachment_evidence,
     )
-    from .amex_accounting_posting_service import ALLOWED_AMEX_LIABILITY_CODES, _money
 
     await lock_recognition(session)
     actor = await session.get(Empleado, actor_id, populate_existing=True)

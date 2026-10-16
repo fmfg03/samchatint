@@ -1,0 +1,99 @@
+{
+  "source_commit": "a983be79e1ad8a6b5aa56affe27a945160ac8166",
+  "statement_id": "ec3f1c01-8daf-47f8-b9f9-2c7d5aad2976",
+  "file_sha256": "ab641fa6ccafcfc046bf213764f41a61a969d05ce022899d217aa8ab3ea3cd4c",
+  "source_file": {
+    "file_sha256": "ab641fa6ccafcfc046bf213764f41a61a969d05ce022899d217aa8ab3ea3cd4c",
+    "byte_size": 10232
+  },
+  "card_last4": "5007",
+  "period_start": "2026-09-01",
+  "period_end": "2026-09-30",
+  "profile": "debit_positive",
+  "movement_counts": {
+    "debit": 140,
+    "skipped": 5,
+    "credit": 3
+  },
+  "match_status_counts": {
+    "pending": 148
+  },
+  "match_reason_counts": {
+    "merchant_identity_or_fresh_sat_evidence_pending": 140,
+    "fiscal_identity_pending": 8
+  },
+  "budget_status_counts": {
+    "unclassified": 148
+  },
+  "accounting_status_counts": {
+    "pending": 148
+  },
+  "debit_with_cfdi": 0,
+  "debit_with_project": 0,
+  "debit_with_budget_assignment": 0,
+  "credits_excluded": 0,
+  "matching_candidate_count_distribution": {
+    "0": 140
+  },
+  "debit_without_merchant_or_fiscal_uuid": 140,
+  "accounting_preview_status": "pending",
+  "accounting_preview_reason": "merchant_identity_or_fresh_sat_evidence_pending",
+  "accounting_preview_progress": {
+    "exceptions": [
+      "merchant_identity_or_fresh_sat_evidence_pending",
+      "budget_assignment_required",
+      "budget_account_mapping_required",
+      "budget_assignment_changed",
+      "statement_row_unresolved",
+      "credit_exclusion_required"
+    ],
+    "new_count": 140,
+    "prior_count": 0,
+    "lines": []
+  },
+  "cut_exists": false,
+  "classification_option_counts": {
+    "tournaments": 16,
+    "projects": 0,
+    "concepts": 1314,
+    "contexts": 1,
+    "edition_years": 1
+  },
+  "admin_dg_project_options": [
+    {
+      "id": "36b67127-3a1d-4c08-924b-75e5bb5f6fa6",
+      "name": "Gastos Administrativos - Direcci\u00f3n General"
+    }
+  ],
+  "unresolved_source_rows": [
+    {
+      "row_number": 146,
+      "movement_kind": "skipped",
+      "match_reason": "fiscal_identity_pending"
+    },
+    {
+      "row_number": 147,
+      "movement_kind": "skipped",
+      "match_reason": "fiscal_identity_pending"
+    },
+    {
+      "row_number": 149,
+      "movement_kind": "skipped",
+      "match_reason": "fiscal_identity_pending"
+    },
+    {
+      "row_number": 145,
+      "movement_kind": "skipped",
+      "match_reason": "fiscal_identity_pending"
+    },
+    {
+      "row_number": 148,
+      "movement_kind": "skipped",
+      "match_reason": "fiscal_identity_pending"
+    }
+  ],
+  "read_only": true,
+  "business_writes": false,
+  "sat_calls": false,
+  "authenticated_production_uat": false
+}
