@@ -57,7 +57,7 @@ class AmexRecognitionConsumption(Base):
         CheckConstraint(
             "(source_kind = 'statement' AND imported_expense_id IS NOT NULL "
             "AND source_report_expense_id IS NULL "
-            "AND binding_mode IN ('legacy', 'report_bridge')) OR "
+            "AND binding_mode IN ('legacy', 'report_bridge', 'direct')) OR "
             "(source_kind = 'report' AND imported_expense_id IS NULL "
             "AND source_report_expense_id IS NOT NULL AND binding_mode = 'report')",
             name="ck_amex_consumption_source_anchor",
@@ -340,10 +340,13 @@ class AmexStatementImport(Base):
             "parser_version",
             name="uq_amex_statement_identity",
         ),
+        UniqueConstraint("id", "workflow_mode", name="uq_amex_statement_mode"),
         CheckConstraint("period_end >= period_start", name="ck_amex_statement_period"),
         CheckConstraint(
-            "imported_count > 0 AND skipped_count >= 0 "
-            "AND total_rows = imported_count + skipped_count",
+            "(workflow_mode='legacy' AND imported_count>0 AND skipped_count>=0 "
+            "AND credit_count=0 AND unknown_count=0 AND total_rows=imported_count+skipped_count) OR "
+            "(workflow_mode='direct' AND total_rows>0 AND imported_count>=0 AND skipped_count>=0 "
+            "AND credit_count>=0 AND unknown_count>=0 AND total_rows=imported_count+skipped_count+credit_count+unknown_count)",
             name="ck_amex_statement_counts",
         ),
         CheckConstraint("length(file_sha256) = 64", name="ck_amex_statement_hash"),
@@ -369,6 +372,9 @@ class AmexStatementImport(Base):
         ForeignKey("empleados.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    workflow_mode = Column(String(10), nullable=False, default="legacy", server_default="legacy")
+    credit_count = Column(Integer, nullable=False, default=0, server_default="0")
+    unknown_count = Column(Integer, nullable=False, default=0, server_default="0")
     total_rows = Column(Integer, nullable=False)
     imported_count = Column(Integer, nullable=False)
     skipped_count = Column(Integer, nullable=False)
@@ -389,9 +395,9 @@ class AmexStatementImportItem(Base):
         UniqueConstraint("imported_expense_id", name="uq_amex_statement_expense"),
         CheckConstraint("row_number >= 2", name="ck_amex_statement_row_number"),
         CheckConstraint(
-            "(status = 'imported' AND imported_expense_id IS NOT NULL "
-            "AND reason_code IS NULL) OR (status = 'skipped' "
-            "AND imported_expense_id IS NULL AND reason_code IS NOT NULL)",
+            "(status='imported' AND imported_expense_id IS NOT NULL AND reason_code IS NULL) OR "
+            "(status='skipped' AND imported_expense_id IS NULL AND reason_code IS NOT NULL) OR "
+            "(workflow_mode='direct' AND status IN ('credit','unknown') AND imported_expense_id IS NULL)",
             name="ck_amex_statement_item_status",
         ),
     )
@@ -401,6 +407,7 @@ class AmexStatementImportItem(Base):
         ForeignKey("amex_statement_imports.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    workflow_mode = Column(String(10), nullable=False, default="legacy", server_default="legacy")
     row_number = Column(Integer, nullable=False)
     imported_expense_id = Column(
         UUID(as_uuid=True),
@@ -4521,3 +4528,12 @@ class TelegramNotificationOutbox(Base):
                 self.next_retry_at.isoformat() if self.next_retry_at else None
             ),
         }
+
+
+# Explicitly registered for metadata; runtime policy excludes owner-run tables.
+from .amex_direct_models import (  # noqa: E402,F401
+    AmexStatementSourceFile, AmexStatementDirectContext, AmexStatementDirectState,
+    AmexMerchantIdentityAlias, AmexCFDIStatusReceipt, AmexDirectItem,
+    AmexDirectEvent, AmexDirectAccountingCut, AmexDirectCutItem,
+    AmexDirectCoverageRevision, AmexDirectRecoveredRow,
+)

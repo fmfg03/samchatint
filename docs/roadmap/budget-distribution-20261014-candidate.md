@@ -249,3 +249,7 @@ La primera ejecución de CI detectó inventario estático desactualizado:
 de `admin_budget_routes.py`, sus líneas/hashes y evidencias derivadas.
 No cambia el catálogo de 44 acciones ni se habilitan herramientas del plugin.
 Workflow, gates y baselines de fallos permanecen intactos.
+
+## Continuación autorizada — 2026-10-16
+
+El usuario autorizó terminar y fusionar el PR #487; las limitaciones de publicación anteriores describen el punto de control del14 de octubre. Se corrigió el P1 pendiente de CxC/aviso semanal conservando raíz financiera y calendario de revisión, y se integró main03fa1fece. La integración exacta de los canons recibió revisión humana explícita adicional; conserva ambos textos aprobados. Cierre local:634 pruebas PASS, incluidas7 PostgreSQL15; cobertura322/376=85.64%. Ver `budget-distribution-20261016-merge-report.md`, validación independiente y evidencia asociada. Controles GitHub nuevos pendientes al publicar. Sin migración, datos ni despliegue productivo; Finance crosswalk y UAT siguen separados.

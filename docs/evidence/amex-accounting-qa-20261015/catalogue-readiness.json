@@ -1,0 +1,11 @@
+{
+  "read_only": true,
+  "sat_pool_window_start": "2026-08-28",
+  "sat_pool_window_end_exclusive": "2026-10-04",
+  "sat_received": 605,
+  "sat_received_with_xml": 605,
+  "sat_mxn_invoice_i": 566,
+  "admin_dg_active_expense_concepts": 39,
+  "admin_dg_mapped_expense_concepts": 39,
+  "admin_dg_approved_2026_lines": 39
+}

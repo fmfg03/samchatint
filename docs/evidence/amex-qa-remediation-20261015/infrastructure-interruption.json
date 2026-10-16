@@ -1,0 +1,10 @@
+{
+  "classification": "test_infrastructure",
+  "docker_service_exec_start": "2026-10-15T20:16:44+02:00",
+  "docker_service_active_since": "2026-10-15T20:16:53+02:00",
+  "evidence": "systemctl show docker.service + restarted container uptimes + vanished --rm test container",
+  "effect": "original full-statement attempt lost SQL connection at344.76s; no passing claim",
+  "response": "only root-owned disposable PostgreSQL recreated on127.0.0.1:55471 without --rm; repeat affected tests",
+  "unrelated_containers_modified": false,
+  "production_application_changed": false
+}

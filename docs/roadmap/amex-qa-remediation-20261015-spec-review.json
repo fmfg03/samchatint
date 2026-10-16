@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-15",
+  "base_commit": "a983be79e1ad8a6b5aa56affe27a945160ac8166",
+  "phase": "approved_scoped_build",
+  "story_approval": "User: ok, aprobado, following eight-finding AMEX QA assessment",
+  "story_sha256": "8251d6c84cb2d35539d10ed99d7dca723fe60f5f5bf02f0d8f94a3edf03823f5",
+  "spec_sha256": "75dd45c04961e089f47e5aa49efbe1d0b9d551f893689c865473d01b99c2197d",
+  "read_only_design_reviews": [
+    {
+      "reviewer": "amex_period_recovery_spec_research",
+      "result": "No important findings remaining in reviewed recovery design",
+      "closed": [
+        "Atomic recovery membership sealing",
+        "Economy anchored to immutable original evidence",
+        "Effective SQL view admission",
+        "Coordinated guard-hash migration and runtime promotion"
+      ]
+    },
+    {
+      "reviewer": "amex_operability_spec_research",
+      "result": "No important findings remaining in reviewed operability design",
+      "closed": [
+        "Explicit vigencia and conciliar authority separation",
+        "Server-verified cursor context",
+        "Advisory selection only and locked final matching revalidation"
+      ]
+    }
+  ],
+  "implementation_started": false,
+  "new_tests_run": false,
+  "test_evidence_basis": "Existing QA red reproductions; future acceptance plan in specification",
+  "application_source_modified": false,
+  "production_modified": false,
+  "canon_modified": true,
+  "canon_amendments": "Exact human-approved texts applied to product/engineering; register hashes refreshed",
+  "migration_required_for_recovery": true,
+  "production_migration_authorized_by_this_receipt": false,
+  "technical_approval": "User: aprobada",
+  "approved_presented_spec_sha256": "75dd45c04961e089f47e5aa49efbe1d0b9d551f893689c865473d01b99c2197d",
+  "spec_with_approval_record_sha256": "7befbfb7a5e6dc2fdda3845fb9b5a1407e754454ad38989af07582756d996657"
+}

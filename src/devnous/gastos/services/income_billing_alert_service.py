@@ -28,6 +28,11 @@ async def send_weekly_unbilled_income_alert(
     if not definitive_version:
         return {"expected": 0.0, "invoiced": 0.0, "pending": 0.0, "recipients": 0, "sent": 0}
     version_id = str(definitive_version["id"])
+    financial_version_id = version_id
+    if definitive_version.get("source") == "distribution_revision":
+        from samchat.budgets.distribution import financial_context
+
+        financial_version_id, _ = await financial_context(session, definitive_version)
     expected = (await session.execute(text("""
         SELECT COALESCE(SUM(p.expected_income_amount), 0) AS amount
         FROM budget_line_monthly_plan p
@@ -41,7 +46,7 @@ async def send_weekly_unbilled_income_alert(
         FROM budget_cfdi_income_links link
         WHERE link.status = 'approved' AND link.income_date::date <= :cutoff
           AND link.budget_version_id = CAST(:version_id AS uuid)
-    """), {"cutoff": cutoff, "version_id": version_id})).scalar_one()
+    """), {"cutoff": cutoff, "version_id": financial_version_id})).scalar_one()
     pending = max(0.0, float(expected or 0) - float(invoiced or 0))
     iso_year, iso_week, _ = cutoff.isocalendar()
     notification_type = f"income_unbilled_weekly_{iso_year}_{iso_week:02d}"

@@ -1,0 +1,40 @@
+{
+  "source_commit": "a983be79e1ad8a6b5aa56affe27a945160ac8166",
+  "browser": "chromium",
+  "live_handlers": true,
+  "production_data_read_only": true,
+  "identity": "Local QA injection of actual Finance actor; not production login UAT. Separate CP actor exercised in isolated accounting simulation.",
+  "writes_blocked": true,
+  "sat_network": false,
+  "direct_index_status": 200,
+  "loaded_statement_continue_is_direct": true,
+  "rendered_statement_rows": 148,
+  "whole_page_horizontal_overflow": false,
+  "classification_category_count_before_project": 1314,
+  "classification_category_count_after_admin_dg": 1314,
+  "category_options_have_project_relation": false,
+  "generate_policy_button_present": false,
+  "classify_valid_without_send_confirmation": false,
+  "classify_required_send_confirmation_label": "Confirmo enviar los cargos seleccionados a Control Presupuestal",
+  "classify_valid_with_send_confirmation": true,
+  "desktop_document_height": 26834,
+  "visible_uuid_fields": [
+    {
+      "label": "UUID de registro CFDI"
+    }
+  ],
+  "cfdi_search_inputs": 0,
+  "credit_exclusion_forms": 1,
+  "screenshots": [
+    "statement-desktop.png",
+    "statement-mobile.png",
+    "intake-preview.png"
+  ],
+  "mobile_page_overflow": false,
+  "actual_csv_preview_rows": 148,
+  "preview_omitted_type_rows": 0,
+  "preview_cargo_type_rows": 145,
+  "preview_warns_period_mismatch": false,
+  "actual_csv_preview_readonly": true,
+  "browser_js_errors": []
+}

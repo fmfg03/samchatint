@@ -69,6 +69,10 @@ async def render(
     attention_context=None,
     request=None,
 ):
+    # This unit fixture models a legacy installation without the recovery owner.
+    monkeypatch.setattr(
+        user_routes, "effective_direct_sources_available", AsyncMock(return_value=False)
+    )
     charge = item(last4="1005")
     catalog_card = card()
     session = SimpleNamespace(

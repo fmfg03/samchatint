@@ -16,7 +16,11 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from devnous.gastos import models
-from devnous.gastos.amex_schema_policy import AMEX_STATEMENT_OWNER_MIGRATION_TABLES
+from devnous.gastos.amex_schema_policy import (
+    AMEX_DIRECT_OWNER_MIGRATION_TABLES,
+    AMEX_OWNER_MIGRATION_TABLES,
+    AMEX_STATEMENT_OWNER_MIGRATION_TABLES,
+)
 from devnous.gastos.services import amex_statement_import_service as service
 from devnous.gastos.services.amex_statement_schema_service import (
     inspect_amex_statement_schema,
@@ -48,7 +52,11 @@ async def pg(monkeypatch):
     )
     metadata = MetaData()
     for table in models.Base.metadata.tables.values():
-        if table.name in AMEX_STATEMENT_OWNER_MIGRATION_TABLES:
+        if table.name in (
+            AMEX_STATEMENT_OWNER_MIGRATION_TABLES
+            | AMEX_DIRECT_OWNER_MIGRATION_TABLES
+            | AMEX_OWNER_MIGRATION_TABLES
+        ):
             continue
         clone = table.to_metadata(metadata)
         for constraint in list(clone.constraints):
@@ -67,9 +75,18 @@ async def pg(monkeypatch):
         database=url.database,
         server_settings={"search_path": name},
     )
-    await conn.execute(
-        (ROOT / "database/migrations/20261013_amex_statement_workflow.sql").read_text()
-    )
+    for filename in (
+        "20261001_amex_shared_recognition.sql",
+        "20261013_amex_approved_informe_recognition.sql",
+        "20261013_amex_statement_workflow.sql",
+        "20261014_amex_sat_budget_direct.sql",
+    ):
+        if filename == "20261014_amex_sat_budget_direct.sql":
+            from samchat.budgets.service import ensure_budget_schema
+
+            async with async_sessionmaker(engine).begin() as fixture_session:
+                await ensure_budget_schema(fixture_session)
+        await conn.execute((ROOT / "database/migrations" / filename).read_text())
     factory = async_sessionmaker(engine, expire_on_commit=False)
     actor = models.Empleado(id=uuid4(), nombre="Finance", rol="finanzas", activo=True)
     employee = models.Empleado(id=uuid4(), nombre="Owner", rol="empleado", activo=True)
@@ -238,6 +255,11 @@ async def test_missing_guard_fails_readiness(pg):
 
 @pytest.mark.asyncio
 async def test_empty_schema_rollback_allowed(pg):
+    await pg.conn.execute(
+        (
+            ROOT / "database/migrations/20261014_amex_sat_budget_direct_rollback.sql"
+        ).read_text()
+    )
     await pg.conn.execute(
         (
             ROOT / "database/migrations/20261013_amex_statement_workflow_rollback.sql"

@@ -22,9 +22,9 @@ canon edits silently.
 
 | Protected source path | SHA-256 at Line 0 baseline |
 | --- | --- |
-| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `9afe144d8919e10aefbd2a5fbe6f7d642d0df1d58877d08826d5beb4a72d9175` |
+| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `3f92bc667e2b152334a500f2cf9427cebdd4ed9c0b9b10538e075596842f435a` |
 | `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `2c55cc807c464d5462bca3e9d092fcefe6f5f2f66f4498231d72a7b57d795985` |
-| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `2c0ddc2f9bcbe701c12d35ed54ad0761bbed82fc6691cd32eb3ce13864488ce9` |
+| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `b98ba82dade2cc148b06b787c9b0415479a4c68e8109bf6c5f2402dcbe5228e1` |
 
 | Canon amendment date | Affected sources | Reason and evidence | Evidence state |
 | --- | --- | --- | --- |
@@ -41,6 +41,8 @@ canon edits silently.
 | 2026-10-13 | Product and Engineering canons | Human-approved technical specification and exact canon amendment for approved-INFORME AMEX recognition, consolidated explicit Finance confirmation and subsequent nonposting bank association. Evidence: `docs/roadmap/amex-approved-informe-20261013-story.md` and `docs/roadmap/amex-approved-informe-20261013-spec.md`. Sweep unchanged because no historical sweep inventory is revised. | Approved candidate; implementation validation, commit, merge, migration, deployment and Finance UAT remain pending. |
 
 | 2026-10-13 | Product and Engineering canons | Human-approved statement workflow and explicit beneficiary attention policy. Exact amendment text approved with technical specification; evidence: `docs/roadmap/amex-statement-workflow-20261013-story.md` and `docs/roadmap/amex-statement-workflow-20261013-spec.md`. Sweep unchanged: historical inventory is not rewritten. | Approved implementation scope; Git publication, owner-run migration, deployment and Finance UAT pending separate receipts. |
+
+| 2026-10-15 | Product §9.1 and Engineering §8.2.1 | Explicit user approval of the exact 2026-10-14 direct AMEX source contract. Evidence: `docs/roadmap/amex-sat-budget-direct-20261015-spec.md`; typed statements, fiscal context and budget assignment without INFORME, immutable direct cuts and no duplicate recognition. | Approved build scope only; migration, publication, deployment and Finance UAT pending. |
 
 ## Work lanes and gates
 

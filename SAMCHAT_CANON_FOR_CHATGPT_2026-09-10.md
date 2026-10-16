@@ -209,6 +209,10 @@ Amendment date: 2026-10-13. Explicit human approval of the technical specificati
 
 AMEX dispone de un recorrido por importación de estado de cuenta con identidad persistida de archivo, tarjeta y período declarados. Su avance separa pendientes operativos, asociación bancaria y disponibilidad contable. La importación no aprueba informes ni origina pólizas. Finanzas selecciona fuentes explícitas y confirma cada INFORME completo mediante el corte canónico; vínculo de navegación no acredita conciliación. La política de atención por beneficiario explícito puede retirar informes y partidas de la cola manual sin ocultar cargos bancarios, alterar su estado ni excluirlos de controles financieros. Identidad ausente o contradictoria permanece visible. Cargas históricas no reciben identidad de estado reconstruida.
 
+Amendment date: 2026-10-14. Explicit human approval of the technical specification and exact canon text on 2026-10-15. Reason: direct statement/SAT-to-budget/accounting workflow without a fabricated expense report. Evidence: `docs/roadmap/amex-sat-budget-direct-20261015-spec.md` and its approved story; implementation, migration, merge, deployment and Finance UAT remain separate gates.
+
+El recorrido AMEX directo admite como fuente contable un estado identificado y sus cargos reales, con CFDI SAT/evidencia fiscal, entidad receptora explícita, clasificación de Contabilidad, asignación presupuestal por autoridad configurada y confirmación Finance. No requiere ni fabrica un INFORME. Conciliación automática utiliza política aprobada de identidad fiscal/comercio, vigencia, economía y unicidad global; faltantes o ambigüedad permanecen pendientes. Contabilidad define proyecto/torneo y categoría; Control Presupuestal asigna únicamente la partida. El corte directo íntegro e inmutable genera como máximo una póliza nueva por estado para consumos no reconocidos; los consumos ya cubiertos conservan sus receipts y pólizas. No se permiten doble gasto, base fiscal o pasivo ni exportación parcial. Programación y liquidación de la tarjeta mantienen su owner y no se condicionan por un nuevo gate de CFDI.
+
 ### 9.2 Monthly DIOT by effective payment date
 
 Amendment date: 2026-10-09. This canon diff received explicit human approval.
@@ -411,6 +415,12 @@ PostgreSQL migration verification, and independent implementation validation.
 This remains an isolated-worktree candidate; merge, deployment, migration/data
 application, authenticated UAT, and business acceptance are separate.
 
+
+### AMEX directo: recuperación auditada de cobertura temporal
+
+Fecha: 2026-10-15. Texto y especificación técnica aprobados explícitamente por el usuario con «aprobada». Razón: corregir cargos omitidos por período conservando fuentes y controles financieros. Evidencia: `docs/roadmap/amex-qa-remediation-20261015-spec.md`, sección 9, y assessment QA asociado. Candidato aprobado para implementación; migración, aplicación productiva, promoción y UAT mantienen sus propios checkpoints.
+
+Contabilidad puede corregir explícitamente la cobertura temporal declarada de un estado directo todavía no reconocido cuando el archivo original demuestra cargos omitidos únicamente por estar fuera del período capturado. La recuperación preserva el original y sus recibos, conserva los cargos ya creados y agrega sólo los cargos faltantes mediante evidencia auditada e idempotente. No cambia identidad fiscal, no crea informes, no aprueba gastos ni modifica fuentes reconocidas. La fecha contable sigue siendo una declaración explícita dentro de la cobertura efectiva confirmada y un período abierto.
 ## 18. Approved budget distribution revision rules
 
 Date: 2026-10-14. Human approval: Francisco, evidence

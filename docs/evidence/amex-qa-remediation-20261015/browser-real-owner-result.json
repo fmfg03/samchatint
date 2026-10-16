@@ -1,0 +1,21 @@
+{
+  "case": "two_charge_browser_real_owners",
+  "synthetic_fiscal_data": true,
+  "internal_business_services_mocked": false,
+  "sat_transport_substituted": true,
+  "roles": [
+    "Finance",
+    "Control Presupuestal"
+  ],
+  "statement_id": "ba6f26ef-ccba-4b82-9274-2800ad4f2858",
+  "charges": 2,
+  "policies": 1,
+  "balanced_total": "348.00",
+  "downloaded_formats": [
+    "xlsx",
+    "csv",
+    "zip"
+  ],
+  "rfc_trimmed": true,
+  "recognized_items_not_actionable_in_cp": true
+}

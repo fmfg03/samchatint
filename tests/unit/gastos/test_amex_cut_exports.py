@@ -362,3 +362,63 @@ def test_unchanged_partida_in_adjustment_does_not_create_extra_movement():
     )
     assert len(cut_expense_cfdis(cut)) == 2
     assert_rows(build_coi_poliza_rows(cut_expense_cfdis(cut)), cut)
+
+
+@pytest.mark.parametrize("direct", [False, True])
+def test_multicharge_export_preserves_economic_coverage_in_any_order(direct):
+    """Direct posting groups debit rows before liability rows, unlike items."""
+    from devnous.gastos.models import AmexDirectAccountingCut
+
+    original = frozen_cut()
+    snapshot = copy.deepcopy(original.snapshot_json)
+    snapshot["lines"] = sorted(snapshot["lines"], key=lambda row: Decimal(row["haber"]))
+    cut = (
+        AmexDirectAccountingCut(
+            id=original.id,
+            import_id=uuid4(),
+            accounting_date=original.accounting_date,
+            snapshot_json=snapshot,
+        )
+        if direct
+        else SimpleNamespace(**{**vars(original), "snapshot_json": snapshot})
+    )
+    before = copy.deepcopy(snapshot)
+    expenses = cut_expense_cfdis(cut)
+    assert len(expenses) == 2
+    assert generate_coi_poliza_csv(expenses)
+    assert load_workbook(io.BytesIO(generate_coi_poliza_xlsx(expenses))).sheetnames
+    assert zipfile.ZipFile(io.BytesIO(generate_coi_poliza_zip(expenses))).namelist()
+    assert snapshot == before
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "account", "code", "amount"])
+def test_multiset_export_rejects_inexact_economic_coverage(mutation):
+    cut = frozen_cut()
+    rows = cut.snapshot_json["lines"]
+    if mutation == "missing":
+        rows.pop()
+    elif mutation == "extra":
+        rows.append(copy.deepcopy(rows[0]))
+    elif mutation == "account":
+        rows[0]["cuenta_contable_id"] = str(uuid4())
+    elif mutation == "code":
+        rows[0]["cuenta_codigo"] = "5300-999-999"
+    else:
+        rows[0]["debe"] = "100.01"
+    with pytest.raises(ValueError, match="desglose completo"):
+        cut_expense_cfdis(cut)
+
+
+def test_repeated_identical_lines_keep_exact_multiplicity():
+    cut = frozen_cut()
+    # A second identical accounting source is legitimate only in both arrays.
+    duplicate = copy.deepcopy(cut.snapshot_json["partidas"][0])
+    duplicate["expense_id"] = str(uuid4())
+    duplicate["reference"] = "G-repeated"
+    cut.snapshot_json["partidas"].append(duplicate)
+    cut.snapshot_json["lines"].extend(copy.deepcopy(duplicate["journal_lines"]))
+    cut.snapshot_json["lines"].reverse()
+    assert len(cut_expense_cfdis(cut)) == 3
+    cut.snapshot_json["lines"].pop()
+    with pytest.raises(ValueError, match="desglose completo"):
+        cut_expense_cfdis(cut)

@@ -142,6 +142,11 @@ from ..services.amex_cfdi_matching_service import (
     validate_amex_cfdi_suggestion,
     validate_pase_monthly_cfdi_suggestion,
 )
+from ..services.amex_accounting_identity_service import (
+    direct_amex_expense_condition,
+    effective_direct_sources_available,
+    is_direct_amex_expense,
+)
 from ..services.amex_recognition_service import (
     activation_reason,
     assign_missing_amex_card,
@@ -172,6 +177,8 @@ from ..services.access_control_service import (
     ACCESS_TOOLS,
     ALL_ROLES,
     NON_CONFIGURABLE_GATEWAY_TOOL_KEYS,
+    AccessControlLookupError,
+    can_defer_path_authorization_to_route_guard,
     filter_cards_by_tools,
     is_catalog_admin_user,
     is_superadmin_role,
@@ -16144,6 +16151,23 @@ async def panel_operaciones_console(
     return html
 
 
+async def _amex_entry_destination(session: AsyncSession, actor: Empleado) -> str:
+    """Prefer the direct owner without overriding persisted read restrictions."""
+    legacy = "/admin/contabilidad/amex/estados"
+    direct = legacy + "/directo"
+    if not bool(getattr(actor, "activo", False)) or (
+        str(getattr(actor, "rol", "")).strip().lower() not in FINANCE_AMEX_ROLES
+    ):
+        return legacy
+    try:
+        allowed = await can_defer_path_authorization_to_route_guard(
+            session, actor, direct, "GET"
+        )
+    except AccessControlLookupError:
+        return legacy
+    return direct if allowed else legacy
+
+
 @router.get("/panel", response_class=HTMLResponse)
 async def panel(
     request: Request,
@@ -16319,12 +16343,17 @@ async def panel(
             </section>
         """
 
+    amex_entry_destination = (
+        await _amex_entry_destination(session, current_empleado)
+        if "admin.gastos.amex" in visible_tool_keys
+        else "/admin/contabilidad/amex/estados"
+    )
     operacion_contable_cards = filter_cards_by_tools([
         ("admin.contabilidad", "/admin/contabilidad/coi", "Vista contable", "Revisa pólizas COI y el detalle de sus cuentas."),
         ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Revisa el vínculo por UUID con empleado y proyecto operativo."),
         ("admin.gastos.cfdi_carga", "/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CSV por UUID para alimentar la revisión de matching."),
-        ("admin.gastos.amex", "/admin/contabilidad/amex/estados", "AMEX",
-         "Carga el estado, resuelve pendientes y prepara las pólizas del informe."),
+        ("admin.gastos.amex", amex_entry_destination, "AMEX",
+         "Carga el estado, revisa CFDI y prepara la póliza de la tarjeta."),
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "Prepara CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
     ], visible_tool_keys)
     if is_superadmin_role(getattr(current_empleado, "rol", None)):
@@ -20411,8 +20440,9 @@ async def carga_masiva_amex_get(
                 <strong>Éxito:</strong> {escape(success_msg)}
             </div>
         """
-    hero_actions_html = """
-        <a href="/admin/contabilidad/amex/estados" class="button primary">
+    amex_entry_destination = await _amex_entry_destination(session, current_empleado)
+    hero_actions_html = f"""
+        <a href="{amex_entry_destination}" class="button primary">
             Abrir recorrido AMEX</a>
         <a href="/admin/gastos/amex/conciliacion" class="button secondary">Ver conciliación AMEX</a>
         <a href="/admin/gastos" class="button secondary">Volver a finanzas</a>
@@ -21331,7 +21361,12 @@ async def amex_conciliacion_link_cfdi(
         .where(ExpenseReport.id == expense_uuid)
     )
     expense = result.scalar_one_or_none()
-    if not expense or expense.origen != "amex_batch" or expense.estado_gasto != "activo":
+    if (
+        not expense
+        or expense.origen != "amex_batch"
+        or expense.estado_gasto != "activo"
+        or await is_direct_amex_expense(session, expense_uuid)
+    ):
         return RedirectResponse(
             url=redirect_base + "&error_msg=" + quote("El cargo AMEX ya no está disponible para vinculación.") + redirect_anchor,
             status_code=303,
@@ -21407,6 +21442,7 @@ async def amex_conciliacion_link_cfdi_bulk(
             or expense.origen != "amex_batch"
             or expense.estado_gasto != "activo"
             or expense.cfdi_report_id
+            or await is_direct_amex_expense(session, expense_uuid)
         ):
             skipped_count += 1
             continue
@@ -21473,6 +21509,16 @@ async def amex_conciliacion_link_pase_monthly_cfdi(
     ):
         return RedirectResponse(
             url=redirect_base + "&error_msg=" + quote("Los cargos PASE ya no están disponibles para vinculación mensual."),
+            status_code=303,
+        )
+
+    if any(
+        [await is_direct_amex_expense(session, exp.id) for exp in expenses_to_link]
+    ):
+        return RedirectResponse(
+            url=redirect_base
+            + "&error_msg="
+            + quote("El cargo pertenece al recorrido AMEX directo."),
             status_code=303,
         )
 
@@ -21785,6 +21831,10 @@ async def amex_conciliacion_view(
         .where(
             and_(
                 ExpenseReport.origen == "amex_batch",
+                ~direct_amex_expense_condition(
+                    ExpenseReport,
+                    effective_sources=await effective_direct_sources_available(session),
+                ),
                 ExpenseReport.estado_gasto == "activo",
                 ExpenseReport.fecha >= start_dt,
                 ExpenseReport.fecha < end_dt,
@@ -22770,6 +22820,13 @@ async def contabilidad_cuentas_por_cobrar_view(
                 </div>
             """
         else:
+            financial_version_id = str(selected_version["id"])
+            if selected_version.get("source") == "distribution_revision":
+                from samchat.budgets.distribution import financial_context
+
+                financial_version_id, _ = await financial_context(
+                    session, selected_version
+                )
             tournament_ctx = await resolve_budget_tournament_context(
                 session, tournament_key=selected_torneo_id
             )
@@ -22787,7 +22844,7 @@ async def contabilidad_cuentas_por_cobrar_view(
                 return_to = f"{return_to}?{request.url.query}"
             unassigned_candidates = await list_psp_cfdi_income_candidates(
                 session,
-                budget_version_id=str(selected_version["id"]),
+                budget_version_id=financial_version_id,
                 unassigned_only=True,
                 limit=250,
             )
@@ -22863,13 +22920,13 @@ async def contabilidad_cuentas_por_cobrar_view(
                 lines=income_lines,
                 candidates=await list_psp_cfdi_income_candidates(
                     session,
-                    budget_version_id=str(selected_version["id"]),
+                    budget_version_id=financial_version_id,
                     tournament_id=(tournament_ctx or {}).get("tournament_id"),
                     assigned_only=True,
                 ),
                 links=await list_budget_cfdi_income_links(
                     session,
-                    budget_version_id=str(selected_version["id"]),
+                    budget_version_id=financial_version_id,
                     tournament_id=(tournament_ctx or {}).get("tournament_id"),
                 ),
                 can_edit=_cxc_can_assign_income_cfdi(current_empleado),
@@ -44343,6 +44400,7 @@ def _quick_expense_values(
     propina_no_deducible: Optional[str] = None,
     xml_data: Optional[Dict[str, Any]] = None,
     factura_compartida: bool = False,
+    cfdi_source: Optional[str] = None,
 ) -> Dict[str, Any]:
     xml_data = xml_data or {}
     concepto_final = (concepto or "").strip()
@@ -44352,6 +44410,26 @@ def _quick_expense_values(
         required=False,
     )
     if xml_data:
+        source = (
+            "PDF"
+            if cfdi_source == "PDF" or "_pdf_explicit_fields" in xml_data
+            else "XML"
+        )
+        if xml_data.get("_pdf_ambiguous_fields"):
+            raise ValueError(
+                "El PDF contiene importes ambiguos. "
+                "Revisa el PDF o adjunta el CFDI XML original."
+            )
+        missing = [
+            label
+            for key, label in (("subtotal", "Sub total"), ("total", "TOTAL"))
+            if xml_data.get(key) in (None, "")
+        ]
+        if missing:
+            raise ValueError(
+                f"No se pudo leer {', '.join(missing)} del {source} de la factura. "
+                f"Revisa el {source} o adjunta el CFDI XML original."
+            )
         fecha_xml = xml_data.get("fecha")
         fecha_final = fecha_xml.strftime("%Y-%m-%d") if fecha_xml else (fecha or "").strip()
         numero_final = (xml_data.get("cfdi_uuid") or numero_factura or "").strip()
@@ -44374,11 +44452,11 @@ def _quick_expense_values(
         )
         if abs(calculated_total - xml_total) > Decimal("0.01"):
             raise ValueError(
-                "El TOTAL del XML no coincide con Sub total - Descuento + "
-                f"Impuestos y retenciones. TOTAL XML: ${xml_total:,.2f}; "
+                f"El TOTAL del {source} no coincide con Sub total - Descuento + "
+                f"Impuestos y retenciones. TOTAL {source}: ${xml_total:,.2f}; "
                 f"total calculado: ${calculated_total:,.2f}. Diferencia: "
                 f"${abs(xml_total - calculated_total):,.2f}. "
-                "Revisa el XML de la factura."
+                f"Revisa el {source} de la factura."
             )
         if factura_compartida:
             subtotal_amount = _quick_expense_decimal(subtotal, "Sub total aplicado")
@@ -44651,6 +44729,9 @@ async def crear_gasto_rapido_en_informe(
             propina_no_deducible=propina_no_deducible,
             xml_data=xml_data,
             factura_compartida=_form_checkbox_checked(cfdi_compartido_confirmado),
+            cfdi_source=(
+                "XML" if resolved_cfdi and resolved_cfdi.from_uploaded_xml else "PDF"
+            ),
         )
         if no_deducible_material:
             values["numero_factura"] = "no facturable"
@@ -44872,6 +44953,11 @@ async def crear_gasto_rapido_en_informe(
                 propina_no_deducible="0",
                 xml_data=supplement_cfdi.parsed if supplement_cfdi else {},
                 factura_compartida=_form_checkbox_checked(shared_confirmed),
+                cfdi_source=(
+                    "XML"
+                    if supplement_cfdi and supplement_cfdi.from_uploaded_xml
+                    else "PDF"
+                ),
             )
             supplement_expense = await create_expense_from_data(
                 session=session,

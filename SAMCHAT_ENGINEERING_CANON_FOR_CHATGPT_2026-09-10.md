@@ -254,6 +254,10 @@ Amendment date: 2026-10-13. Explicit human approval of the technical specificati
 
 El recorrido AMEX conserva imports e items con archivo exacto, tarjeta, titular, período y actor declarados; replay de importación no crea cargos adicionales. Tablas y guards se provisionan mediante migración owner-run, excluida de startup. Una política de presentación por UUID de beneficiario explícito se comparte entre descubrimiento, selectores y contadores, sin alterar owners financieros ni cubrir conflictos de identidad con fallbacks al capturista. Vínculos de navegación usan FK a cortes reales y guardan confirmación/payload; no sustituyen AmexReportBankAssociation. Confirmación y link por INFORME son transaccionales, con decisiones y source/version actuales; exportación usa snapshots completos sin cambios de granularidad. Cargos sin fuente aprobada permanecen bloqueados para generación independiente. Datos financieros/históricos y límites de permisos se preservan.
 
+Amendment date: 2026-10-14. Explicit human approval of the technical specification and exact canon text on 2026-10-15. Reason: direct statement/SAT-to-budget/accounting workflow without a fabricated expense report. Evidence: `docs/roadmap/amex-sat-budget-direct-20261015-spec.md` and its approved story; implementation, migration, merge, deployment and Finance UAT remain separate gates.
+
+El origen AMEX directo se autoriza mediante revisiones append-only de contexto fiscal declarado y fuente original privada de bytes/signo/perfil verificables, evidencia de matching/status, clasificación, asignación y corte propios, sin simular Documento o retirar guards de los owners INFORME. Comparte identidad económica/uniqueness y exclusión cross-source con statement/report/bridge; modo direct exige proof de corte y journal reales. Snapshots, decisiones, membership y receipts reconocidos son inmutables; locks y constraints evitan doble reconocimiento entre fuentes. Presupuesto proyecta cargos reales sin Documento y resuelve mapping desde la partida, con pasivo de tarjeta; pending y journal no duplican gasto. Consultas SAT se reutilizan acotadas y auditadas, sin inferir vigencia de descarga ni ampliar credenciales/downloads. Schema se instala mediante owner-run migration explícita y no startup DDL. Exportación directa utiliza snapshots completos preservando contratos y cortes INFORME existentes.
+
 #### 8.2.2 Monthly DIOT read contract
 
 Amendment date: 2026-10-09. This canon diff received explicit human approval.
@@ -521,6 +525,12 @@ tests, and isolated PostgreSQL migration/constraint/rollback tests. This remains
 repository evidence under review, not deployment, data admission, UAT, or
 business acceptance.
 
+
+### AMEX directo: recuperación auditada de cobertura temporal
+
+Fecha: 2026-10-15. Texto y especificación técnica aprobados explícitamente por el usuario con «aprobada». Razón: corregir cargos omitidos por período conservando fuentes y controles financieros. Evidencia: `docs/roadmap/amex-qa-remediation-20261015-spec.md`, sección 9, y assessment QA asociado. Candidato aprobado para implementación; migración, aplicación productiva, promoción y UAT mantienen sus propios checkpoints.
+
+La recuperación acotada de período utiliza revisiones y recibos append-only vinculados a las filas originales omitidas, con una única relación de fuente efectiva compartida por Python y guards SQL. Los headers, originales, membresía física y anclas existentes permanecen inmutables; sólo se crean anclas para cargos demostrados antes no importados. Matching, vigencia, presupuesto, reconocimiento, unicidad fiscal y freeze resuelven la misma fuente efectiva. El corte conserva cobertura total y evidencia de la revisión. Versiones, locks y constraints rechazan correcciones concurrentes incompatibles, fuentes ajenas, doble reconocimiento y recuperación después de un corte. El esquema se instala mediante migración owner-run explícita y no permite downgrade operativo a código que ignore recuperaciones existentes.
 ## 21. Approved budget distribution revision rules
 
 Date: 2026-10-14. Human approval: Francisco, evidence

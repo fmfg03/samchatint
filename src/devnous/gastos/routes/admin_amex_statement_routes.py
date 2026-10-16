@@ -38,9 +38,15 @@ from .admin_amex_accounting_routes import (
     amex_accounting_report_review,
     extract_amex_page_content,
 )
+from .admin_amex_direct_routes import (
+    direct_upload,
+    direct_upload_form,
+)
+from .admin_amex_direct_routes import router as direct_router
 from .dependencies import get_db_session, require_admin_finanzas
 
 router = APIRouter()
+router.include_router(direct_router)
 BASE = "/admin/contabilidad/amex/estados"
 
 
@@ -251,7 +257,7 @@ async def statement_dashboard(
             f"<td>{pending} operativos<br>{skipped} filas omitidas</td>"
             f"<td>{bank_pending} por vincular</td>"
             f'<td>{_progress(summary)}{partial}</td><td><a class="button primary"'
-            f' href="{BASE}/{statement.id}/pendientes">Continuar</a></td></tr>'
+            f' href="{BASE}/{statement.id}/{"directo" if getattr(statement, "workflow_mode", "legacy") == "direct" else "pendientes"}">Continuar</a></td></tr>'
         )
     paging = (
         f'<nav aria-label="Páginas de estados"><span>Página {listing["page"]}</span>'
@@ -269,8 +275,9 @@ async def statement_dashboard(
     paging += "</nav>"
     return _html(
         "Estados de cuenta AMEX",
-        f'<p><a class="button primary" href="{BASE}/nuevo">'
-        "Cargar estado de cuenta</a></p><div"
+        f'<p><a class="button primary" href="{BASE}/directo">'
+        "Estados directos y carga</a> · "
+        f'<a href="{BASE}/nuevo">Recorrido de informes</a></p><div'
         ' class="statement-table table-shell"><table><thead><tr><th>Tarjeta</th>'
         "<th>Período"
         " declarado</th><th>Cargos</th><th>Pendientes"
@@ -332,15 +339,19 @@ async def _upload_form(
 
 @router.get(BASE + "/nuevo", response_class=Response)
 async def statement_new(
+    request: Request,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = require_admin_finanzas(),
 ):
     _require_finance_actor(current_empleado)
+    if request.query_params.get("modo") == "directo":
+        return await direct_upload_form(request, session, current_empleado)
     return await _upload_form(session, current_empleado)
 
 
 @router.post(BASE + "/nuevo", response_class=Response)
 async def statement_upload(
+    request: Request,
     card_account_id: UUID = Form(...),
     employee_id: UUID = Form(...),
     period_start: date = Form(...),
@@ -348,10 +359,15 @@ async def statement_upload(
     file: UploadFile = File(...),
     cfdi_uuid_mensual: str = Form(""),
     additional_confirmed: bool = Form(False),
+    workflow_mode: str = Form("legacy"),
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = require_admin_finanzas(),
 ):
     _require_finance_actor(current_empleado)
+    if workflow_mode == "direct":
+        return await direct_upload(request, session, current_empleado)
+    if workflow_mode != "legacy":
+        raise HTTPException(422, "Selecciona un recorrido AMEX válido.")
     try:
         result = await import_amex_statement(
             session,
