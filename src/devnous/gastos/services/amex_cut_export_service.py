@@ -1,5 +1,6 @@
 """Export an authorized AMEX cut from immutable journal/evidence snapshots."""
 
+from collections import Counter
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, cast
@@ -28,21 +29,23 @@ def _cut_expense_cfdis(
     items = snapshot.get("partidas") or []
     actual = snapshot.get("lines") or []
     flattened = [row for item in items for row in item.get("journal_lines", [])]
-    if not actual or flattened != actual:
-        # Both arrays must cover precisely the same journal. Metadata such as
-        # cut_id may be added only to global rows; compare their account/amount.
-        def identity(row: dict[str, Any]) -> tuple[str, str, Decimal, Decimal]:
-            return (
-                str(row["cuenta_contable_id"]),
-                row["cuenta_codigo"],
-                Decimal(str(row["debe"])),
-                Decimal(str(row["haber"])),
-            )
 
-        if not actual or [identity(r) for r in flattened] != [
-            identity(r) for r in actual
-        ]:
-            raise ValueError("El corte no contiene un desglose completo de su póliza.")
+    # Global journals group by movement while item snapshots group by expense.
+    # Coverage is economic and preserves every repeated movement exactly.
+    def identity(row: dict[str, Any]) -> tuple[str, str, Decimal, Decimal]:
+        return (
+            str(row["cuenta_contable_id"]),
+            row["cuenta_codigo"],
+            Decimal(str(row["debe"])),
+            Decimal(str(row["haber"])),
+        )
+
+    if (
+        not actual
+        or not flattened
+        or Counter(map(identity, flattened)) != Counter(map(identity, actual))
+    ):
+        raise ValueError("El corte no contiene un desglose completo de su póliza.")
     result = []
     for item in items:
         rows = item.get("journal_lines") or []

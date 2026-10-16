@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, select, text
 from sqlalchemy.sql.elements import ColumnElement
 
 from ..models import (
@@ -42,8 +42,47 @@ def accounting_expense_sql(alias: str = "e") -> str:
           AND amex_identity.binding_mode = 'report_bridge')"""
 
 
-def direct_amex_expense_condition(expense_model: Any) -> ColumnElement[bool]:
-    """Only a real direct receipt assigns an expense to the direct owner."""
+async def effective_direct_sources_available(session: Any) -> bool:
+    """Legacy installations lack the additive owner; a partial owner fails closed."""
+    row = (
+        (
+            await session.execute(
+                text(
+                    "SELECT to_regclass('amex_direct_effective_sources') "
+                    "IS NOT NULL AS view_present, "
+                    "(to_regclass('amex_direct_recovered_rows') IS NOT NULL OR "
+                    "to_regclass('amex_direct_coverage_revisions') IS NOT NULL) "
+                    "AS recovery_present"
+                )
+            )
+        )
+        .mappings()
+        .one()
+    )
+    if row["recovery_present"] and not row["view_present"]:
+        from .amex_direct_schema_service import DirectSchemaUnavailable
+
+        raise DirectSchemaUnavailable("effective_direct_source_unavailable")
+    if row["view_present"]:
+        from .amex_direct_schema_service import require_amex_direct_schema
+
+        await require_amex_direct_schema(session)
+    return bool(row["view_present"])
+
+
+def direct_amex_expense_condition(
+    expense_model: Any, *, effective_sources: bool = False
+) -> ColumnElement[bool]:
+    """Resolve audited direct ownership; preserve pre-owner legacy installations."""
+    if effective_sources:
+        from .amex_direct_effective_source_service import effective_sources_select
+
+        sources = effective_sources_select()
+        return exists(
+            select(sources.c.id).where(
+                sources.c.imported_expense_id == expense_model.id
+            )
+        ).correlate(expense_model)
     return exists(
         select(AmexStatementImportItem.id)
         .join(
@@ -60,10 +99,13 @@ def direct_amex_expense_condition(expense_model: Any) -> ColumnElement[bool]:
 
 async def is_direct_amex_expense(session: Any, expense_id: Any) -> bool:
     """Read source ownership before a legacy fiscal mutation."""
+    effective = await effective_direct_sources_available(session)
     return bool(
         await session.scalar(
-            select(direct_amex_expense_condition(ExpenseReport)).where(
-                ExpenseReport.id == expense_id
-            )
+            select(
+                direct_amex_expense_condition(
+                    ExpenseReport, effective_sources=effective
+                )
+            ).where(ExpenseReport.id == expense_id)
         )
     )

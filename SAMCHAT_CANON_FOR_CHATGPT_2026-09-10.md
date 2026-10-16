@@ -414,3 +414,10 @@ Evidence: `docs/roadmap/ctt-pilot-batch-admission.md`, scoped tests, isolated
 PostgreSQL migration verification, and independent implementation validation.
 This remains an isolated-worktree candidate; merge, deployment, migration/data
 application, authenticated UAT, and business acceptance are separate.
+
+
+### AMEX directo: recuperación auditada de cobertura temporal
+
+Fecha: 2026-10-15. Texto y especificación técnica aprobados explícitamente por el usuario con «aprobada». Razón: corregir cargos omitidos por período conservando fuentes y controles financieros. Evidencia: `docs/roadmap/amex-qa-remediation-20261015-spec.md`, sección 9, y assessment QA asociado. Candidato aprobado para implementación; migración, aplicación productiva, promoción y UAT mantienen sus propios checkpoints.
+
+Contabilidad puede corregir explícitamente la cobertura temporal declarada de un estado directo todavía no reconocido cuando el archivo original demuestra cargos omitidos únicamente por estar fuera del período capturado. La recuperación preserva el original y sus recibos, conserva los cargos ya creados y agrega sólo los cargos faltantes mediante evidencia auditada e idempotente. No cambia identidad fiscal, no crea informes, no aprueba gastos ni modifica fuentes reconocidas. La fecha contable sigue siendo una declaración explícita dentro de la cobertura efectiva confirmada y un período abierto.

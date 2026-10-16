@@ -1,0 +1,53 @@
+{
+  "recovery_integrity": {
+    "original140_expense_ids_preserved": true,
+    "original148_physical_items_unchanged": true,
+    "original_header_unchanged": true,
+    "new_expenses": 5,
+    "effective_membership": 148,
+    "effective_debits": 145,
+    "original_bytes_preserved": true,
+    "one_import": true,
+    "recovery_idempotent": true,
+    "cp_queue_after_cut": 0,
+    "exported_formats": [
+      "xlsx",
+      "csv",
+      "zip"
+    ],
+    "recovered_expense_frozen_after_cut": true
+  },
+  "full_actual_csv_synthetic_dependencies": {
+    "label": "Original CSV with synthetic fiscal/budget dependencies; no production posting",
+    "source_sha256": "ab641fa6ccafcfc046bf213764f41a61a969d05ce022899d217aa8ab3ea3cd4c",
+    "explicit_recovery_period": [
+      "2026-08-31",
+      "2026-09-30"
+    ],
+    "total_rows": 148,
+    "debits": 145,
+    "credits": 3,
+    "skipped": 0,
+    "synthetic_cfdis": 145,
+    "synthetic_tax_treatment": "Zero tax purely fixture, no real IVA assertion",
+    "synthetic_merchant_aliases": 47,
+    "status_transport": "SYNTHETIC vigente stub only external transport",
+    "status_requests": 145,
+    "status_chunks": 3,
+    "initial_automatic_matched": 80,
+    "manual_link_operations": 65,
+    "finance_cp_distinct": true,
+    "budget_assignments": 145,
+    "polizas": 1,
+    "recognized_debits": 145,
+    "consumptions": 145,
+    "journal_balanced": true,
+    "total_matches_original_debits": true,
+    "xlsx": "/tmp/amex-remediation-FULL-CSV-SYNTHETIC-poliza-coi.xlsx",
+    "xlsx_bytes": 35626,
+    "xlsx_rows": 729,
+    "replay_same_cut": true,
+    "seconds": 321.33,
+    "production_writes": 0
+  }
+}

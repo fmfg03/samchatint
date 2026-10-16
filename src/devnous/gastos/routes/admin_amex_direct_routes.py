@@ -16,9 +16,11 @@ from starlette.datastructures import FormData, UploadFile
 from ..models import Empleado
 from ..services import amex_direct_accounting_service as accounting
 from ..services import amex_direct_budget_service as budget
+from ..services import amex_direct_cfdi_search_service as finder
 from ..services import amex_direct_context_service as context
 from ..services import amex_direct_intake_service as intake
 from ..services import amex_direct_matching_service as matching
+from ..services import amex_direct_recovery_service as recovery
 from ..services import amex_direct_status_service as status
 from ..services.amex_direct_common import DirectSchemaUnavailable
 from . import dependencies
@@ -126,6 +128,26 @@ def _reason(code: str | None) -> str:
         "no_statement_rows": "El archivo no contiene movimientos; no se creó una póliza.",
         "inactive_context": "Finanzas debe revisar la tarjeta o titular activos de esta carga.",
         "employee_context_denied": "Finanzas debe elegir un titular autorizado para esta tarjeta y contexto fiscal antes de cargar el estado.",
+        "statement_period_mismatch": (
+            "El CSV contiene fechas fuera del "
+            "período declarado. Revisa las "
+            "fechas mostradas y corrige el "
+            "período antes de cargar."
+        ),
+        ("recovery_period_must_contain_origina" "l"): (
+            "El período corregido debe conservar "
+            "el original y cubrir todas las "
+            "fechas del archivo."
+        ),
+        "recovery_reason_required": "Explica el motivo de la corrección de cobertura.",
+        "invalid_cfdi_search": (
+            "Revisa los filtros de fecha, " "importe y texto de la búsqueda."
+        ),
+        "invalid_cfdi_search_cursor": (
+            "La búsqueda cambió o quedó "
+            "desactualizada. Inicia una búsqueda "
+            "nueva."
+        ),
         "row_outside_declared_period": "La fecha original queda fuera del período declarado. Finanzas debe revisar el archivo y período.",
         "invalid_date": "Falta una fecha válida en la fila original; Finanzas debe revisar el CSV.",
         "missing_description": "Falta la descripción original del movimiento; Finanzas debe revisar el CSV.",
@@ -242,9 +264,9 @@ def _optional_uuid(form: FormData, name: str) -> UUID | None:
     return _uuid(form, name) if _value(form, name) else None
 
 
-def _version(form: FormData) -> int:
+def _version(form: FormData, name: str = "expected_source_version") -> int:
     try:
-        value = int(_value(form, "expected_source_version", required=True))
+        value = int(_value(form, name, required=True))
         if value < 1:
             raise ValueError
         return value
@@ -488,6 +510,10 @@ def _preview_script() -> str:
         const summary=document.createElement('p');
         summary.textContent=`${data.rows.length} filas originales. Perfil declarado: ${data.profile}. Revisa signo y tipo antes de confirmar.`;
         output.append(summary);
+        if(data.outside_count){summary.textContent+=
+          ` ${data.outside_count} filas fuera del período: `+
+          `${data.min_date} a ${data.max_date}. `+
+          'Corrige el período antes de cargar.';}
         const shell=document.createElement('div');shell.className='direct-table table-shell';
         const table=document.createElement('table');
         const header=document.createElement('tr');
@@ -499,7 +525,8 @@ def _preview_script() -> str:
           [row.row_number,row.raw_amount,row.raw_signed_amount,({debit:'Cargo',credit:'Crédito',unknown:'Signo desconocido',skipped:'Fila omitida'}[row.movement_kind]||'Tipo pendiente'),row.amount,row.reason_text||''].forEach(value=>{
             const td=document.createElement('td');td.textContent=value===null||value===undefined?'Pendiente':String(value);tr.append(td);});
           table.append(tr);
-        });shell.append(table);output.append(shell);submit.disabled=false;
+        });shell.append(table);output.append(shell);
+        submit.disabled=Boolean(data.outside_count);
       }catch(error){if(current===generation)output.textContent=error.message;}
       finally{button.disabled=false;}
     });})();</script>"""
@@ -522,7 +549,16 @@ async def direct_csv_preview(
     profile = _value(form, "profile", required=True)
     currency = _value(form, "currency", required=True)
     try:
-        rows = intake.parse_direct_csv(content, profile=profile, currency=currency)
+        evaluation = intake.evaluate_direct_period(
+            content,
+            profile=profile,
+            currency=currency,
+            period_start=date.fromisoformat(
+                _value(form, "period_start", required=True)
+            ),
+            period_end=date.fromisoformat(_value(form, "period_end", required=True)),
+        )
+        rows = evaluation["rows"]
     except ValueError as exc:
         raise HTTPException(422, _reason(str(exc))) from None
     # Decimal and dates are rendered from the parser, never reconstructed from abs.
@@ -531,7 +567,9 @@ async def direct_csv_preview(
         for row in rows
     ]
     return JSONResponse(
-        json.loads(json.dumps({"rows": rows, "profile": profile}, default=str)),
+        json.loads(
+            json.dumps({**evaluation, "rows": rows, "profile": profile}, default=str)
+        ),
         headers={"Cache-Control": "no-store"},
     )
 
@@ -555,14 +593,14 @@ async def _consult(actor_id: UUID, import_id: UUID, version: int, request_key: s
 
 
 async def _fresh_match(
-    session: AsyncSession, actor: Empleado, import_id: UUID, version: int
+    session: AsyncSession, actor_id: UUID, import_id: UUID, version: int
 ) -> tuple[int, str, bool]:
     """Reuse approved fresh fiscal receipts after the original intake is committed."""
     try:
         result = await _call(
             matching.reconcile_direct_statement(
                 session,
-                actor_id=_actor_id(actor),
+                actor_id=actor_id,
                 import_id=import_id,
                 expected_source_version=version,
             )
@@ -587,6 +625,7 @@ async def direct_upload(
 ) -> Response:
     """Commit intake before optional bounded external status consultation."""
     _require_finance_actor(actor)
+    actor_id = _actor_id(actor)
     form = await _form(request)
     file = _csv_file(form)
     content = await file.read(_MAX_BYTES + 1)
@@ -597,7 +636,7 @@ async def direct_upload(
         result = await _call(
             intake.import_direct_statement(
                 session,
-                actor_id=_actor_id(actor),
+                actor_id=actor_id,
                 employee_id=_uuid(form, "employee_id"),
                 card_account_id=_uuid(form, "card_account_id"),
                 period_start=date.fromisoformat(
@@ -633,7 +672,7 @@ async def direct_upload(
     can_consult = result.status == "imported"
     if result.status == "imported":
         version, local_message, can_consult = await _fresh_match(
-            session, actor, import_id, version
+            session, actor_id, import_id, version
         )
         if local_message:
             message += " " + local_message
@@ -641,7 +680,7 @@ async def direct_upload(
         message = "Carga existente conservada. Continúa desde su estado guardado."
     if _confirmed(form, "sat_consented") and can_consult:
         # Both local transactions are closed before bounded external SAT chunks.
-        observed = await _consult(_actor_id(actor), import_id, version, key)
+        observed = await _consult(actor_id, import_id, version, key)
         if observed.status == "pending":
             message += " " + _reason(observed.reason)
     return _redirect(import_id, message)
@@ -660,6 +699,8 @@ def _row(item) -> str:
     fiscal += f"<br>Vigencia: {_text(getattr(item, 'sat_status', None))}"
     fiscal += f"<br>Observada: {_text(getattr(item, 'status_observed_at', None))}"
     select_item = f'<input type="checkbox" name="item_ids" value="{item.id}" aria-label="Seleccionar fila {item.row_number}">'
+    if item.movement_kind != "debit" or item.accounting_status == "recognized":
+        select_item = ""
     return (
         f'<tr data-item-id="{item.id}"><td>{select_item}{item.row_number}</td>'
         f"<td>{_text(item.fecha)}<br>{_text(item.descriptor)}</td>"
@@ -732,8 +773,32 @@ async def direct_statement(
         "<p>Conciliación fiscal, clasificación, partida, póliza y pago son hechos separados. "
         "Todos los cargos, créditos y filas pendientes permanecen visibles.</p>"
     )
+    coverage = view.progress or {}
+    effective_start = coverage.get("effective_period_start") or statement.period_start
+    effective_end = coverage.get("effective_period_end") or statement.period_end
+    if coverage.get("recovery_revision_ids"):
+        body += (
+            "<p>Declaración original conservada. "
+            "Cobertura efectiva corregida: "
+            f"{_text(effective_start)}"
+            " a "
+            f"{_text(effective_end)}"
+            " · Revisión auditada: "
+            f"{_text(coverage['recovery_revision_ids'])}"
+            "</p>"
+        )
     card = view.card
     body += f'<p>Tarjeta declarada: {_text(getattr(card, "card_label", None))} · ••••{_text(getattr(card, "last4", None))}</p>'
+    if finance and not view.cut:
+        body += (
+            '<p><a href="'
+            f"{BASE}"
+            "/"
+            f"{import_id}"
+            '/directo/periodo">Revisar cobertura '
+            "y recuperar cargos omitidos por "
+            "período</a></p>"
+        )
     frozen = view.cut is not None or preview.cut is not None
     if frozen:
         body += "<p>Fuente congelada: las decisiones se conservan y no se modifican desde esta pantalla.</p><fieldset disabled>"
@@ -743,38 +808,146 @@ async def direct_statement(
     body += _open(request, import_id, "clasificar", _source_version(view)) + _hidden(
         "expected_versions", json.dumps(versions)
     )
-    body += '<div class="direct-table table-shell"><table><thead><tr><th>Fila</th><th>Fecha/comercio</th><th>Original/signo</th><th>Importe económico</th><th>CFDI/SAT</th><th>Clasificación</th><th>Presupuesto</th><th>Cuentas</th><th>Contabilidad</th></tr></thead><tbody>'
-    body += "".join(_row(item) for item in view.items) + "</tbody></table></div>"
-    tournament_opts = "".join(
-        f'<option value="{entry["id"]}">{_text(entry["name"])}</option>'
-        for entry in options.get("tournaments", [])
+    body += (
+        '<div class="direct-table '
+        'table-shell"><table><thead><tr><th><'
+        'input type="checkbox" '
+        'id="direct-select-all" '
+        'aria-label="Seleccionar todos los '
+        "cargos "
+        'disponibles">Fila</th><th>Fecha/come'
+        "rcio</th><th>Original/signo</th><th>"
+        "Importe "
+        "económico</th><th>CFDI/SAT</th><th>C"
+        "lasificación</th><th>Presupuesto</th"
+        "><th>Cuentas</th><th>Contabilidad</t"
+        "h></tr></thead><tbody>"
     )
+    body += (
+        "".join(
+            _row(item).replace(
+                "</td></tr>",
+                (
+                    (
+                        '<br><a href="'
+                        f"{BASE}"
+                        "/"
+                        f"{import_id}"
+                        "/directo/cfdi?item_id="
+                        f"{item.id}"
+                        '">Buscar CFDI</a></td></tr>'
+                    )
+                    if item.movement_kind == "debit" and not frozen
+                    else "</td></tr>"
+                ),
+            )
+            for item in view.items
+        )
+        + "</tbody></table></div>"
+    )
+    body += '<p id="direct-selection-count" role="status">0 cargos seleccionados</p>'
     project_opts = "".join(
-        f'<option value="{entry["code"]}">{_text(entry["name"])}</option>'
+        (
+            '<option value="t:'
+            f"{escape(str(entry['id']), quote=True)}"
+            '">'
+            f"{_text(entry['name'])}"
+            "</option>"
+        )
+        for entry in options.get("tournaments", [])
+    ) + "".join(
+        (
+            '<option value="p:'
+            f"{escape(str(entry['code']), quote=True)}"
+            '">'
+            f"{_text(entry['name'])}"
+            "</option>"
+        )
         for entry in options.get("projects", [])
     )
     concept_opts = "".join(
-        f'<option value="{entry["id"]}">{_text(entry["name"])}</option>'
+        (
+            '<option value="'
+            f"{entry['id']}"
+            '" data-project="'
+            f"{_project_option_key(entry)}"
+            '">'
+            f"{_text(entry['name'])}"
+            "</option>"
+        )
         for entry in options.get("concepts", [])
     )
-    body += f'<label>Torneo<select name="tournament_id"><option value="">Selecciona torneo</option>{tournament_opts}</select></label>'
-    body += f'<label>Proyecto no torneo<select name="project_code"><option value="">Selecciona proyecto autorizado</option>{project_opts}</select></label>'
-    body += f'<label>Categoría<select name="budget_concept_id" required><option value="">Selecciona categoría activa</option>{concept_opts}</select></label>'
-    if classification_allowed and (
-        not options.get("concepts") or not options.get("edition_years")
-    ):
-        body += "<p>Contabilidad debe revisar el catálogo de categorías, proyecto y edición autorizados antes de clasificar.</p>"
+    body += (
+        "<label>Proyecto / torneo<select "
+        'id="direct-project" '
+        "required><option "
+        'value="">Selecciona proyecto '
+        "autorizado</option>"
+        f"{project_opts}"
+        "</select></label>"
+    )
+    body += (
+        '<input type="hidden" '
+        'name="tournament_id" '
+        'id="direct-tournament"><input '
+        'type="hidden" name="project_code" '
+        'id="direct-project-code">'
+    )
+    body += (
+        "<label>Categoría del "
+        'catálogo<select id="direct-concept" '
+        'name="budget_concept_id" required '
+        "disabled><option "
+        'value="">Selecciona categoría del '
+        "proyecto</option>"
+        f"{concept_opts}"
+        "</select></label>"
+    )
     edition_options = "".join(
         f'<option value="{year}">{year}</option>'
         for year in options.get("edition_years", [])
     )
     body += f'<label>Edición presupuestal<select name="edition_year" required><option value="">Selecciona edición autorizada</option>{edition_options}</select></label><label>Motivo<input name="reason"></label>'
-    body += _submit("Guardar clasificación de cargos seleccionados")
+    body += _submit("Guardar clasificación de cargos seleccionados") + "</form>"
+    body += _open(request, import_id, "enviar-presupuesto", _source_version(view))
+    body += _hidden("expected_versions", json.dumps(versions))
     body += (
-        f'<button class="button secondary" formaction="{BASE}/{import_id}/directo/enviar-presupuesto" formnovalidate>Enviar seleccionados a Control Presupuestal</button>'
-        + _confirm("Confirmo enviar los cargos seleccionados a Control Presupuestal")
-        + "</form>"
+        "<div "
+        'id="direct-send-selection"></div><p>'
+        "Enviar utiliza únicamente la "
+        "clasificación que ya guardaste. Los "
+        "cambios sin guardar no se "
+        "envían.</p>"
     )
+    body += _confirm("Confirmo enviar los cargos seleccionados a Control Presupuestal")
+    body += _submit("Enviar seleccionados a Control Presupuestal") + "</form>"
+    body += """<script>(()=>{const project=document.getElementById('direct-project'),
+    concept=document.getElementById('direct-concept'),
+    choices=Array.from(concept.options).slice(1);
+    choices.forEach(o=>o.remove());project.addEventListener('change',()=>{
+    document.getElementById('direct-tournament').value=
+    project.value.startsWith('t:')?project.value.slice(2):'';
+    document.getElementById('direct-project-code').value=
+    project.value.startsWith('p:')?project.value.slice(2):'';
+    concept.replaceChildren(new Option('Selecciona categoría del proyecto',''));
+    choices.filter(o=>o.dataset.project===project.value)
+    .forEach(o=>concept.add(o.cloneNode(true)));
+    concept.disabled=!project.value;});
+    const selectedBoxes=()=>document.querySelectorAll('input[name=item_ids]:checked');
+    document.getElementById('direct-select-all').addEventListener('change',event=>{
+    document.querySelectorAll('input[name=item_ids]').forEach(box=>{
+    box.checked=event.target.checked;
+    box.dispatchEvent(new Event('change'));});});
+    document.querySelectorAll('input[name=item_ids]').forEach(box=>
+    box.addEventListener('change',()=>{
+    document.getElementById('direct-selection-count').textContent=
+    selectedBoxes().length+' cargos seleccionados';
+    const target=document.getElementById('direct-send-selection');
+    target.replaceChildren();
+    document.querySelectorAll('input[name=item_ids]:checked').forEach(selected=>{
+    const input=document.createElement('input');
+    input.type='hidden';input.name='item_ids';
+    input.value=selected.value;target.append(input);});}));})();</script>"""
     if not classification_allowed:
         body += "</fieldset>"
     if not finance:
@@ -806,6 +979,40 @@ async def direct_statement(
         + "</form>"
     )
     body += _exception_forms(request, import_id, view)
+    if not finance:
+        body += "</fieldset>"
+    if frozen:
+        body += "</fieldset>"
+    body += "<section><h2>Bloqueos y siguiente acción</h2><ul>"
+    for issue in (preview.progress or {}).get("issues", []):
+        body += (
+            "<li>Fila "
+            f"{_text(issue.get('row_number'))}"
+            ": "
+            f"{escape(_reason(issue.get('reason')))}"
+            " · "
+            f"{_text(issue.get('responsible'))}"
+            " · "
+            f"{_text(issue.get('next_action'))}"
+            "</li>"
+        )
+    for issue in (preview.progress or {}).get("global_issues", []):
+        body += (
+            "<li>"
+            f"{escape(_reason(issue.get('reason')))}"
+            " · "
+            f"{_text(issue.get('responsible'))}"
+            " · "
+            f"{_text(issue.get('next_action'))}"
+            "</li>"
+        )
+    for exception in (preview.progress or {}).get("exceptions", []):
+        code = (
+            exception.get("reason") if isinstance(exception, dict) else str(exception)
+        )
+        body += f"<li>{escape(_reason(code))}</li>"
+    body += "</ul></section>"
+    body += _journal_preview(preview)
     body += "<section><h2>Confirmar póliza completa</h2>"
     if preview.cut is not None:
         body += f"<p>Corte congelado: {_text(preview.cut.accounting_date)}. La descarga conserva su evidencia.</p>"
@@ -820,7 +1027,15 @@ async def direct_statement(
             + _hidden("expected_source_key", preview.source_key)
             + _hidden("idempotency_key", uuid4())
         )
-        body += f'<label>Fecha contable declarada<input type="date" name="accounting_date" min="{statement.period_start}" max="{statement.period_end}" required></label>'
+        body += (
+            "<label>Fecha contable "
+            'declarada<input type="date" '
+            'name="accounting_date" min="'
+            f"{effective_start}"
+            '" max="'
+            f"{effective_end}"
+            '" required></label>'
+        )
         body += (
             '<label>Motivo<input name="reason"></label>'
             + _confirm("Confirmo el estado completo y la fecha contable")
@@ -884,14 +1099,20 @@ def _exception_forms(request: Request, import_id: UUID, view) -> str:
         for item in view.items
         if item.movement_kind == "debit"
     )
-    body += _open(request, import_id, "vincular", _source_version(view))
-    body += f'<label>Cargo<select name="item_id" required><option value="">Selecciona cargo</option>{items}</select></label><label>UUID de registro CFDI<input name="cfdi_id" required></label>'
-    body += '<label>Importe aplicado declarado (opcional)<input name="applied_amount" inputmode="decimal"></label><label>Propina declarada (opcional)<input name="tip_amount" inputmode="decimal"></label><label><input type="checkbox" name="shared_confirmed" value="true">Declaro factura compartida</label><label>Motivo/evidencia<input name="reason" required></label>'
     body += (
-        _confirm("Confirmo el vínculo fiscal y sus importes explícitos")
-        + _submit("Declarar vínculo fiscal manual")
-        + "</form>"
+        '<form class="direct-form" '
+        'method="GET" action="'
+        f"{BASE}"
+        "/"
+        f"{import_id}"
+        '/directo/cfdi"><h3>Buscar factura '
+        "del cargo</h3><label>Cargo<select "
+        'name="item_id" required><option '
+        'value="">Selecciona cargo</option>'
+        f"{items}"
+        "</select></label>"
     )
+    body += _submit("Buscar CFDI SAT por datos de negocio") + "</form>"
     credits = "".join(
         f'<option value="{item.id}">Fila {item.row_number} · {_text(item.raw_signed_amount)}</option>'
         for item in view.items
@@ -908,6 +1129,459 @@ def _exception_forms(request: Request, import_id: UUID, view) -> str:
             + "</form>"
         )
     return body
+
+
+def _project_option_key(entry: dict) -> str:
+    key = (
+        "t:" + str(entry["tournament_id"])
+        if entry.get("tournament_id")
+        else "p:" + str(entry.get("project_code") or "")
+    )
+    return escape(key, quote=True)
+
+
+def _journal_preview(preview) -> str:
+    lines = (preview.progress or {}).get("lines", [])
+    if preview.cut is not None:
+        snapshot = getattr(preview.cut, "snapshot_json", None) or {}
+        lines = snapshot.get("lines", lines)
+    title = (
+        "Póliza congelada Debe / Haber"
+        if preview.cut is not None
+        else "Propuesta contable Debe / Haber"
+    )
+    body = f"<section><h2>{title}</h2>"
+    if preview.cut is None and preview.status != "ready":
+        body += (
+            "<p>Propuesta incompleta: el detalle "
+            "disponible no autoriza una póliza "
+            "parcial. Resuelve todos los "
+            "bloqueos antes de confirmar.</p>"
+        )
+    if not lines:
+        return body + (
+            "<p>Propuesta incompleta: resuelve "
+            "los bloqueos para obtener el "
+            "detalle canónico.</p></section>"
+        )
+    body += (
+        "<table "
+        'id="direct-journal"><thead><tr><th>C'
+        "uenta</th><th>Concepto</th><th>Debe<"
+        "/th><th>Haber</th></tr></thead><tbod"
+        "y>"
+    )
+    for line in lines:
+        account = line.get("cuenta_codigo") or line.get("account_code")
+        account = account or line.get("cuenta")
+        concept = line.get("concept") or line.get("concepto")
+        debit = line.get("debit") if "debit" in line else line.get("debe")
+        credit = line.get("credit") if "credit" in line else line.get("haber")
+        columns = (account, concept, debit, credit)
+        body += "<tr>" + "".join(f"<td>{_text(v)}</td>" for v in columns) + "</tr>"
+
+    totals = {
+        "Debe": str(
+            sum((Decimal(str(line.get("debe", "0"))) for line in lines), Decimal("0"))
+        ),
+        "Haber": str(
+            sum((Decimal(str(line.get("haber", "0"))) for line in lines), Decimal("0"))
+        ),
+    }
+    return body + (
+        "</tbody></table><p>Total Debe: "
+        f"{_text(totals['Debe'])}"
+        " · Total Haber: "
+        f"{_text(totals['Haber'])}"
+        "</p></section>"
+    )
+
+
+@router.get(BASE + "/{import_id}/directo/cfdi")
+async def direct_cfdi_search(
+    import_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    actor: Empleado = require_admin_finanzas(),
+):
+    """Business picker; source access and fiscal scope are enforced by its owner."""
+    _require_finance_actor(actor)
+    params = request.query_params
+    try:
+        item_id = UUID(params.get("item_id", ""))
+        result = await _call(
+            finder.search_direct_cfdis(
+                session,
+                actor_id=_actor_id(actor),
+                import_id=import_id,
+                item_id=item_id,
+                navigation=request.session,
+                q=params.get("q", ""),
+                date_from=(
+                    date.fromisoformat(params["date_from"])
+                    if params.get("date_from")
+                    else None
+                ),
+                date_to=(
+                    date.fromisoformat(params["date_to"])
+                    if params.get("date_to")
+                    else None
+                ),
+                amount=Decimal(params["amount"]) if params.get("amount") else None,
+                cursor=params.get("cursor"),
+            )
+        )
+    except (ValueError, ArithmeticError):
+        raise HTTPException(422, "Revisa los filtros de búsqueda.") from None
+    body = (
+        '<p><a href="'
+        f"{BASE}"
+        "/"
+        f"{import_id}"
+        '/directo">Volver al '
+        "estado</a></p><h2>CFDI del cargo · "
+        "fila "
+        f"{_text(result['row_number'])}"
+        "</h2>"
+    )
+    body += (
+        "<p>La búsqueda propone facturas. "
+        "Consultar vigencia no vincula ni "
+        "reserva. Confirma la "
+        "correspondencia y los importes "
+        "antes de vincular.</p>"
+    )
+    body += (
+        '<p role="status">'
+        f"{escape(params.get('msg', ''))}"
+        '</p><form method="GET" '
+        'class="direct-form">'
+    ) + _hidden("item_id", item_id)
+    for field, label, kind in (
+        ("q", "RFC, emisor o UUID fiscal", "search"),
+        ("date_from", "Desde", "date"),
+        ("date_to", "Hasta", "date"),
+        ("amount", "Importe", "text"),
+    ):
+        body += (
+            (
+                "<label>"
+                f"{label}"
+                '<input type="'
+                f"{kind}"
+                '" name="'
+                f"{field}"
+                '" value="'
+                f"{escape(params.get(field, ''), quote=True)}"
+                '"'
+            )
+            + (' maxlength="120"' if field == "q" else "")
+            + "></label>"
+        )
+    body += _submit("Buscar facturas") + "</form>"
+    for candidate in result["candidates"]:
+        body += (
+            '<section data-cfdi-uuid="'
+            f"{candidate['uuid']}"
+            '"><h3>'
+            f"{_text(candidate['issuer_name'])}"
+            " · "
+            f"{_text(candidate['issuer_rfc'])}"
+            "</h3><p>UUID fiscal: "
+            f"{_text(candidate['uuid'])}"
+            " · "
+            f"{_text(candidate['date'])}"
+            " · MXN "
+            f"{_text(candidate['total'])}"
+            "</p>"
+        )
+        body += (
+            "<p>Vigencia: "
+            f"{_text(candidate['status'])}"
+            " · Observada: "
+            f"{_text(candidate['observed_at'])}"
+            "</p>"
+        )
+        body += (
+            "<p>Disponible provisionalmente.</p>"
+            if candidate["available"]
+            else (
+                "<p>Uso existente: requiere revisar "
+                "la aplicación compartida explícita. "
+                "No se muestran documentos de otros "
+                "usuarios.</p>"
+            )
+        )
+        common = _hidden("item_id", item_id) + _hidden("cfdi_id", candidate["id"])
+        body += (
+            _open(request, import_id, "cfdi/vigencia", result["source_version"])
+            + common
+        )
+        body += (
+            _hidden("expected_item_version", result["item_version"])
+            + _hidden("expected_identity_hash", candidate["identity_hash"])
+            + _hidden("request_key", uuid4())
+        )
+        body += (
+            _confirm("Autorizo consultar vigencia SAT de esta factura seleccionada")
+            + _submit("Consultar vigencia de esta factura")
+            + "</form>"
+        )
+        body += _open(request, import_id, "vincular", result["source_version"]) + common
+        body += (
+            "<label>Importe aplicado declarado "
+            "(opcional)<input "
+            'name="applied_amount" '
+            'inputmode="decimal"></label><label>P'
+            "ropina declarada (opcional)<input "
+            'name="tip_amount" '
+            'inputmode="decimal"></label><label><'
+            'input type="checkbox" '
+            'name="shared_confirmed" '
+            'value="true">Declaro factura '
+            "compartida</label><label>Motivo/evid"
+            'encia<input name="reason" '
+            "required></label>"
+        )
+        body += (
+            _confirm("Confirmo correspondencia fiscal e importes de esta factura")
+            + _submit("Vincular factura seleccionada")
+            + "</form></section>"
+        )
+    if not result["candidates"]:
+        body += "<p>No hay candidatos válidos en esta página examinada.</p>"
+    if result["has_more"]:
+        query = dict(params)
+        query["cursor"] = result["cursor"]
+        body += (
+            "<p>Hay más filas por revisar. <a "
+            'href="?'
+            f"{escape(urlencode(query), quote=True)}"
+            '">Siguiente página</a></p>'
+        )
+    return _html("Buscar CFDI SAT del cargo AMEX", body, actor)
+
+
+@router.post(BASE + "/{import_id}/directo/cfdi/vigencia")
+async def direct_selected_cfdi_status(
+    import_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    actor: Empleado = require_admin_finanzas(),
+):
+    _require_finance_actor(actor)
+    actor_id = _actor_id(actor)
+    form = await _form(request)
+    item_id = _uuid(form, "item_id")
+    if not _confirmed(form):
+        raise HTTPException(422, "Confirma la consulta SAT de esta factura.")
+    factory = dependencies._db_session_maker
+    if factory is None:
+        raise HTTPException(503, "La consulta SAT no está disponible.")
+    await session.rollback()
+    result = await _call(
+        status.consult_selected_direct_cfdi_status(
+            factory,
+            actor_id=actor_id,
+            import_id=import_id,
+            item_id=item_id,
+            cfdi_id=_uuid(form, "cfdi_id"),
+            expected_source_version=_version(form),
+            expected_item_version=_version(form, "expected_item_version"),
+            expected_identity_hash=_value(
+                form, "expected_identity_hash", required=True
+            ),
+            request_key=_value(form, "request_key", required=True),
+            consented=True,
+        )
+    )
+    message = (
+        _reason(result.reason)
+        if result.status == "pending"
+        else "Vigencia observada: "
+        + str(result.progress.get("status"))
+        + ". Revisa y confirma el vínculo por separado."
+    )
+    return RedirectResponse(
+        f"{BASE}/{import_id}/directo/cfdi?"
+        + urlencode({"item_id": str(item_id), "msg": message}),
+        303,
+    )
+
+
+@router.get(BASE + "/{import_id}/directo/periodo")
+async def direct_period_form(
+    import_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    actor: Empleado = require_admin_finanzas(),
+):
+    _require_finance_actor(actor)
+    view = await _call(
+        context.list_direct_statement(
+            session, actor_id=_actor_id(actor), import_id=import_id
+        )
+    )
+    body = (
+        '<p><a href="'
+        f"{BASE}"
+        "/"
+        f"{import_id}"
+        '/directo">Volver al '
+        "estado</a></p><p>Declaración "
+        "original: "
+        f"{_text(view.statement.period_start)}"
+        " a "
+        f"{_text(view.statement.period_end)}"
+        ". La corrección conserva archivo, "
+        "recibos y cargos existentes; sólo "
+        "recupera cargos demostrados "
+        "omitidos por período.</p>"
+    )
+    body += _open(request, import_id, "periodo/previsualizar", _source_version(view))
+    body += (
+        "<label>Inicio corregido<input "
+        'name="period_start" type="date" '
+        "required></label><label>Fin "
+        'corregido<input name="period_end" '
+        'type="date" '
+        "required></label><label>Motivo<input"
+        ' name="reason" required></label>'
+    )
+    body += _submit("Previsualizar recuperación de período") + "</form>"
+    return _html("Revisar cobertura del estado", body, actor)
+
+
+@router.post(BASE + "/{import_id}/directo/periodo/{operation}")
+async def direct_period_action(
+    import_id: UUID,
+    operation: str,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    actor: Empleado = require_admin_finanzas(),
+):
+    _require_finance_actor(actor)
+    form = await _form(request)
+    if operation not in {"previsualizar", "confirmar"}:
+        raise HTTPException(404, "Acción no disponible.")
+    try:
+        payload = dict(
+            actor_id=_actor_id(actor),
+            import_id=import_id,
+            period_start=date.fromisoformat(
+                _value(form, "period_start", required=True)
+            ),
+            period_end=date.fromisoformat(_value(form, "period_end", required=True)),
+            reason=_value(form, "reason", required=True),
+            expected_source_version=_version(form),
+        )
+        if operation == "confirmar":
+            result = await _call(
+                recovery.confirm_direct_period_recovery(
+                    session,
+                    **payload,
+                    preview_hash=_value(form, "preview_hash", required=True),
+                    idempotency_key=_value(form, "idempotency_key", required=True),
+                    confirmed=_confirmed(form),
+                )
+            )
+            if result.status not in {"recovered", "exists"}:
+                await session.rollback()
+                return _redirect(import_id, _reason(result.reason))
+            await session.commit()
+            return _redirect(
+                import_id,
+                (
+                    "Cobertura efectiva corregida. Los "
+                    "cargos recuperados requieren CFDI, "
+                    "clasificación y partida ordinarios."
+                ),
+            )
+        result = await _call(
+            recovery.preview_direct_period_recovery(session, **payload)
+        )
+        plan = result.progress or {}
+        message = (
+            _reason(result.reason)
+            if result.reason
+            else "Revisa la recuperación propuesta."
+        )
+        body = f"<p>{escape(message)}</p>"
+        body += (
+            "<p>Período corregido: "
+            f"{_text(plan.get('period_start'))}"
+            " a "
+            f"{_text(plan.get('period_end'))}"
+            ". Cargos por recuperar: "
+            f"{_text(plan.get('expected_count'))}"
+            ".</p>"
+        )
+        if plan.get("original_counts"):
+            body += (
+                "<table><thead><tr><th>Movimiento</th"
+                "><th>Original "
+                "conservado</th><th>Cobertura "
+                "efectiva</th></tr></thead><tbody>"
+            )
+            for key, label in (
+                ("debit", "Cargos"),
+                ("credit", "Créditos"),
+                ("skipped", "Omitidas"),
+                ("unknown", "Sin resolver"),
+            ):
+                body += (
+                    "<tr><td>"
+                    f"{label}"
+                    "</td><td>"
+                    f"{_text(plan['original_counts'].get(key))}"
+                    "</td><td>"
+                    f"{_text(plan['effective_counts'].get(key))}"
+                    "</td></tr>"
+                )
+            body += (
+                "</tbody></table><table><thead><tr><t"
+                "h>Fila original</th><th>Fecha "
+                "económica</th><th>Importe</th></tr><"
+                "/thead><tbody>"
+            )
+            for row in plan.get("rows", []):
+                body += (
+                    "<tr><td>"
+                    f"{_text(row.get('row_number'))}"
+                    "</td><td>"
+                    f"{_text(row.get('date'))}"
+                    "</td><td>"
+                    f"{_text(row.get('amount'))}"
+                    "</td></tr>"
+                )
+            body += "</tbody></table>"
+        if result.status == "preview":
+            body += _open(request, import_id, "periodo/confirmar", _version(form))
+            for name in ("period_start", "period_end", "reason"):
+                body += _hidden(name, _value(form, name, required=True))
+            body += _hidden("preview_hash", result.progress["preview_hash"]) + _hidden(
+                "idempotency_key", uuid4()
+            )
+            body += (
+                _confirm(
+                    (
+                        "Confirmo los límites y recuperar "
+                        "únicamente los cargos omitidos "
+                        "demostrados"
+                    )
+                )
+                + _submit("Confirmar recuperación de período")
+                + "</form>"
+            )
+        return _html("Preview de recuperación de período", body, actor)
+    except (ValueError, ArithmeticError):
+        await session.rollback()
+        raise HTTPException(
+            422, "Revisa el período y los datos de recuperación."
+        ) from None
+    except Exception:
+        await session.rollback()
+        raise
 
 
 @router.post(BASE + "/{import_id}/directo/{action}")
@@ -937,7 +1611,7 @@ async def direct_action(
                 raise HTTPException(422, "Confirma el consentimiento de consulta SAT.")
             await session.rollback()  # Release dependency/auth reads before external SOAP.
             result = await _consult(
-                _actor_id(actor),
+                common["actor_id"],
                 import_id,
                 version,
                 _value(form, "request_key", required=True),
@@ -1011,7 +1685,7 @@ async def direct_action(
             result = await _call(
                 matching.link_direct_cfdi_manual(
                     session,
-                    actor_id=_actor_id(actor),
+                    actor_id=common["actor_id"],
                     import_id=import_id,
                     item_id=_uuid(form, "item_id"),
                     cfdi_id=_uuid(form, "cfdi_id"),
@@ -1035,7 +1709,7 @@ async def direct_action(
             result = await _call(
                 matching.exclude_direct_credit(
                     session,
-                    actor_id=_actor_id(actor),
+                    actor_id=common["actor_id"],
                     import_id=import_id,
                     item_id=_uuid(form, "item_id"),
                     expected_source_version=version,
@@ -1076,7 +1750,7 @@ async def direct_action(
         raise
     if action == "contexto" and _confirmed(form, "sat_consented"):
         await _consult(
-            _actor_id(actor),
+            common["actor_id"],
             import_id,
             _source_version(result),
             context_request_key,
@@ -1180,27 +1854,48 @@ async def direct_budget_queue(
     )
     body = "<p>Contabilidad declara proyecto y categoría. Aquí sólo se asigna la partida o se devuelve con motivo; el plan no se edita.</p>"
     for item in rows:
-        lines = await _call(
-            budget.list_direct_budget_lines(
-                session, actor_id=_actor_id(actor), item_id=item.id
+        lines = (
+            []
+            if item.budget_status == "assigned"
+            else await _call(
+                budget.list_direct_budget_lines(
+                    session, actor_id=_actor_id(actor), item_id=item.id
+                )
             )
         )
         options = "".join(
             f'<option value="{entry["id"]}">{_text(entry["label"])}</option>'
             for entry in lines
         )
-        if not lines:
+        if not lines and item.budget_status != "assigned":
             body += "<p>No hay partidas compatibles en este contexto. Devuelve el cargo a Contabilidad con el motivo de revisión.</p>"
         body += f"<section><h2>Fila {item.row_number} · {_text(item.descriptor)}</h2><p>{_text(item.amount)} {_text(item.currency)} · Proyecto: {_text(getattr(item, "tournament_name", None) or getattr(item, "project_name", None) or item.tournament_id or item.project_code)} · Categoría: {_text(getattr(item, "budget_concept_name", None) or item.budget_concept_id)}</p>"
         hidden = _csrf(request) + _hidden(
             "expected_source_version", item.source_version
         )
-        body += f'<form class="direct-form" method="POST" action="{QUEUE}/{item.id}/asignar">{hidden}'
-        body += _hidden("expected_source_hash", item.source_hash) + _hidden(
-            "idempotency_key", uuid4()
-        )
-        body += f'<label>Partida y versión presupuestal<select name="budget_line_id" required><option value="">Selecciona partida</option>{options}</select></label>'
-        body += _submit("Asignar partida existente") + "</form>"
+        if item.budget_status == "sent":
+            body += (
+                '<form class="direct-form" '
+                'method="POST" action="'
+                f"{QUEUE}"
+                "/"
+                f"{item.id}"
+                '/asignar">'
+                f"{hidden}"
+            )
+            body += _hidden("expected_source_hash", item.source_hash) + _hidden(
+                "idempotency_key", uuid4()
+            )
+            body += (
+                "<label>Partida y versión "
+                "presupuestal<select "
+                'name="budget_line_id" '
+                "required><option "
+                'value="">Selecciona partida</option>'
+                f"{options}"
+                "</select></label>"
+            )
+            body += _submit("Asignar partida existente") + "</form>"
         body += (
             f'<form class="direct-form" method="POST" action="{QUEUE}/{item.id}/rechazar">{hidden}<label>Motivo de devolución<input name="reason" required></label>'
             + _submit("Devolver a Contabilidad")

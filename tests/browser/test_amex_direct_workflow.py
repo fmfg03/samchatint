@@ -106,6 +106,7 @@ def test_cp_browser_selects_line_only_and_owner_denies_unscoped(
 ):
     w = complete_direct_workspace
     w.actor.rol = "usuario"
+    w.item.budget_status = "sent"
     with live_app(w.app) as base:
         page.goto(base + w.routes.QUEUE)
         assert page.locator('select[name="budget_line_id"]').input_value() == ""
@@ -125,6 +126,20 @@ def test_cp_browser_selects_line_only_and_owner_denies_unscoped(
     kwargs = w.routes.budget.assign_direct_budget_line.await_args.kwargs
     assert kwargs["budget_line_id"] == w.item.budget_line_id
     assert "budget_concept_id" not in kwargs and "project_code" not in kwargs
+
+
+def test_cp_browser_assigned_charge_allows_return_without_reassignment(
+    page, complete_direct_workspace
+):
+    w = complete_direct_workspace
+    w.actor.rol = "usuario"
+    assert w.item.budget_status == "assigned"
+    with live_app(w.app) as base:
+        page.goto(base + w.routes.QUEUE)
+        assert page.locator('select[name="budget_line_id"]').count() == 0
+        assert page.locator('form[action$="/asignar"]').count() == 0
+        assert page.get_by_role("button", name="Devolver a Contabilidad").is_visible()
+    w.routes.budget.assign_direct_budget_line.assert_not_awaited()
 
 
 def test_finance_can_correct_context_when_classification_is_denied(

@@ -468,7 +468,11 @@ async def test_sat_continuation_caps_queries_and_concurrency_using_server_cursor
     )
     assert first.progress["total"] == 51
     assert first.progress["cursor"] == 50
-    assert transport.calls == 49  # One real, fresh cached receipt was reused.
+    cached_in_first_page = any(
+        row["cfdi_id"] == str(cfdi.id) for row in first.progress["candidates"][:50]
+    )
+    # UUID ordering may place the one existing receipt on the second page.
+    assert transport.calls == 50 - int(cached_in_first_page)
     assert transport.maximum <= 2
     second = await status.consult_direct_statement_status(
         pg.factory,
@@ -720,3 +724,74 @@ async def test_real_retention_posts_bank_net_and_freezes_canonical_custom_mappin
             session, actor_id=pg.actor.id, import_id=current.statement.id, format="xlsx"
         )
         assert payload.startswith(b"PK")
+
+
+@pytest.mark.asyncio
+async def test_new_period_mismatch_is_rejected_without_partial_source_or_expense(
+    direct_pg,
+):
+    pg = direct_pg
+    content = (
+        b"Date,Description,Amount\n2026-09-30,Outside,-116.00\n"
+        b"2026-10-01,Inside,-232.00\n"
+    )
+    result = await _fixture._direct_import(pg, content)
+    assert result.status == "pending"
+    assert result.reason == "statement_period_mismatch"
+    assert result.progress["outside_count"] == 1
+    for table in (
+        "amex_statement_imports",
+        "amex_statement_import_items",
+        "expense_reports",
+        "amex_direct_items",
+        "amex_statement_source_files",
+    ):
+        assert await pg.conn.fetchval(f"SELECT count(*) FROM {table}") == 0
+    # Correcting the explicit declaration is a new successful intake, once.
+    corrected = await _fixture._direct_import(
+        pg, content, period_start=date(2026, 9, 30), key="corrected-period"
+    )
+    assert corrected.status == "imported"
+    replay = await _fixture._direct_import(
+        pg, content, period_start=date(2026, 9, 30), key="retry"
+    )
+    assert replay.status == "exists"
+    assert replay.statement.id == corrected.statement.id
+    assert await pg.conn.fetchval("SELECT count(*) FROM expense_reports") == 2
+
+
+@pytest.mark.asyncio
+async def test_intake_holds_global_recognition_before_expense_folio_owner(
+    direct_pg, monkeypatch
+):
+    from sqlalchemy import text
+
+    from devnous.gastos.services import amex_direct_intake_service as intake
+
+    owner = intake.create_expense_from_data
+    observed = []
+
+    async def probe_real_expense_owner(*, session, **kwargs):
+        # Inspect this transaction's exact lock, not another test's lock holder.
+        held = await session.scalar(
+            text(
+                """
+            SELECT EXISTS(SELECT 1 FROM pg_locks
+            WHERE pid=pg_backend_pid() AND locktype='advisory' AND granted
+            AND objid=(hashtext('samchat:amex:shared-recognition')::bigint
+                       & 4294967295)
+            AND classid=CASE WHEN hashtext('samchat:amex:shared-recognition')<0
+                            THEN 4294967295 ELSE 0 END)
+        """
+            )
+        )
+        observed.append(held)
+        assert held, "intake must acquire global recognition before expense folio"
+        return await owner(session=session, **kwargs)
+
+    monkeypatch.setattr(intake, "create_expense_from_data", probe_real_expense_owner)
+    result = await _fixture._direct_import(
+        direct_pg, b"Date,Description,Amount\n2026-10-02,Ordered source,-116.00\n"
+    )
+    assert result.status == "imported"
+    assert observed == [True]

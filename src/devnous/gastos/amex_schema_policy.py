@@ -47,6 +47,8 @@ AMEX_DIRECT_OWNER_MIGRATION_TABLES = frozenset(
         "amex_direct_events",
         "amex_direct_accounting_cuts",
         "amex_direct_cut_items",
+        "amex_direct_coverage_revisions",
+        "amex_direct_recovered_rows",
     }
 )
 

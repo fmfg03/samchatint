@@ -581,6 +581,7 @@ async def test_cp_queue_has_only_line_fields_and_explicit_versions(
 
     w = complete_direct_workspace
     w.actor.rol = "usuario"
+    w.item.budget_status = "sent"
     async with await _client(w) as client:
         response = await client.get(w.routes.QUEUE)
     tree = html.fromstring(response.text)
@@ -748,7 +749,13 @@ async def test_preview_parses_real_signed_rows_without_business_writes(
         token = tree.xpath('//input[@name="_csrf_token"]/@value')[0]
         response = await client.post(
             statements.BASE + "/directo/previsualizar",
-            data={"_csrf_token": token, "profile": "debit_negative", "currency": "MXN"},
+            data={
+                "_csrf_token": token,
+                "profile": "debit_negative",
+                "currency": "MXN",
+                "period_start": "2026-09-01",
+                "period_end": "2026-09-30",
+            },
             files={
                 "file": (
                     "original.csv",
@@ -1162,7 +1169,13 @@ async def test_preview_boundary_preserves_no_business_effects(
             files = {"file": ("x.csv", b"not,a,statement", "text/csv")}
         response = await client.post(
             statements.BASE + "/directo/previsualizar",
-            data={"_csrf_token": token, "profile": "debit_negative", "currency": "MXN"},
+            data={
+                "_csrf_token": token,
+                "profile": "debit_negative",
+                "currency": "MXN",
+                "period_start": "2026-09-01",
+                "period_end": "2026-09-30",
+            },
             files=files,
         )
     assert response.status_code == (413 if failure == "too_large" else 422)
@@ -1378,3 +1391,90 @@ def test_employee_context_denial_explains_the_required_authorized_selection():
     assert "Finanzas" in explanation
     assert "titular autorizado" in explanation
     assert "tarjeta y contexto fiscal" in explanation
+
+
+@pytest.mark.asyncio
+async def test_classification_and_submission_are_separate_forms(
+    complete_direct_workspace,
+):
+    from lxml import html
+
+    w = complete_direct_workspace
+    async with await _client(w) as client:
+        response = await client.get(f"{w.routes.BASE}/{w.statement.id}/directo")
+    tree = html.fromstring(response.text)
+    save = tree.xpath('//form[contains(@action,"/clasificar")]')[0]
+    send = tree.xpath('//form[contains(@action,"/enviar-presupuesto")]')[0]
+    assert save is not send
+    assert not save.xpath('.//input[@name="confirmed"]')
+    assert send.xpath('.//input[@name="confirmed" and @required]')
+    assert not send.xpath('.//select[@name="budget_concept_id"]')
+    assert tree.xpath('//select[@id="direct-project"]')
+    assert tree.xpath('//select[@id="direct-concept" and @disabled]')
+    assert not tree.xpath('//input[@name="cfdi_id" and not(@type="hidden")]')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "suffix", ["cfdi/vigencia", "periodo/previsualizar", "periodo/confirmar"]
+)
+async def test_new_mutation_routes_reject_missing_csrf(
+    complete_direct_workspace, suffix
+):
+    w = complete_direct_workspace
+    async with await _client(w) as client:
+        response = await client.post(
+            f"{w.routes.BASE}/{w.statement.id}/directo/{suffix}", data={}
+        )
+    assert response.status_code == 403
+    w.session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cp_assigned_has_return_without_impossible_reassignment(
+    complete_direct_workspace,
+):
+    from lxml import html
+
+    w = complete_direct_workspace
+    w.item.budget_status = "assigned"
+    async with await _client(w) as client:
+        response = await client.get(w.routes.QUEUE)
+    tree = html.fromstring(response.text)
+    assert not tree.xpath('//form[contains(@action,"/asignar")]')
+    assert tree.xpath('//form[contains(@action,"/rechazar")]')
+
+
+@pytest.mark.asyncio
+async def test_preview_exposes_outside_period_without_business_write(
+    complete_direct_workspace,
+):
+    from lxml import html
+
+    w = complete_direct_workspace
+    async with await _client(w) as client:
+        form = await client.get(statements.BASE + "/nuevo?modo=directo")
+        token = html.fromstring(form.text).xpath('//input[@name="_csrf_token"]/@value')[
+            0
+        ]
+        response = await client.post(
+            w.routes.BASE + "/directo/previsualizar",
+            data={
+                "_csrf_token": token,
+                "profile": "debit_negative",
+                "currency": "MXN",
+                "period_start": "2026-09-01",
+                "period_end": "2026-09-30",
+            },
+            files={
+                "file": (
+                    "original.csv",
+                    b"date,description,amount\n2026-08-31,COMERCIO,-116.00",
+                    "text/csv",
+                )
+            },
+        )
+    assert response.status_code == 200
+    assert response.json()["outside_count"] == 1
+    assert response.json()["outside_rows"][0]["reason"] == "row_outside_declared_period"
+    w.session.commit.assert_not_awaited()

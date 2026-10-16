@@ -144,6 +144,7 @@ from ..services.amex_cfdi_matching_service import (
 )
 from ..services.amex_accounting_identity_service import (
     direct_amex_expense_condition,
+    effective_direct_sources_available,
     is_direct_amex_expense,
 )
 from ..services.amex_recognition_service import (
@@ -21830,7 +21831,10 @@ async def amex_conciliacion_view(
         .where(
             and_(
                 ExpenseReport.origen == "amex_batch",
-                ~direct_amex_expense_condition(ExpenseReport),
+                ~direct_amex_expense_condition(
+                    ExpenseReport,
+                    effective_sources=await effective_direct_sources_available(session),
+                ),
                 ExpenseReport.estado_gasto == "activo",
                 ExpenseReport.fecha >= start_dt,
                 ExpenseReport.fecha < end_dt,

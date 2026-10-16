@@ -274,6 +274,13 @@ async def test_accounting_date_inside_statement_still_requires_budget_edition(
         source_key="source",
         source_version=7,
         items=[item],
+        _sources={
+            item.id: SimpleNamespace(
+                movement_kind="debit",
+                period_start=date(2026, 12, 15),
+                period_end=date(2027, 1, 15),
+            )
+        },
     )
     monkeypatch.setattr(accounting, "_prepare", AsyncMock(return_value=ready))
     session = SimpleNamespace(execute=AsyncMock())
@@ -289,3 +296,31 @@ async def test_accounting_date_inside_statement_still_requires_budget_edition(
     )
     assert result.reason == "accounting_date_outside_budget_edition"
     session.execute.assert_not_awaited()
+
+
+def test_declared_period_preview_preserves_rows_and_reports_complete_coverage():
+    from datetime import date
+
+    raw = (
+        b"Date,Description,Amount\n2026-08-31,Prior debit,-116.00\n"
+        b"2026-09-01,Debit,-232.00\n2026-09-30,Credit,116.00\n"
+        b"invalid,Unknown,-5.00\n"
+    )
+    coverage = intake.evaluate_direct_period(
+        raw, "debit_negative", "MXN", date(2026, 9, 1), date(2026, 9, 30)
+    )
+    assert coverage["min_date"] == date(2026, 8, 31)
+    assert coverage["max_date"] == date(2026, 9, 30)
+    assert coverage["outside_rows"] == [
+        {
+            "row_number": 2,
+            "date": date(2026, 8, 31),
+            "reason": "row_outside_declared_period",
+        }
+    ]
+    assert coverage["counts"] == {"debit": 2, "credit": 1, "unknown": 0, "skipped": 1}
+    assert coverage["rows"] == intake.parse_direct_csv(raw, "debit_negative", "MXN")
+    corrected = intake.evaluate_direct_period(
+        raw, "debit_negative", "MXN", date(2026, 8, 31), date(2026, 9, 30)
+    )
+    assert corrected["outside_count"] == 0
