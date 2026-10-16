@@ -148,7 +148,7 @@ def _collect_permission_tokens(value: Any, prefix: str = "") -> Set[str]:
 
 
 async def _load_effective_permissions(
-    session: AsyncSession, empleado_id: UUID
+    session: AsyncSession, empleado_id: UUID, *, fail_closed: bool = False
 ) -> Set[str]:
     """
     Load union of active profile permissions assigned to empleado.
@@ -169,6 +169,8 @@ async def _load_effective_permissions(
         )
         rows = result.fetchall()
     except Exception as exc:
+        if fail_closed:
+            raise
         logger.debug("Access profile tables unavailable or unreadable: %s", exc)
         return set()
 

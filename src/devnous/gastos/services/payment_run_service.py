@@ -447,10 +447,31 @@ async def list_payment_run_items(
     date_to: Optional[date] = None,
     query: Optional[str] = None,
     limit: int = 250,
+    ensure_schema: bool = True,
+    document_ids: Optional[list[str]] = None,
+    tournament_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
-    await ensure_payment_run_schema(session)
+    # Trusted readonly callers use pre-provisioned schema and an exact scope.
+    # This selection narrows data; it never substitutes the caller's access guard.
+    if ensure_schema:
+        await ensure_payment_run_schema(session)
     filters = ["d.tipo = 'SOLICITUD'"]
     params: dict[str, Any] = {"limit": max(1, min(int(limit or 250), 500))}
+    source_quality_select = ""
+    if document_ids is not None:
+        if not document_ids:
+            return []
+        params["scoped_document_ids"] = [
+            str(_parse_uuid(value)) for value in document_ids
+        ]
+        filters.append("d.id = ANY(CAST(:scoped_document_ids AS uuid[]))")
+        source_quality_select = (
+            ", (d.monto_total IS NULL AND d.monto_solicitado IS NULL) "
+            "AS source_amount_missing"
+        )
+    if tournament_id is not None:
+        params["scoped_tournament_id"] = str(_parse_uuid(tournament_id))
+        filters.append("d.torneo_id = CAST(:scoped_tournament_id AS uuid)")
     normalized_status = (status_filter or "pendientes").strip().lower()
     if normalized_status in {"pendientes", "abiertas"}:
         filters.append("d.estado = 'aprobado'")
@@ -525,7 +546,7 @@ async def list_payment_run_items(
                          LIKE :reimbursement_prefix
                     THEN d.monto_total
                     ELSE COALESCE(d.monto_total, d.monto_solicitado, 0)
-                END AS monto,
+                END AS monto{source_quality_select},
                 e.nombre AS solicitante_nombre,
                 b.nombre AS beneficiario_nombre,
                 pc.nombre AS proveedor_nombre,

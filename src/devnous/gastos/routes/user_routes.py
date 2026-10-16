@@ -10860,6 +10860,17 @@ def _can_read_cuenta_de_gastos(cuenta: CuentaDeGastos, empleado: Empleado) -> bo
     return cuenta.empleado_id == empleado.id or _can_view_all_cuentas_de_gastos(empleado)
 
 
+def _can_read_documento(documento: Documento, empleado: Empleado) -> bool:
+    """Pure visibility guard shared with isolated connector reads; no side effects."""
+    return not (
+        documento.empleado_id != empleado.id
+        and empleado.rol
+        not in ["coordinador", "finanzas", "admin", "superadmin", "super_admin"]
+        and not _can_access_read_only_informe_document(documento, empleado)
+        and not _can_finance_replace_comprobante_pago(documento, empleado)
+    )
+
+
 def _can_access_read_only_informe_document(
     documento: Documento, empleado: Empleado
 ) -> bool:
@@ -40032,13 +40043,7 @@ async def ver_documento(
         raise HTTPException(status_code=404, detail="Documento not found")
 
     # Do not let a document view trigger a write or notification before access is known.
-    if (
-        documento.empleado_id != current_empleado.id
-        and current_empleado.rol
-        not in ["coordinador", "finanzas", "admin", "superadmin", "super_admin"]
-        and not _can_access_read_only_informe_document(documento, current_empleado)
-        and not _can_finance_replace_comprobante_pago(documento, current_empleado)
-    ):
+    if not _can_read_documento(documento, current_empleado):
         return _render_documento_access_denied_page(current_empleado)
 
     is_read_only_operations_observer = (
