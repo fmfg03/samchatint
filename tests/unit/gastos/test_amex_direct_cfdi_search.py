@@ -172,9 +172,15 @@ async def test_explicit_denial_precedes_source_and_catalog_reads(setup_search):
 def selected_status(monkeypatch):
     item = NS(id=uuid4(), source_version=2, accounting_status="pending")
     ctx = NS(id=uuid4(), version=1, receiver_rfc="AAA010101AAA")
-    state = NS(source_version=3)
+    state = NS(source_version=3, progress_json={})
     cfdi = NS(id=uuid4(), receptor_rfc=ctx.receiver_rfc)
     session = NS(get=AsyncMock(return_value=cfdi), add=MagicMock(), flush=AsyncMock())
+    from devnous.gastos.models import AmexStatementDirectState
+
+    async def get(model, *args, **kwargs):
+        return state if model is AmexStatementDirectState else cfdi
+
+    session.get.side_effect = get
     active = []
 
     @asynccontextmanager

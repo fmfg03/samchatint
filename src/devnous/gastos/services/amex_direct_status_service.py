@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 
@@ -33,6 +34,13 @@ REUSABLE_STATUSES = frozenset({"vigente", "cancelado"})
 MAX_QUERIES = 50
 MAX_CONCURRENCY = 2
 EXTERNAL_BUDGET_SECONDS = 30
+
+
+def _lease_active(progress: dict[str, Any], now: datetime) -> bool:
+    if not progress.get("running"):
+        return False
+    stamp = datetime.fromisoformat(progress["started_at"])
+    return now - stamp < timedelta(seconds=EXTERNAL_BUDGET_SECONDS + 5)
 
 
 async def _status_candidates(
@@ -132,6 +140,8 @@ async def consult_direct_statement_status(
         if not context or state.source_version != expected_source_version:
             return DirectResult("pending", "stale_source_version")
         prior = state.progress_json or {}
+        if _lease_active(prior.get("selected_consultation") or {}, started):
+            return DirectResult("pending", "sat_consultation_in_progress")
         if prior.get("running") and prior.get("source_version") == state.source_version:
             stamp = datetime.fromisoformat(prior["started_at"])
             if started - stamp < timedelta(seconds=EXTERNAL_BUDGET_SECONDS + 5):
@@ -400,8 +410,15 @@ async def consult_selected_direct_cfdi_status(
         )
         return state, cfdi, identity, source_hash
 
+    lease_token = str(uuid4())
     async with factory.begin() as session:
         state, cfdi, identity, source_hash = await validate(session)
+        prior = dict(state.progress_json or {})
+        started = datetime.now(timezone.utc)
+        if _lease_active(prior, started) or _lease_active(
+            prior.get("selected_consultation") or {}, started
+        ):
+            return DirectResult("pending", "sat_consultation_in_progress")
         receipt = await current_status_receipt(session, cfdi)
         if receipt and receipt.observed_status in REUSABLE_STATUSES:
             return DirectResult(
@@ -413,46 +430,96 @@ async def consult_selected_direct_cfdi_status(
                     "cached": True,
                 },
             )
-    # No database transaction or lock survives the external request.
-    service = status_service or SATCFDIStatusService()
+        prior["selected_consultation"] = {
+            "running": True,
+            "started_at": started.isoformat(),
+            "token": lease_token,
+            "request_key": request_key,
+            "item_id": str(item_id),
+            "cfdi_id": str(cfdi_id),
+            "source_hash": source_hash,
+            "identity_hash": expected_identity_hash,
+        }
+        state.progress_json = prior
+
+    async def release_lease():
+        from ..models import AmexStatementDirectState, AmexStatementImport
+
+        async with factory.begin() as session:
+            # Internal lease cleanup follows import -> state locking and does
+            # not require business authority that may have just been revoked.
+            await session.get(AmexStatementImport, import_id, with_for_update=True)
+            state = await session.get(
+                AmexStatementDirectState, import_id, with_for_update=True
+            )
+            if state is None:
+                return
+            progress = dict(state.progress_json or {})
+            lease = dict(progress.get("selected_consultation") or {})
+            if lease.get("token") == lease_token:
+                lease["running"] = False
+                progress["selected_consultation"] = lease
+                state.progress_json = progress
+
     try:
-        response = await asyncio.wait_for(
-            service.consult_status(
-                uuid=identity["uuid"],
-                rfc_emisor=identity["rfc_emisor"],
-                rfc_receptor=identity["rfc_receptor"],
-                total=identity["total"],
-            ),
-            timeout=EXTERNAL_BUDGET_SECONDS,
-        )
-    except (asyncio.TimeoutError, OSError, ValueError):
-        return DirectResult("pending", "sat_status_pending")
-    if not isinstance(response, dict) or not _observed_request_matches(
-        response, identity
-    ):
-        return DirectResult("pending", "invalid_observed_request")
-    async with factory.begin() as session:
-        state, cfdi, current_identity, current_source_hash = await validate(session)
-        if current_source_hash != source_hash or current_identity != identity:
-            return DirectResult("pending", "sat_progress_source_changed")
-        receipt = AmexCFDIStatusReceipt(
-            cfdi_id=cfdi.id,
-            fiscal_uuid=identity["uuid"],
-            issuer_rfc=identity["rfc_emisor"],
-            receiver_rfc=identity["rfc_receptor"],
-            amount=identity["total"],
-            xml_hash=identity["xml_hash"],
-            request_hash=digest(identity),
-            observed_status=str(response.get("status") or "unknown").lower(),
-            response_json=response,
-            response_hash=digest(response),
-            actor_id=actor_id,
-            observed_at=datetime.now(timezone.utc),
-        )
-        session.add(receipt)
-        await session.flush()
-        return DirectResult(
-            "observed",
-            source_version=state.source_version,
-            progress={"status": receipt.observed_status, "receipt_id": str(receipt.id)},
-        )
+        # No database transaction or lock survives the external request.
+        service = status_service or SATCFDIStatusService()
+        try:
+            response = await asyncio.wait_for(
+                service.consult_status(
+                    uuid=identity["uuid"],
+                    rfc_emisor=identity["rfc_emisor"],
+                    rfc_receptor=identity["rfc_receptor"],
+                    total=identity["total"],
+                ),
+                timeout=EXTERNAL_BUDGET_SECONDS,
+            )
+        except (asyncio.TimeoutError, OSError, ValueError):
+            return DirectResult("pending", "sat_status_pending")
+        if not isinstance(response, dict) or not _observed_request_matches(
+            response, identity
+        ):
+            return DirectResult("pending", "invalid_observed_request")
+        async with factory.begin() as session:
+            state, cfdi, current_identity, current_source_hash = await validate(session)
+            lease = (state.progress_json or {}).get("selected_consultation") or {}
+            if (
+                lease.get("token") != lease_token
+                or not lease.get("running")
+                or current_source_hash != source_hash
+                or current_identity != identity
+            ):
+                return DirectResult("pending", "sat_progress_source_changed")
+            receipt = AmexCFDIStatusReceipt(
+                cfdi_id=cfdi.id,
+                fiscal_uuid=identity["uuid"],
+                issuer_rfc=identity["rfc_emisor"],
+                receiver_rfc=identity["rfc_receptor"],
+                amount=identity["total"],
+                xml_hash=identity["xml_hash"],
+                request_hash=digest(identity),
+                observed_status=str(response.get("status") or "unknown").lower(),
+                response_json=response,
+                response_hash=digest(response),
+                actor_id=actor_id,
+                observed_at=datetime.now(timezone.utc),
+            )
+            session.add(receipt)
+            await session.flush()
+            return DirectResult(
+                "observed",
+                source_version=state.source_version,
+                progress={
+                    "status": receipt.observed_status,
+                    "receipt_id": str(receipt.id),
+                },
+            )
+    finally:
+        propagating_error = sys.exc_info()[0] is not None
+        try:
+            await release_lease()
+        except Exception:
+            # Preserve the original denial/cancellation. An unreleased lease
+            # still expires within the bounded external-request window.
+            if not propagating_error:
+                raise

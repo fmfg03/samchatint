@@ -129,3 +129,184 @@ async def test_status_permission_revoked_during_external_call_discards_receipt(
         )
     assert len(observed.requests) == 1
     assert await owner._count(pg, models.AmexCFDIStatusReceipt) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("second_key", ["same", "different"])
+async def test_selected_lease_prevents_duplicate_calls_and_replays(
+    direct_pg, second_key
+):
+    import asyncio
+
+    pg = direct_pg
+    args = await seed_selection(pg)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class GatedSAT(owner.ObservedSAT):
+        async def consult_status(self, **kwargs):
+            entered.set()
+            await release.wait()
+            return await super().consult_status(**kwargs)
+
+    observed = GatedSAT("vigente")
+    task = asyncio.create_task(
+        status.consult_selected_direct_cfdi_status(
+            pg.factory, **args, status_service=observed
+        )
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        other = dict(args)
+        if second_key == "different":
+            other["request_key"] = str(uuid4())
+        duplicate = await status.consult_selected_direct_cfdi_status(
+            pg.factory, **other, status_service=observed
+        )
+        assert duplicate.reason == "sat_consultation_in_progress"
+        batch = await status.consult_direct_statement_status(
+            pg.factory,
+            actor_id=args["actor_id"],
+            import_id=args["import_id"],
+            expected_source_version=args["expected_source_version"],
+            request_key="batch",
+            consented=True,
+            status_service=observed,
+        )
+        assert batch.reason == "sat_consultation_in_progress"
+    finally:
+        release.set()
+        first = await task
+    assert first.status == "observed"
+    replay = await status.consult_selected_direct_cfdi_status(
+        pg.factory, **args, status_service=observed
+    )
+    assert replay.progress["cached"]
+    assert replay.progress["receipt_id"] == first.progress["receipt_id"]
+    assert len(observed.requests) == 1
+    assert await owner._count(pg, models.AmexCFDIStatusReceipt) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["error", "timeout", "cancel"])
+async def test_selected_failed_attempt_releases_lease_for_retry(direct_pg, failure):
+    import asyncio
+
+    pg = direct_pg
+    args = await seed_selection(pg)
+
+    class FailedSAT:
+        async def consult_status(self, **kwargs):
+            if failure == "cancel":
+                raise asyncio.CancelledError()
+            if failure == "timeout":
+                raise asyncio.TimeoutError()
+            raise OSError("isolated transport failure")
+
+    if failure == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            await status.consult_selected_direct_cfdi_status(
+                pg.factory, **args, status_service=FailedSAT()
+            )
+    else:
+        result = await status.consult_selected_direct_cfdi_status(
+            pg.factory, **args, status_service=FailedSAT()
+        )
+        assert result.reason == "sat_status_pending"
+    observed = owner.ObservedSAT("vigente")
+    result = await status.consult_selected_direct_cfdi_status(
+        pg.factory, **args, status_service=observed
+    )
+    assert result.status == "observed"
+    assert len(observed.requests) == 1
+    assert await owner._count(pg, models.AmexCFDIStatusReceipt) == 1
+
+
+@pytest.mark.asyncio
+async def test_selected_superseded_lease_cannot_publish_or_release_new_attempt(
+    direct_pg,
+):
+    import asyncio
+    from datetime import datetime, timezone
+
+    pg = direct_pg
+    args = await seed_selection(pg)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class GatedSAT(owner.ObservedSAT):
+        async def consult_status(self, **kwargs):
+            entered.set()
+            await release.wait()
+            return await super().consult_status(**kwargs)
+
+    task = asyncio.create_task(
+        status.consult_selected_direct_cfdi_status(
+            pg.factory, **args, status_service=GatedSAT("vigente")
+        )
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        async with pg.factory.begin() as session:
+            state = await session.get(
+                models.AmexStatementDirectState, args["import_id"], with_for_update=True
+            )
+            progress = dict(state.progress_json)
+            progress["selected_consultation"] = {
+                **progress["selected_consultation"],
+                "token": "new-attempt",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "running": True,
+            }
+            state.progress_json = progress
+    finally:
+        release.set()
+        result = await task
+    assert result.reason == "sat_progress_source_changed"
+    assert await owner._count(pg, models.AmexCFDIStatusReceipt) == 0
+    async with pg.factory() as session:
+        state = await session.get(models.AmexStatementDirectState, args["import_id"])
+        assert state.progress_json["selected_consultation"]["token"] == "new-attempt"
+        assert state.progress_json["selected_consultation"]["running"]
+
+
+@pytest.mark.asyncio
+async def test_selected_respects_batch_lease_and_retries_expired_lease(direct_pg):
+    from datetime import datetime, timedelta, timezone
+
+    pg = direct_pg
+    args = await seed_selection(pg)
+    now = datetime.now(timezone.utc)
+    async with pg.factory.begin() as session:
+        state = await session.get(models.AmexStatementDirectState, args["import_id"])
+        state.progress_json = {
+            "running": True,
+            "started_at": now.isoformat(),
+            "request_key": "batch-owner",
+            "cursor": 7,
+        }
+    observed = owner.ObservedSAT("vigente")
+    result = await status.consult_selected_direct_cfdi_status(
+        pg.factory, **args, status_service=observed
+    )
+    assert result.reason == "sat_consultation_in_progress"
+    assert not observed.requests
+    async with pg.factory.begin() as session:
+        state = await session.get(models.AmexStatementDirectState, args["import_id"])
+        state.progress_json = {
+            **state.progress_json,
+            "running": False,
+            "selected_consultation": {
+                "running": True,
+                "token": "expired",
+                "started_at": (now - timedelta(seconds=60)).isoformat(),
+            },
+        }
+    result = await status.consult_selected_direct_cfdi_status(
+        pg.factory, **args, status_service=observed
+    )
+    assert result.status == "observed"
+    assert len(observed.requests) == 1
+    async with pg.factory() as session:
+        state = await session.get(models.AmexStatementDirectState, args["import_id"])
+        assert state.progress_json["cursor"] == 7
+        assert state.progress_json["request_key"] == "batch-owner"
+        assert not state.progress_json["selected_consultation"]["running"]
