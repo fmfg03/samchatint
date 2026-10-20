@@ -15,6 +15,7 @@ from devnous.gastos.services.amex_direct_schema_contract import (
     EXPECTED_FUNCTION_HASHES,
     EXPECTED_INDEXES,
     EXPECTED_KEYS,
+    EXPECTED_SETTLEMENT_VIEW_DEFINITIONS,
     EXPECTED_TRIGGERS,
 )
 from devnous.gastos.services.amex_direct_schema_service import (
@@ -73,6 +74,7 @@ def catalog():
         "20261013_amex_statement_workflow.sql",
         "20261014_amex_sat_budget_direct.sql",
         "20261015_amex_direct_period_recovery.sql",
+        "20261020_amex_expense_account_settlements.sql",
     ]:
         source = (ROOT / "database/migrations" / file).read_text()
         bodies.update(
@@ -109,6 +111,10 @@ async def inspect(parts):
     view_result = MagicMock()
     view_result.scalar_one_or_none.return_value = EXPECTED_EFFECTIVE_VIEW_DEFINITION
     results.append(view_result)
+    for definition in EXPECTED_SETTLEMENT_VIEW_DEFINITIONS.values():
+        settlement_view = MagicMock()
+        settlement_view.scalar_one_or_none.return_value = definition
+        results.append(settlement_view)
     session.execute.side_effect = results
     answer = await inspect_amex_direct_schema(session)
     queries = [str(call.args[0]).lower() for call in session.execute.call_args_list]
@@ -228,3 +234,22 @@ async def test_runtime_admission_never_installs_missing_owner_schema(
         ):
             await service.require_amex_direct_schema(session)
     session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind,name",
+    [
+        ("trigger", "amex_approval_proof_guard"),
+        ("trigger", "amex_statement_link_guard"),
+        ("function", "amex_guard_source_evidence"),
+        ("function", "amex_statement_immutable"),
+    ],
+)
+async def test_legacy_owner_guards_remain_required_after_settlement(kind, name):
+    """New DDL cannot erase guards whose names predate the direct prefix."""
+    parts = list(catalog())
+    index = 2 if kind == "trigger" else 3
+    assert any(row[0] == name for row in parts[index])
+    parts[index] = [row for row in parts[index] if row[0] != name]
+    assert (await inspect(tuple(parts)))["ready"] is False

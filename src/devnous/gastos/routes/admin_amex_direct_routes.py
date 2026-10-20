@@ -22,6 +22,8 @@ from ..services import amex_direct_intake_service as intake
 from ..services import amex_direct_matching_service as matching
 from ..services import amex_direct_recovery_service as recovery
 from ..services import amex_direct_status_service as status
+from ..services import amex_direct_suggestion_service as suggestions
+from ..services import amex_expense_account_settlement_service as settlements
 from ..services.amex_direct_common import DirectSchemaUnavailable
 from . import dependencies
 from .admin_amex_accounting_routes import (
@@ -192,6 +194,71 @@ def _reason(code: str | None) -> str:
         "unknown_movement": "Finanzas debe revisar el perfil y signo original; no se presume que sea un gasto.",
         "credit_requires_exclusion": "Finanzas debe declarar el crédito como no nuevo gasto; esto no registra un pago.",
         "source_changed": "Los datos cambiaron. Recarga el estado antes de confirmar.",
+        "prior_bank_requires_explicit_selection": (
+            "Selecciona la póliza de origen para asociar este cargo "
+            "a su reconocimiento anterior."
+        ),
+        "historical_cfdi_xml_required": (
+            "Falta el XML de la factura original de la cuenta de gastos. "
+            "Revisa su comprobación antes de seleccionar el crédito."
+        ),
+        "historical_cfdi_identity_conflict": (
+            "La factura original y su XML se contradicen. "
+            "Revisa la comprobación de origen."
+        ),
+        "expense_account_original_fiscal_identity_changed": (
+            "Cambió la factura original del crédito seleccionado. "
+            "Recarga y revisa la evidencia de origen."
+        ),
+        "expense_account_selection_stale": (
+            "Cambió el cargo desde la selección de origen. Revisa y "
+            "selecciona de nuevo la cuenta de gastos."
+        ),
+        "expense_account_origin_changed": (
+            "Cambió la evidencia o el saldo del asiento original. Revisa "
+            "el origen antes de confirmar."
+        ),
+        "expense_account_credit_not_proven": (
+            "No hay un crédito contable original con evidencia suficiente"
+            " para cancelar este cargo."
+        ),
+        "expense_account_source_scope_mismatch": (
+            "La cuenta de gastos no pertenece al ámbito fiscal, proyecto "
+            "o edición autorizado del estado."
+        ),
+        "expense_account_residual_not_attributable": (
+            "El saldo tiene otros movimientos sin atribución suficiente; "
+            "Contabilidad debe revisar el origen."
+        ),
+        "expense_account_credit_exhausted": (
+            "El crédito disponible no alcanza para este cargo o ya fue " "cancelado."
+        ),
+        "expense_account_already_amex_recognized": (
+            "El gasto ya tiene reconocimiento AMEX; corresponde asociarlo"
+            " sin generar otro pasivo."
+        ),
+        "expense_account_selection_confirmation_required": (
+            "Confirma el origen y explica por qué corresponde al cargo."
+        ),
+        "expense_account_origin_identity_mismatch": (
+            "El asiento de origen no corresponde a la cuenta y partida "
+            "seleccionadas. Recarga las opciones."
+        ),
+        "expense_account_bank_already_recognized": (
+            "Este cargo ya tiene reconocimiento contable. Revisa su " "póliza original."
+        ),
+        "direct_cfdi_tax_evidence_incomplete": (
+            "El XML no contiene evidencia fiscal suficiente. Revisa la "
+            "factura; no se estimó IVA ni se sustituyó por cero."
+        ),
+        "direct_cfdi_tax_evidence_inconsistent": (
+            "El desglose fiscal del XML es inconsistente. Revisa la "
+            "factura antes de generar la póliza."
+        ),
+        "direct_completion_request_conflict": (
+            "El estado ya se finalizó con otra confirmación. Revisa el "
+            "recibo conservado."
+        ),
         "stale_source": "Los datos cambiaron. Recarga el estado antes de confirmar.",
         "missing_budget_assignment": "Control Presupuestal debe asignar la partida del proyecto y categoría declarados.",
         "missing_budget_mapping": "Falta el catálogo de cuenta contable activo de la partida presupuestal.",
@@ -448,13 +515,19 @@ async def direct_dashboard(
             summary["counts"],
         )
         cut = summary.get("cut")
+        posting_label = "Sin corte directo confirmado"
+        if cut is not None:
+            posting_label = "Corte congelado: " + _text(cut.accounting_date)
+        elif summary.get("completion_receipt"):
+            posting_label = "Finalizado: cargos reconocidos previamente"
         rows.append(
             f'<tr><td>{_text(getattr(card, "card_label", None))} · ••••{_text(getattr(card, "last4", None))}</td>'
             f"<td>{_text(statement.filename)}<br>{_text(statement.period_start)} a {_text(statement.period_end)}</td>"
             f'<td>Cargos: {_text(counts.get("debit"))}<br>Créditos: {_text(counts.get("credit"))}<br>Signo desconocido: {_text(counts.get("unknown"))}<br>Omitidas: {_text(counts.get("skipped"))}</td>'
             f'<td>CFDI confirmado: {_text(counts.get("matched"))}</td>'
             f'<td>Clasificados: {_text(counts.get("classified"))}<br>En Control Presupuestal: {_text(counts.get("sent"))}<br>Partida asignada: {_text(counts.get("assigned"))}</td>'
-            f'<td>{"Corte congelado: " + _text(cut.accounting_date) if cut is not None else "Sin corte directo confirmado"}<br>Consumos reconocidos: {_text(counts.get("recognized"))}</td>'
+            f"<td>{posting_label}<br>Consumos reconocidos: "
+            f'{_text(counts.get("recognized"))}</td>'
             f'<td><a class="button secondary" href="{BASE}/{statement.id}/directo">Continuar estado</a></td></tr>'
         )
     body += '<div class="direct-table table-shell"><table><thead><tr><th>Tarjeta</th><th>Fuente/período</th><th>Movimientos originales</th><th>Conciliación fiscal</th><th>Presupuesto</th><th>Contabilidad</th><th>Acción</th></tr></thead><tbody>'
@@ -686,7 +759,100 @@ async def direct_upload(
     return _redirect(import_id, message)
 
 
-def _row(item) -> str:
+def _fiscal_evidence_label(candidate: dict) -> str:
+    complement = {
+        "available": "Disponible",
+        "not_local": "No localizado en las facturas descargadas",
+        "not_verifiable": "No verificable",
+    }.get(str(candidate.get("complement_status") or ""), "No verificable")
+    return (
+        "<p>Método de pago: "
+        + _text(candidate.get("payment_method"))
+        + " · Complemento: "
+        + escape(complement)
+        + (
+            ". Su ausencia no bloquea la conciliación ni la póliza.</p>"
+            if candidate.get("policy_applies")
+            else ". Evidencia informativa; no acredita pago por sí sola.</p>"
+        )
+    )
+
+
+def _candidate_differences(candidate: dict, bank_date=None, bank_amount=None) -> str:
+    if "amount_delta" not in candidate:
+        return _fiscal_evidence_label(candidate)
+    return (
+        "<p>Fecha del cargo: "
+        + _text(bank_date)
+        + " · Importe del cargo: "
+        + _text(bank_amount)
+        + " · Diferencia CFDI − cargo: "
+        + _text(candidate.get("amount_delta"))
+        + " MXN · Días entre emisión y cargo: "
+        + _text(candidate.get("days_delta"))
+        + ". Diferencia visible para revisión; no acredita propina.</p>"
+        + _fiscal_evidence_label(candidate)
+    )
+
+
+def _suggestion_summary(import_id, row: dict | None) -> str:
+    if row is None:
+        return ""
+    html = (
+        '<section aria-label="Facturas sugeridas"><strong>Facturas sugeridas</strong>'
+    )
+    for candidate in row.get("candidates", []):
+        query = urlencode({"item_id": row["item_id"]})
+        html += (
+            "<p>"
+            + _text(candidate.get("issuer_name"))
+            + " · MXN "
+            + _text(candidate.get("total"))
+            + " · "
+            + _text(candidate.get("date"))
+            + "<br>RFC: "
+            + _text(candidate.get("issuer_rfc"))
+            + "<br>UUID: "
+            + _text(candidate.get("uuid"))
+            + _candidate_differences(
+                candidate, row.get("bank_date"), row.get("bank_amount")
+            )
+            + '<a href="'
+            + BASE
+            + "/"
+            + str(import_id)
+            + "/directo/cfdi?"
+            + escape(query, quote=True)
+            + '">Revisar propuestas</a></p>'
+        )
+    if not row.get("candidates"):
+        message = (
+            "Sin candidatas en la búsqueda completa. Puedes buscar manualmente."
+            if row.get("coverage_complete")
+            else (
+                "La búsqueda aún no está completa o falta evidencia; "
+                "revisa el detalle."
+            )
+        )
+        html += "<p>" + message + "</p>"
+    if row.get("has_more"):
+        parameters = {"item_id": row["item_id"]}
+        if row.get("cursor"):
+            parameters["suggest_cursor"] = row["cursor"]
+        query = urlencode(parameters)
+        html += (
+            '<a href="'
+            + BASE
+            + "/"
+            + str(import_id)
+            + "/directo/cfdi?"
+            + escape(query, quote=True)
+            + '">Más candidatas</a>'
+        )
+    return html + "</section>"
+
+
+def _row(item, suggestion_html: str = "") -> str:
     kind = {
         "debit": "Cargo",
         "credit": "Crédito",
@@ -698,6 +864,7 @@ def _row(item) -> str:
         fiscal += "<br>" + escape(_reason(item.match_reason))
     fiscal += f"<br>Vigencia: {_text(getattr(item, 'sat_status', None))}"
     fiscal += f"<br>Observada: {_text(getattr(item, 'status_observed_at', None))}"
+    fiscal += suggestion_html
     select_item = f'<input type="checkbox" name="item_ids" value="{item.id}" aria-label="Seleccionar fila {item.row_number}">'
     if item.movement_kind != "debit" or item.accounting_status == "recognized":
         select_item = ""
@@ -799,7 +966,30 @@ async def direct_statement(
             "y recuperar cargos omitidos por "
             "período</a></p>"
         )
-    frozen = view.cut is not None or preview.cut is not None
+    completion = (preview.progress or {}).get("completion_receipt")
+    frozen = view.cut is not None or preview.cut is not None or bool(completion)
+    suggested = {}
+    suggestion_page = {}
+    suggestion_message = ""
+    if finance and not frozen:
+        try:
+            suggestion_page = await _call(
+                suggestions.suggest_direct_statement_cfdis(
+                    session,
+                    actor_id=_actor_id(actor),
+                    import_id=import_id,
+                    navigation=request.session,
+                    cursor=request.query_params.get("suggest_cursor"),
+                )
+            )
+            suggested = {row["item_id"]: row for row in suggestion_page["items"]}
+        except HTTPException as exc:
+            if exc.status_code not in {403, 409}:
+                raise
+            suggestion_message = (
+                "No se pudieron consultar sugerencias con el contexto o "
+                "permiso actual; la lectura del estado se conserva."
+            )
     if frozen:
         body += "<p>Fuente congelada: las decisiones se conservan y no se modifican desde esta pantalla.</p><fieldset disabled>"
     if not classification_allowed:
@@ -825,7 +1015,9 @@ async def direct_statement(
     )
     body += (
         "".join(
-            _row(item).replace(
+            _row(
+                item, _suggestion_summary(import_id, suggested.get(str(item.id)))
+            ).replace(
                 "</td></tr>",
                 (
                     (
@@ -835,7 +1027,9 @@ async def direct_statement(
                         f"{import_id}"
                         "/directo/cfdi?item_id="
                         f"{item.id}"
-                        '">Buscar CFDI</a></td></tr>'
+                        '">Buscar CFDI</a> · <a href="'
+                        f"{BASE}/{import_id}/directo/cuenta-gastos?item_id={item.id}"
+                        '">Cuenta de gastos reconocida</a></td></tr>'
                     )
                     if item.movement_kind == "debit" and not frozen
                     else "</td></tr>"
@@ -845,6 +1039,18 @@ async def direct_statement(
         )
         + "</tbody></table></div>"
     )
+    if suggestion_message:
+        body += '<p role="status">' + escape(suggestion_message) + "</p>"
+    if suggestion_page.get("has_more"):
+        query = urlencode({"suggest_cursor": suggestion_page["next_cursor"]})
+        body += (
+            '<p><a href="?'
+            + escape(query, quote=True)
+            + (
+                '">Sugerencias de los siguientes 25 cargos</a>. Todos los'
+                " movimientos originales permanecen visibles.</p>"
+            )
+        )
     body += '<p id="direct-selection-count" role="status">0 cargos seleccionados</p>'
     project_opts = "".join(
         (
@@ -1014,7 +1220,13 @@ async def direct_statement(
     body += "</ul></section>"
     body += _journal_preview(preview)
     body += "<section><h2>Confirmar póliza completa</h2>"
-    if preview.cut is not None:
+    if completion:
+        body += (
+            "<p>Todos los cargos ya reconocidos. Finalización conservada: "
+            + _text(completion.get("id"))
+            + ". No se creó otra póliza; consulta los reconocimientos originales.</p>"
+        )
+    elif preview.cut is not None:
         body += f"<p>Corte congelado: {_text(preview.cut.accounting_date)}. La descarga conserva su evidencia.</p>"
         if finance:
             body += " · ".join(
@@ -1141,6 +1353,15 @@ def _project_option_key(entry: dict) -> str:
 
 
 def _journal_preview(preview) -> str:
+    if (preview.progress or {}).get("completion_receipt") or (
+        preview.progress or {}
+    ).get("completion_only"):
+        return (
+            "<section><h2>Reconocimientos contables previos</h2><p>Todos "
+            "los cargos están cubiertos por sus pólizas originales. La "
+            "finalización conserva su evidencia y no genera un asiento "
+            "nuevo.</p></section>"
+        )
     lines = (preview.progress or {}).get("lines", [])
     if preview.cut is not None:
         snapshot = getattr(preview.cut, "snapshot_json", None) or {}
@@ -1209,28 +1430,51 @@ async def direct_cfdi_search(
     params = request.query_params
     try:
         item_id = UUID(params.get("item_id", ""))
-        result = await _call(
-            finder.search_direct_cfdis(
-                session,
-                actor_id=_actor_id(actor),
-                import_id=import_id,
-                item_id=item_id,
-                navigation=request.session,
-                q=params.get("q", ""),
-                date_from=(
-                    date.fromisoformat(params["date_from"])
-                    if params.get("date_from")
-                    else None
-                ),
-                date_to=(
-                    date.fromisoformat(params["date_to"])
-                    if params.get("date_to")
-                    else None
-                ),
-                amount=Decimal(params["amount"]) if params.get("amount") else None,
-                cursor=params.get("cursor"),
-            )
+        manual = any(
+            params.get(key)
+            for key in ("search", "q", "date_from", "date_to", "amount", "cursor")
         )
+        bank_date = bank_amount = None
+        if not manual:
+            proposal = await _call(
+                suggestions.suggest_direct_statement_cfdis(
+                    session,
+                    actor_id=_actor_id(actor),
+                    import_id=import_id,
+                    item_ids=[item_id],
+                    navigation=request.session,
+                    cursor=params.get("suggest_cursor"),
+                )
+            )
+            rows = proposal["items"]
+            if not rows:
+                raise HTTPException(422, "Selecciona un cargo con fuente válida.")
+            row = rows[0]
+            bank_date, bank_amount = row.get("bank_date"), row.get("bank_amount")
+            result = {**row, "source_version": proposal["source_version"]}
+        else:
+            result = await _call(
+                finder.search_direct_cfdis(
+                    session,
+                    actor_id=_actor_id(actor),
+                    import_id=import_id,
+                    item_id=item_id,
+                    navigation=request.session,
+                    q=params.get("q", ""),
+                    date_from=(
+                        date.fromisoformat(params["date_from"])
+                        if params.get("date_from")
+                        else None
+                    ),
+                    date_to=(
+                        date.fromisoformat(params["date_to"])
+                        if params.get("date_to")
+                        else None
+                    ),
+                    amount=Decimal(params["amount"]) if params.get("amount") else None,
+                    cursor=params.get("cursor"),
+                )
+            )
     except (ValueError, ArithmeticError):
         raise HTTPException(422, "Revisa los filtros de búsqueda.") from None
     body = (
@@ -1252,11 +1496,20 @@ async def direct_cfdi_search(
         "antes de vincular.</p>"
     )
     body += (
-        '<p role="status">'
-        f"{escape(params.get('msg', ''))}"
-        '</p><form method="GET" '
-        'class="direct-form">'
-    ) + _hidden("item_id", item_id)
+        (
+            '<p role="status">'
+            f"{escape(params.get('msg', ''))}"
+            '</p><form method="GET" '
+            'class="direct-form">'
+        )
+        + _hidden("item_id", item_id)
+        + _hidden("search", "1")
+    )
+    if not manual:
+        body += (
+            "<p>Propuestas ordenadas por identidad, importe, comercio y "
+            "fechas. La primera propuesta no está confirmada.</p>"
+        )
     for field, label, kind in (
         ("q", "RFC, emisor o UUID fiscal", "search"),
         ("date_from", "Desde", "date"),
@@ -1280,6 +1533,7 @@ async def direct_cfdi_search(
         )
     body += _submit("Buscar facturas") + "</form>"
     for candidate in result["candidates"]:
+        body += _candidate_differences(candidate, bank_date, bank_amount)
         body += (
             '<section data-cfdi-uuid="'
             f"{candidate['uuid']}"
@@ -1349,10 +1603,17 @@ async def direct_cfdi_search(
             + "</form></section>"
         )
     if not result["candidates"]:
-        body += "<p>No hay candidatos válidos en esta página examinada.</p>"
+        body += (
+            (
+                "<p>No hay candidatos válidos en esta página examinada. "
+                "La búsqueda aún está incompleta; puedes continuar.</p>"
+            )
+            if result.get("has_more") or not result.get("coverage_complete", True)
+            else "<p>No hay candidatos válidos en la búsqueda completa.</p>"
+        )
     if result["has_more"]:
         query = dict(params)
-        query["cursor"] = result["cursor"]
+        query["cursor" if manual else "suggest_cursor"] = result["cursor"]
         body += (
             "<p>Hay más filas por revisar. <a "
             'href="?'
@@ -1584,6 +1845,100 @@ async def direct_period_action(
         raise
 
 
+@router.get(BASE + "/{import_id}/directo/cuenta-gastos")
+async def direct_expense_account_sources(
+    import_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    actor: Empleado = require_admin_finanzas(),
+):
+    """Review evidenced original credits; listing never settles an account."""
+    _require_finance_actor(actor)
+    try:
+        item_id = UUID(request.query_params.get("item_id", ""))
+    except ValueError:
+        raise HTTPException(422, "Selecciona el cargo del estado.") from None
+    result = await _call(
+        settlements.list_settlement_sources(
+            session,
+            actor_id=_actor_id(actor),
+            import_id=import_id,
+            item_id=item_id,
+            navigation=request.session,
+            cursor=request.query_params.get("cursor"),
+        )
+    )
+    body = f'<p><a href="{BASE}/{import_id}/directo">Volver al estado</a></p>'
+    body += (
+        "<p>Selecciona únicamente el reconocimiento contable que "
+        "corresponde al cargo. La selección no cancela saldos: se "
+        "confirma con el estado completo.</p>"
+    )
+    for candidate in result.get("candidates", []):
+        body += "<section><h2>" + _text(candidate.get("concepto")) + "</h2>"
+        body += (
+            "<p>Pasivo AMEX ya reconocido: sólo asociar el cargo, sin otro asiento.</p>"
+            if candidate.get("coverage_kind") == "prior"
+            else (
+                "<p>Crédito de cuenta de gastos pendiente: cancelar "
+                "contra AMEX, sin nuevo gasto ni IVA.</p>"
+            )
+        )
+        body += (
+            "<p>Cuenta original: "
+            + _text(candidate.get("origin_account_code"))
+            + " · Crédito: "
+            + _text(candidate.get("credit_amount"))
+            + " · Disponible: "
+            + _text(candidate.get("residual_amount"))
+            + " · CFDI: "
+            + _text(candidate.get("cfdi_uuid"))
+            + "</p>"
+        )
+        body += _open(request, import_id, "cuenta-gastos", result["source_version"])
+        body += _hidden("item_id", item_id) + _hidden(
+            "expected_item_version", result["item_version"]
+        )
+        for field in (
+            "origin_poliza_id",
+            "origin_line_id",
+            "origin_expense_id",
+            "origin_document_id",
+            "origin_cuenta_gastos_id",
+            "origin_account_id",
+        ):
+            body += _hidden(field, candidate[field])
+        body += (
+            '<label>Motivo de la correspondencia<input name="reason" required></label>'
+        )
+        body += (
+            _confirm("Confirmo el origen contable que corresponde a este cargo")
+            + _submit("Seleccionar cuenta de gastos de origen")
+            + "</form></section>"
+        )
+    if not result.get("candidates"):
+        body += (
+            "<p>No hay créditos de origen con evidencia suficiente en "
+            "este ámbito. No se infiere una cuenta por el titular o el "
+            "importe.</p>"
+        )
+    if result.get("has_more"):
+        continuation = urlencode(
+            {"item_id": str(item_id), "cursor": result["next_cursor"]}
+        )
+        body += (
+            '<p><a href="?'
+            + escape(continuation, quote=True)
+            + (
+                '">Siguientes orígenes contables</a>. Hay más opciones '
+                "dentro de tu ámbito.</p>"
+            )
+        )
+    for reason in result.get("exceptions", []):
+        body += "<p>" + escape(_reason(str(reason))) + "</p>"
+    return _html("Cuenta de gastos reconocida", body, actor)
+
+
 @router.post(BASE + "/{import_id}/directo/{action}")
 async def direct_action(
     import_id: UUID,
@@ -1717,6 +2072,24 @@ async def direct_action(
                     confirmed=_confirmed(form),
                 )
             )
+        elif action == "cuenta-gastos":
+            result = await _call(
+                settlements.select_settlement_source(
+                    session,
+                    **common,
+                    item_id=_uuid(form, "item_id"),
+                    origin_poliza_id=_uuid(form, "origin_poliza_id"),
+                    origin_line_id=_uuid(form, "origin_line_id"),
+                    origin_expense_id=_uuid(form, "origin_expense_id"),
+                    origin_document_id=_uuid(form, "origin_document_id"),
+                    origin_cuenta_gastos_id=_uuid(form, "origin_cuenta_gastos_id"),
+                    origin_account_id=_uuid(form, "origin_account_id"),
+                    expected_item_version=_version(form, "expected_item_version"),
+                    expected_source_version=version,
+                    reason=_value(form, "reason", required=True),
+                    confirmed=_confirmed(form),
+                )
+            )
         elif action == "confirmar":
             result = await _call(
                 accounting.confirm_direct_accounting(
@@ -1758,6 +2131,10 @@ async def direct_action(
     messages = {
         "clasificar": "Clasificación guardada; no acredita asignación ni póliza.",
         "enviar-presupuesto": "Cargos enviados a Control Presupuestal; todavía requieren partida.",
+        "cuenta-gastos": (
+            "Origen seleccionado; revisa el estado completo antes de "
+            "confirmar la cancelación."
+        ),
         "confirmar": "Corte completo conservado. Revisa la póliza congelada y sus descargas.",
     }
     return _redirect(

@@ -13,6 +13,10 @@ from ..models import (
     AmexCardAccount,
     AmexCFDIStatusReceipt,
     AmexDirectAccountingCut,
+    AmexDirectCompletionReceipt,
+    AmexDirectCutItem,
+    AmexDirectPriorCoverage,
+    AmexExpenseAccountSettlement,
     AmexStatementDirectContext,
     BudgetConcept,
     CFDIReport,
@@ -213,6 +217,46 @@ async def list_direct_statement(
             else await load_items(session, import_id)
         )
         sources = await load_effective_sources(session, import_id)
+        ledger_by_item: dict[Any, list[Any]] = {}
+        coverage_by_item: dict[Any, str] = {}
+        for model in (AmexDirectPriorCoverage, AmexExpenseAccountSettlement):
+            rows = (
+                (
+                    await session.execute(
+                        select(model).where(model.import_id == import_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for row in rows:
+                ledger_by_item.setdefault(row.direct_item_id, []).append(
+                    row.accounting_poliza_id
+                )
+                coverage_by_item[row.direct_item_id] = (
+                    "settlement" if model is AmexExpenseAccountSettlement else "prior"
+                )
+        cut_rows = (
+            (
+                await session.execute(
+                    select(AmexDirectCutItem).where(
+                        AmexDirectCutItem.direct_item_id.in_(
+                            [item.id for item in items]
+                        )
+                    )
+                )
+            )
+            .scalars()
+            .all()
+            if items
+            else []
+        )
+        for row in cut_rows:
+            if row.accounting_poliza_id:
+                ledger_by_item.setdefault(row.direct_item_id, []).append(
+                    row.accounting_poliza_id
+                )
+            coverage_by_item[row.direct_item_id] = row.coverage_kind
         views = []
         for item in items:
             expense = (
@@ -283,7 +327,10 @@ async def list_direct_statement(
                 budget_version_label=(
                     str(item.budget_version_id) if item.budget_version_id else None
                 ),
-                recognized_poliza_ids=[],
+                recognized_poliza_ids=list(
+                    dict.fromkeys(ledger_by_item.get(item.id, []))
+                ),
+                coverage_kind=coverage_by_item.get(item.id),
             )
             views.append(SimpleNamespace(**facts))
         cut = (
@@ -606,8 +653,23 @@ async def list_direct_statements(
                     )
                 )
             ).scalar_one_or_none()
+            completion = (
+                await session.execute(
+                    select(AmexDirectCompletionReceipt).where(
+                        AmexDirectCompletionReceipt.import_id == statement.id
+                    )
+                )
+            ).scalar_one_or_none()
             result.append(
                 {
+                    "completion_receipt": (
+                        {
+                            "id": str(completion.id),
+                            "created_at": str(completion.created_at),
+                        }
+                        if completion
+                        else None
+                    ),
                     "statement": statement,
                     "context": context,
                     "card": card,

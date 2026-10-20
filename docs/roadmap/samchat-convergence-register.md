@@ -22,9 +22,9 @@ canon edits silently.
 
 | Protected source path | SHA-256 at Line 0 baseline |
 | --- | --- |
-| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `3f92bc667e2b152334a500f2cf9427cebdd4ed9c0b9b10538e075596842f435a` |
+| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `65f8116afaac868e4682db3d430eeef4a16afe39c015fcdef8d8fa907ccfe6c4` |
 | `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `2c55cc807c464d5462bca3e9d092fcefe6f5f2f66f4498231d72a7b57d795985` |
-| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `b98ba82dade2cc148b06b787c9b0415479a4c68e8109bf6c5f2402dcbe5228e1` |
+| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `8eebb3c5d2928baced92841d1f72758f3c9ad4e1945ffa2b8655a2fa3e8a5856` |
 
 | Canon amendment date | Affected sources | Reason and evidence | Evidence state |
 | --- | --- | --- | --- |
@@ -95,3 +95,5 @@ The refreshed hashes describe a proposed draft; human canon review, production
 migration, deployment and authenticated Finance UAT remain pending.
 Canon unchanged for the sweep: it is the historical installation inventory;
 this work makes no new production-observation claim.
+
+2026-10-20: enmiendas exactas de producto/ingeniería revisadas y aprobadas por el usuario en conversación junto con la especificación AMEX de sugerencias/cancelación de cuenta de gastos. Hashes actualizados; sweep unchanged por ser inventario histórico sin nueva observación productiva. Implementación y pruebas aisladas autorizadas; sin publicación/migración/deploy/UAT implícitos. Evidencia: `amex-suggestions-settlement-20261020-spec.md` §10.

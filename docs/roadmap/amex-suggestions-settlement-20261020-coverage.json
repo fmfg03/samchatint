@@ -1,0 +1,230 @@
+{
+  "base": "0df07ace2b13e942c322b30f88a4c5b811b85e62",
+  "datasets": [
+    "/tmp/amex-suggestions-units-final-20261020.coverage",
+    "/tmp/amex-suggestions-pg-final-20261020.coverage",
+    "/tmp/amex-suggestions-acceptance-final-20261020.coverage"
+  ],
+  "covered": 780,
+  "total": 863,
+  "percent": 90.38,
+  "files": [
+    {
+      "file": "src/devnous/gastos/amex_schema_policy.py",
+      "sha256": "d787caa3d35ff988cba64774d9be10b1ee2282a9fa9738e0928d2a1e6d8e1e6c",
+      "changed_executable": 0,
+      "covered": 0,
+      "missing": []
+    },
+    {
+      "file": "src/devnous/gastos/amex_settlement_models.py",
+      "sha256": "df0473dcde60507d17e6e056ec4707b9fe7f53a5d8cb6be395ec129cc7862b31",
+      "changed_executable": 74,
+      "covered": 74,
+      "missing": []
+    },
+    {
+      "file": "src/devnous/gastos/models.py",
+      "sha256": "5914dc416c5b8cbe0d2b5f63afc9bc50294d9a817e86f20f2e487a8c09b5a7c6",
+      "changed_executable": 1,
+      "covered": 1,
+      "missing": []
+    },
+    {
+      "file": "src/devnous/gastos/routes/admin_amex_direct_routes.py",
+      "sha256": "8266d2a93ee72644e115d53c1d406e38bc87b7d9a0161c1434cc85e15fb7fac9",
+      "changed_executable": 102,
+      "covered": 88,
+      "missing": [
+        520,
+        783,
+        839,
+        840,
+        841,
+        842,
+        843,
+        988,
+        1045,
+        1046,
+        1451,
+        1859,
+        1860,
+        1938
+      ]
+    },
+    {
+      "file": "src/devnous/gastos/services/amex_accounting_posting_service.py",
+      "sha256": "94ca002044b7a5cc3a4e5fba980e43c0d2dc995f0143c2ee1e317adeec409778",
+      "changed_executable": 8,
+      "covered": 7,
+      "missing": [
+        212
+      ]
+    },
+    {
+      "file": "src/devnous/gastos/services/amex_direct_accounting_service.py",
+      "sha256": "fa50afa0979456579740342e9cf5fdcb8159b744905ff48fb42e361a5a5f8f2f",
+      "changed_executable": 103,
+      "covered": 98,
+      "missing": [
+        561,
+        563,
+        698,
+        699,
+        700
+      ]
+    },
+    {
+      "file": "src/devnous/gastos/services/amex_direct_cfdi_search_service.py",
+      "sha256": "c686d428a002da2d72f4412f2cddf253c4f6fcb7f601d08a2ede592e89a75721",
+      "changed_executable": 8,
+      "covered": 8,
+      "missing": []
+    },
+    {
+      "file": "src/devnous/gastos/services/amex_direct_common.py",
+      "sha256": "15204d88b9971d6d4fd6ebfdeeaa3a21eeeee6837dbd5c2d53eb86c1719b3185",
+      "changed_executable": 7,
+      "covered": 5,
+      "missing": [
+        272,
+        295
+      ]
+    },
+    {
+      "file": "src/devnous/gastos/services/amex_direct_context_service.py",
+      "sha256": "73b7d5c15b9ee094ba6e9a56a5fcf515de25f26206493924fdfd761dd9929536",
+      "changed_executable": 13,
+      "covered": 13,
+      "missing": []
+    },
+    {
+      "file": "src/devnous/gastos/services/amex_direct_fiscal_evidence_service.py",
+      "sha256": "06065554bcbdff6d1d7a62b4af2fbcca78e21a5976e2348d12b9beab9d8fa8f8",
+      "changed_executable": 160,
+      "covered": 147,
+      "missing": [
+        38,
+        50,
+        55,
+        59,
+        84,
+        91,
+        94,
+        112,
+        160,
+        170,
+        181,
+        184,
+        288
+      ]
+    },
+    {
+      "file": "src/devnous/gastos/services/amex_direct_navigation.py",
+      "sha256": "1b3e9eecd46d9a95c86f10fd3e9577413c87fe9c4da73b5e8693546432d4d939",
+      "changed_executable": 36,
+      "covered": 36,
+      "missing": []
+    },
+    {
+      "file": "src/devnous/gastos/services/amex_direct_schema_contract.py",
+      "sha256": "65c85200d121453d2ab2e85c761fc882b73a3b43a5a44b7234ee4e404c25e87f",
+      "changed_executable": 3,
+      "covered": 3,
+      "missing": []
+    },
+    {
+      "file": "src/devnous/gastos/services/amex_direct_schema_service.py",
+      "sha256": "2bd625ca32e2a1e279327b23f12f7e37c8c8b4a813752ca0566df0d017edc56e",
+      "changed_executable": 4,
+      "covered": 3,
+      "missing": [
+        257
+      ]
+    },
+    {
+      "file": "src/devnous/gastos/services/amex_direct_suggestion_service.py",
+      "sha256": "5cb0a2f58b8224a9265fed9375b89bb9b4259d4a4c1e21e9ba908e8cf4b3b2ec",
+      "changed_executable": 124,
+      "covered": 116,
+      "missing": [
+        115,
+        118,
+        119,
+        163,
+        200,
+        258,
+        259,
+        319
+      ]
+    },
+    {
+      "file": "src/devnous/gastos/services/amex_expense_account_settlement_service.py",
+      "sha256": "ee3c4672efa74e669cd0338ff2166aeb0139310991b033e90207da2b333ff841",
+      "changed_executable": 199,
+      "covered": 160,
+      "missing": [
+        66,
+        77,
+        82,
+        154,
+        159,
+        165,
+        171,
+        191,
+        194,
+        196,
+        333,
+        338,
+        340,
+        343,
+        355,
+        364,
+        412,
+        414,
+        482,
+        491,
+        497,
+        523,
+        524,
+        525,
+        526,
+        527,
+        542,
+        543,
+        544,
+        552,
+        553,
+        560,
+        567,
+        568,
+        569,
+        581,
+        582,
+        583,
+        584
+      ]
+    },
+    {
+      "file": "src/devnous/gastos/services/amex_recognition_service.py",
+      "sha256": "ec136c88b465c56113183909025f522a395956b7fb7d38a7dac20bacc2f3c692",
+      "changed_executable": 5,
+      "covered": 5,
+      "missing": []
+    },
+    {
+      "file": "src/devnous/gastos/services/employee_debtor_accounting_service.py",
+      "sha256": "445e46baf4e3624c6e994cff93cee5d92915854e4ca0b6c7128ac792d872144d",
+      "changed_executable": 0,
+      "covered": 0,
+      "missing": []
+    },
+    {
+      "file": "src/devnous/gastos/services/expense_accounting_service.py",
+      "sha256": "66215f3d2057515ea9450124d33467aca1fe8f30566c5ccc272cdaa12388c00f",
+      "changed_executable": 16,
+      "covered": 16,
+      "missing": []
+    }
+  ]
+}

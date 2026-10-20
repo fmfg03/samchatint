@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -11,10 +12,15 @@ from sqlalchemy.orm import selectinload
 
 from ..models import (
     AccountingClosePeriod,
+    AccountingPolizaLine,
     AmexAccountingCut,
     AmexCardAccount,
     AmexDirectAccountingCut,
+    AmexDirectCompletionReceipt,
     AmexDirectCutItem,
+    AmexDirectPriorCoverage,
+    AmexExpenseAccountSettlement,
+    AmexExpenseAccountSettlementAllocation,
     AmexRecognitionConsumption,
     AmexRecognitionRepresentation,
     AmexStatementImportItem,
@@ -47,6 +53,12 @@ from .amex_direct_matching_service import (
     cfdi_identity,
     current_status_receipt,
     fiscal_source_hash,
+)
+from .amex_expense_account_settlement_service import (
+    prepare_settlement,
+    prior_source,
+    selected_origin,
+    settlement_lines,
 )
 from .amex_recognition_service import (
     activation_reason,
@@ -210,6 +222,23 @@ async def _prepare(
         cut=cut,
         source_version=state.source_version,
     )
+    completion = (
+        await session.execute(
+            select(AmexDirectCompletionReceipt).where(
+                AmexDirectCompletionReceipt.import_id == import_id
+            )
+        )
+    ).scalar_one_or_none()
+    if completion:
+        result.status = "completed"
+        result.source_key = completion.source_hash
+        result.progress["completion_receipt"] = {
+            "id": str(completion.id),
+            "created_at": str(completion.created_at),
+            "source_hash": completion.source_hash,
+        }
+        result._completion = completion
+        return result
     if cut:
         result.status = "existing"
         result.source_key = cut.source_hash
@@ -265,6 +294,8 @@ async def _prepare(
     journal = []
     facts = []
     new = []
+    settlements = {}
+    prior_proofs = {}
     if not context:
         reasons.append("contexto_fiscal_pendiente")
     if (
@@ -275,6 +306,17 @@ async def _prepare(
         or liability.codigo not in ALLOWED_AMEX_LIABILITY_CODES
     ):
         reasons.append("invalid_amex_liability")
+    if locked:
+        # Statement/global AMEX locks precede all sorted historical ledger locks.
+        selected = [await selected_origin(session, item) for item in items]
+        line_ids = sorted({UUID(v["origin_line_id"]) for v in selected if v}, key=str)
+        if line_ids:
+            await session.execute(
+                select(AccountingPolizaLine.id)
+                .where(AccountingPolizaLine.id.in_(line_ids))
+                .order_by(AccountingPolizaLine.id)
+                .with_for_update()
+            )
     for item in items:
         first_reason = len(reasons)
         expense = by_id.get(sources[item.id].imported_expense_id)
@@ -302,8 +344,46 @@ async def _prepare(
         elif sources[item.id].movement_kind != "debit" or not expense:
             reasons.append("statement_row_unresolved")
         else:
-            proof = await covered_source_proof(session, expense)
+            prior = None
+            settlement = None
+            try:
+                prior = await prior_source(
+                    session,
+                    item=item,
+                    source=sources[item.id],
+                    context=context,
+                    card=card,
+                    config=config,
+                    actor_id=actor_id,
+                )
+                if not prior:
+                    settlement = await prepare_settlement(
+                        session,
+                        item=item,
+                        context=context,
+                        config=config,
+                        actor_id=actor_id,
+                        source=sources[item.id],
+                        locked=locked,
+                    )
+            except DirectConflict as exc:
+                reasons.append(str(exc))
+            proof = prior["consumption"] if prior else None
             proofs[item.id] = proof
+            if prior:
+                prior_proofs[item.id] = prior
+            if settlement:
+                settlements[item.id] = settlement
+                fact["settlement"] = settlement
+                if liability:
+                    journal.extend(
+                        settlement_lines(
+                            settlement,
+                            expense_id=expense.id,
+                            amount=abs(money(sources[item.id].raw_signed_amount)),
+                            liability=liability,
+                        )
+                    )
             if proof:
                 fact["prior"] = {
                     "id": proof.id,
@@ -313,7 +393,7 @@ async def _prepare(
                 }
                 if proof.card_account_id != statement.card_account_id:
                     reasons.append("recognized_source_card_mismatch")
-            else:
+            elif not settlement:
                 reason = await validate_direct_match(session, item)
                 if reason:
                     reasons.append(reason)
@@ -422,18 +502,24 @@ async def _prepare(
         if reason:
             reasons.append(reason)
         if not reasons:
-            lines, total, reason = await fiscal_lines(session, new)
+            lines, total, reason = await fiscal_lines(
+                session, new, strict_direct=True, lock=locked
+            )
             if reason:
                 reasons.append(reason)
             else:
                 assert liability is not None
-                journal = list(lines or [])
+                journal = [*journal, *(lines or [])]
                 item_by_expense = {
                     str(sources[i.id].imported_expense_id): i
                     for i in items
                     if sources[i.id].imported_expense_id
                 }
                 for line in journal:
+                    if (line.get("raw_row_json") or {}).get(
+                        "coverage_kind"
+                    ) == "settlement":
+                        continue
                     metadata = line.get("raw_row_json") or {}
                     item = item_by_expense[metadata["expense_id"]]
                     expense = by_id[sources[item.id].imported_expense_id]
@@ -471,10 +557,50 @@ async def _prepare(
                     )
                 if not posting_is_balanced(journal):
                     reasons.append("unbalanced_direct_journal")
-    elif not reasons:
-        reasons.append("all_sources_already_recognized")
+    elif not reasons and not settlements and not prior_proofs:
+        reasons.append("statement_has_no_debit_activity")
+    if journal and not posting_is_balanced(journal):
+        reasons.append("unbalanced_direct_journal")
+    from .amex_direct_fiscal_evidence_service import (
+        read_direct_cfdi_fiscal_evidence_batch,
+    )
+
+    fiscal_ids = {expense.cfdi_report_id for expense in new if expense.cfdi_report_id}
+    fiscal_cfdis = (
+        list(
+            (
+                await session.execute(
+                    select(CFDIReport).where(CFDIReport.id.in_(fiscal_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if fiscal_ids
+        else []
+    )
+    evidence_by_cfdi = (
+        await read_direct_cfdi_fiscal_evidence_batch(
+            session,
+            fiscal_cfdis,
+            receiver_rfc=context.receiver_rfc if context else "",
+            company_code=context.company_code if context else None,
+        )
+        if fiscal_cfdis
+        else {}
+    )
+    fiscal_evidence = {
+        str(item.id): evidence_by_cfdi[
+            str(by_id[sources[item.id].imported_expense_id].cfdi_report_id)
+        ]
+        for item in items
+        if sources[item.id].imported_expense_id in by_id
+        and str(by_id[sources[item.id].imported_expense_id].cfdi_report_id)
+        in evidence_by_cfdi
+    }
     result.source_key = digest(
         {
+            "fiscal_evidence": fiscal_evidence,
             "context": context.payload_hash if context else None,
             "version": state.source_version,
             "facts": facts,
@@ -520,10 +646,15 @@ async def _prepare(
             if sources
             else statement.period_end
         ),
+        "fiscal_evidence": fiscal_evidence,
         "new_count": len(new),
+        "settlement_count": len(settlements),
+        "completion_only": bool(prior_proofs) and not new and not settlements,
         "prior_count": sum(bool(v) for v in proofs.values()),
         "lines": _freeze_lines(journal),
     }
+    result._settlements = settlements
+    result._prior_proofs = prior_proofs
     result._sources = sources
     result._expenses = by_id
     result._proofs = proofs
@@ -563,6 +694,12 @@ async def confirm_direct_accounting(
         session, actor_id=actor_id, import_id=import_id, locked=True
     )
     sources = result._sources
+    if result.status == "completed":
+        if result._completion.payload_hash == digest(payload):
+            return result
+        return DirectResult(
+            "pending", "direct_completion_request_conflict", progress=result.progress
+        )
     if result.cut:
         if result.cut.payload_hash == digest(payload):
             return result
@@ -587,9 +724,15 @@ async def confirm_direct_accounting(
     if any(
         not _date_in_edition_year(accounting_date, item.edition_year)
         for item in result.items
-        if sources[item.id].movement_kind == "debit" and not result._proofs.get(item.id)
+        if sources[item.id].movement_kind == "debit"
+        and not result._proofs.get(item.id)
+        and item.id not in result._settlements
     ):
         return DirectResult("pending", "accounting_date_outside_budget_edition")
+    if result.progress.get("completion_only"):
+        return await _complete_prior_statement(
+            session, result=result, actor_id=actor_id, payload=payload
+        )
     periods = list(
         (
             await session.execute(
@@ -627,7 +770,11 @@ async def confirm_direct_accounting(
             coverage = (
                 "credit_exclusion"
                 if sources[item.id].movement_kind == "credit"
-                else "prior" if prior else "new"
+                else (
+                    "prior"
+                    if prior
+                    else "settlement" if item.id in result._settlements else "new"
+                )
             )
             consumption = prior
             if coverage == "new":
@@ -673,7 +820,9 @@ async def confirm_direct_accounting(
             if expense and coverage == "new":
                 from .expense_accounting_service import build_expense_accounting_preview
 
-                preview = await build_expense_accounting_preview(session, expense)
+                preview = await build_expense_accounting_preview(
+                    session, expense, strict_direct=True
+                )
                 retention_proof = [
                     {
                         "impuesto": tax["impuesto"],
@@ -711,9 +860,14 @@ async def confirm_direct_accounting(
                             bump=False,
                         )
             fact = {
+                "settlement_proof": json.loads(
+                    json.dumps(result._settlements.get(item.id), default=str)
+                ),
                 "fiscal_retention_proof": retention_proof,
                 "accounting_poliza_id": (
-                    str(consumption.accounting_poliza_id) if consumption else None
+                    str(consumption.accounting_poliza_id)
+                    if consumption
+                    else str(poliza.id) if coverage == "settlement" else None
                 ),
                 "direct_item_id": str(item.id),
                 "expense_id": (
@@ -735,7 +889,11 @@ async def confirm_direct_accounting(
                 "cfdi": (
                     _freeze_cfdi(expense.cfdi_report)
                     if expense and coverage == "new"
-                    else None
+                    else (
+                        result._settlements[item.id]["origin_cfdi_json"]
+                        if coverage == "settlement"
+                        else None
+                    )
                 ),
                 "journal_lines": _freeze_lines(lines),
                 "source": sources[item.id].source_json,
@@ -789,6 +947,8 @@ async def confirm_direct_accounting(
                         if source.recovery_revision_id
                     }
                 ),
+                "fiscal_evidence_version": "amex_direct_fiscal_evidence_v1",
+                "fiscal_evidence": result.progress.get("fiscal_evidence", {}),
                 "context": {
                     c.name: str(getattr(result.context, c.name))
                     for c in result.context.__table__.columns
@@ -806,7 +966,9 @@ async def confirm_direct_accounting(
                     imported_expense_id=sources[item.id].imported_expense_id,
                     consumption_id=consumption.id if consumption else None,
                     accounting_poliza_id=(
-                        consumption.accounting_poliza_id if consumption else None
+                        consumption.accounting_poliza_id
+                        if consumption
+                        else poliza.id if coverage == "settlement" else None
                     ),
                     coverage_kind=coverage,
                     source_hash=item.source_hash,
@@ -814,6 +976,17 @@ async def confirm_direct_accounting(
                 )
             )
         await session.flush()
+        await _persist_coverage(
+            session,
+            result=result,
+            cut=cut,
+            poliza=poliza,
+            actor_id=actor_id,
+            payload=payload,
+        )
+        # Force deferred owner guards inside this savepoint, not caller commit.
+        await session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+        await session.execute(text("SET CONSTRAINTS ALL DEFERRED"))
     return DirectResult(
         "recognized",
         statement=result.statement,
@@ -825,6 +998,199 @@ async def confirm_direct_accounting(
         source_key=result.source_key,
         source_version=result.source_version,
     )
+
+
+async def _persist_prior(
+    session: Any,
+    *,
+    result: DirectResult,
+    item: Any,
+    actor_id: UUID,
+    cut: Any = None,
+    completion: Any = None,
+) -> None:
+    prior = result._prior_proofs[item.id]
+    consumption = prior["consumption"]
+    session.add(
+        AmexDirectPriorCoverage(
+            import_id=result.statement.id,
+            direct_item_id=item.id,
+            imported_expense_id=result._sources[item.id].imported_expense_id,
+            consumption_id=consumption.id,
+            representation_id=prior["representation"].id,
+            original_cut_id=prior["cut"].id if prior["cut"] else None,
+            original_direct_cut_id=(
+                prior["direct_cut"].id if prior["direct_cut"] else None
+            ),
+            accounting_poliza_id=consumption.accounting_poliza_id,
+            card_account_id=result.card.id,
+            context_id=result.context.id,
+            amount=money(consumption.amount),
+            currency=consumption.currency,
+            cut_id=cut.id if cut else None,
+            completion_receipt_id=completion.id if completion else None,
+            source_hash=item.source_hash,
+            proof_json={
+                "selection": prior.get("selection"),
+                "consumption_id": str(consumption.id),
+            },
+            actor_id=actor_id,
+        )
+    )
+
+
+async def _persist_coverage(
+    session: Any,
+    *,
+    result: DirectResult,
+    cut: Any,
+    poliza: Any,
+    actor_id: UUID,
+    payload: dict,
+) -> None:
+    ledger = (
+        (
+            await session.execute(
+                select(AccountingPolizaLine).where(
+                    AccountingPolizaLine.poliza_id == poliza.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for item in result.items:
+        if item.id in result._prior_proofs:
+            await _persist_prior(
+                session, result=result, item=item, actor_id=actor_id, cut=cut
+            )
+        proof = result._settlements.get(item.id)
+        if not proof:
+            continue
+        source = result._sources[item.id]
+        settlement = AmexExpenseAccountSettlement(
+            import_id=result.statement.id,
+            direct_item_id=item.id,
+            imported_expense_id=source.imported_expense_id,
+            context_id=result.context.id,
+            card_account_id=result.card.id,
+            cut_id=cut.id,
+            accounting_poliza_id=poliza.id,
+            amount=abs(source.raw_signed_amount),
+            currency="MXN",
+            source_hash=item.source_hash,
+            payload_hash=digest(payload),
+            actor_id=actor_id,
+            reason=proof["selection"]["reason"],
+            proof_json=json.loads(json.dumps(proof, default=str)),
+        )
+        session.add(settlement)
+        await session.flush()
+        own = [
+            entry
+            for entry in ledger
+            if (entry.raw_row_json or {}).get("expense_id")
+            == str(source.imported_expense_id)
+        ]
+        debit = next(entry for entry in own if money(entry.debe or 0) > 0)
+        credit = next(entry for entry in own if money(entry.haber or 0) > 0)
+        session.add(
+            AmexExpenseAccountSettlementAllocation(
+                settlement_id=settlement.id,
+                **{
+                    k: proof[k]
+                    for k in (
+                        "origin_poliza_id",
+                        "origin_line_id",
+                        "origin_expense_id",
+                        "origin_document_id",
+                        "origin_cuenta_gastos_id",
+                        "origin_account_id",
+                        "origin_account_code",
+                    )
+                },
+                destination_debit_line_id=debit.id,
+                destination_credit_line_id=credit.id,
+                amount=abs(source.raw_signed_amount),
+                proof_json=settlement.proof_json,
+            )
+        )
+    await session.flush()
+
+
+async def _complete_prior_statement(
+    session: Any, *, result: DirectResult, actor_id: UUID, payload: dict
+) -> DirectResult:
+    import json
+
+    with session.no_autoflush:
+        facts = []
+        for item in result.items:
+            source = result._sources[item.id]
+            prior = result._prior_proofs.get(item.id)
+            facts.append(
+                {
+                    "direct_item_id": str(item.id),
+                    "source_hash": item.source_hash,
+                    "source": source.source_json,
+                    "effective_source": source.source_json,
+                    "coverage_kind": "prior" if prior else "credit_exclusion",
+                    "consumption_id": str(prior["consumption"].id) if prior else None,
+                    "accounting_poliza_id": (
+                        str(prior["consumption"].accounting_poliza_id)
+                        if prior
+                        else None
+                    ),
+                }
+            )
+    async with session.begin_nested():
+        receipt = AmexDirectCompletionReceipt(
+            import_id=result.statement.id,
+            context_id=result.context.id,
+            context_version=result.context.version,
+            source_version=result.source_version,
+            source_hash=result.source_key,
+            payload_hash=digest(payload),
+            actor_id=actor_id,
+            snapshot_json=json.loads(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "kind": "prior_only",
+                        "partidas": facts,
+                        "request": payload,
+                    },
+                    default=str,
+                )
+            ),
+        )
+        # Freeze projection state before inserting the receipt.
+        for item in result.items:
+            item.accounting_status = (
+                "recognized" if item.id in result._prior_proofs else "excluded"
+            )
+        await session.flush()
+        session.add(receipt)
+        await session.flush()
+        for item in result.items:
+            if item.id in result._prior_proofs:
+                await _persist_prior(
+                    session,
+                    result=result,
+                    item=item,
+                    actor_id=actor_id,
+                    completion=receipt,
+                )
+        await session.flush()
+        await session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+        await session.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+    result.status = "completed"
+    result.progress["completion_receipt"] = {
+        "id": str(receipt.id),
+        "created_at": str(receipt.created_at),
+        "source_hash": receipt.source_hash,
+    }
+    return result
 
 
 async def export_direct_cut(

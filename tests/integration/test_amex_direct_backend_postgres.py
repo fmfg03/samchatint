@@ -645,6 +645,13 @@ async def test_real_retention_posts_bank_net_and_freezes_canonical_custom_mappin
             'TotalImpuestosRetenidos="10.00">',
         )
         .replace(
+            "</cfdi:Traslados></cfdi:Impuestos></cfdi:Concepto>",
+            "</cfdi:Traslados><cfdi:Retenciones><cfdi:Retencion "
+            'Base="100.00" Impuesto="001" TipoFactor="Tasa" '
+            'TasaOCuota="0.100000" Importe="10.00"/>'
+            "</cfdi:Retenciones></cfdi:Impuestos></cfdi:Concepto>",
+        )
+        .replace(
             "</cfdi:Traslados></cfdi:Impuestos>\n <cfdi:Complemento>",
             "</cfdi:Traslados><cfdi:Retenciones><cfdi:Retencion "
             'Impuesto="001" Importe="10.00"/></cfdi:Retenciones>'

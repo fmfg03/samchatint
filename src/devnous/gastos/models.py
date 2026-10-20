@@ -4537,3 +4537,8 @@ from .amex_direct_models import (  # noqa: E402,F401
     AmexDirectEvent, AmexDirectAccountingCut, AmexDirectCutItem,
     AmexDirectCoverageRevision, AmexDirectRecoveredRow,
 )
+
+from .amex_settlement_models import (  # noqa: E402,F401
+    AmexDirectCompletionReceipt, AmexDirectPriorCoverage,
+    AmexExpenseAccountSettlement, AmexExpenseAccountSettlementAllocation,
+)

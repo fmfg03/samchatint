@@ -38,6 +38,7 @@ async def inspect_amex_direct_schema(
         EXPECTED_FUNCTION_HASHES,
         EXPECTED_INDEXES,
         EXPECTED_KEYS,
+        EXPECTED_SETTLEMENT_VIEW_HASHES,
         EXPECTED_TRIGGERS,
     )
 
@@ -232,6 +233,28 @@ async def inspect_amex_direct_schema(
         errors.append(
             "amex_direct_effective_sources: incompatible owner view definition"
         )
+    for name, expected in EXPECTED_SETTLEMENT_VIEW_HASHES.items():
+        definition = (
+            await session.execute(
+                text(
+                    "SELECT pg_get_viewdef(c.oid,true) FROM pg_class c "
+                    "JOIN pg_namespace n ON n.oid=c.relnamespace "
+                    + (
+                        "WHERE n.nspname=current_schema() AND c.relname=:name "
+                        "AND c.relkind='v'"
+                    )
+                ),
+                {"name": name},
+            )
+        ).scalar_one_or_none()
+        if (
+            definition is None
+            or hashlib.sha256(
+                _catalog_check(definition.replace(schema + ".", "")).encode()
+            ).hexdigest()
+            != expected
+        ):
+            errors.append(name + ": incompatible settlement view definition")
     result = {
         "ready": not missing and not missing_triggers and not errors,
         "missing_columns": missing,

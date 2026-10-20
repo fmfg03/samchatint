@@ -531,7 +531,11 @@ def signature(lines: list[dict[str, Any]]) -> list[dict[str, str]]:
 
 
 async def fiscal_lines(
-    session: AsyncSession, expenses: list[ExpenseReport]
+    session: AsyncSession,
+    expenses: list[ExpenseReport],
+    *,
+    strict_direct: bool = False,
+    lock: bool = True,
 ) -> tuple[list[dict[str, Any]] | None, Decimal, str | None]:
     """Verify full invoice coverage across explicitly distinct economic sources.
 
@@ -566,7 +570,7 @@ async def fiscal_lines(
     for expense in expenses:
         if not expense.cfdi_report_id or expense.cfdi_report is None:
             return None, Decimal(0), "unlinked_amex_charges"
-        result = await session.execute(
+        coverage_query = (
             select(ExpenseReport)
             .options(
                 selectinload(ExpenseReport.cfdi_report),
@@ -587,9 +591,14 @@ async def fiscal_lines(
                 ExpenseReport.cfdi_report_id == expense.cfdi_report_id,
             )
             .order_by(ExpenseReport.id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
         )
+        if lock:
+            coverage_query = coverage_query.with_for_update().execution_options(
+                populate_existing=True
+            )
+        else:
+            coverage_query = coverage_query.execution_options(autoflush=False)
+        result = await session.execute(coverage_query)
         coverage = list(result.scalars().all())
         invoice_total = _money(expense.cfdi_report.total)
         covered = sum(
@@ -603,7 +612,10 @@ async def fiscal_lines(
         if invoice_total <= 0 or covered != invoice_total:
             return None, Decimal(0), "amex_cfdi_coverage_mismatch"
         constructed, net, reason = await _single_expense_fiscal_lines(
-            session, expense, meta={"expense_id": str(expense.id)}
+            session,
+            expense,
+            meta={"expense_id": str(expense.id)},
+            **({"strict_direct": True} if strict_direct else {}),
         )
         if reason:
             return None, Decimal(0), reason

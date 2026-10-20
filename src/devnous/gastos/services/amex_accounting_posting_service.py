@@ -185,6 +185,7 @@ async def _single_expense_fiscal_lines(
     expense: ExpenseReport,
     *,
     meta: dict[str, Any],
+    strict_direct: bool = False,
 ) -> tuple[Optional[list[dict[str, Any]]], Decimal, Optional[str]]:
     header = await session.scalar(
         select(amex_bank_header_condition(ExpenseReport)).where(
@@ -199,7 +200,17 @@ async def _single_expense_fiscal_lines(
     if account is None or not getattr(account, "activo", False):
         return None, Decimal("0.00"), f"missing_expense_account:{expense.id}"
 
-    preview = await build_expense_accounting_preview(session, expense)
+    try:
+        if strict_direct:
+            preview = await build_expense_accounting_preview(
+                session, expense, strict_direct=True
+            )
+        else:
+            preview = await build_expense_accounting_preview(session, expense)
+    except ValueError as exc:
+        if not strict_direct:
+            raise
+        return None, Decimal("0.00"), str(exc)
     taxes = preview.get("taxes") or {}
     base = _money(taxes.get("base_gasto"))
     net = _money(taxes.get("neto_contrapartida"))
