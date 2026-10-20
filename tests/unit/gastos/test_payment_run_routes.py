@@ -956,7 +956,7 @@ def test_payment_run_tables_are_sortable_by_operational_reference() -> None:
     ]
     payment_run = source[
         source.index("@router.get(\"/admin/finanzas/payment-run\""):
-        source.index("def _render_payment_history_rows")
+        source.index('@router.get("/admin/finanzas/payment-history"')
     ]
     history_start = source.index("@router.get(\"/admin/finanzas/payment-history\"")
     payment_history = source[
@@ -969,9 +969,11 @@ def test_payment_run_tables_are_sortable_by_operational_reference() -> None:
     assert "_payment_run_sort_key" in source
     assert "_payment_run_ref_number" in source
     assert "for row in sorted(rows, key=_payment_run_sort_key)" in source
-    for block in (payment_run, payment_history):
+    for block in (payment_run,):
         assert "data-sortable-table" in block
         assert 'data-default-sort-dir="desc"' in block
         assert 'data-sort-key="referencia_operaciones"' in block
         assert 'data-sort-type="number"' in block
         assert "_admin_sortable_table_assets()" in block
+    assert "list_payment_history(session, values)" in payment_history
+    assert "render_history(values, payload, error)" in payment_history

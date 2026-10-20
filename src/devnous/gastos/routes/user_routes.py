@@ -400,6 +400,7 @@ from ..utils.receipt_bytes import (
 )
 from .dependencies import get_current_empleado, get_db_session, has_permission, require_admin_finanzas
 from ..services.payment_run_service import (
+    can_access_payment_run,
     can_confirm_payment_run_payment,
     can_manage_payment_run,
 )
@@ -2266,6 +2267,11 @@ def _gastos_workspace_nav_html(current_empleado: Empleado, active: str) -> str:
                 ("/beneficiarios/altas", "Alta de beneficiarios", "beneficiarios"),
             ]
         )
+
+    if can_access_payment_run(current_empleado) and can_show(
+        "admin.finanzas", ("finanzas", "admin")
+    ):
+        items.append(("/admin/finanzas/payment-history", "Pagado y pendiente", "pagos"))
 
     if not items:
         return ""
@@ -15429,6 +15435,7 @@ async def panel(
                     ("gastos.solicitudes", "/gastos-terceros", "Solicitudes de transferencia", "Revisa solicitudes a proveedores o terceros."),
                     ("gastos.solicitudes", "/beneficiarios/altas", "Alta de beneficiarios", "Solicita y da seguimiento a nuevas cuentas destino."),
                     ("gastos.solicitudes", "/documentos/todos", "Todos los documentos", "Vista global de documentos."),
+                    *([("admin.finanzas", "/admin/finanzas/payment-history", "Pagado y pendiente", "Consulta pagos y pendientes con filtros.")] if can_access_payment_run(current_empleado) else []),
                 ], visible_tool_keys), "tone-blue")}
             </div>
         </section>
