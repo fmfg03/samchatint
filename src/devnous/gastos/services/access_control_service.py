@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
@@ -46,6 +47,36 @@ class AccessTool:
 
 
 ACCESS_TOOLS: tuple[AccessTool, ...] = (
+    AccessTool(
+        "amex_direct",
+        "AMEX directo y partida presupuestal",
+        "Contabilidad",
+        "Acciones AMEX directas con autoridad y ámbito validados por su owner.",
+        (
+            "/documentos/control-presupuestal/amex-directo",
+            "/admin/contabilidad/amex/estados/directo",
+            "/admin/contabilidad/amex/estados/{import_id}/directo",
+        ),
+        frozenset(),
+        (
+            "ver",
+            "editar",
+            "cargar",
+            "fuente",
+            "contexto",
+            "alias",
+            "conciliar",
+            "vigencia",
+            "corregir_periodo",
+            "clasificar",
+            "enviar_presupuesto",
+            "asignar_partida",
+            "rechazar_presupuesto",
+            "excluir_credito",
+            "confirmar",
+            "exportar",
+        ),
+    ),
     AccessTool(
         "direccion.tableros_ejecutivos",
         "Tableros ejecutivos",
@@ -454,7 +485,26 @@ def action_for_method(method: str) -> str:
     return "ver" if (method or "GET").upper() == "GET" else "editar"
 
 
+def is_amex_direct_path(path: str) -> bool:
+    """Recognize only the new scoped owners, preserving legacy AMEX paths."""
+    clean = (path or "").strip().rstrip("/")
+    budget = "/documentos/control-presupuestal/amex-directo"
+    if clean == budget or clean.startswith(budget + "/"):
+        return True
+    return (
+        re.fullmatch(
+            r"/admin/contabilidad/amex/estados/(?:directo(?:/.*)?|"
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+            r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/directo(?:/.*)?)",
+            clean,
+        )
+        is not None
+    )
+
+
 def path_to_tool(path: str) -> Optional[AccessTool]:
+    if is_amex_direct_path(path):
+        return TOOLS_BY_KEY["amex_direct"]
     clean_path = (path or "").strip() or "/"
     if clean_path != "/" and clean_path.endswith("/"):
         clean_path = clean_path.rstrip("/")
@@ -597,6 +647,31 @@ async def can_access_path(
     return await can_access_tool(session, empleado, tool.key, action_for_method(method))
 
 
+async def can_defer_path_authorization_to_route_guard(
+    session: AsyncSession,
+    empleado: Any,
+    path: str,
+    method: str = "GET",
+) -> bool:
+    """Allow a route-owned guard only when no explicit tool denial exists.
+
+    Route-owned authorization is intentionally narrower than normal path access:
+    it lets the route enforce its own required permission instead of the tool's
+    role default. Persisted access-control decisions remain authoritative,
+    especially explicit denials.
+    """
+    tool = path_to_tool(path)
+    if tool is None:
+        return True
+    decision = await explicit_tool_decision(
+        session,
+        empleado,
+        tool.key,
+        action_for_method(method),
+    )
+    return decision is not False
+
+
 async def list_rules(session: AsyncSession) -> dict[tuple[str, str, str, str], bool]:
     try:
         result = await session.execute(
@@ -650,7 +725,7 @@ async def upsert_rule(
     if tool is None:
         raise ValueError("tool_key inválido")
     action = (action_key or "ver").strip().lower()
-    if action not in ACTION_KEYS:
+    if action not in ACTION_KEYS and action not in tool.actions:
         raise ValueError("action_key inválido")
     role = normalize_role(role_key)
     if role not in CONFIGURABLE_ROLES and role not in SUPERADMIN_ROLES:

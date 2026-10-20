@@ -66,6 +66,45 @@ def test_read_only_delegate_can_open_only_a_linked_informe_document():
     assert not user_routes._can_access_read_only_informe_document(solicitud, alicia)
 
 
+@pytest.mark.parametrize("document_type", ["SOLICITUD", "INFORME"])
+def test_alicia_can_open_operations_reference_documents_read_only(
+    document_type: str,
+):
+    alicia = SimpleNamespace(
+        id="90701d00-5f0b-4b3d-b677-e491e53caf82",
+        correo="azuniga@plataformasports.com",
+        rol="operaciones",
+    )
+    documento = SimpleNamespace(
+        empleado_id=uuid4(),
+        tipo=document_type,
+        cuenta_gastos_id=None,
+        referencia_operaciones="481",
+    )
+
+    assert user_routes._can_access_read_only_informe_document(
+        documento, alicia
+    )
+
+
+def test_alicia_cannot_open_document_without_operations_reference():
+    alicia = SimpleNamespace(
+        id="90701d00-5f0b-4b3d-b677-e491e53caf82",
+        correo="azuniga@plataformasports.com",
+        rol="operaciones",
+    )
+    documento = SimpleNamespace(
+        empleado_id=uuid4(),
+        tipo="SOLICITUD",
+        cuenta_gastos_id=None,
+        referencia_operaciones=" ",
+    )
+
+    assert not user_routes._can_access_read_only_informe_document(
+        documento, alicia
+    )
+
+
 @pytest.mark.asyncio
 async def test_read_only_delegate_can_open_linked_expense_evidence():
     alicia = SimpleNamespace(

@@ -12,10 +12,10 @@ import json
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Empleado
+from ..models import Documento, Empleado
 
 
 DIRECTOR_OPERACIONES = "director_operaciones"
@@ -165,6 +165,14 @@ async def resolve_and_snapshot_document_route(
     )
     positions = tuple(beneficiary.scalars().all())
     tournament_id = getattr(documento, "torneo_id", None)
+    if tournament_id is None and getattr(documento, "cuenta_gastos_id", None):
+        account_result = await session.execute(
+            text("SELECT torneo_id FROM cuentas_de_gastos WHERE id = :cuenta_id"),
+            {"cuenta_id": str(getattr(documento, "cuenta_gastos_id"))},
+        )
+        account = account_result.mappings().first()
+        if account is not None:
+            tournament_id = account["torneo_id"]
     rule_row = None
     if tournament_id:
         rule_row = (
@@ -235,19 +243,153 @@ async def invalidate_document_route(session: AsyncSession, documento_id: object)
     )
 
 
+def has_operations_reference(documento: object) -> bool:
+    """An Operations folio always selects Operations authorization."""
+    return bool(str(getattr(documento, "referencia_operaciones", None) or "").strip())
+
+
+def document_route_approver_sql(
+    document_alias: str = "documentos", actor_parameter: str = "route_employee_id"
+) -> str:
+    """Shared read-only SQL policy; arguments are trusted query identifiers."""
+    if not document_alias.isidentifier() or not actor_parameter.isidentifier():
+        raise ValueError("Invalid query identifier")
+    reference = (
+        f"NULLIF(BTRIM({document_alias}.referencia_operaciones), '') IS NOT NULL"
+    )
+    valid = (
+        "route.eligible_position_keys = '[\"director_operaciones\"]'::jsonb "
+        "AND route.requires_operations_reference = TRUE"
+    )
+    snapshot = f"""EXISTS (
+        SELECT 1 FROM documento_authorization_routes route
+        WHERE route.documento_id = {document_alias}.id AND ({valid})
+          AND :{actor_parameter} IN (
+              SELECT jsonb_array_elements_text(route.eligible_empleado_ids))
+    )"""
+    fallback = f"""NOT EXISTS (
+        SELECT 1 FROM documento_authorization_routes route
+        WHERE route.documento_id = {document_alias}.id AND ({valid})
+    ) AND EXISTS (
+        SELECT 1 FROM authorization_position_assignments a
+        JOIN authorization_positions p
+          ON p.position_key = a.position_key AND p.active = TRUE
+        JOIN empleados operations_holder
+          ON operations_holder.id = a.empleado_id
+         AND operations_holder.activo = TRUE
+        WHERE a.active = TRUE AND a.position_key = 'director_operaciones'
+          AND a.empleado_id::text = :{actor_parameter}
+    )"""
+    natural = f"""EXISTS (
+        SELECT 1 FROM documento_authorization_routes route
+        WHERE route.documento_id = {document_alias}.id
+          AND :{actor_parameter} IN (
+              SELECT jsonb_array_elements_text(route.eligible_empleado_ids))
+    )"""
+    return f"""(
+        (({reference}) AND (({snapshot}) OR ({fallback})))
+        OR (NOT ({reference}) AND ({natural}))
+    ) AND EXISTS (
+        SELECT 1 FROM empleados active_actor
+        WHERE active_actor.id::text = :{actor_parameter}
+          AND active_actor.activo = TRUE
+    )"""
+
+
+async def prepare_document_authorization_route(
+    session: AsyncSession, documento: object
+) -> Optional[ProjectAuthorizationRoute]:
+    """Prepare a nonterminal workflow document without approving or committing."""
+    if getattr(documento, "pagado_en", None) or str(
+        getattr(documento, "estado_pago", "") or ""
+    ).lower() in {"pagado", "en_proceso_pago"}:
+        return None
+    if str(getattr(documento, "estado", "")).lower() not in {
+        "borrador",
+        "enviado",
+        "control_presupuestal",
+        "rechazado",
+    }:
+        return None
+    route = await resolve_and_snapshot_document_route(session, documento)
+    if (
+        route
+        and route.requires_operations_reference
+        and not has_operations_reference(documento)
+    ):
+        from .documento_service import allocate_next_referencia_operaciones
+
+        setattr(
+            documento,
+            "referencia_operaciones",
+            await allocate_next_referencia_operaciones(session),
+        )
+    if not has_operations_reference(documento):
+        return route
+    if (
+        route
+        and route.eligible_position_keys == (DIRECTOR_OPERACIONES,)
+        and route.requires_operations_reference
+    ):
+        return route
+    holders = await session.execute(
+        text(
+            "SELECT a.empleado_id FROM authorization_position_assignments a "
+            "JOIN authorization_positions p ON p.position_key = a.position_key "
+            "AND p.active = TRUE "
+            "JOIN empleados e ON e.id = a.empleado_id AND e.activo = TRUE "
+            "WHERE a.active = TRUE AND a.position_key = 'director_operaciones'"
+        )
+    )
+    employee_ids = [str(value) for value in holders.scalars().all()]
+    await session.execute(
+        text("""
+        INSERT INTO documento_authorization_routes (
+            documento_id, eligible_position_keys, eligible_empleado_ids,
+            requires_operations_reference, source
+        ) VALUES (:documento_id, CAST(:positions AS jsonb),
+                  CAST(:employee_ids AS jsonb), TRUE, 'operations_reference')
+        ON CONFLICT (documento_id) DO UPDATE SET
+            eligible_position_keys = EXCLUDED.eligible_position_keys,
+            eligible_empleado_ids = EXCLUDED.eligible_empleado_ids,
+            requires_operations_reference = TRUE, source = EXCLUDED.source,
+            resolved_at = NOW()
+    """),
+        {
+            "documento_id": str(getattr(documento, "id")),
+            "positions": json.dumps([DIRECTOR_OPERACIONES]),
+            "employee_ids": json.dumps(employee_ids),
+        },
+    )
+    return ProjectAuthorizationRoute(
+        (DIRECTOR_OPERACIONES,), True, "operations_reference"
+    )
+
+
+async def actor_route_approver_document_ids(
+    session: AsyncSession, *, actor_id: object, documento_ids: Iterable[Any]
+) -> set[Any]:
+    """Apply the canonical route policy to a queue in one database round trip."""
+    ids = list(documento_ids)
+    if not ids:
+        return set()
+    result = await session.execute(
+        select(Documento.id)
+        .where(Documento.id.in_(ids), text(document_route_approver_sql()))
+        .params(route_employee_id=str(actor_id))
+    )
+    return set(result.scalars().all())
+
+
 async def actor_is_route_approver(
     session: AsyncSession, *, actor_id: object, documento_id: object
 ) -> bool:
-    """True only for a holder snapshotted when the route was resolved."""
+    """Apply folio policy, retaining valid snapshotted Operations holders."""
     result = await session.execute(
         text(
-            """
-        SELECT 1
-        FROM documento_authorization_routes route
-        WHERE route.documento_id = :documento_id
-          AND :actor_id IN (SELECT jsonb_array_elements_text(route.eligible_empleado_ids))
-        LIMIT 1
-    """
+            "SELECT 1 FROM documentos WHERE documentos.id = :documento_id AND ("
+            + document_route_approver_sql(actor_parameter="actor_id")
+            + ") LIMIT 1"
         ),
         {"documento_id": str(documento_id), "actor_id": str(actor_id)},
     )
@@ -257,32 +399,34 @@ async def actor_is_route_approver(
 async def route_approvers_for_document(
     session: AsyncSession, documento_id: object
 ) -> Optional[list[Any]]:
-    """Return active route holders, or ``None`` when the document uses legacy routing."""
+    """Return effective holders; None exclusively means the natural legacy lane."""
     route = await session.execute(
-        text(
-            "SELECT 1 FROM documento_authorization_routes "
-            "WHERE documento_id = :documento_id"
-        ),
+        text("""
+        SELECT 1 FROM documentos d WHERE d.id = :documento_id AND (
+            NULLIF(BTRIM(d.referencia_operaciones), '') IS NOT NULL OR
+            EXISTS (SELECT 1 FROM documento_authorization_routes r
+                    WHERE r.documento_id = d.id)
+        )
+    """),
         {"documento_id": str(documento_id)},
     )
     if route.scalar_one_or_none() is None:
         return None
     employees = await session.execute(
         text(
-            """
-            SELECT e.id
-            FROM empleados e
-            JOIN documento_authorization_routes route
-              ON route.documento_id = :documento_id
-             AND e.id::text IN (SELECT jsonb_array_elements_text(route.eligible_empleado_ids))
-            WHERE e.activo = TRUE
-            ORDER BY e.nombre
-            """
+            "SELECT e.id FROM empleados e CROSS JOIN documentos "
+            "WHERE documentos.id = :documento_id AND e.activo = TRUE AND ("
+            + document_route_approver_sql(actor_parameter="route_employee_id").replace(
+                ":route_employee_id", "e.id::text"
+            )
+            + ") ORDER BY e.nombre"
         ),
         {"documento_id": str(documento_id)},
     )
-    employee_ids = list(employees.scalars().all())
-    return [await session.get(Empleado, employee_id) for employee_id in employee_ids]
+    return [
+        await session.get(Empleado, employee_id)
+        for employee_id in employees.scalars().all()
+    ]
 
 
 async def list_position_assignments(session: AsyncSession) -> list[dict[str, Any]]:

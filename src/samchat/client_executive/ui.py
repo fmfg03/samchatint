@@ -136,7 +136,7 @@ def _alerts(card: dict[str, Any]) -> str:
     """
 
 
-def _breakdown_rows(items: list[dict[str, Any]], limit: int = 8) -> str:
+def _breakdown_rows(items: list[dict[str, Any]], limit: int | None = None) -> str:
     rows = []
     for item in items[:limit]:
         budget = item.get("budget_total")
@@ -236,13 +236,23 @@ def _budget_detail(card: dict[str, Any]) -> str:
         if account_rows
         else ""
     )
+    phases = [item for item in breakdowns.get("by_phase", []) if isinstance(item, dict)]
+    phase_rows = _breakdown_rows(phases)
+    phases_html = (
+        '<h3>Fases y subproyectos</h3><div class="table-wrap"><table>'
+        "<thead><tr><th>Fase / subproyecto</th><th>Presupuesto</th>"
+        "<th>Ejercido</th><th>Comprometido</th><th>Uso</th></tr></thead>"
+        f"<tbody>{phase_rows}</tbody></table></div>"
+        if phase_rows
+        else ""
+    )
     return f"""
     <section class="panel finance-panel">
       <div class="section-heading">
         <div><span class="eyebrow">Presupuesto y contabilidad</span><h2>Presupuesto vs. real</h2></div>
         {bridge_badge}
       </div>
-      <div class="finance-split">{concepts_html}{accounts_html}</div>
+      <div class="finance-split">{concepts_html}{accounts_html}</div>{phases_html}
     </section>
     """
 
@@ -460,9 +470,185 @@ def _marketing(dossier: dict[str, Any], index: int) -> str:
     """
 
 
+def _registration(snapshot: dict[str, Any], index: int) -> str:
+    """Show the same scoped counts used by the governed assistant."""
+    available = snapshot.get("available") is True
+    labels = {
+        "AVAILABLE": "available",
+        "EMPTY": "available",
+        "SCOPE_MISSING": "edition_unavailable",
+        "SCOPE_INACTIVE": "unavailable",
+        "SCOPE_AMBIGUOUS": "unavailable",
+        "SOURCE_FAILED": "unavailable",
+    }
+    status = labels.get(str(snapshot.get("status")), "unavailable")
+    if not available:
+        next_action = _text(
+            snapshot.get("next_action"),
+            "La fuente de inscripción no está disponible para esta edición.",
+        )
+        return f"""
+        <section id="inscripcion-{index}" class="panel compact-panel">
+          <div class="section-heading"><div>
+            <span class="eyebrow">Inscripción</span>
+            <h2>Equipos y avance de captura</h2></div>{_status(status)}</div>
+          <p class="empty-copy">{next_action}</p>
+        </section>
+        """
+    counts = dict(snapshot.get("summary") or {})
+    kpis = "".join(
+        f"<div><span>{escape(label)}</span>"
+        f"<strong>{_number(counts.get(key))}</strong></div>"
+        for key, label in (
+            ("total_teams", "Equipos capturados"),
+            ("active_players", "Jugadores activos"),
+            ("provisional_players", "Jugadores provisionales"),
+            ("pending_reviews", "Expedientes pendientes de la edición"),
+        )
+    )
+    groups = dict(snapshot.get("groups") or {})
+    rows = (
+        "".join(
+            f"<tr><td>{_text(row.get('state'), 'Estado pendiente')}</td>"
+            f"<td>{_number(row.get('teams'))}</td>"
+            f"<td>{_number(row.get('active_players'))}</td>"
+            f"<td>{_number(row.get('provisional_players'))}</td></tr>"
+            for row in groups.get("by_state") or []
+        )
+        or '<tr><td colspan="4">Sin equipos capturados en esta edición.</td></tr>'
+    )
+    return f"""
+    <section id="inscripcion-{index}" class="panel">
+      <div class="section-heading"><div>
+        <span class="eyebrow">Inscripción</span>
+        <h2>Equipos y avance de captura</h2></div>{_status(status)}</div>
+      <div class="mini-kpis marketing-kpis">{kpis}</div>
+      <div class="table-wrap secondary-table"><table><thead><tr>
+        <th>Estado</th><th>Equipos</th><th>Jugadores activos</th>
+        <th>Provisionales</th></tr></thead><tbody>{rows}</tbody></table></div>
+      <p class="source-note">Registro operativo de SamChat · edición
+        {_number(snapshot.get('edition_year'))}. La captura y el estado activo
+        no acreditan elegibilidad externa. Los expedientes pendientes
+        se cuentan por edición.</p>
+    </section>
+    """
+
+
+def _accounting_detail(card: dict[str, Any]) -> str:
+    accounting = card.get("accounting") or {}
+    previous = card.get("accounting_previous_year") or {}
+    previous_html = (
+        _accounting_detail({"accounting": previous})
+        if previous.get("source_status") in {"available", "partial"}
+        else ""
+    )
+    if not accounting or accounting.get("source_status") == "unavailable":
+        return (
+            '<section class="panel"><h3>Contabilidad del torneo</h3>'
+            "<p>No disponible · "
+            + _text(accounting.get("reason"), "Falta acreditar el vínculo contable.")
+            + "</p></section>"
+            + previous_html
+        )
+    rows = "".join(
+        "<tr><td>"
+        + _text(item.get("company_code"))
+        + " / "
+        + _text(item.get("account_code"))
+        + "</td><td>"
+        + _text(item.get("metric_kind"))
+        + "</td><td>"
+        + _money(item.get("amount"))
+        + "</td><td>"
+        + _money(item.get("closing_balance"))
+        + "</td><td>"
+        + _text(item.get("closing_month"))
+        + "</td><td>"
+        + _text(str(item.get("source_sha256") or "")[:12])
+        + "</td></tr>"
+        for item in accounting.get("accounts", [])
+    )
+    months = ", ".join(str(m) for m in accounting.get("coverage_months", []))
+    monthly = "".join(
+        "<tr><td>"
+        + _text(p.get("month"))
+        + "</td><td>"
+        + _money(p.get("income"))
+        + "</td><td>"
+        + _money(p.get("expense"))
+        + "</td></tr>"
+        for p in accounting.get("periods", [])
+    )
+    previous = card.get("accounting_previous_year") or {}
+    comparison = accounting.get("comparison") or {}
+    comparison_html = (
+        "<p>Presupuesto anual comparable: "
+        + _money(comparison.get("budget"))
+        + " · Desviación contable: "
+        + _money(comparison.get("variance"))
+        + " · "
+        + _text(
+            comparison.get("reason"),
+            (
+                "Mismo periodo y base fiscal"
+                if comparison.get("variance") is not None
+                else "Falta acreditar periodo y base fiscal comparables."
+            ),
+        )
+        + "</p>"
+    )
+    if previous:
+        comparison_html += (
+            "<p>Referencia histórica · Ejercicio "
+            + _text(previous.get("fiscal_year"))
+            + " · Gasto contable: "
+            + _money(previous.get("expense"))
+            + " · Consultar su cobertura y base fiscal en el bloque siguiente.</p>"
+        )
+    return (
+        '<section class="panel"><h3>Contabilidad del torneo</h3><p>'
+        + (
+            "Cobertura parcial"
+            if accounting.get("source_status") == "partial"
+            else "Fuente disponible"
+        )
+        + " · Ejercicio "
+        + _text(accounting.get("fiscal_year"))
+        + " · Meses: "
+        + escape(months)
+        + " · Moneda: "
+        + _text(accounting.get("currency"))
+        + " · Base fiscal: "
+        + _text(accounting.get("tax_basis"))
+        + '</p><div class="table-wrap"><table><thead><tr><th>Empresa / cuenta</th>'
+        "<th>Indicador</th><th>Movimiento neto</th><th>Saldo de cierre</th>"
+        "<th>Mes de cierre</th><th>Fuente SHA-256</th></tr></thead><tbody>"
+        + rows
+        + "</tbody></table></div>"
+        "<p>Fuente: balanzas y pólizas históricas. El movimiento contable se presenta "
+        "separado del ejercido operativo y de los pagos comprobados.</p>"
+        + "<h4>Evolución mensual</h4><table><thead><tr><th>Mes</th>"
+        "<th>Ingresos contables</th>"
+        "<th>Gastos contables</th></tr></thead><tbody>"
+        + monthly
+        + "</tbody></table>"
+        + comparison_html
+        + "".join("<p>" + _text(gap) + "</p>" for gap in accounting.get("gaps", []))
+        + "</section>"
+        + previous_html
+    )
+
+
 def _tournament(card: dict[str, Any], edition_year: int, index: int) -> str:
     dossier = dict(card.get("dossier") or {})
     source_status = dossier.get("source_status") or "unavailable"
+    registration = card.get("registration")
+    registration = registration if isinstance(registration, dict) else None
+    if registration is not None:
+        if registration.get("available") is True:
+            source_status = "available" if source_status == "available" else "partial"
+        elif source_status == "available":
+            source_status = "partial"
     budget_bridge = (
         card.get("budget_scope_bridge")
         if isinstance(card.get("budget_scope_bridge"), dict)
@@ -475,6 +661,11 @@ def _tournament(card: dict[str, Any], edition_year: int, index: int) -> str:
     if operational_bridge == "exact_name_edition_bridge":
         provenance.append("operación reconciliada")
     provenance_text = " · ".join(provenance)
+    operations_html = (
+        _registration(registration, index)
+        if registration is not None
+        else _operations(dossier, index)
+    )
     return f"""
     <article class="tournament" id="torneo-{index}">
       <header class="tournament-header">
@@ -488,7 +679,8 @@ def _tournament(card: dict[str, Any], edition_year: int, index: int) -> str:
       {_budget_kpis(card)}
       {_alerts(card)}
       {_budget_detail(card)}
-      {_operations(dossier, index)}
+      {_accounting_detail(card)}
+      {operations_html}
       <div class="two-column">
         {_national_phase(dossier, index)}
         {_marketing(dossier, index)}
@@ -650,7 +842,7 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
     <body>
       <main class="shell">
         <header class="hero">
-          <div><span class="eyebrow">Plataforma Sports</span><h1>Tablero ejecutivo de Dirección</h1><p>Una vista de decisión: presupuesto, operación y evidencia dentro de la cartera y torneos asignados. Sólo lectura.</p></div>
+          <div><span class="eyebrow">Plataforma Sports</span><h1>Tablero ejecutivo de Dirección</h1><p><a href="/direccion/inicio">Abrir portada ejecutiva y Sam contextual</a></p><p>Una vista de decisión: presupuesto, operación y evidencia dentro de la cartera y torneos asignados. Sólo lectura.</p></div>
           <form class="filters" method="get" action="/direccion/tableros"><label>Edición<select name="edition_year">{year_options}</select></label><button type="submit">Actualizar</button></form>
         </header>
         <nav aria-label="Secciones">{section_links}<a href="/direccion/reportes">Reportes publicados</a></nav>

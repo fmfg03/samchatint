@@ -1,0 +1,227 @@
+{
+  "date": "2026-10-16",
+  "pr": 491,
+  "previous_head": "7ea82f2e1d402c024978fc3218dca645a865654a",
+  "review_thread": "PRRT_kwDORuojeM6tQWom",
+  "finding": "Concurrent selected-CFDI SAT requests were not serialized",
+  "tests": {
+    "aggregate_passed": 816,
+    "aggregate_warnings": 1453,
+    "aggregate_seconds": 149.98,
+    "budget_supplement_passed": 30,
+    "budget_supplement_seconds": 4.54,
+    "total_passed": 846,
+    "new_concurrency_cases": 7,
+    "integration_collection": 49
+  },
+  "coverage": {
+    "changed_statements": 679,
+    "covered": 630,
+    "percent": 92.78,
+    "files": [
+      {
+        "path": "src/devnous/gastos/amex_direct_models.py",
+        "changed_statements": 42,
+        "covered": 42,
+        "missing": []
+      },
+      {
+        "path": "src/devnous/gastos/amex_schema_policy.py",
+        "changed_statements": 0,
+        "covered": 0,
+        "missing": []
+      },
+      {
+        "path": "src/devnous/gastos/models.py",
+        "changed_statements": 0,
+        "covered": 0,
+        "missing": []
+      },
+      {
+        "path": "src/devnous/gastos/routes/admin_amex_direct_routes.py",
+        "changed_statements": 175,
+        "covered": 162,
+        "missing": [
+          780,
+          988,
+          1000,
+          1010,
+          1013,
+          1352,
+          1354,
+          1355,
+          1356,
+          1380,
+          1466,
+          1578,
+          1579
+        ]
+      },
+      {
+        "path": "src/devnous/gastos/routes/user_routes.py",
+        "changed_statements": 0,
+        "covered": 0,
+        "missing": []
+      },
+      {
+        "path": "src/devnous/gastos/services/access_control_service.py",
+        "changed_statements": 0,
+        "covered": 0,
+        "missing": []
+      },
+      {
+        "path": "src/devnous/gastos/services/amex_accounting_identity_service.py",
+        "changed_statements": 16,
+        "covered": 16,
+        "missing": []
+      },
+      {
+        "path": "src/devnous/gastos/services/amex_cut_export_service.py",
+        "changed_statements": 5,
+        "covered": 5,
+        "missing": []
+      },
+      {
+        "path": "src/devnous/gastos/services/amex_direct_accounting_service.py",
+        "changed_statements": 19,
+        "covered": 16,
+        "missing": [
+          403,
+          404,
+          866
+        ]
+      },
+      {
+        "path": "src/devnous/gastos/services/amex_direct_budget_service.py",
+        "changed_statements": 24,
+        "covered": 18,
+        "missing": [
+          635,
+          644,
+          719,
+          720,
+          733,
+          790
+        ]
+      },
+      {
+        "path": "src/devnous/gastos/services/amex_direct_cfdi_search_service.py",
+        "changed_statements": 78,
+        "covered": 73,
+        "missing": [
+          44,
+          51,
+          54,
+          114,
+          115
+        ]
+      },
+      {
+        "path": "src/devnous/gastos/services/amex_direct_common.py",
+        "changed_statements": 11,
+        "covered": 11,
+        "missing": []
+      },
+      {
+        "path": "src/devnous/gastos/services/amex_direct_context_service.py",
+        "changed_statements": 4,
+        "covered": 4,
+        "missing": []
+      },
+      {
+        "path": "src/devnous/gastos/services/amex_direct_effective_source_service.py",
+        "changed_statements": 37,
+        "covered": 37,
+        "missing": []
+      },
+      {
+        "path": "src/devnous/gastos/services/amex_direct_intake_service.py",
+        "changed_statements": 18,
+        "covered": 16,
+        "missing": [
+          206,
+          338
+        ]
+      },
+      {
+        "path": "src/devnous/gastos/services/amex_direct_matching_service.py",
+        "changed_statements": 20,
+        "covered": 18,
+        "missing": [
+          664,
+          732
+        ]
+      },
+      {
+        "path": "src/devnous/gastos/services/amex_direct_recovery_service.py",
+        "changed_statements": 128,
+        "covered": 117,
+        "missing": [
+          91,
+          93,
+          96,
+          117,
+          137,
+          156,
+          169,
+          181,
+          183,
+          251,
+          388
+        ]
+      },
+      {
+        "path": "src/devnous/gastos/services/amex_direct_schema_contract.py",
+        "changed_statements": 6,
+        "covered": 6,
+        "missing": []
+      },
+      {
+        "path": "src/devnous/gastos/services/amex_direct_schema_service.py",
+        "changed_statements": 4,
+        "covered": 4,
+        "missing": []
+      },
+      {
+        "path": "src/devnous/gastos/services/amex_direct_status_service.py",
+        "changed_statements": 86,
+        "covered": 80,
+        "missing": [
+          388,
+          391,
+          456,
+          521,
+          524,
+          525
+        ]
+      },
+      {
+        "path": "src/devnous/gastos/services/amex_recognition_service.py",
+        "changed_statements": 6,
+        "covered": 5,
+        "missing": [
+          843
+        ]
+      }
+    ]
+  },
+  "independent_validation": "CLEAN_WITH_NOTES",
+  "original_manifest_unchanged": 37,
+  "original_manifest_expected_changes": [
+    "src/devnous/gastos/services/amex_direct_status_service.py",
+    "tests/acceptance/test_amex_direct_selected_cfdi_authority.py",
+    "tests/unit/gastos/test_amex_direct_cfdi_search.py"
+  ],
+  "source_sha256": {
+    "src/devnous/gastos/services/amex_direct_status_service.py": "8c230d23aff117f715055998ded380cb5923dc358166e04e90f9bb50b663db5a",
+    "tests/acceptance/test_amex_direct_selected_cfdi_authority.py": "5651a64e9dd1ab97369d020a09e5ecdc03e65ae8cdcd09bb1401d9a3c22ab0ea",
+    "tests/unit/gastos/test_amex_direct_cfdi_search.py": "7281b8a69f2e283c3ed75b4614366a1f16878a9b74c06690d451ed8e61f1eb62"
+  },
+  "external_sat": "synthetic_only",
+  "production_writes": 0,
+  "commands": [
+    "PYTHONPATH=src:.:/tmp/samchat-amex-source-testdeps /root/samchat/.venv/bin/python /tmp/amex-final-concurrency-run.py",
+    "PYTHONPATH=src:.:/tmp/samchat-amex-source-testdeps COVERAGE_FILE=/tmp/amex-pr491-final-concurrency.coverage /root/samchat/.venv/bin/python -m pytest tests/unit/test_amex_direct_budget_integration.py -q -o addopts= --cov=devnous.gastos --cov-config=.github/coverage-repository.ini --cov-append --cov-report= --cov-fail-under=0",
+    "PYTHONPATH=src:.:/tmp/samchat-amex-source-testdeps /root/samchat/.venv/bin/python /tmp/amex-pr491-final-concurrency-coverage.py"
+  ]
+}

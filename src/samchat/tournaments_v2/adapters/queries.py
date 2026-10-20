@@ -370,6 +370,7 @@ async def _load_scope_dataset(
     *,
     tournament_key: str,
     tournament_slug: Optional[str],
+    include_registration: bool = True,
 ) -> Dict[str, Any]:
     tournaments = await resolve_tournaments_for_scope(
         client,
@@ -389,6 +390,14 @@ async def _load_scope_dataset(
         order="name.asc",
         missing_columns=["branch"],
     )
+    if not include_registration:
+        return {
+            "tournaments": tournaments,
+            "categories": categories,
+            "teams": [],
+            "registrations": [],
+            "players": [],
+        }
     teams = await _fetch_all_rows_with_fallback(
         client,
         table="teams",
@@ -1085,6 +1094,7 @@ async def tournament_soul_snapshot_v2(
     tournament_name: Optional[str] = None,
     include_communications: bool = True,
     include_media: bool = True,
+    include_registration: bool = True,
     limit: int = 250,
     client: Optional[SupabaseRestClient] = None,
 ) -> Dict[str, Any]:
@@ -1093,6 +1103,8 @@ async def tournament_soul_snapshot_v2(
     The snapshot intentionally aggregates canonical tournament data but does not
     write anything. Missing optional copatelmex tables are reported in
     ``optional_sources`` instead of breaking the core operations snapshot.
+    ``include_registration=False`` leaves roster reads to their owning source;
+    metadata, calendar, media, and communications keep their existing loaders.
     """
 
     max_limit = max(1, min(int(limit or 250), 1000))
@@ -1106,6 +1118,7 @@ async def tournament_soul_snapshot_v2(
         client,
         tournament_key=tournament_key,
         tournament_slug=tournament_slug,
+        include_registration=include_registration,
     )
     tournaments = dataset.get("tournaments") or []
     categories = dataset.get("categories") or []
@@ -1521,7 +1534,7 @@ async def tournament_soul_snapshot_v2(
         for row in tournaments
     ]
 
-    return {
+    snapshot: Dict[str, Any] = {
         "ok": True,
         "source": "supabase_tournaments_v2",
         "snapshot_type": "tournament_soul",
@@ -1531,6 +1544,7 @@ async def tournament_soul_snapshot_v2(
             "tournament_name": tournament_name,
             "include_communications": include_communications,
             "include_media": include_media,
+            "include_registration": include_registration,
             "limit": max_limit,
         },
         "tournaments": tournament_rows,
@@ -1583,3 +1597,30 @@ async def tournament_soul_snapshot_v2(
             "Las fuentes opcionales no bloquean el snapshot si la tabla aun no existe o no tiene columnas esperadas.",
         ],
     }
+    if not include_registration:
+        # This domain was deliberately not queried. Empty local accumulators
+        # cannot become evidence of zero teams, players, or missing documents.
+        snapshot["registration_status"] = "handled_elsewhere"
+        snapshot["source_metadata"] = {
+            "registration": "handled_elsewhere",
+            "registration_tables_queried": False,
+            "team_names": "unavailable_without_registration_source",
+        }
+        for key in (
+            "entities_count",
+            "teams_count",
+            "registrations_count",
+            "players_count",
+            "document_players_complete",
+            "document_players_verified",
+            "teams_with_incomplete_documents",
+        ):
+            snapshot["summary"][key] = None
+        snapshot["marketing"]["team_marketing_profiles_count"] = None
+        for row, original in zip(snapshot["operations"]["matches"], matches):
+            row["home_team_id"] = original.get("home_team_id")
+            row["away_team_id"] = original.get("away_team_id")
+        snapshot["notes"].append(
+            "Inscripción y contactos de equipos omitidos: consultar su fuente canónica."
+        )
+    return snapshot

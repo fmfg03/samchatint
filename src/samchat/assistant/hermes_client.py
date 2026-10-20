@@ -270,18 +270,23 @@ class HermesSamchatAssistantClient:
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(str(path))
-        form_data = {
-            "kind": kind,
-            "note": note or "",
-            "tournament_key": tournament_key or "",
-            "module_key": module_key or "",
-            "module_label": module_label or "",
-            "module_context_json": json.dumps(module_context or {}, ensure_ascii=False),
-            "assistant_mode": assistant_mode,
-            "bi_year": str(bi_year or ""),
-            "bi_scope": bi_scope or "",
-            "bi_segment": bi_segment or "",
-        }
+        # None means omitted. Explicit empty strings / {} retain clear semantics.
+        form_data = {"kind": kind, "assistant_mode": assistant_mode}
+        for key, value in {
+            "note": note,
+            "tournament_key": tournament_key,
+            "module_key": module_key,
+            "module_label": module_label,
+            "bi_year": bi_year,
+            "bi_scope": bi_scope,
+            "bi_segment": bi_segment,
+        }.items():
+            if value is not None:
+                form_data[key] = str(value)
+        if module_context is not None:
+            form_data["module_context_json"] = json.dumps(
+                module_context, ensure_ascii=False
+            )
         with path.open("rb") as fh:
             files = {"file": (path.name, fh, "application/octet-stream")}
             response = self._request(

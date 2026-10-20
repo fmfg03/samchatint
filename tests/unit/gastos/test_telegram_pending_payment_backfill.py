@@ -259,3 +259,101 @@ async def test_document_detail_denies_before_payment_or_telegram_side_effects(
     assert result == "denied"
     session.commit.assert_not_awaited()
     ensure_pending.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_alicia_observer_document_view_skips_payment_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    documento_id = uuid4()
+    documento = SimpleNamespace(
+        id=documento_id,
+        empleado_id=uuid4(),
+        tipo="SOLICITUD",
+        estado="aprobado",
+        referencia_operaciones="481",
+        gasto_generado_id=None,
+    )
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                _SingleResult(documento),
+                RuntimeError("stop after observer side-effect guard"),
+            ]
+        ),
+        commit=AsyncMock(),
+    )
+    ensure_pending = AsyncMock()
+    monkeypatch.setattr(
+        user_routes,
+        "ensure_fecha_pago_for_approved_solicitud",
+        lambda _documento: True,
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "ensure_finance_pending_payment_notifications",
+        ensure_pending,
+    )
+
+    with pytest.raises(RuntimeError, match="observer side-effect guard"):
+        await user_routes.ver_documento(
+            documento_id=documento_id,
+            request=SimpleNamespace(query_params={}, headers={}),
+            session=session,
+            current_empleado=SimpleNamespace(
+                id="90701d00-5f0b-4b3d-b677-e491e53caf82",
+                correo="azuniga@plataformasports.com",
+                rol="operaciones",
+            ),
+        )
+
+    session.commit.assert_not_awaited()
+    ensure_pending.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_regular_document_view_keeps_payment_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    documento_id = uuid4()
+    documento = SimpleNamespace(
+        id=documento_id,
+        empleado_id=uuid4(),
+        tipo="SOLICITUD",
+        estado="aprobado",
+        referencia_operaciones="481",
+        gasto_generado_id=None,
+    )
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                _SingleResult(documento),
+                RuntimeError("stop after normal side effects"),
+            ]
+        ),
+        commit=AsyncMock(),
+    )
+    ensure_pending = AsyncMock()
+    monkeypatch.setattr(
+        user_routes,
+        "ensure_fecha_pago_for_approved_solicitud",
+        lambda _documento: True,
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "ensure_finance_pending_payment_notifications",
+        ensure_pending,
+    )
+
+    with pytest.raises(RuntimeError, match="normal side effects"):
+        await user_routes.ver_documento(
+            documento_id=documento_id,
+            request=SimpleNamespace(query_params={}, headers={}),
+            session=session,
+            current_empleado=SimpleNamespace(
+                id=uuid4(), correo="finance@example.com", rol="finanzas"
+            ),
+        )
+
+    session.commit.assert_awaited_once()
+    ensure_pending.assert_awaited_once_with(session, documento)

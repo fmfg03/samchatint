@@ -22,15 +22,27 @@ canon edits silently.
 
 | Protected source path | SHA-256 at Line 0 baseline |
 | --- | --- |
-| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `10e53ea2d57ab1bf3d0c5d85097ad48afaefefc99793460698ab626c86f5ff6e` |
-| `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `f930556b0c6002d8d6242e5591fdce72362d922a39a0746d4fac04538580e433` |
-| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `a94e5a8a07ef037e7258e362e3e3e6cdce7f1289015169805fa65f43ef322834` |
+| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `3f92bc667e2b152334a500f2cf9427cebdd4ed9c0b9b10538e075596842f435a` |
+| `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `2c55cc807c464d5462bca3e9d092fcefe6f5f2f66f4498231d72a7b57d795985` |
+| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `b98ba82dade2cc148b06b787c9b0415479a4c68e8109bf6c5f2402dcbe5228e1` |
 
 | Canon amendment date | Affected sources | Reason and evidence | Evidence state |
 | --- | --- | --- | --- |
+| 2026-10-14 | Product and Engineering canons | Explicit human approval of distribution revision rules (`Sentinel_e34dca62ad888191ae00a160c9ee5b09`); Git publication authorized separately (`Sentinel_a80479c5cb1081919315d4fa293a5777`). Preserve financial lines, amounts and history; approved reconciled successor, week-start month, full-month YTD, fixed categories N/D pending Finance. Evidence: `docs/roadmap/budget-distribution-20261014-candidate.md`. Sweep unchanged: historical inventory, no production observation. | Approved candidate and publication; CI, merge, deployment, identified-case UAT and Finance crosswalk remain pending. |
 | 2026-09-11 | Product and Engineering canons | This amendment governs the pending correction to #314/#315 from an external-client interpretation to internal Direction, position-scoped boards and reports. Production remains at `81335f8ddd7e103839719f62235a14d11bb2bd47` with the incorrect client-based interpretation; the correction is only an uncommitted isolated-worktree diff with focused authorization/reporting tests and route-contract validation. | `repo_live` only after merge; `deployed_verified` only after a new release plus authenticated smoke. UAT and real scope configuration remain pending; not `business_accepted`. |
 | 2026-09-12 | Product and Engineering canons | Human-approved expansion of `/direccion/tableros` to cross-domain, read-only Operations, Finance, and Marketing visibility inside assigned Direction portfolio/tournament scope. Evidence: scoped budget and tournament SOUL/entity-dossier integration, explicit gap inventory, aggregate age handling, focused tests, lint and diff validation. | Worktree implementation under review; not merged, deployed, UAT-validated, or business accepted. |
 | 2026-09-19 | Engineering canon | Human-approved correction for PR #350: its required CI gate replaces the obsolete Python 3.11/3.12 and non-blocking-security description with the Python 3.12-only direct-suite, exact pytest/Bandit baselines, changed-code coverage, and aggregate-gate contract. Evidence: focused contract tests, exact Bandit baseline verification, and diff hygiene in the isolated worktree. | Worktree implementation under review; not merged, deployed, or business accepted. |
+| 2026-09-29 | Product and Engineering canons | Human-approved accounting invariant: one atomic COI policy per `INFORME`, with all active expense movements and CFDI blocks grouped under one header; incomplete or cross-period reports originally failed closed without partial status updates. The cross-period restriction is superseded by the human-approved 2026-10-05 amendment below. Evidence: isolated-worktree implementation and focused exporter, route, batch, and ZIP regression tests. | Worktree implementation under review; not merged, deployed, authenticated-UAT-validated, or business accepted. |
+| 2026-10-05 | Product and Engineering canons | Explicit human approval to permit normal reports with expense dates in different months, using one approval-month policy period for monthly discovery and Finance batches. Missing approval dates remain blockers. AMEX requires its immutable initial cut and that cut's accounting month, retaining cut-creation controls. Evidence: PR #458 shared period predicates, SQL-backed discovery tests, complete CSV/XLSX/ZIP exports and frozen-cut regressions. | Source changes under PR review; deployment, authenticated UAT and business acceptance remain pending. |
+
+| 2026-10-05 | Product, Engineering and Sweep canons | Human-approved final diff and canon amendment for the first Copa Telmex registration PostgreSQL delivery. Explicit tournament/edition catalog, shared assistant/Direction read projection, and early exclusion of alternate SOUL registration reads. Evidence: `docs/roadmap/ctt-postgres-registration-first-delivery.md`; 209 tests passed, 99.45% changed-statement coverage, independent review with no pending defects. General lint/type validation remains partial due to inherited debt. | Approved isolated-worktree candidate; not committed, merged, deployed, imported, UAT-validated, or business accepted. |
+| 2026-10-06 | Product and Engineering canons | Human-approved review-only admission contract for the 11 reconciled Copa Telmex 2026 dossiers. Exact edition, PDF, page, extraction and technical-staff evidence is bound to idempotent review drafts; team, staff and eligibility writes remain blocked pending a separately approved Zaubern staff contract. Evidence: `docs/roadmap/ctt-pilot-batch-admission.md`, 56 focused tests, isolated PostgreSQL migration verification, and independent validation with no critical or important findings. | Approved isolated-worktree candidate; not committed, merged, deployed, migration-applied, data-admitted, UAT-validated, or business accepted. |
+| 2026-10-09 | Product and Engineering canons | Human-approved monthly DIOT contract based on `Documento.fecha_pago_efectiva`, with explicit missing/ambiguous-date queues, fail-closed TXT blockers, proportional confirmed shared-CFDI allocation, and IVA withholding read only from XML. Evidence: isolated implementation, 10 focused tests, route import verification, and production classification in a read-only transaction. Sweep canon unchanged because this feature does not revise the historical installation inventory. | Approved isolated-worktree candidate; not committed, merged, deployed, SAT-submitted, authenticated-UAT-validated, or business accepted. |
+| 2026-10-13 | Product and Engineering canons | Human-approved technical specification and exact canon amendment for approved-INFORME AMEX recognition, consolidated explicit Finance confirmation and subsequent nonposting bank association. Evidence: `docs/roadmap/amex-approved-informe-20261013-story.md` and `docs/roadmap/amex-approved-informe-20261013-spec.md`. Sweep unchanged because no historical sweep inventory is revised. | Approved candidate; implementation validation, commit, merge, migration, deployment and Finance UAT remain pending. |
+
+| 2026-10-13 | Product and Engineering canons | Human-approved statement workflow and explicit beneficiary attention policy. Exact amendment text approved with technical specification; evidence: `docs/roadmap/amex-statement-workflow-20261013-story.md` and `docs/roadmap/amex-statement-workflow-20261013-spec.md`. Sweep unchanged: historical inventory is not rewritten. | Approved implementation scope; Git publication, owner-run migration, deployment and Finance UAT pending separate receipts. |
+
+| 2026-10-15 | Product §9.1 and Engineering §8.2.1 | Explicit user approval of the exact 2026-10-14 direct AMEX source contract. Evidence: `docs/roadmap/amex-sat-budget-direct-20261015-spec.md`; typed statements, fiscal context and budget assignment without INFORME, immutable direct cuts and no duplicate recognition. | Approved build scope only; migration, publication, deployment and Finance UAT pending. |
 
 ## Work lanes and gates
 
@@ -62,3 +74,24 @@ canon edits silently.
    recorded. Requested features are not silently reclassified as defects.
 5. This register records facts and decisions; it does not confer authority to
    deploy, mutate data, or accept contractual scope.
+
+## Proposed 2026-10-02 amendment — requires human PR review
+
+Francisco authorized SUPERADMIN read supervision of all active local-installation
+tournaments at 18:27 UTC. Product and engineering canons record that narrow
+exception and independent documentary source coverage. Other profiles, explicit
+denials and all write authority remain unchanged. Evidence and limitations:
+`docs/evidence/direction-report-redesign/README.md`. Updated hashes above describe
+the proposed draft, not deployment or accepted UAT. Sweep canon unchanged.
+
+## Proposed 2026-10-06 amendment — requires human PR review
+
+Francisco requested ordered partial paid-advance approvals with a confirmed
+applicant motive, approver comments, an open report until zero, and idempotent
+incremental accounting. Product and engineering canons propose explicit child
+`INFORME` ownership while preserving atomic export per child and the AMEX cut.
+Evidence and release limitations: `docs/roadmap/partial-advance-comprobaciones.md`.
+The refreshed hashes describe a proposed draft; human canon review, production
+migration, deployment and authenticated Finance UAT remain pending.
+Canon unchanged for the sweep: it is the historical installation inventory;
+this work makes no new production-observation claim.

@@ -161,6 +161,81 @@ The deployed guard does not by itself close the business incident: historical
 reconciliation and affected-reference verification remain required, and Finance
 UAT is separate evidence.
 
+### 9.1 Expense-report COI policy granularity
+
+Date: 2026-09-29
+
+An `INFORME` is the accounting export unit. Its active expense items, tax
+movements, and CFDI evidence must be emitted under exactly one COI policy
+header. A single expense that belongs to an `INFORME` must not be exported as
+an independent policy.
+
+The export is atomic. If any active item is not COI-ready, the complete
+`INFORME` policy is blocked. No partial file is generated and no item is
+marked `contabilizado`.
+Cancelled items remain excluded. Standalone third-party requests retain their
+existing policy granularity.
+
+Amendment date: 2026-10-05. Reason: explicit human approval to remove the
+cross-month export restriction. Active items may have dates in different
+months or years while remaining under one complete `INFORME` policy. Their
+original expense dates and CFDI evidence are preserved. Each normal report is
+discovered only in its approval month for both monthly COI surfaces and Finance
+batches, including all its active items regardless of their dates. Missing
+approval dates remain explicit blockers, without a creation-date fallback.
+Company-AMEX reports retain their canonical cut controls and are exported only
+from the immutable initial cut in that cut's accounting month; this change does
+not authorize cross-month cut creation or rebuilding mutable classifications.
+Approval, accounting readiness, beneficiary and tax validations remain required.
+Evidence: the scoped correction in
+`user_routes.py` and `admin_routes.py`, with regression cases in
+`tests/unit/gastos/test_coi_exportable_status_ui.py`. This amendment describes
+the approved implementation scope; merge, deployment and Finance UAT remain
+pending their own evidence.
+
+Repository evidence for this amendment is the approved 2026-09-29 correction
+that groups XLSX, CSV, ZIP, document, and batch exports by `INFORME` and adds
+focused regression coverage. Merge, deployment, authenticated Finance UAT, and
+business acceptance remain separate evidence.
+
+Amendment date: 2026-10-13. Explicit human approval of technical specification and this canon text. Reason: use the approved expense account as accounting source without repeating its comprobacion. Evidence: `docs/roadmap/amex-approved-informe-20261013-spec.md` and its approved story. Approved candidate; implementation validation, merge, deployment and Finance UAT remain pending.
+
+La aprobación final real de un INFORME acredita comprobación documental de su CuentaDeGastos mediante evidencia inmutable del evento autoritativo, entidad, actor, fecha y versión. No atribuye autoridad Finance al aprobador ni genera póliza. Finanzas declara tratamientos y excepciones del informe completo con una confirmación contable explícita; no repite comprobación individual ya aprobada. Falta de tarjeta, mapping, tratamiento o evidencia produce excepción, jamás inferencia o cero.
+
+Partidas AMEX de informe aprobado pueden originar reconocimiento contable report-first con ancla real de partida y sin cargo bancario previamente seleccionado. Corte completo mantiene una póliza inicial única e inmutable por INFORME, y ajustes preservan historia. Históricos sin snapshot no reciben atestaciones retrospectivas ficticias; confirmación actual Finance se identifica como tal y no regulariza los 14 casos históricos bloqueados.
+
+
+Amendment date: 2026-10-13. Explicit human approval of the technical specification and exact canon text. Reason: a clear statement-to-policy workflow and separation of report attention from AMEX manual queues. Evidence: `docs/roadmap/amex-statement-workflow-20261013-story.md` and `docs/roadmap/amex-statement-workflow-20261013-spec.md`. Approved implementation scope; merge, owner-run migration, deployment and authenticated Finance UAT require their own receipts.
+
+AMEX dispone de un recorrido por importación de estado de cuenta con identidad persistida de archivo, tarjeta y período declarados. Su avance separa pendientes operativos, asociación bancaria y disponibilidad contable. La importación no aprueba informes ni origina pólizas. Finanzas selecciona fuentes explícitas y confirma cada INFORME completo mediante el corte canónico; vínculo de navegación no acredita conciliación. La política de atención por beneficiario explícito puede retirar informes y partidas de la cola manual sin ocultar cargos bancarios, alterar su estado ni excluirlos de controles financieros. Identidad ausente o contradictoria permanece visible. Cargas históricas no reciben identidad de estado reconstruida.
+
+Amendment date: 2026-10-14. Explicit human approval of the technical specification and exact canon text on 2026-10-15. Reason: direct statement/SAT-to-budget/accounting workflow without a fabricated expense report. Evidence: `docs/roadmap/amex-sat-budget-direct-20261015-spec.md` and its approved story; implementation, migration, merge, deployment and Finance UAT remain separate gates.
+
+El recorrido AMEX directo admite como fuente contable un estado identificado y sus cargos reales, con CFDI SAT/evidencia fiscal, entidad receptora explícita, clasificación de Contabilidad, asignación presupuestal por autoridad configurada y confirmación Finance. No requiere ni fabrica un INFORME. Conciliación automática utiliza política aprobada de identidad fiscal/comercio, vigencia, economía y unicidad global; faltantes o ambigüedad permanecen pendientes. Contabilidad define proyecto/torneo y categoría; Control Presupuestal asigna únicamente la partida. El corte directo íntegro e inmutable genera como máximo una póliza nueva por estado para consumos no reconocidos; los consumos ya cubiertos conservan sus receipts y pólizas. No se permiten doble gasto, base fiscal o pasivo ni exportación parcial. Programación y liquidación de la tarjeta mantienen su owner y no se condicionan por un nuevo gate de CFDI.
+
+### 9.2 Monthly DIOT by effective payment date
+
+Amendment date: 2026-10-09. This canon diff received explicit human approval.
+The monthly DIOT period is determined by `Documento.fecha_pago_efectiva`, never
+by the expense capture date or an invented fallback. A direct paid-document
+relationship has priority. A single paid date on the same `CuentaDeGastos` may
+resolve the period; missing or multiple possible dates remain visible outside
+the monthly result until their linkage is corrected.
+
+The accounting UI provides a period preview, an audit workbook, and the SAT TXT.
+The TXT fails closed when a paid movement in the selected period lacks required
+fiscal evidence or has an unconfirmed shared CFDI. Cancelled expenses and items
+marked for COI reversal are excluded. Confirmed shared CFDIs are allocated in
+proportion to the evidenced amount applied to each expense. IVA withholding is
+read only from CFDI XML tax detail; it is never inferred from supplier type,
+association status, expense totals, or accounting labels. The existing
+per-report DIOT downloads remain available.
+
+Evidence: isolated worktree based on `7d857ad326a`, focused unit and route
+tests, and a production-data classification executed inside an explicit
+read-only transaction. This is not a SAT submission, data correction, merge,
+deployment, authenticated Finance UAT, or business acceptance.
+
 ## 10. Current closure gates
 
 A finance capability is not “done” until it passes a real UAT path showing:
@@ -249,3 +324,121 @@ portfolio and tournament scope was configured for the eligible Direction
 positions. The expanded executive dossier remains an approved repository
 change under review until its own merge and deployment. Authenticated UAT and
 business acceptance remain pending.
+
+## 15. Direction supervision and independent documentary facts amendment
+
+Date: 2026-10-02. Human authorization: Francisco explicitly authorized SUPERADMIN
+to read all active tournaments in these boards, relayed at 18:27 UTC. This
+amendment is proposed in a draft PR and requires human review before merge.
+
+SUPERADMIN supervision now includes the active tournament catalog of the current
+Plataforma Sports installation even without portfolio membership. It does not
+include unrelated organizations, external catalogs, inactive tournaments, or any
+new action authority. Other profiles retain their assigned active portfolios and
+positions. An explicit portfolio filter narrows even SUPERADMIN's selection;
+explicit denials still prevail. No persistent assignment is created by a read.
+
+Documentary facts with their own verified source coverage must remain visible
+without an approved budget. Absence of an approved budget is not an authorized
+zero. Expenses use the canonical fiscal base and expense date; commitments and
+documentary paid amounts use the canonical payable amount in the request creation
+cohort. These stages are not added together, and none proves bank cash. Monthly
+budget, operating classifications, reconciled cash and comparative periods require
+their own source evidence; the supplied workbook examples are not production data.
+
+Evidence: isolated worktree from PR452, synthetic unit/browser/export verification
+and draft review evidence in `docs/evidence/direction-report-redesign`. No production
+access, merge, deployment, or business acceptance is claimed.
+
+## 16. Copa Telmex registration PostgreSQL candidate amendment
+
+Date: 2026-10-05
+
+Reason: human-approved first delivery of registration read-source consolidation; preserve the distinction between local candidate, production activation, and canonical intake. The final diff and this amendment were explicitly approved in the conversation.
+
+La primera entrega de consolidación de inscripción de Copa Telmex añade un catálogo explícito de torneo y edición. Para ediciones configuradas en ese catálogo, el asistente y Dirección consumen una misma proyección del registro operativo PostgreSQL, distinguiendo equipos, jugadores activos y provisionales, revisiones pendientes y disponibilidad de fuente. La captura y el estado activo no acreditan elegibilidad externa. La revisión visual de los 11 expedientes se conserva como evidencia pendiente de admisión canónica; no constituye una importación ni autorización automática. Las ediciones sin configurar conservan su ruta anterior. La activación productiva y la aceptación autenticada deben documentarse por separado.
+
+Evidence: `docs/roadmap/ctt-postgres-registration-first-delivery.md` and its scoped test and review receipts. This is an isolated-worktree candidate; merge, deployment, data application, authenticated UAT, and business acceptance remain separate.
+
+### Proposed 2026-10-06 amendment: partial paid-advance comprobaciones
+
+Requires explicit human PR review. Reason: Francisco requests applicant-confirmed
+motives, approver comments, an open original report until zero, and incremental
+accounting without duplicate recognition. This proposal does not establish
+production or business acceptance.
+
+For an open, unapproved, non-AMEX report with an actually paid advance and its
+existing debtor posting, the applicant may explicitly submit the newly captured
+expenses as a child `INFORME`. The original report remains an open case container;
+it must never be approved or exported again in partial mode. Each child owns
+only its explicitly assigned expenses and retains its confirmed applicant motive.
+The authorized approver must read that motive and record comments. Budget-control
+and accounting-readiness gates still apply. Each approved child has its own
+idempotent debtor recognition and one atomic COI policy in its approval month.
+Previously approved expenses cannot be reassigned or mutated; corrections require
+accounting reversal rather than overwriting recognized evidence.
+
+Actual, evidenced advance returns reduce the same collaborator debtor balance.
+Repeated submissions reuse the original result; additional returns require new
+submission identities. The original closes only when all children are approved,
+no active expenses remain unassigned, and the persisted debtor auxiliary is zero.
+Ordinary full reimbursement and company-AMEX immutable-cut rules remain intact.
+
+Evidence: `docs/roadmap/partial-advance-comprobaciones.md`, scoped implementation,
+SQLite-backed workflow/ledger tests and isolated PostgreSQL/WASM migration tests.
+No production migration, deployment, authenticated UAT, or historical mutation
+has been performed.
+
+## 17. Copa Telmex reviewed-dossier admission candidate amendment
+
+Date: 2026-10-06
+
+Reason: add a review-only, source-bound admission path for the 11 manually
+reconciled Copa Telmex 2026 dossiers while preserving the distinction between
+draft admission, governed team commit, eligibility, production data application,
+and business acceptance.
+
+The candidate accepts an authenticated private batch manifest bound to the exact
+tournament edition, PDF hashes, ordered source pages, extraction payloads, and
+two technical-staff slots. It creates idempotent registration-review drafts and
+receipts; it does not create teams, players, staff, or eligibility. Director
+tecnico and auxiliar evidence remains visible in review. Because the current
+REG-S05/Zaubern decision contract authorizes player slots only, any draft with
+technical staff fails closed with `STAFF_GOVERNANCE_CONTRACT_REQUIRED`. Staff
+commit requires a separately approved external contract expansion and a later
+SamChat commit integration. The 11 dossiers remain pending production admission
+until the owner migration, deployment, authenticated submission, and resulting
+zero-team/zero-eligibility receipt are verified.
+
+Evidence: `docs/roadmap/ctt-pilot-batch-admission.md`, scoped tests, isolated
+PostgreSQL migration verification, and independent implementation validation.
+This remains an isolated-worktree candidate; merge, deployment, migration/data
+application, authenticated UAT, and business acceptance are separate.
+
+
+### AMEX directo: recuperación auditada de cobertura temporal
+
+Fecha: 2026-10-15. Texto y especificación técnica aprobados explícitamente por el usuario con «aprobada». Razón: corregir cargos omitidos por período conservando fuentes y controles financieros. Evidencia: `docs/roadmap/amex-qa-remediation-20261015-spec.md`, sección 9, y assessment QA asociado. Candidato aprobado para implementación; migración, aplicación productiva, promoción y UAT mantienen sus propios checkpoints.
+
+Contabilidad puede corregir explícitamente la cobertura temporal declarada de un estado directo todavía no reconocido cuando el archivo original demuestra cargos omitidos únicamente por estar fuera del período capturado. La recuperación preserva el original y sus recibos, conserva los cargos ya creados y agrega sólo los cargos faltantes mediante evidencia auditada e idempotente. No cambia identidad fiscal, no crea informes, no aprueba gastos ni modifica fuentes reconocidas. La fecha contable sigue siendo una declaración explícita dentro de la cobertura efectiva confirmada y un período abierto.
+## 18. Approved budget distribution revision rules
+
+Date: 2026-10-14. Human approval: Francisco, evidence
+`Sentinel_e34dca62ad888191ae00a160c9ee5b09`. Reason: complete the distribution
+of authorized budgets without changing their amounts or losing history.
+Evidence: `docs/roadmap/budget-distribution-20261014-candidate.md`.
+
+Una revisión de distribución puede sustituir al presupuesto activo, incluso
+congelado, únicamente al aprobarse con las mismas partidas e importes y con
+las semanas conciliadas al total. El original conserva su historial; otro
+ajuste requiere otra revisión. Cada semana se asigna al mes en que empieza;
+el acumulado incluye completo el mes seleccionado. Las 26 categorías fijas
+quedan en N/D hasta que Finanzas confirme qué partidas corresponden a cada
+una. La tabla por partidas reales sí muestra los periodos.
+
+This records approved candidate rules, not production correction or business
+acceptance. Git publication was separately authorized through
+`Sentinel_a80479c5cb1081919315d4fa293a5777`; merge and deployment are not
+authorized. Finance crosswalk, the identified incident case and authenticated
+UAT remain pending. Economic replacement and historical retirement are outside
+this distribution-only scope.

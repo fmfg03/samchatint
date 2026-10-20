@@ -24,7 +24,7 @@ async def history_db():
             statements = [
                 "CREATE TEMP TABLE empleados (id uuid PRIMARY KEY, nombre text)",
                 "CREATE TEMP TABLE proveedores_clientes (id uuid PRIMARY KEY, nombre text)",
-                "CREATE TEMP TABLE documentos (id uuid PRIMARY KEY, numero_referencia text, referencia_operaciones integer, estado text, fecha_pago date, aprobado_en timestamp, pagado_en timestamp, pago_urgente boolean, concepto_pago text, currency text, monto_total numeric, monto_solicitado numeric, empleado_id uuid, beneficiario_empleado_id uuid, proveedor_cliente_id uuid, tipo text, creado_en timestamp)",
+                "CREATE TEMP TABLE documentos (id uuid PRIMARY KEY, numero_referencia text, referencia_operaciones integer, estado text, fecha_pago date, fecha_pago_efectiva date, aprobado_en timestamp, pagado_en timestamp, pago_urgente boolean, concepto_pago text, currency text, monto_total numeric, monto_solicitado numeric, empleado_id uuid, beneficiario_empleado_id uuid, proveedor_cliente_id uuid, tipo text, creado_en timestamp)",
                 "CREATE TEMP TABLE payment_run_closures (id uuid PRIMARY KEY, closed_at timestamp, run_date date)",
                 "CREATE TEMP TABLE payment_run_closure_items (documento_id uuid, closure_id uuid)",
                 "INSERT INTO empleados VALUES (md5('Ana')::uuid, 'Ana'), (md5('Luis')::uuid, 'Luis')",
@@ -32,7 +32,7 @@ async def history_db():
                 """INSERT INTO documentos
                     SELECT md5(n::text)::uuid, 'S-' || n, n,
                     CASE WHEN n % 3 = 0 THEN 'pagado' WHEN n % 3 = 1 THEN 'en_proceso_pago' ELSE 'aprobado' END,
-                    '2026-10-20'::date, '2026-10-19'::timestamp,
+                    '2026-10-20'::date, CASE WHEN n % 3 = 0 THEN '2026-10-20'::date END, '2026-10-19'::timestamp,
                     CASE WHEN n % 3 = 0 THEN '2026-10-20 23:59:59'::timestamp END,
                     false, 'Prueba ' || n, CASE WHEN n % 2 = 0 THEN 'MXN' ELSE 'USD' END,
                     n + 0.01, NULL, md5('Ana')::uuid, md5('Luis')::uuid,
@@ -211,3 +211,20 @@ async def test_state_sort_matches_displayed_labels(history_db):
         labels = [row["status"] for row in result["rows"]]
         assert set(labels) == {"pagada", "programada", "vencida", "en proceso de pago"}
         assert labels == sorted(labels, reverse=direction == "desc")
+
+
+@pytest.mark.asyncio
+async def test_effective_payment_date_is_distinct_from_capture(history_db):
+    await history_db.execute(
+        text(
+            "UPDATE documentos SET pagado_en='2026-11-01' WHERE referencia_operaciones=603"
+        )
+    )
+    effective = await list_payment_history(
+        history_db, filters(q="Prueba 603", month="2026-10", date_kind="pago")
+    )
+    assert effective["total_count"] == 1
+    captured = await list_payment_history(
+        history_db, filters(q="Prueba 603", month="2026-10", date_kind="captura")
+    )
+    assert captured["total_count"] == 0

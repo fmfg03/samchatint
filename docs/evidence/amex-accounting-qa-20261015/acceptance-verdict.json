@@ -1,0 +1,111 @@
+{
+  "assessed_commit": "a983be79e1ad8a6b5aa56affe27a945160ac8166",
+  "overall_acceptance": "FAIL",
+  "production_writes": false,
+  "production_policy_generated": false,
+  "authenticated_production_uat": false,
+  "findings": [
+    {
+      "id": "AMEX-QA-01",
+      "priority": "P1",
+      "evidence": [
+        "production_readonly",
+        "browser_readonly_preview",
+        "isolated_owner_postgres"
+      ],
+      "summary": "Period mismatch creates 5 skipped rows that block whole-statement cut without repair path."
+    },
+    {
+      "id": "AMEX-QA-02",
+      "priority": "P1",
+      "evidence": [
+        "browser_render",
+        "deployed_source_review",
+        "production_zero_candidates"
+      ],
+      "summary": "Manual CFDI association requires internal PK without contextual search."
+    },
+    {
+      "id": "AMEX-QA-08",
+      "priority": "P1",
+      "evidence": [
+        "isolated_full_csv_owner_postgres"
+      ],
+      "summary": "145-charge balanced policy created, frozen cut fails COI XLSX export."
+    },
+    {
+      "id": "AMEX-QA-03",
+      "priority": "P2",
+      "evidence": [
+        "browser_readonly",
+        "catalogue_readonly"
+      ],
+      "summary": "Administrative project retains all 1314 concepts instead of its39."
+    },
+    {
+      "id": "AMEX-QA-04",
+      "priority": "P2",
+      "evidence": [
+        "browser_DOM_validation"
+      ],
+      "summary": "Saving classification requires a confirmation of sending to CP."
+    },
+    {
+      "id": "AMEX-QA-05",
+      "priority": "P2",
+      "evidence": [
+        "deployed_source_review",
+        "production_readonly_preview"
+      ],
+      "summary": "Only first blocker displayed and full journal preview not rendered."
+    },
+    {
+      "id": "AMEX-QA-06",
+      "priority": "P2",
+      "evidence": [
+        "deployed_source_review",
+        "isolated_full_csv_observer"
+      ],
+      "summary": "145 recognized expenses remain actionable in CP; frozen owner rejects reassignment."
+    },
+    {
+      "id": "AMEX-QA-07",
+      "priority": "P2",
+      "evidence": [
+        "existing_browser_suite_review"
+      ],
+      "summary": "Existing browser suite does not exercise real owners through final accounting download."
+    }
+  ],
+  "checks": {
+    "initial_isolated_tests": {
+      "passed": 3,
+      "seconds": 11.18
+    },
+    "full_csv_positive_journey": {
+      "failed": 1,
+      "teardown_infrastructure_error": 1,
+      "seconds": 288.71,
+      "balanced_policy_created": true,
+      "export_download_completed": false
+    },
+    "minimal_two_charge_export": {
+      "failed": 1,
+      "seconds": 4.75,
+      "formats_failed": [
+        "xlsx",
+        "csv",
+        "zip"
+      ],
+      "balanced_policy_created": true,
+      "line_identity_multiset_equal": true,
+      "line_order_equal": false
+    },
+    "browser_readonly_journey": {
+      "completed": true,
+      "original_rows": 148,
+      "js_errors": 0,
+      "auth_production_login_tested": false
+    }
+  }
+}

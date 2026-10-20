@@ -1,0 +1,140 @@
+{
+  "changed_statements": 376,
+  "covered": 322,
+  "percent": 85.64,
+  "files": [
+    {
+      "path": "src/devnous/gastos/routes/admin_budget_routes.py",
+      "changed_statements": 51,
+      "covered": 30,
+      "missing": [
+        664,
+        822,
+        826,
+        832,
+        835,
+        864,
+        883,
+        1100,
+        1101,
+        1102,
+        1465,
+        1466,
+        1492,
+        1493,
+        1854,
+        1895,
+        1914,
+        2152,
+        2153,
+        2154,
+        2156
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/routes/admin_budget_ui.py",
+      "changed_statements": 25,
+      "covered": 24,
+      "missing": [
+        437
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/routes/user_routes.py",
+      "changed_statements": 4,
+      "covered": 4,
+      "missing": []
+    },
+    {
+      "path": "src/devnous/gastos/services/cfdi_income_bridge_service.py",
+      "changed_statements": 12,
+      "covered": 11,
+      "missing": [
+        156
+      ]
+    },
+    {
+      "path": "src/devnous/gastos/services/income_billing_alert_service.py",
+      "changed_statements": 4,
+      "covered": 4,
+      "missing": []
+    },
+    {
+      "path": "src/samchat/ar/service.py",
+      "changed_statements": 13,
+      "covered": 11,
+      "missing": [
+        291,
+        301
+      ]
+    },
+    {
+      "path": "src/samchat/budgets/distribution.py",
+      "changed_statements": 176,
+      "covered": 152,
+      "missing": [
+        40,
+        41,
+        56,
+        70,
+        71,
+        96,
+        100,
+        151,
+        187,
+        209,
+        239,
+        242,
+        245,
+        249,
+        263,
+        273,
+        281,
+        325,
+        415,
+        426,
+        475,
+        478,
+        497,
+        509
+      ]
+    },
+    {
+      "path": "src/samchat/budgets/service.py",
+      "changed_statements": 64,
+      "covered": 60,
+      "missing": [
+        6197,
+        7359,
+        7793,
+        7826
+      ]
+    },
+    {
+      "path": "src/samchat/budgets/tournament_upload.py",
+      "changed_statements": 2,
+      "covered": 1,
+      "missing": [
+        197
+      ]
+    },
+    {
+      "path": "src/samchat/client_executive/home.py",
+      "changed_statements": 0,
+      "covered": 0,
+      "missing": []
+    },
+    {
+      "path": "src/samchat/client_executive/home_ui.py",
+      "changed_statements": 13,
+      "covered": 13,
+      "missing": []
+    },
+    {
+      "path": "src/samchat/executive/exporter.py",
+      "changed_statements": 12,
+      "covered": 12,
+      "missing": []
+    }
+  ]
+}

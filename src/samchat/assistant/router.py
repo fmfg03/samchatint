@@ -100,6 +100,7 @@ from .bi_scope import AssistantBIScope, bi_scope_terms, text_matches_bi_scope
 from .capability_negotiation import capability_registry_hash
 from .context import AssistantContext
 from .conversation_service import (
+    finalize_contextual_response,
     run_conversation_turn,
     run_message_turn_with_pending,
 )
@@ -146,6 +147,7 @@ from .closeout_diagnostics import build_finance_closeout_diagnostics
 from .executive_answer_renderer import render_executive_tool_result
 from .finance_read_answer import render_finance_read_answer
 from .finance_read_adapter import run_finance_read_adapter
+from .conversation_context import context_digest, contextual_read_frame, contextual_route, update_context
 from .historical_accounting_precedent import query_historical_accounting_precedents
 from .institutional_artifact_registry import (
     build_institutional_artifact_registry_report,
@@ -210,6 +212,7 @@ from .tournament_application_case import (
 )
 from .tournament_draft_case import run_tournament_draft_workbench
 from .tournament_goal_case import build_tournament_goal_shadow
+from .registration_postgres_adapter import registration_postgres_response
 from .tools import (
     assistant_save_artifact,
     dev_file_read,
@@ -237,7 +240,6 @@ from .tools import (
     tournament_schedule_regenerate_from_rules,
     tournament_team_register_from_roster,
 )
-from .turn_service import build_cached_response as _build_cached_response
 from .turn_service import build_turn_messages as _build_turn_messages
 from .turn_service import prepare_turn_state as _prepare_turn_state
 from .upload_service import extract_text_from_media
@@ -364,8 +366,10 @@ def _assistant_response_cache_key(
     bi_scope: Optional[str],
     bi_segment: Optional[str],
     assistant_mode: Optional[str],
+    context_fingerprint: str,
 ) -> str:
     return (
+        f"ctx={context_fingerprint}|"
         f"emp={str(empleado_id)}|"
         f"msg={_normalize_query_for_cache(raw_message)}|"
         f"t={str((tournament_key or '').strip().lower())}|"
@@ -560,10 +564,12 @@ def _cache_key_for_query(
     empleado_id: Optional[uuid.UUID] = None,
     module_key: Optional[str] = None,
     tournament_key: Optional[str] = None,
+    conversation_id: Optional[uuid.UUID] = None,
+    domain: Optional[str] = None,
 ) -> str:
     weights = _rag_weights()
     return (
-        f"{_normalize_query_for_cache(query)}::"
+        f"{context_digest(conversation_id=conversation_id, history=query, metadata=domain)}::"
         f"e={str(empleado_id or '')}|"
         f"m={str((module_key or '').strip().lower())}|"
         f"t={str((tournament_key or '').strip().lower())}|"
@@ -756,28 +762,20 @@ def _update_conversation_context(
     module_key: Optional[str] = None,
     module_label: Optional[str] = None,
     module_context: Optional[Dict[str, Any]] = None,
+    bi_year: Optional[int] = None,
+    bi_scope: Optional[str] = None,
+    bi_segment: Optional[str] = None,
 ) -> None:
-    metadata = _conversation_metadata_dict(conversation)
-    tournament_clean = str(tournament_key or "").strip().lower()
-    if tournament_clean:
-        conversation.tournament_key = tournament_clean
-    module_key_clean = str(module_key or "").strip().lower()
-    if module_key_clean:
-        metadata["module_key"] = module_key_clean
-    module_label_clean = str(module_label or "").strip()
-    if module_label_clean:
-        metadata["module_label"] = module_label_clean
-    if isinstance(module_context, dict) and module_context:
-        existing = metadata.get("module_context")
-        merged = dict(existing) if isinstance(existing, dict) else {}
-        for key, value in module_context.items():
-            key_clean = str(key or "").strip()
-            if not key_clean:
-                continue
-            merged[key_clean] = value
-        if merged:
-            metadata["module_context"] = merged
-    conversation.metadata_ = metadata or None
+    update_context(
+        conversation,
+        tournament_key=tournament_key,
+        module_key=module_key,
+        module_label=module_label,
+        module_context=module_context,
+        bi_year=bi_year,
+        bi_scope=bi_scope,
+        bi_segment=bi_segment,
+    )
 
 
 async def _find_conversation_by_external_session_id(
@@ -1148,6 +1146,7 @@ async def _build_hybrid_retrieval(
     tournament_key: Optional[str] = None,
     client: Any = None,
     canon_only: bool = False,
+    use_cache: bool = True,
 ) -> Dict[str, Any]:
     _bump_metric("retrieval_requests", 1)
     canon_only = bool(canon_only or is_owner_ai_conceptual_request(query))
@@ -1158,10 +1157,11 @@ async def _build_hybrid_retrieval(
         empleado_id=empleado_id,
         module_key=cache_module_key,
         tournament_key=tournament_key,
+        conversation_id=conversation_id, domain=domain,
     )
     now = time.time()
     with _RETRIEVAL_CACHE_LOCK:
-        cached = _RETRIEVAL_CACHE.get(key)
+        cached = _RETRIEVAL_CACHE.get(key) if use_cache else None
         if cached and float(cached.get("expires_at", 0)) > now:
             _bump_metric("cache_hits", 1)
             return {
@@ -1310,13 +1310,14 @@ async def _build_hybrid_retrieval(
             for r in memory_results
         ],
     }
-    with _RETRIEVAL_CACHE_LOCK:
-        _RETRIEVAL_CACHE[key] = {
-            "expires_at": now + cache_ttl,
-            "context": context,
-            "sources": used_sources,
-            "trace": trace,
-        }
+    if use_cache:
+        with _RETRIEVAL_CACHE_LOCK:
+            _RETRIEVAL_CACHE[key] = {
+                "expires_at": now + cache_ttl,
+                "context": context,
+                "sources": used_sources,
+                "trace": trace,
+            }
     return {
         "context": context,
         "sources": used_sources,
@@ -3207,7 +3208,8 @@ def _tool_defs() -> List[Dict[str, Any]]:
                     "pre-matching AR, cashflow planning, presupuesto snapshot, "
                     "Finance Platform y guidance de exports. No ejecuta writes, "
                     "no usa SQL libre y no trata candidate_match como cobranza "
-                    "probada."
+                    "probada. Para IVA pagado usa finance.vat_paid: devuelve la "
+                    "capacidad y brechas sin estimar un agregado fiscal."
                 ),
                 "parameters": {
                     "type": "object",
@@ -3224,6 +3226,7 @@ def _tool_defs() -> List[Dict[str, Any]]:
                                 "budget.vs_actual",
                                 "finance.platform",
                                 "finance.exports",
+                                "finance.vat_paid",
                             ],
                         },
                         "budget_version_id": {"type": ["string", "null"]},
@@ -4480,6 +4483,8 @@ def _tool_defs() -> List[Dict[str, Any]]:
                     "additionalProperties": False,
                     "properties": {
                         "tournament_key": {"type": "string", "minLength": 1},
+                        "tournament_id": {"type": ["string", "null"]},
+                        "edition_year": {"type": ["integer", "null"]},
                         "question": {"type": ["string", "null"]},
                         "state": {"type": ["string", "null"]},
                         "municipality": {"type": ["string", "null"]},
@@ -4516,6 +4521,8 @@ def _tool_defs() -> List[Dict[str, Any]]:
                     "additionalProperties": False,
                     "properties": {
                         "tournament_key": {"type": "string", "minLength": 1},
+                        "tournament_id": {"type": ["string", "null"]},
+                        "edition_year": {"type": ["integer", "null"]},
                         "state": {"type": "string", "minLength": 1},
                         "date_from": {
                             "type": ["string", "null"],
@@ -9803,6 +9810,18 @@ async def _run_read_tool(
                 status_code=400,
                 detail="Para consultas de torneo especifica tournament_key=beisbol.",
             )
+        postgres = await registration_postgres_response(
+            gastos_session,
+            projection="breakdown",
+            **{
+                **args,
+                "tournament_key": str(
+                    args.get("tournament_key") or tournament_key_default or ""
+                ).strip(),
+            },
+        )
+        if postgres is not None:
+            return postgres
         session_maker = get_tournament_session_maker(tkey)
         async with session_maker() as t_session:
             return await tournament_registration_breakdown(t_session, **args)
@@ -9816,6 +9835,18 @@ async def _run_read_tool(
                 status_code=400,
                 detail="Para consultas de torneo especifica tournament_key=beisbol.",
             )
+        postgres = await registration_postgres_response(
+            gastos_session,
+            projection="operations",
+            **{
+                **args,
+                "tournament_key": str(
+                    args.get("tournament_key") or tournament_key_default or ""
+                ).strip(),
+            },
+        )
+        if postgres is not None:
+            return postgres
         session_maker = get_tournament_session_maker(tkey)
         async with session_maker() as t_session:
             return await tournament_ops_query(t_session, **args)
@@ -10161,13 +10192,26 @@ async def _assistant_turn(
     assistant_mode: Optional[str] = None,
     openai_api_key: Optional[str] = None,
 ) -> MessageResponse:
+    # Snapshot history before persisting this turn: never duplicate the user message.
+    history = await _history_messages(
+        session, conversation_id=conversation.id, limit=20
+    )
+    metadata = _conversation_metadata_dict(conversation)
+    filters = metadata.get("bi_filters") or {}
+    bi_year = bi_year if bi_year is not None else filters.get("bi_year")
+    bi_scope = bi_scope if bi_scope is not None else filters.get("bi_scope")
+    bi_segment = bi_segment if bi_segment is not None else filters.get("bi_segment")
+
     turn_state = _prepare_turn_state(
         raw_message=raw_message,
         conversation=conversation,
         request=request,
         tournament_key=tournament_key,
         assistant_mode=assistant_mode,
-        assistant_classify_request=_assistant_classify_request,
+        assistant_classify_request=lambda _: contextual_route(
+            raw_message, history, _assistant_classify_request,
+            current_domain=_scope_from_module_key(_conversation_module_key(conversation)),
+        ),
         assistant_request_origin=_assistant_request_origin,
         conversation_module_key=_conversation_module_key,
         conversation_module_label=_conversation_module_label,
@@ -10201,21 +10245,9 @@ async def _assistant_turn(
     has_active_tournament_case = isinstance(active_case, dict) and bool(
         active_case.get("case_id")
     )
-    response_cache_enabled = os.getenv(
-        "ASSISTANT_RESPONSE_CACHE_ENABLED", "1"
-    ).strip().lower() not in {
-        "0",
-        "false",
-        "no",
-    } and _assistant_response_cache_allowed_for_message(
-        raw_message,
-        has_active_tournament_case=has_active_tournament_case,
-        active_tournament_case_status=(
-            str(active_case.get("status") or "")
-            if isinstance(active_case, dict)
-            else None
-        ),
-    )
+    # Context identity alone cannot invalidate cached results after permission
+    # revocation or changes in live financial evidence. Revalidate every turn.
+    response_cache_enabled = False
     cache_key = _assistant_response_cache_key(
         empleado_id=current_empleado.id,
         raw_message=raw_message,
@@ -10225,22 +10257,12 @@ async def _assistant_turn(
         bi_scope=bi_scope,
         bi_segment=bi_segment,
         assistant_mode=normalized_mode,
+        context_fingerprint=context_digest(
+            conversation_id=conversation.id,
+            history=[*history, {"role": "user", "content": raw_message}],
+            metadata=metadata,
+        ),
     )
-    if response_cache_enabled:
-        cached = _assistant_response_cache_get(cache_key)
-        if cached:
-            return await _build_cached_response(
-                cache_payload=cached,
-                conversation=conversation,
-                current_empleado=current_empleado,
-                raw_message=raw_message,
-                origin_info=origin_info,
-                session=session,
-                assistant_message_cls=AssistantMessage,
-                assistant_run_cls=AssistantRun,
-                message_response_cls=MessageResponse,
-            )
-
     tool_trace: List[Dict[str, Any]] = []
     if origin_info:
         tool_trace.append({"assistant_origin": origin_info})
@@ -10369,6 +10391,7 @@ async def _assistant_turn(
         }
         if rag_enabled:
             retrieval = await _build_hybrid_retrieval(
+                use_cache=False,
                 session=session,
                 query=raw_message,
                 empleado_id=current_empleado.id,
@@ -10406,7 +10429,12 @@ async def _assistant_turn(
         retrieval_context=retrieval_context,
         assistant_system_prompt=_assistant_system_prompt,
         history_messages=_history_messages,
+        history_snapshot=history,
+        filter_context=filters,
     )
+
+    async def turn_history(*_args: Any, **_kwargs: Any) -> List[Dict[str, Any]]:
+        return history
 
     provider_errors: List[str] = []
     tool_policy_evaluator = None
@@ -10426,6 +10454,14 @@ async def _assistant_turn(
         kwargs["current_employee_id"] = str(getattr(current_empleado, "id", "") or "")
         kwargs["current_conversation_id"] = str(conversation.id)
         return await _run_read_tool(tool_name, args, **kwargs)
+
+    read_frame = contextual_read_frame(raw_message, history)
+
+    def finalize_response(answer, trace, *, pending=False):
+        return finalize_contextual_response(
+            answer, trace, work_frame=read_frame,
+            maybe_append_export_prompt=_maybe_append_export_prompt, pending=pending,
+        )
 
     for provider in _assistant_provider_order(
         normalized_mode,
@@ -10464,7 +10500,7 @@ async def _assistant_turn(
                 module_context_default=module_context_default,
                 retrieval_context=retrieval_context,
                 assistant_system_prompt=_assistant_system_prompt,
-                history_messages=_history_messages,
+                history_messages=turn_history,
                 get_model=_assistant_model,
                 get_openai_client=_get_openai_client,
                 get_anthropic_client=_get_anthropic_client,
@@ -10484,7 +10520,8 @@ async def _assistant_turn(
                 assistant_message_cls=AssistantMessage,
                 message_response_cls=MessageResponse,
                 tool_policy_evaluator=tool_policy_evaluator,
-                deterministic_tool_answer=_assistant_deterministic_tool_answer,
+                deterministic_tool_answer=None,
+                finalize_response=finalize_response,
             )
 
         except HTTPException as exc:
@@ -14194,6 +14231,9 @@ async def create_message(
             module_key=payload.module_key,
             module_label=payload.module_label,
             module_context=payload.module_context,
+            bi_year=payload.bi_year,
+            bi_scope=payload.bi_scope,
+            bi_segment=payload.bi_segment,
         )
         await session.commit()
 
@@ -14223,6 +14263,7 @@ async def create_message(
             }
 
         return await run_message_turn_with_pending(
+            contextual=True,
             raw_message=payload.message,
             conversation=conversation,
             current_empleado=current_empleado,
@@ -14307,6 +14348,9 @@ async def create_media_message(
             module_key=module_key,
             module_label=module_label,
             module_context=module_context_payload,
+            bi_year=bi_year,
+            bi_scope=bi_scope,
+            bi_segment=bi_segment,
         )
         await session.commit()
         raw_file = await file.read()
@@ -14337,6 +14381,7 @@ async def create_media_message(
             extract_roster_from_records=_extract_roster_from_records,
         )
         return await run_conversation_turn(
+            contextual=True,
             raw_message=extracted_message,
             conversation=conversation,
             current_empleado=current_empleado,

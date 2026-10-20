@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, date, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Optional, List, Union, Dict, Any, Tuple, Iterable
+from typing import Optional, List, Union, Dict, Any, Tuple, Iterable, cast
 from uuid import UUID as UUIDType, uuid4
 from urllib.parse import quote, unquote, parse_qs, urlparse, urlencode
 from dotenv import dotenv_values
@@ -35,6 +35,7 @@ from sqlalchemy.orm import aliased, selectinload, undefer
 
 from samchat.budgets.service import (
     attach_cuenta_contable_to_budget_lines,
+    budget_document_effect_snapshot,
     ensure_budget_schema,
     list_budget_lines,
     resolve_budget_tournament_context,
@@ -43,6 +44,10 @@ from samchat.budgets.service import (
 
 from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeePaymentProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto, BeneficiaryOnboardingRequest, AmexCardAccount, SolicitudPrestamo, PrestamoAbono, CFDIDuplicateReleaseOperation, CFDIDuplicateReleaseOperationItem
 from ..status_semantics import document_status_visual
+from ..workflow_guidance import (
+    WorkflowGuidance,
+    build_document_workflow_guidance,
+)
 from ..expense_metadata import (
     COMMON_CURRENCIES,
     configured_categories,
@@ -58,11 +63,16 @@ from ..services.coi_poliza_exporter import (
     generate_coi_poliza_csv,
     generate_coi_poliza_xlsx,
 )
+from ..services.informe_poliza_workpaper import (
+    InformeWorkpaperExpense,
+    generate_informe_poliza_workpaper,
+)
 from ..services.diot_exporter import (
     build_diot_export,
     create_diot_excel,
     generate_diot_txt,
 )
+from ..services.monthly_diot_service import build_monthly_diot_scope
 from ..services.cfdi_expense_link_service import (
     ExpenseCFDIDuplicateError,
     is_cfdi_uuid_prefix_candidate,
@@ -99,6 +109,7 @@ from ..services.amex_expense_service import (
     is_company_amex_account,
     is_company_amex_expense,
     set_company_amex_status,
+    sum_active_solicitud_amounts,
     sum_paid_solicitud_amounts,
 )
 from ..services.amex_card_account_service import (
@@ -131,7 +142,30 @@ from ..services.amex_cfdi_matching_service import (
     validate_amex_cfdi_suggestion,
     validate_pase_monthly_cfdi_suggestion,
 )
-from ..services.amex_statement_matcher import find_amex_cfdi_match
+from ..services.amex_accounting_identity_service import (
+    direct_amex_expense_condition,
+    effective_direct_sources_available,
+    is_direct_amex_expense,
+)
+from ..services.amex_recognition_service import (
+    activation_reason,
+    assign_missing_amex_card,
+    bind_amex_consumption,
+    bind_amex_report_bank_consumptions,
+    validate_amex_card_identity,
+    validate_amex_card_edit_transition,
+    validate_amex_pending_edit_transition,
+)
+from ..services.amex_expense_service import company_amex_sql_condition
+from ..services.expense_coi_export_service import informe_expense_link_condition
+from ..services.amex_cut_export_service import cut_expense_cfdis
+from ..models import (
+    AmexAccountingCut,
+    AmexRecognitionActivation,
+    AmexRecognitionConsumption,
+    AmexRecognitionRepresentation,
+    AmexReportBankAssociation,
+)
 from ..services.authorization_profile_service import (
     copy_authorization_profile,
     list_authorization_profiles,
@@ -143,6 +177,8 @@ from ..services.access_control_service import (
     ACCESS_TOOLS,
     ALL_ROLES,
     NON_CONFIGURABLE_GATEWAY_TOOL_KEYS,
+    AccessControlLookupError,
+    can_defer_path_authorization_to_route_guard,
     filter_cards_by_tools,
     is_catalog_admin_user,
     is_superadmin_role,
@@ -155,13 +191,22 @@ from ..services.budget_concept_account_service import (
     apply_budget_concept_cuenta_mapping,
 )
 from ..services.expense_accounting_service import build_expense_accounting_preview
+from ..services.expense_accounting_cleanup_service import cleanup_issues_match_filter
+from ..services.payment_run_exporter import _safe_cell_text as _safe_spreadsheet_cell_text
 from ..services.employee_debtor_accounting_service import (
     build_cuenta_debtor_auxiliary,
+    debtor_account_block_label_for_employee,
     ensure_debtor_payment_posting_for_document,
+    resolve_cuenta_debtor_account,
+    resolve_cuenta_debtor_empleado,
 )
 from ..services.expense_coi_export_service import (
     assess_expense_coi_cleanup_ready,
     build_expense_cfdi_for_export,
+    coi_document_loader_options,
+    coi_document_metadata,
+    group_expense_cfdis_for_document,
+    informe_coi_period_condition,
     load_expense_for_coi_export,
 )
 from ..services.documento_service import (
@@ -180,6 +225,7 @@ from ..services.documento_service import (
     update_solicitud_terceros_document,
     generate_documento_reference_number as service_generate_documento_reference_number,
     validate_solicitud_terceros_attachment,
+    validate_shared_cfdi_payment_amount,
     fetch_documento_aprobador_display_batch,
 )
 from ..services.documento_workflow_service import (
@@ -189,6 +235,7 @@ from ..services.documento_workflow_service import (
     promote_solicitudes_ready_for_payment,
     reserve_documento_cfdis_or_raise,
     transition_documento_workflow,
+    validate_informe_surplus_before_submission,
 )
 from ..services.reimbursement_payment_run_service import (
     ensure_approved_informe_reimbursement_for_payment_run,
@@ -205,7 +252,13 @@ from ..services.cfdi_income_bridge_service import (
     list_psp_cfdi_income_candidates,
 )
 from ..services.documento_telegram import ensure_finance_pending_payment_notifications
-from ..services.project_authorization_service import actor_is_route_approver
+from ..services.project_authorization_service import (
+    actor_is_route_approver,
+    actor_route_approver_document_ids,
+    document_route_approver_sql,
+    has_operations_reference,
+    prepare_document_authorization_route,
+)
 from ..services.beneficiary_onboarding_service import (
     BENEFICIARY_ATTACHMENT_LABELS,
     BENEFICIARY_TARGET_TYPE_LABELS,
@@ -239,12 +292,21 @@ from ..services.documento_semantics import (
     is_employee_reimbursement,
     reimbursement_concept_from_cuenta,
 )
+from ..services.partial_advance_service import (
+    PartialAdvanceError,
+    finalize_partial_advance,
+    submit_partial_advance_lot,
+)
 from ..services.cuenta_settlement_service import (
+    PREAPPROVAL_INFORME_STATES,
     CuentaSettlementPermissionError,
     CuentaSettlementValidationError,
+    advance_return_is_stale,
     cancel_cuenta_settlement,
     compute_cuenta_saldo_adjustments,
     register_cuenta_settlement,
+    sum_active_advance_returns,
+    validate_settlement_eligibility,
 )
 from ..services.loan_request_service import (
     PRESTAMO_ABONO_STATUS_ENVIADO,
@@ -399,8 +461,23 @@ from ..utils.receipt_bytes import (
     resolve_media_type,
 )
 from .dependencies import get_current_empleado, get_db_session, has_permission, require_admin_finanzas
+from .block_messages import (
+    ExpenseBlockRoute,
+    duplicate_invoice_message,
+    expense_lock_reason,
+)
+from .admin_amex_accounting_routes import router as amex_accounting_router
+from .admin_amex_statement_routes import router as amex_statement_router
+from ..services.amex_attention_policy import load_amex_attention_context
+from ..services.amex_statement_import_service import (
+    StatementValidationError,
+    import_amex_csv_rows,
+)
 from ..services.payment_run_service import (
     can_access_payment_run,
+    PaymentRunPermissionError,
+    require_payment_run_access,
+    require_payment_run_payment_confirmation,
     can_confirm_payment_run_payment,
     can_manage_payment_run,
 )
@@ -508,7 +585,11 @@ async def _active_cfdi_project_assignment_ids(
     return ids
 
 
-router = APIRouter()
+router = APIRouter(route_class=ExpenseBlockRoute)
+
+
+router.include_router(amex_accounting_router)
+router.include_router(amex_statement_router)
 
 # This will be set by the app that includes these routes
 _db_session_maker = None
@@ -602,6 +683,47 @@ def _safe_redirect_base(return_to: Optional[str], fallback: str = "/admin/contab
     if not redirect_base.startswith("/"):
         return fallback
     return redirect_base
+
+
+def _amex_statement_return_to(value: Any) -> Optional[str]:
+    """Accept local workflow steps and one explicit report selection only."""
+    if not isinstance(value, str) or any(ord(c) < 32 for c in value):
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme or parsed.netloc or parsed.params or parsed.fragment:
+        return None
+    match = re.fullmatch(
+        r"/admin/contabilidad/amex/estados/([0-9a-fA-F-]{36})/(pendientes|polizas)",
+        parsed.path,
+    )
+    if match is None:
+        return None
+    try:
+        statement_id = UUIDType(match.group(1))
+    except ValueError:
+        return None
+    target = f"/admin/contabilidad/amex/estados/{statement_id}/{match.group(2)}"
+    if parsed.query:
+        try:
+            query = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
+            if match.group(2) != "polizas" or set(query) != {"informe_id"}:
+                return None
+            if len(query["informe_id"]) != 1:
+                return None
+            report_id = UUIDType(query["informe_id"][0])
+        except (ValueError, TypeError, KeyError):
+            return None
+        target += "?" + urlencode({"informe_id": str(report_id)})
+    return target
+
+
+def _amex_reconciliation_return_context(url: str, value: Any) -> str:
+    """Carry only a validated statement destination before the URL fragment."""
+    target = _amex_statement_return_to(value)
+    if target is None:
+        return url
+    base, separator, fragment = url.partition("#")
+    return _append_query_params(base, {"return_to": target}) + separator + fragment
 
 
 async def _resolve_latest_bank_source(session: AsyncSession) -> tuple[AccountingImportRun, Path]:
@@ -1405,7 +1527,12 @@ async def _derive_informe_monto_total(
         ExpenseReport.informe_documento_id == documento.id,
     ]
     if documento.cuenta_gastos_id:
-        expense_conditions.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
+        expense_conditions.append(
+            and_(
+                ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id,
+                ExpenseReport.informe_documento_id.is_(None),
+            )
+        )
 
     expenses_result = await session.execute(
         select(ExpenseReport).where(
@@ -2212,6 +2339,7 @@ def _contabilidad_subnav(active: str) -> str:
         ("/admin/contabilidad/estado", "Estado mes", "estado"),
         ("/admin/contabilidad/historica", "Histórica", "historica"),
         ("/admin/contabilidad/coi", "COI", "coi"),
+        ("/admin/contabilidad/diot", "DIOT", "diot"),
         ("/admin/contabilidad/ingresos", "Ingresos", "ingresos"),
         ("/admin/contabilidad/cuentas-por-cobrar", "CxC", "cxc"),
         ("/admin/contabilidad/cuentas-por-pagar", "CxP", "cxp"),
@@ -4370,29 +4498,33 @@ async def _load_coi_lote_informe_documentos(
     start_dt: datetime,
     end_dt: datetime,
 ) -> List[Documento]:
-    """Approved INFORME documents with an active expense on the accounting period."""
-    expense_in_period = exists(
-        select(ExpenseReport.id).where(
-            ExpenseReport.estado_gasto != "cancelado",
-            ExpenseReport.fecha >= start_dt,
-            ExpenseReport.fecha < end_dt,
-            or_(
-                ExpenseReport.documento_id == Documento.id,
-                ExpenseReport.informe_documento_id == Documento.id,
-                and_(
-                    Documento.cuenta_gastos_id.isnot(None),
-                    ExpenseReport.cuenta_gastos_id == Documento.cuenta_gastos_id,
-                ),
-            ),
-        )
-    )
+    """Approved reports in their single policy period, including blocked gaps."""
     return (
         await session.execute(
             select(Documento)
+            .options(
+                selectinload(Documento.beneficiario_empleado),
+                selectinload(Documento.beneficiario_proveedor_cliente),
+                selectinload(Documento.proveedor_cliente),
+                selectinload(Documento.empleado),
+                selectinload(Documento.torneo),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.beneficiario_empleado
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.beneficiario_proveedor_cliente
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.empleado
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.torneo
+                ),
+            )
             .where(
                 Documento.tipo == "INFORME",
                 Documento.estado == "aprobado",
-                expense_in_period,
+                informe_coi_period_condition(start_dt, end_dt),
             )
             .order_by(
                 Documento.numero_referencia.asc(),
@@ -4437,6 +4569,25 @@ async def _load_coi_lote_terceros_documentos(
     return (
         await session.execute(
             select(Documento)
+            .options(
+                selectinload(Documento.beneficiario_empleado),
+                selectinload(Documento.beneficiario_proveedor_cliente),
+                selectinload(Documento.proveedor_cliente),
+                selectinload(Documento.empleado),
+                selectinload(Documento.torneo),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.beneficiario_empleado
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.beneficiario_proveedor_cliente
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.empleado
+                ),
+                selectinload(Documento.cuenta_gastos).selectinload(
+                    CuentaDeGastos.torneo
+                ),
+            )
             .where(
                 Documento.tipo == "SOLICITUD",
                 Documento.proveedor_cliente_id.isnot(None),
@@ -4456,10 +4607,16 @@ async def _load_coi_lote_terceros_documentos(
 async def _load_documento_active_coi_expenses(
     session: AsyncSession,
     documento: Documento,
-    start_dt: datetime,
-    end_dt: datetime,
+    start_dt: Optional[datetime] = None,
+    end_dt: Optional[datetime] = None,
 ) -> List[ExpenseReport]:
-    """Load active expenses for the document in the selected accounting month."""
+    """Load active document expenses, optionally inside one accounting month."""
+    period_conditions = []
+    if start_dt is not None and end_dt is not None:
+        period_conditions = [
+            ExpenseReport.fecha >= start_dt,
+            ExpenseReport.fecha < end_dt,
+        ]
     if documento.tipo == "INFORME":
         expense_conditions = [
             ExpenseReport.documento_id == documento.id,
@@ -4467,7 +4624,10 @@ async def _load_documento_active_coi_expenses(
         ]
         if documento.cuenta_gastos_id:
             expense_conditions.append(
-                ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id
+                and_(
+                    ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id,
+                    ExpenseReport.informe_documento_id.is_(None),
+                )
             )
         expenses_result = await session.execute(
             select(ExpenseReport)
@@ -4479,8 +4639,7 @@ async def _load_documento_active_coi_expenses(
                 and_(
                     or_(*expense_conditions),
                     ExpenseReport.estado_gasto != "cancelado",
-                    ExpenseReport.fecha >= start_dt,
-                    ExpenseReport.fecha < end_dt,
+                    *period_conditions,
                 )
             )
             .order_by(ExpenseReport.fecha.asc())
@@ -4496,8 +4655,7 @@ async def _load_documento_active_coi_expenses(
                 and_(
                     ExpenseReport.documento_id == documento.id,
                     ExpenseReport.estado_gasto != "cancelado",
-                    ExpenseReport.fecha >= start_dt,
-                    ExpenseReport.fecha < end_dt,
+                    *period_conditions,
                 )
             )
             .order_by(ExpenseReport.fecha.asc())
@@ -4512,8 +4670,6 @@ def _coi_lote_documento_period_label(
     if tipo_lote == "INFORME":
         if documento.aprobado_en:
             return documento.aprobado_en.date().isoformat()
-        if documento.creado_en:
-            return documento.creado_en.date().isoformat()
         return "-"
     if documento.pagado_en:
         return documento.pagado_en.date().isoformat()
@@ -4530,24 +4686,94 @@ def _coi_exportable_matches_search(
     expenses: List[ExpenseReport],
     search_q: str,
 ) -> bool:
-    token = (search_q or "").strip().lower()
+    token = _normalize_filter_value(search_q)
     if not token:
         return True
     haystack = [
         documento.numero_referencia or "",
         documento.estado or "",
         str(documento.id),
+        effective_document_beneficiary_name(documento, fallback=""),
     ]
     for expense in expenses:
+        cfdi = getattr(expense, "cfdi_report", None)
+        employee = getattr(expense, "empleado", None)
         haystack.extend(
             [
                 expense.numero_referencia or "",
                 expense.concepto or "",
                 expense.proyecto or "",
                 str(expense.id),
+                getattr(expense, "cfdi_uuid_manual", None) or "",
+                getattr(expense, "numero_factura", None) or "",
+                getattr(employee, "nombre", None) or "",
+                getattr(cfdi, "cfdi_uuid", None) or "",
+                getattr(cfdi, "emisor_nombre", None) or "",
+                getattr(cfdi, "emisor_rfc", None) or "",
             ]
         )
-    return any(token in (value or "").lower() for value in haystack)
+    return any(token in _normalize_filter_value(value) for value in haystack)
+
+
+def _normalize_coi_document_type(value: Any) -> str:
+    normalized = str(value or "all").strip().lower()
+    return normalized if normalized in {"all", "informe", "solicitud"} else "all"
+
+
+def _normalize_coi_preparation(value: Any) -> str:
+    normalized = str(value or "all").strip().lower()
+    return normalized if normalized in {"all", "ready", "blocked"} else "all"
+
+
+def _coi_cleanup_actionable_issues(issues: Iterable[Any]) -> List[str]:
+    issue_types = ("main_account", "counterpart", "cfdi", "fiscal")
+    return [
+        str(issue)
+        for issue in issues
+        if any(
+            cleanup_issues_match_filter([issue], issue_type)
+            for issue_type in issue_types
+        )
+    ]
+
+
+def _filter_coi_exportable_lote_rows(
+    rows: List[dict[str, Any]],
+    *,
+    document_type: str = "all",
+    preparation: str = "all",
+) -> List[dict[str, Any]]:
+    selected_document_type = _normalize_coi_document_type(document_type)
+    selected_preparation = _normalize_coi_preparation(preparation)
+    filtered: List[dict[str, Any]] = []
+    for row in rows:
+        row_document_type = (
+            "informe" if row.get("tipo_lote") == "INFORME" else "solicitud"
+        )
+        if (
+            selected_document_type != "all"
+            and row_document_type != selected_document_type
+        ):
+            continue
+        can_export = bool(row.get("can_export"))
+        if selected_preparation == "ready" and not can_export:
+            continue
+        if selected_preparation == "blocked" and can_export:
+            continue
+        filtered.append(row)
+    return filtered
+
+
+async def _load_initial_amex_cut(
+    session: AsyncSession, informe_id: UUIDType
+) -> Optional[AmexAccountingCut]:
+    result = await session.execute(
+        select(AmexAccountingCut).where(
+            AmexAccountingCut.informe_id == informe_id,
+            AmexAccountingCut.kind == "initial",
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 async def _build_coi_exportable_lote_rows(
@@ -4558,8 +4784,10 @@ async def _build_coi_exportable_lote_rows(
     start_date: date,
     end_date: date,
     search_q: str = "",
+    document_type: str = "all",
+    preparation: str = "all",
 ) -> List[dict[str, Any]]:
-    """Per-expense rows for COI admin view (limpieza contable Listo COI only)."""
+    """Document policy rows for COI, with INFORME eligibility evaluated atomically."""
     documento_batches = (
         ("INFORME", await _load_coi_lote_informe_documentos(session, start_dt, end_dt)),
         (
@@ -4576,40 +4804,124 @@ async def _build_coi_exportable_lote_rows(
     rows: List[dict[str, Any]] = []
     for tipo_lote, documentos in documento_batches:
         for documento in documentos:
-            expenses = await _load_documento_active_coi_expenses(
+            period_expenses = await _load_documento_active_coi_expenses(
                 session, documento, start_dt, end_dt
             )
-            ready_expenses: List[ExpenseReport] = []
-            for expense in expenses:
-                ready, _ = await assess_expense_coi_cleanup_ready(session, expense)
-                if ready:
-                    ready_expenses.append(expense)
-            if not ready_expenses:
+            expenses = period_expenses
+            block_reasons: List[str] = []
+            if tipo_lote == "INFORME":
+                expenses = await _load_documento_active_coi_expenses(
+                    session, documento
+                )
+            if not expenses:
                 continue
+            if tipo_lote != "INFORME":
+                if not _coi_exportable_matches_search(
+                    documento=documento, expenses=expenses, search_q=search_q
+                ):
+                    continue
+                for expense in expenses:
+                    ready, issues = await assess_expense_coi_cleanup_ready(
+                        session, expense
+                    )
+                    cleanup_issues = _coi_cleanup_actionable_issues(issues or [])
+                    reference = expense.numero_referencia or str(expense.id)[:8]
+                    rows.append(
+                        {
+                            "tipo_lote": tipo_lote,
+                            "documento": documento,
+                            "expenses": [expense],
+                            "period_label": _coi_lote_documento_period_label(
+                                documento, tipo_lote
+                            ),
+                            "can_export": ready,
+                            "block_reason": (
+                                ""
+                                if ready
+                                else (
+                                    f"{reference}: "
+                                    f"{'; '.join(issues) or 'preparación COI incompleta'}"
+                                )
+                            ),
+                            "cleanup_blockers": (
+                                [
+                                    {
+                                        "expense_id": expense.id,
+                                        "expense_reference": reference,
+                                        "issues": cleanup_issues,
+                                    }
+                                ]
+                                if cleanup_issues
+                                else []
+                            ),
+                        }
+                    )
+                continue
+            period_label = _coi_lote_documento_period_label(documento, tipo_lote)
+            cleanup_blockers: List[dict[str, Any]] = []
+            if any(is_company_amex_expense(expense) for expense in expenses):
+                cut = await _load_initial_amex_cut(session, documento.id)
+                if cut is None:
+                    block_reasons.append("Completa la revisión AMEX y el corte contable del informe.")
+                else:
+                    try:
+                        cut_expense_cfdis(cut)
+                        period_label = cut.accounting_date.isoformat()
+                    except ValueError as exc:
+                        block_reasons.append(str(exc))
+            else:
+                if not getattr(documento, "aprobado_en", None):
+                    block_reasons.append(
+                        "Falta fecha de aprobación del Informe para definir su periodo COI."
+                    )
+                for expense in expenses:
+                    ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
+                    if not ready:
+                        reference = expense.numero_referencia or str(expense.id)[:8]
+                        issue_detail = (
+                            "; ".join(issues) or "preparación COI incompleta"
+                        )
+                        cleanup_issues = _coi_cleanup_actionable_issues(issues or [])
+                        if cleanup_issues:
+                            cleanup_blockers.append(
+                                {
+                                    "expense_id": expense.id,
+                                    "expense_reference": reference,
+                                    "issues": cleanup_issues,
+                                }
+                            )
+                        block_reasons.append(
+                            f"{reference}: {issue_detail}"
+                        )
             if not _coi_exportable_matches_search(
                 documento=documento,
-                expenses=ready_expenses,
+                expenses=expenses,
                 search_q=search_q,
             ):
                 continue
-            period_label = _coi_lote_documento_period_label(documento, tipo_lote)
-            for expense in ready_expenses:
-                rows.append(
-                    {
-                        "tipo_lote": tipo_lote,
-                        "documento": documento,
-                        "expense": expense,
-                        "period_label": period_label,
-                        "can_export": True,
-                        "block_reason": "",
-                    }
-                )
+            rows.append(
+                {
+                    "tipo_lote": tipo_lote,
+                    "documento": documento,
+                    "expenses": expenses,
+                    "period_label": period_label,
+                    "can_export": not block_reasons,
+                    "block_reason": "; ".join(block_reasons),
+                    "cleanup_blockers": cleanup_blockers,
+                }
+            )
+    rows = _filter_coi_exportable_lote_rows(
+        rows,
+        document_type=document_type,
+        preparation=preparation,
+    )
     actor_ids = {
         actor_id
         for row in rows
+        for expense in row.get("expenses") or []
         for actor_id in (
-            getattr(row["expense"], "coi_status_updated_by_id", None),
-            getattr(row["expense"], "coi_exported_by_id", None),
+            getattr(expense, "coi_status_updated_by_id", None),
+            getattr(expense, "coi_exported_by_id", None),
         )
         if actor_id is not None
     }
@@ -4623,27 +4935,31 @@ async def _build_coi_exportable_lote_rows(
             for actor_id, actor_name in actor_rows.all()
         }
     for row in rows:
-        expense = row["expense"]
-        status_updated_at = getattr(expense, "coi_status_updated_at", None)
-        exported_at = getattr(expense, "coi_exported_at", None)
-        row["audit"] = {
-            "status_changed_at": (
-                status_updated_at.isoformat(sep=" ", timespec="seconds")
-                if status_updated_at
-                else "No registrado"
-            ),
-            "status_changed_by": actors_by_id.get(
-                getattr(expense, "coi_status_updated_by_id", None), "No registrado"
-            ),
-            "exported_at": (
-                exported_at.isoformat(sep=" ", timespec="seconds")
-                if exported_at
-                else "No registrado"
-            ),
-            "exported_by": actors_by_id.get(
-                getattr(expense, "coi_exported_by_id", None), "No registrado"
-            ),
-        }
+        audit_by_expense: dict[Any, dict[str, str]] = {}
+        for expense in row.get("expenses") or []:
+            status_updated_at = getattr(expense, "coi_status_updated_at", None)
+            exported_at = getattr(expense, "coi_exported_at", None)
+            audit_by_expense[expense.id] = {
+                "status_changed_at": (
+                    status_updated_at.isoformat(sep=" ", timespec="seconds")
+                    if status_updated_at
+                    else "No registrado"
+                ),
+                "status_changed_by": actors_by_id.get(
+                    getattr(expense, "coi_status_updated_by_id", None),
+                    "No registrado",
+                ),
+                "exported_at": (
+                    exported_at.isoformat(sep=" ", timespec="seconds")
+                    if exported_at
+                    else "No registrado"
+                ),
+                "exported_by": actors_by_id.get(
+                    getattr(expense, "coi_exported_by_id", None),
+                    "No registrado",
+                ),
+            }
+        row["audit_by_expense"] = audit_by_expense
     return rows
 
 
@@ -4687,68 +5003,206 @@ def _coi_estado_options(selected: Any) -> str:
     )
 
 
-def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
-    if not rows:
-        return (
-            '<tr><td colspan="11" class="muted">'
-            "No hay gastos con preparación COI guardada (Listo COI) para este periodo."
-            "</td></tr>"
+def _render_coi_expense_status_form(
+    expense: ExpenseReport,
+    audit: dict[str, str],
+    *,
+    return_to: str = "/admin/contabilidad/coi",
+) -> str:
+    reference = escape(expense.numero_referencia or str(expense.id)[:8])
+    return (
+        f'<div id="coi-expense-{expense.id}" style="margin-bottom:8px;">'
+        f'{_coi_estado_badge(getattr(expense, "coi_estado", None))} {reference}'
+        f'<form method="POST" action="/admin/contabilidad/coi/gastos/{expense.id}/estado" '
+        f'style="display:flex;gap:6px;align-items:center;min-width:170px;margin-top:4px;">'
+        f'<input type="hidden" name="next" value="{escape(return_to, quote=True)}">'
+        f'<select name="coi_estado" style="min-width:130px;padding:6px 8px;">'
+        f'{_coi_estado_options(getattr(expense, "coi_estado", None))}</select>'
+        f'<button type="submit" class="button secondary" '
+        f'style="padding:6px 8px;font-size:12px;">Guardar</button>'
+        f'</form><div class="muted" style="margin-top:4px;">'
+        f'Clasificación: {escape(audit.get("status_changed_at") or "No registrado")} · '
+        f'{escape(audit.get("status_changed_by") or "No registrado")}<br>'
+        f'Exportación: {escape(audit.get("exported_at") or "No registrado")} · '
+        f'{escape(audit.get("exported_by") or "No registrado")}</div></div>'
+    )
+
+
+async def _coi_readable_workpaper_account_ids(
+    session: AsyncSession,
+    rows: List[dict[str, Any]],
+    empleado: Empleado,
+) -> set[str]:
+    """Limit review links to accounts this Finance viewer can already read."""
+    candidate_ids = {
+        row["documento"].cuenta_gastos_id
+        for row in rows
+        if row.get("tipo_lote") == "INFORME"
+        and not row.get("can_export")
+        and row["documento"].cuenta_gastos_id
+        and any(is_company_amex_expense(expense) for expense in row.get("expenses") or [])
+    }
+    if not candidate_ids:
+        return set()
+    if _can_view_all_cuentas_de_gastos(empleado):
+        return {str(account_id) for account_id in candidate_ids}
+    owned_accounts = (
+        await session.execute(
+            select(CuentaDeGastos.id).where(
+                CuentaDeGastos.id.in_(candidate_ids),
+                CuentaDeGastos.empleado_id == empleado.id,
+            )
         )
+    ).scalars().all()
+    return {str(account_id) for account_id in owned_accounts}
+
+
+def _render_coi_exportable_lote_rows_html(
+    rows: List[dict[str, Any]],
+    *,
+    return_to: str = "/admin/contabilidad/coi",
+    readable_workpaper_account_ids: Optional[set[str]] = None,
+    accounting_period: str = "",
+    empty_message: Optional[str] = None,
+) -> str:
+    if not rows:
+        message = escape(
+            empty_message
+            or (
+                "No hay gastos con preparación COI guardada (Listo COI) "
+                "para este periodo."
+            )
+        )
+        return f'<tr><td colspan="11" class="muted">{message}</td></tr>'
 
     rendered: List[str] = []
     for row in rows:
         documento = row["documento"]
-        expense = row["expense"]
+        expenses = list(row.get("expenses") or [])
         documento_id = str(documento.id)
-        expense_id = str(expense.id)
         doc_ref = escape(documento.numero_referencia or "(Sin referencia)")
+        beneficiary_name = escape(effective_document_beneficiary_name(documento))
         tipo_lote = row["tipo_lote"]
         tipo_label = "Informe" if tipo_lote == "INFORME" else "Solicitud terceros"
-        gasto_ref_raw = expense.numero_referencia or str(expense.id)[:8]
-        gasto_ref = escape(gasto_ref_raw)
-        concepto = escape((expense.concepto or "-")[:120])
-        monto = format_currency(expense.gasto_cantidad or 0)
-        fecha_gasto = (
-            expense.fecha.date().isoformat()
-            if getattr(expense, "fecha", None)
-            else "-"
+        gasto_links = "<br>".join(
+            f'<a href="/gastos/{expense.id}">'
+            f'{escape(expense.numero_referencia or str(expense.id)[:8])}</a>'
+            for expense in expenses
         )
-        coi_estado = getattr(expense, "coi_estado", None) or "pendiente"
-        audit = row.get("audit") or {}
-        status_changed_at = audit.get("status_changed_at") or "No registrado"
-        status_changed_by = audit.get("status_changed_by") or "No registrado"
-        exported_at = audit.get("exported_at") or "No registrado"
-        exported_by = audit.get("exported_by") or "No registrado"
-        gasto_link = f'<a href="/gastos/{expense_id}">{gasto_ref}</a>'
+        concepts = "<br>".join(
+            escape((expense.concepto or "-")[:120]) for expense in expenses
+        )
+        monto = format_currency(
+            sum(float(expense.gasto_cantidad or 0) for expense in expenses)
+        )
+        expense_dates = [expense.fecha.date() for expense in expenses if expense.fecha]
+        fecha_gasto = "-"
+        if expense_dates:
+            fecha_gasto = min(expense_dates).isoformat()
+            if max(expense_dates) != min(expense_dates):
+                fecha_gasto += f" a {max(expense_dates).isoformat()}"
+        is_report = tipo_lote == "INFORME"
+        is_amex_report = is_report and any(
+            is_company_amex_expense(expense) for expense in expenses
+        )
+        selection_name = "selected_documento_id" if is_report else "selected_gasto_id"
+        selection_id = documento_id if is_report else str(expenses[0].id)
+        export_path = (
+            f"/documentos/{documento_id}" if is_report else f"/gastos/{selection_id}"
+        )
         coi_action = (
-            f'<a href="/gastos/{expense_id}/exportar-coi.xlsx" '
+            f'<a href="{export_path}/exportar-coi.xlsx" '
             f'class="button" style="padding:8px 12px;font-size:12px;">'
-            "Generar descarga COI</a>"
+            "Generar póliza COI</a>"
         )
-        status_form = (
-            f'<form method="POST" action="/admin/contabilidad/coi/gastos/{expense_id}/estado" '
-            f'style="display:flex;gap:6px;align-items:center;min-width:170px;">'
-            f'<input type="hidden" name="next" value="/admin/contabilidad/coi">'
-            f'<select name="coi_estado" style="min-width:130px;padding:6px 8px;">'
-            f'{_coi_estado_options(coi_estado)}</select>'
-            f'<button type="submit" class="button secondary" style="padding:6px 8px;font-size:12px;">Guardar</button>'
-            f'</form>'
+        audit_by_expense = row.get("audit_by_expense") or {}
+        status_forms = "".join(
+            _render_coi_expense_status_form(
+                expense,
+                audit_by_expense.get(expense.id) or {},
+                return_to=return_to,
+            )
+            for expense in expenses
+        )
+        block_reason = escape(str(row.get("block_reason") or ""))
+        selection = (
+            f'<input class="coi-selection-checkbox" type="checkbox" '
+            f'form="coi-export-form" name="{selection_name}" '
+            f'value="{selection_id}">'
+            if row.get("can_export")
+            else '<span title="Póliza bloqueada">⛔</span>'
+        )
+        if is_amex_report:
+            coi_action += (
+                f' <a href="/admin/contabilidad/amex/informes/{documento_id}">'
+                "Preparar póliza del informe</a>"
+            )
+        cleanup_action = ""
+        cleanup_blockers = [
+            blocker
+            for blocker in (row.get("cleanup_blockers") or [])
+            if blocker.get("expense_id") and blocker.get("issues")
+        ]
+        if not is_amex_report and cleanup_blockers and accounting_period:
+            focus_expense_id = str(cleanup_blockers[0]["expense_id"])
+            cleanup_query = urlencode(
+                {
+                    "period": accounting_period,
+                    "document_type": "informe" if is_report else "solicitud",
+                    "q": str(documento.numero_referencia or ""),
+                    "focus_expense_id": focus_expense_id,
+                    "document_id": documento_id,
+                }
+            )
+            cleanup_action = (
+                ' <a class="button secondary cleanup-action-link" '
+                'style="padding:8px 12px;font-size:12px;" '
+                f'href="/admin/gastos/sin-cuenta-contable?'
+                f'{escape(cleanup_query, quote=True)}'
+                f'#row-{focus_expense_id}">Atender en Limpieza contable</a>'
+            )
+        action = (
+            coi_action
+            if row.get("can_export")
+            else (
+                f'<span class="muted">Bloqueada: {block_reason}</span>'
+                + cleanup_action
+                + (
+                    f' <a href="/admin/contabilidad/amex/informes/{documento_id}">Revisar AMEX</a>'
+                    if is_amex_report
+                    else ""
+                )
+                + (
+                    f' <a href="/informes-de-gastos/{documento.cuenta_gastos_id}/papel-poliza.xlsx" '
+                    'title="Papel de revisión; no contabilizado">'
+                    "Descargar papel de revisión</a>"
+                    if (
+                        is_amex_report
+                        and documento.cuenta_gastos_id
+                        and str(documento.cuenta_gastos_id)
+                        in (readable_workpaper_account_ids or set())
+                    )
+                    else ""
+                )
+            )
         )
 
         rendered.append(
             f"""
         <tr>
-            <td style="text-align:center;"><input class="coi-selection-checkbox" type="checkbox" form="coi-export-form" name="selected_gasto_id" value="{expense_id}"></td>
-            <td>{_coi_estado_badge(coi_estado)}<div style="margin-top:6px;">{status_form}</div><div class="muted" style="margin-top:6px;">Clasificación: {escape(status_changed_at)} · {escape(status_changed_by)}<br>Exportación: {escape(exported_at)} · {escape(exported_by)}</div></td>
+            <td style="text-align:center;">{selection}</td>
+            <td>{status_forms}</td>
             <td>{escape(tipo_label)}</td>
-            <td><a href="/documentos/{documento_id}">{doc_ref}</a></td>
+            <td><a href="/documentos/{documento_id}">{doc_ref}</a>
+                <div class="muted">Titular/beneficiario: {beneficiary_name}</div>
+            </td>
             <td>{escape(row["period_label"])}</td>
             <td>{escape((documento.estado or "-").upper())}</td>
-            <td>{gasto_link}</td>
-            <td>{concepto}</td>
+            <td>{gasto_links}</td>
+            <td>{concepts}</td>
             <td>{monto}</td>
             <td>{fecha_gasto}</td>
-            <td>{coi_action}</td>
+            <td>{action}</td>
         </tr>
         """
         )
@@ -4759,7 +5213,7 @@ async def _collect_coi_lote_expense_cfdis(
     session: AsyncSession,
     exportable_rows: List[Dict[str, Any]],
 ) -> tuple[List[Any], List[List[str]], int, set[UUIDType]]:
-    """Build consolidated COI payloads in admin-table order; skip per-gasto failures."""
+    """Build complete document policies; any expense failure blocks the whole batch."""
     manifest_rows = [
         [
             "gasto_id",
@@ -4767,6 +5221,9 @@ async def _collect_coi_lote_expense_cfdis(
             "tipo_lote",
             "gasto_referencia",
             "documento_referencia",
+            "referencia_operaciones",
+            "beneficiario_razon_social",
+            "descripcion_contexto",
             "partida",
             "status",
             "mensaje",
@@ -4775,16 +5232,51 @@ async def _collect_coi_lote_expense_cfdis(
     expense_cfdis: List[Any] = []
     exported_ids: set[UUIDType] = set()
     for row in exportable_rows:
-        expense = row["expense"]
         documento = row["documento"]
         tipo_lote = row["tipo_lote"]
-        try:
-            expense_cfdi = await build_expense_cfdi_for_export(
-                session,
-                expense,
-                require_cleanup_ready=False,
+        metadata = coi_document_metadata(documento)
+        if tipo_lote == "INFORME" and any(
+            is_company_amex_expense(expense) for expense in row.get("expenses") or []
+        ):
+            cut = await _load_initial_amex_cut(session, documento.id)
+            if cut is None:
+                raise ValueError("El informe AMEX necesita su corte contable antes de exportar.")
+            cut_cfdis = group_expense_cfdis_for_document(
+                cut_expense_cfdis(cut), documento
             )
-            expense_cfdis.append(expense_cfdi)
+            expense_cfdis.extend(cut_cfdis)
+            for index, item in enumerate(cut.snapshot_json["partidas"], start=1):
+                exported_ids.add(UUIDType(item["expense_id"]))
+                manifest_rows.append([
+                    item["expense_id"], str(documento.id), tipo_lote,
+                    item.get("reference") or "", documento.numero_referencia or "",
+                    metadata["operation_reference"], metadata["party_name"],
+                    metadata["context_description"],
+                    str(index), "exportado", f"corte:{cut.id}",
+                ])
+            continue
+        document_cfdis: List[ExpenseCFDI] = []
+        for expense_index, expense in enumerate(row.get("expenses") or [], start=1):
+            try:
+                document_cfdis.append(
+                    await build_expense_cfdi_for_export(
+                        session,
+                        expense,
+                        require_cleanup_ready=False,
+                    )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Blocking COI document policy %s because expense %s failed: %s",
+                    documento.id,
+                    expense.id,
+                    exc,
+                )
+                raise ValueError(
+                    "No se generó una póliza parcial. La partida "
+                    f"{expense.numero_referencia or str(expense.id)[:8]} "
+                    f"no está lista para COI: {exc}"
+                ) from exc
             exported_ids.add(expense.id)
             manifest_rows.append(
                 [
@@ -4793,44 +5285,18 @@ async def _collect_coi_lote_expense_cfdis(
                     tipo_lote,
                     expense.numero_referencia or "",
                     documento.numero_referencia or "",
-                    str(len(expense_cfdis)),
+                    metadata["operation_reference"],
+                    metadata["party_name"],
+                    metadata["context_description"],
+                    str(expense_index),
                     "exportado",
                     "",
                 ]
             )
-        except ValueError as exc:
-            manifest_rows.append(
-                [
-                    str(expense.id),
-                    str(documento.id),
-                    tipo_lote,
-                    expense.numero_referencia or "",
-                    documento.numero_referencia or "",
-                    "",
-                    "omitido",
-                    str(exc),
-                ]
-            )
-        except Exception as exc:
-            logger.error(
-                "Error exporting COI batch expense %s: %s",
-                expense.id,
-                exc,
-                exc_info=True,
-            )
-            manifest_rows.append(
-                [
-                    str(expense.id),
-                    str(documento.id),
-                    tipo_lote,
-                    expense.numero_referencia or "",
-                    documento.numero_referencia or "",
-                    "",
-                    "error",
-                    "Error al generar el Excel COI.",
-                ]
-            )
-    return expense_cfdis, manifest_rows, len(expense_cfdis), exported_ids
+        expense_cfdis.extend(
+            group_expense_cfdis_for_document(document_cfdis, documento)
+        )
+    return expense_cfdis, manifest_rows, len(exportable_rows), exported_ids
 
 
 @router.get("/admin/contabilidad/coi/exportar-gastos-lote.xlsx", response_model=None)
@@ -4858,13 +5324,23 @@ async def exportar_coi_gastos_lote_xlsx(
     current_empleado: Empleado = require_admin_finanzas(),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
+    tipo: str = Form("all"),
     q: str = Form(""),
-    selected_gasto_id: Optional[List[UUIDType]] = Form(None),
+    document_type: str = Form("all"),
+    preparation: str = Form("all"),
+    selected_documento_id: Optional[List[UUIDType]] = Form(None),
     confirmed_selection_count: Optional[int] = Form(None),
+    selected_gasto_id: Optional[List[UUIDType]] = Form(None),
 ) -> Union[Response, RedirectResponse]:
     now = datetime.utcnow()
     selected_year = year or now.year
     selected_month = month or now.month
+    selected_tipo = (str(tipo or "all").strip() or "all")
+    if selected_tipo not in {"all", "Eg", "Ig", "Di"}:
+        selected_tipo = "all"
+    selected_q = " ".join(str(q or "").strip().split())[:200]
+    selected_document_type = _normalize_coi_document_type(document_type)
+    selected_preparation = _normalize_coi_preparation(preparation)
     start_dt, end_dt, start_date, end_date = _coi_lote_period_bounds(
         selected_year,
         selected_month,
@@ -4876,15 +5352,39 @@ async def exportar_coi_gastos_lote_xlsx(
         end_dt=end_dt,
         start_date=start_date,
         end_date=end_date,
-        search_q=(q or "").strip(),
+        search_q=selected_q,
+        document_type=selected_document_type,
+        preparation=selected_preparation,
     )
 
-    redirect_params = f"year={selected_year}&month={selected_month}"
-    if (q or "").strip():
-        redirect_params += "&q=" + quote((q or "").strip())
-    selected_ids_list = [str(item) for item in (selected_gasto_id or [])]
+    redirect_values: dict[str, Any] = {
+        "year": selected_year,
+        "month": selected_month,
+    }
+    if selected_tipo != "all":
+        redirect_values["tipo"] = selected_tipo
+    if selected_q:
+        redirect_values["q"] = selected_q
+    if selected_document_type != "all":
+        redirect_values["document_type"] = selected_document_type
+    if selected_preparation != "all":
+        redirect_values["preparation"] = selected_preparation
+    redirect_params = urlencode(redirect_values)
+    selected_ids_list = [
+        ("INFORME", str(item)) for item in (selected_documento_id or [])
+    ]
+    if isinstance(selected_gasto_id, list):
+        selected_ids_list.extend(("GASTO", str(item)) for item in selected_gasto_id)
     selected_ids = set(selected_ids_list)
-    visible_ids = {str(row["expense"].id) for row in exportable_rows}
+
+    def row_selection(row: Dict[str, Any]) -> tuple[str, str]:
+        if row.get("tipo_lote", "INFORME") == "INFORME":
+            return "INFORME", str(row["documento"].id)
+        return "GASTO", str(row["expenses"][0].id)
+
+    visible_ids = {
+        row_selection(row) for row in exportable_rows if row.get("can_export")
+    }
     if not selected_ids:
         return RedirectResponse(
             url=(
@@ -4902,7 +5402,7 @@ async def exportar_coi_gastos_lote_xlsx(
             status_code=303,
         )
     exportable_rows = [
-        row for row in exportable_rows if str(row["expense"].id) in selected_ids
+        row for row in exportable_rows if row_selection(row) in selected_ids
     ]
     if confirmed_selection_count != len(exportable_rows):
         return RedirectResponse(
@@ -4925,15 +5425,26 @@ async def exportar_coi_gastos_lote_xlsx(
             status_code=303,
         )
 
-    expense_cfdis, manifest_rows, exported_count, exported_ids = await _collect_coi_lote_expense_cfdis(
-        session,
-        exportable_rows,
-    )
+    try:
+        (
+            expense_cfdis,
+            manifest_rows,
+            exported_count,
+            exported_ids,
+        ) = await _collect_coi_lote_expense_cfdis(session, exportable_rows)
+    except ValueError as exc:
+        return RedirectResponse(
+            url=(
+                f"/admin/contabilidad/coi?{redirect_params}&error_msg="
+                + quote(str(exc))
+            ),
+            status_code=303,
+        )
 
     if exported_count == 0:
         return RedirectResponse(
             url=(
-                f"/admin/contabilidad/coi?year={selected_year}&month={selected_month}"
+                f"/admin/contabilidad/coi?{redirect_params}"
                 "&error_msg="
                 + quote(
                     "Se encontraron gastos en el periodo, pero ninguno pudo generarse a COI."
@@ -4949,13 +5460,13 @@ async def exportar_coi_gastos_lote_xlsx(
     if exported_ids:
         exported_at = datetime.utcnow()
         for row in exportable_rows:
-            expense = row.get("expense")
-            if expense and expense.id in exported_ids:
-                expense.coi_estado = "contabilizado"
-                expense.coi_exported_at = exported_at
-                expense.coi_exported_by_id = current_empleado.id
-                expense.coi_status_updated_at = exported_at
-                expense.coi_status_updated_by_id = current_empleado.id
+            for expense in row.get("expenses") or []:
+                if expense.id in exported_ids:
+                    expense.coi_estado = "contabilizado"
+                    expense.coi_exported_at = exported_at
+                    expense.coi_exported_by_id = current_empleado.id
+                    expense.coi_status_updated_at = exported_at
+                    expense.coi_status_updated_by_id = current_empleado.id
         await session.commit()
     filename = f"COI_Gastos_{selected_year}_{selected_month:02d}.xlsx"
     return Response(
@@ -4993,7 +5504,9 @@ async def contabilidad_coi_view(
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
     tipo: str = Query("all"),
-    q: str = Query(""),
+    q: str = Query("", max_length=200),
+    document_type: str = Query("all"),
+    preparation: str = Query("all"),
 ) -> str:
     success_msg = request.query_params.get("success_msg", "")
     error_msg = request.query_params.get("error_msg", "")
@@ -5001,7 +5514,9 @@ async def contabilidad_coi_view(
     selected_year = year or now.year
     selected_month = month or now.month
     selected_tipo = (tipo or "all").strip()
-    selected_q = (q or "").strip()
+    selected_q = " ".join(str(q or "").strip().split())[:200]
+    selected_document_type = _normalize_coi_document_type(document_type)
+    selected_preparation = _normalize_coi_preparation(preparation)
 
     start_dt, end_dt, start_date, end_date = _coi_lote_period_bounds(
         selected_year,
@@ -5015,13 +5530,46 @@ async def contabilidad_coi_view(
         start_date=start_date,
         end_date=end_date,
         search_q=selected_q,
+        document_type=selected_document_type,
+        preparation=selected_preparation,
+    )
+    workpaper_account_ids = await _coi_readable_workpaper_account_ids(
+        session, exportable_rows, current_empleado
     )
     exportable_document_ids = {str(row["documento"].id) for row in exportable_rows}
     exportable_expense_count = sum(
-        1 for row in exportable_rows if row.get("expense") is not None
+        len(row.get("expenses") or []) for row in exportable_rows
     )
-    exportable_ready_expenses = len(exportable_rows)
-    exportable_rows_html = _render_coi_exportable_lote_rows_html(exportable_rows)
+    exportable_policy_count = sum(
+        1 for row in exportable_rows if row.get("can_export")
+    )
+    blocked_policy_count = len(exportable_rows) - exportable_policy_count
+    return_to = "/admin/contabilidad/coi?" + urlencode(
+        {
+            "year": selected_year,
+            "month": selected_month,
+            "tipo": selected_tipo,
+            "q": selected_q,
+            "document_type": selected_document_type,
+            "preparation": selected_preparation,
+        }
+    )
+    exportable_rows_html = _render_coi_exportable_lote_rows_html(
+        exportable_rows,
+        return_to=return_to,
+        readable_workpaper_account_ids=workpaper_account_ids,
+        accounting_period=f"{selected_year}-{selected_month:02d}",
+        empty_message=(
+            "No hay informes o solicitudes que coincidan con los filtros de "
+            "preparación COI."
+            if (
+                selected_q
+                or selected_document_type != "all"
+                or selected_preparation != "all"
+            )
+            else None
+        ),
+    )
 
     conditions = []
     if selected_tipo != "all":
@@ -5083,6 +5631,24 @@ async def contabilidad_coi_view(
         f'<option value="{escape(value)}" {_selected_attr(selected_tipo, value)}>{escape(label)}</option>'
         for value, label in (("all", "Todos"), ("Eg", "Egresos"), ("Ig", "Ingresos"), ("Di", "Diario"))
     )
+    document_type_options = "".join(
+        f'<option value="{value}" '
+        f'{_selected_attr(selected_document_type, value)}>{label}</option>'
+        for value, label in (
+            ("all", "Informes y solicitudes"),
+            ("informe", "Informes"),
+            ("solicitud", "Solicitudes"),
+        )
+    )
+    preparation_options = "".join(
+        f'<option value="{value}" '
+        f'{_selected_attr(selected_preparation, value)}>{label}</option>'
+        for value, label in (
+            ("all", "Listas y bloqueadas"),
+            ("ready", "Listas para exportar"),
+            ("blocked", "Bloqueadas"),
+        )
+    )
     summary_rows = "".join(
         f"""
         <tr>
@@ -5126,7 +5692,7 @@ async def contabilidad_coi_view(
 
     html = f"""
     <!DOCTYPE html>
-    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Historial COI</title>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>COI: preparar, exportar e historial</title>
     <style>
     body {{ font-family: Arial, sans-serif; background:#f6f8fb; margin:0; padding:20px; }}
     .container {{ max-width: 1520px; margin:0 auto; }}
@@ -5142,20 +5708,49 @@ async def contabilidad_coi_view(
     th {{ background:#f3f4f6; }}
     .button {{ display:inline-block; padding:10px 14px; border-radius:8px; text-decoration:none; background:#111827; color:#fff; border:none; cursor:pointer; }}
     .button.secondary {{ background:#e5e7eb; color:#111827; }}
+    .cleanup-action-link {{ transition:background-color .18s ease, color .18s ease, box-shadow .18s ease, transform .18s ease; }}
+    .cleanup-action-link:hover {{ background:#0f766e; color:#fff; box-shadow:0 8px 18px rgba(15,118,110,.24); transform:translateY(-1px); }}
+    .cleanup-action-link:focus-visible {{ outline:3px solid rgba(20,184,166,.35); outline-offset:3px; }}
     .muted {{ color:#6b7280; font-size:13px; }}
+    .task-journey {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:0 0 16px; }}
+    .task-link {{ display:block; border:1px solid #dbe3ee; border-radius:10px; padding:12px; color:#111827; text-decoration:none; background:#f8fafc; }}
+    .task-link:hover, .task-link:focus {{ border-color:#111827; background:#fff; }}
+    .task-link strong {{ display:block; margin-bottom:4px; }}
     code {{ font-size:12px; }}
     </style></head>
     <body><div class="container">{render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("coi")}
     <div class="card">
-        <h1 style="margin:0 0 8px 0;">Historial COI</h1>
-        <p class="muted" style="margin:0 0 16px 0;">Consulta pólizas importadas y gastos preparados o exportados por SamChat. El mes de los gastos se determina exclusivamente por su fecha contable.</p>
+        <h1 style="margin:0 0 8px 0;">COI: preparar, exportar e historial</h1>
+        <p class="muted" style="margin:0 0 16px 0;">Completa la preparación contable, revisa y exporta gastos listos, y consulta las pólizas e imports registrados. El mes de los gastos se determina exclusivamente por su fecha contable.</p>
         {f'<div style="background:#d1fae5;color:#065f46;border:1px solid #a7f3d0;border-radius:10px;padding:12px 14px;margin:0 0 16px 0;"><strong>✅ Éxito:</strong> {escape(success_msg)}</div>' if success_msg else ''}
         {f'<div style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:10px;padding:12px 14px;margin:0 0 16px 0;"><strong>❌ Error:</strong> {escape(error_msg)}</div>' if error_msg else ''}
+        <nav class="task-journey" aria-label="Flujo de trabajo COI">
+            <a class="task-link" href="/admin/gastos/sin-cuenta-contable?period={selected_year}-{selected_month:02d}">
+                <strong>1. Preparar COI</strong>
+                <span class="muted">Corrige cuentas y clasificación en Limpieza contable antes de exportar.</span>
+            </a>
+            <a class="task-link" href="#coi-exportacion">
+                <strong>2. Revisar y exportar</strong>
+                <span class="muted">Selecciona explícitamente los gastos listos que deben integrar el archivo COI.</span>
+            </a>
+            <a class="task-link" href="#coi-historial">
+                <strong>3. Consultar historial</strong>
+                <span class="muted">Revisa pólizas importadas, sus totales y las últimas cargas registradas.</span>
+            </a>
+        </nav>
         <form method="GET" action="/admin/contabilidad/coi" class="toolbar" style="margin-bottom:16px;">
             <div><label>Año</label><input type="number" name="year" value="{selected_year}"></div>
             <div><label>Mes</label><input type="number" min="1" max="12" name="month" value="{selected_month}"></div>
             <div><label>Tipo póliza</label><select name="tipo">{tipo_options}</select></div>
             <div><label>Búsqueda</label><input type="text" name="q" value="{_html_value(selected_q)}" placeholder="Número, beneficiario, UUID, concepto"></div>
+            <div>
+                <label>Origen de revisión/exportación</label>
+                <select name="document_type">{document_type_options}</select>
+            </div>
+            <div>
+                <label>Preparación</label>
+                <select name="preparation">{preparation_options}</select>
+            </div>
             <div style="display:flex;align-items:end;gap:8px;"><button type="submit" class="button">Filtrar</button><a href="/admin/contabilidad/coi" class="button secondary">Limpiar</a></div>
         </form>
         <div class="summary">
@@ -5165,30 +5760,37 @@ async def contabilidad_coi_view(
             <div class="box"><div class="label">Diferencia</div><div class="value">{format_currency(total_debe - total_haber)}</div></div>
         </div>
     </div>
-    <div class="card">
+    <div class="card" id="coi-exportacion">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
-            <h2 style="margin:0;">Gastos preparados para COI en este periodo</h2>
+            <h2 style="margin:0;">2. Revisar y exportar gastos listos</h2>
             <form id="coi-export-form" method="POST" action="/admin/contabilidad/coi/exportar-gastos-lote.xlsx" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <input type="hidden" name="year" value="{selected_year}">
                 <input type="hidden" name="month" value="{selected_month}">
+                <input type="hidden" name="tipo" value="{_html_value(selected_tipo)}">
                 <input type="hidden" name="q" value="{_html_value(selected_q)}">
+                <input type="hidden" name="document_type"
+                       value="{_html_value(selected_document_type)}">
+                <input type="hidden" name="preparation"
+                       value="{_html_value(selected_preparation)}">
                 <input type="hidden" id="coi-confirmed-selection-count" name="confirmed_selection_count" value="0">
                 <span id="coi-selected-count" class="muted" aria-live="polite">0 seleccionadas</span>
                 <button id="coi-export-selected" type="submit" class="button" disabled>Exportar seleccionadas</button>
             </form>
         </div>
         <p class="muted" style="margin:0 0 12px 0;">
-            Sólo gastos con preparación COI guardada (<strong>Listo COI</strong> en
-            <a href="/admin/gastos/sin-cuenta-contable">Limpieza contable</a>) dentro de informes aprobados
-            o solicitudes a terceros pagadas, cuya fecha contable pertenece al periodo {selected_year}-{selected_month:02d}.
-            Cada fila genera una póliza individual vía <code>/gastos/{{id}}/exportar-coi.xlsx</code>
-            (mismo formato que solicitudes a terceros). El documento conserva su descarga consolidada.
-            La exportación en lote descarga un Excel COI consolidado únicamente con las filas visibles que selecciones;
-            la hoja Manifest registra partidas exportadas u omitidas.
+            Cada fila representa una póliza por documento. Para un Informe de Gastos,
+            todas sus partidas activas deben estar <strong>Listo COI</strong> en
+            <a href="/admin/gastos/sin-cuenta-contable">Limpieza contable</a>, dentro de informes aprobados,
+            y pertenecer al mismo periodo {selected_year}-{selected_month:02d}. Si una partida está incompleta
+            o pertenece a otro mes, se bloquea el informe completo y no se genera una póliza parcial.
+            Las solicitudes independientes a terceros conservan su granularidad actual.
+            La hoja Manifest registra las partidas incluidas en cada póliza.
         </p>
         <div class="summary" style="margin-bottom:12px;">
             <div class="box"><div class="label">Documentos</div><div class="value">{len(exportable_document_ids)}</div></div>
-            <div class="box"><div class="label">Gastos listos</div><div class="value">{exportable_ready_expenses}</div></div>
+            <div class="box"><div class="label">Pólizas listas</div><div class="value">{exportable_policy_count}</div></div>
+            <div class="box"><div class="label">Pólizas bloqueadas</div><div class="value">{blocked_policy_count}</div></div>
+            <div class="box"><div class="label">Partidas</div><div class="value">{exportable_expense_count}</div></div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
             <a class="button secondary" href="/documentos/todos/exportar-exceles.zip?tipo=INFORME&situacion=cerradas">Descargar informes de gastos</a>
@@ -5214,8 +5816,10 @@ async def contabilidad_coi_view(
             <tbody>{exportable_rows_html}</tbody>
         </table>
     </div>
+    <section id="coi-historial" aria-labelledby="coi-historial-heading">
     <div class="card">
-        <h2 style="margin:0 0 12px 0;">Resumen por tipo de póliza</h2>
+        <h2 id="coi-historial-heading" style="margin:0 0 12px 0;">3. Historial e imports</h2>
+        <h3 style="margin:0 0 12px 0;">Resumen por tipo de póliza</h3>
         <table>
             <thead><tr><th>Tipo</th><th>Pólizas</th><th>Debe</th><th>Haber</th></tr></thead>
             <tbody>{summary_rows if summary_rows else '<tr><td colspan="4" class="muted">Sin pólizas para el filtro seleccionado.</td></tr>'}</tbody>
@@ -5223,7 +5827,7 @@ async def contabilidad_coi_view(
     </div>
     <div class="card">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;">
-            <h2 style="margin:0;">Pólizas importadas</h2>
+            <h3 style="margin:0;">Pólizas importadas</h3>
             <a href="/admin/contabilidad/coi/carga-masiva" class="button secondary">Cargar COI</a>
         </div>
         <table>
@@ -5232,12 +5836,13 @@ async def contabilidad_coi_view(
         </table>
     </div>
     <div class="card">
-        <h2 style="margin:0 0 12px 0;">Últimos imports COI</h2>
+        <h3 style="margin:0 0 12px 0;">Últimos imports COI</h3>
         <table>
             <thead><tr><th>Inicio</th><th>Archivo</th><th>Modo</th><th>Status</th><th>Usuario</th></tr></thead>
             <tbody>{run_rows if run_rows else '<tr><td colspan="5" class="muted">Sin imports COI registrados.</td></tr>'}</tbody>
         </table>
     </div>
+    </section>
     </div>
     <script>
     (() => {{
@@ -5278,6 +5883,28 @@ async def contabilidad_coi_view(
     return html
 
 
+def _coi_status_return_path(raw: str) -> str:
+    """Keep COI status redirects on this view with only its supported filters."""
+    base = "/admin/contabilidad/coi"
+    parsed = urlparse(raw or "")
+    if parsed.scheme or parsed.netloc or parsed.path != base:
+        return base
+    supplied = parse_qs(parsed.query, keep_blank_values=True)
+    filters: dict[str, str] = {}
+    year = (supplied.get("year") or [""])[-1]
+    month = (supplied.get("month") or [""])[-1]
+    tipo = (supplied.get("tipo") or [""])[-1]
+    if year.isdigit() and int(year) > 0:
+        filters["year"] = year
+    if month.isdigit() and 1 <= int(month) <= 12:
+        filters["month"] = month
+    if tipo in {"all", "Eg", "Ig", "Di"}:
+        filters["tipo"] = tipo
+    if "q" in supplied:
+        filters["q"] = supplied["q"][-1]
+    return base + ("?" + urlencode(filters) if filters else "")
+
+
 @router.post("/admin/contabilidad/coi/gastos/{expense_id}/estado")
 async def actualizar_estado_coi_gasto(
     expense_id: UUIDType,
@@ -5288,11 +5915,12 @@ async def actualizar_estado_coi_gasto(
     next: str = Form("/admin/contabilidad/coi"),
 ) -> RedirectResponse:
     allowed = {"pendiente", "contabilizado", "reversar"}
-    redirect_next = next if (next or "").startswith("/") else "/admin/contabilidad/coi"
+    redirect_next = _coi_status_return_path(next)
+    anchor = f"#coi-expense-{expense_id}"
     estado_norm = (coi_estado or "").strip().lower()
     if estado_norm not in allowed:
         return RedirectResponse(
-            url=_append_error_params(redirect_next, error_msg="Estatus COI invalido."),
+            url=_append_error_params(redirect_next, error_msg="Estatus COI invalido.") + anchor,
             status_code=303,
         )
     expense = (
@@ -5311,7 +5939,7 @@ async def actualizar_estado_coi_gasto(
         expense.coi_exported_by_id = current_empleado.id
     await session.commit()
     return RedirectResponse(
-        url=_append_success_params(redirect_next, success_msg="Estatus COI actualizado."),
+        url=_append_success_params(redirect_next, success_msg="Estatus COI actualizado.") + anchor,
         status_code=303,
     )
 
@@ -10183,6 +10811,12 @@ _INFORME_READ_ONLY_GLOBAL_EMAILS = {
     "azuniga@plataformasports.com",  # Alicia
     "otrujillo@plataformasports.com",  # José Odilón Trujillo Macedo
 }
+_ALICIA_OPERATIONS_REFERENCE_READ_ONLY_IDS = {
+    "90701d00-5f0b-4b3d-b677-e491e53caf82",
+}
+_ALICIA_OPERATIONS_REFERENCE_READ_ONLY_EMAILS = {
+    "azuniga@plataformasports.com",
+}
 
 
 def _has_read_only_cross_account_informe_access(empleado: Empleado) -> bool:
@@ -10191,6 +10825,34 @@ def _has_read_only_cross_account_informe_access(empleado: Empleado) -> bool:
     return (
         employee_id in _INFORME_READ_ONLY_GLOBAL_EMPLOYEE_IDS
         or email in _INFORME_READ_ONLY_GLOBAL_EMAILS
+    )
+
+
+def _is_alicia_operations_reference_observer(empleado: Empleado) -> bool:
+    """Return whether Alicia has read-only Operations-reference visibility."""
+    employee_id = str(getattr(empleado, "id", "") or "").strip().lower()
+    email = (getattr(empleado, "correo", None) or "").strip().lower()
+    return (
+        employee_id in _ALICIA_OPERATIONS_REFERENCE_READ_ONLY_IDS
+        or email in _ALICIA_OPERATIONS_REFERENCE_READ_ONLY_EMAILS
+    )
+
+
+def _is_operations_reference_document(documento: Documento) -> bool:
+    """Return whether a document is in the read-only Operations scope."""
+    document_type = str(getattr(documento, "tipo", "") or "").strip().upper()
+    reference = str(
+        getattr(documento, "referencia_operaciones", "") or ""
+    ).strip()
+    return document_type in {"SOLICITUD", "INFORME"} and bool(reference)
+
+
+def _operations_reference_document_filter():
+    """SQL scope shared by Alicia's Operations-reference read-only views."""
+    return and_(
+        Documento.tipo.in_(("SOLICITUD", "INFORME")),
+        Documento.referencia_operaciones.isnot(None),
+        func.btrim(Documento.referencia_operaciones) != "",
     )
 
 
@@ -10208,6 +10870,11 @@ def _can_read_cuenta_de_gastos(cuenta: CuentaDeGastos, empleado: Empleado) -> bo
 def _can_access_read_only_informe_document(
     documento: Documento, empleado: Empleado
 ) -> bool:
+    if (
+        _is_alicia_operations_reference_observer(empleado)
+        and _is_operations_reference_document(documento)
+    ):
+        return True
     return (
         getattr(documento, "tipo", None) == "INFORME"
         and bool(getattr(documento, "cuenta_gastos_id", None))
@@ -10239,6 +10906,17 @@ def _can_mutate_cuenta_de_gastos(cuenta: CuentaDeGastos, empleado: Empleado) -> 
 async def _ensure_can_mutate_informe_expense(
     session: AsyncSession, expense: ExpenseReport, empleado: Empleado
 ) -> None:
+    if getattr(expense, "informe_documento_id", None):
+        owner = await session.get(Documento, expense.informe_documento_id)
+        if (
+            owner is not None
+            and getattr(owner, "informe_origen_id", None)
+            and owner.estado == "aprobado"
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="El gasto pertenece a una comprobación parcial aprobada; requiere una reversión contable, no edición.",
+            )
     if not expense.cuenta_gastos_id or not _has_read_only_cross_account_informe_access(empleado):
         return
     cuenta = await session.get(CuentaDeGastos, expense.cuenta_gastos_id)
@@ -10502,6 +11180,42 @@ def _empty_informe_cancel_error(
     if attachment_count:
         return "El informe tiene archivos vinculados y no puede cancelarse como vacío."
     return None
+
+
+def _blocking_informe_solicitudes_query(cuenta_id: UUIDType):
+    """Terminal unpaid requests are history, not an outstanding obligation."""
+    return select(func.count(Documento.id)).where(
+        Documento.cuenta_gastos_id == cuenta_id,
+        Documento.tipo == "SOLICITUD",
+        or_(
+            Documento.estado.is_(None),
+            Documento.estado.notin_(["rechazado", "cancelado"]),
+            Documento.pagado_en.is_not(None),
+            Documento.fecha_pago_efectiva.is_not(None),
+            Documento.gasto_generado_id.is_not(None),
+            select(Anticipo.id)
+            .where(Anticipo.documento_id == Documento.id)
+            .exists(),
+        ),
+    )
+
+
+async def _count_blocking_informe_solicitudes(
+    session: AsyncSession, cuenta_id: UUIDType
+) -> int:
+    result = await session.execute(_blocking_informe_solicitudes_query(cuenta_id))
+    return int(result.scalar_one() or 0)
+
+
+def _cancel_empty_informe_form_html(cuenta_id: UUIDType) -> str:
+    return (
+        f'<form method="POST" action="/informes-de-gastos/{cuenta_id}/cancelar-borrador" '
+        'style="display:inline;">'
+        '<button type="submit" class="button danger" '
+        'onclick="return confirm(\'¿Cancelar este informe vacío? El registro se conservará para auditoría.\')">'
+        'Cancelar borrador vacío</button></form>'
+    )
+
 
 async def _active_regional_operator_beneficiaries(
     session: AsyncSession,
@@ -10945,6 +11659,7 @@ def _can_edit_solicitud_terceros(
 ) -> bool:
     return (
         _is_solicitud_terceros(documento)
+        and not getattr(documento, "supplier_advance_id", None)
         and _is_pre_budget_edit_window(documento)
         and documento.empleado_id == empleado.id
         and not solicitud_cancelada
@@ -10963,7 +11678,10 @@ def _can_add_solicitud_adjuntos(
     finance_roles = {"finanzas", "admin", "superadmin", "super_admin"}
     materiality_states = {
         "borrador",
+        "control_presupuestal",
+        "enviado",
         "aprobado",
+        "en_proceso_pago",
         "pagado",
         "cerrado",
         "reembolsado",
@@ -10985,13 +11703,21 @@ def _can_remove_solicitud_adjunto(
     solicitud_cancelada: bool = False,
 ) -> bool:
     categoria_norm = (categoria or "supporting").strip().lower()
+    if categoria_norm in {"cfdi_xml_evidence", "cfdi_pdf_evidence"}:
+        return False
+    if getattr(documento, "supplier_advance_id", None) and categoria_norm in {
+        "cfdi_xml",
+        "cfdi_pdf",
+    }:
+        return False
     if categoria_norm == "comprobante_pago":
         return _can_finance_add_comprobante_pago(
             documento,
             empleado,
             solicitud_cancelada=solicitud_cancelada,
         )
-    return _can_add_solicitud_adjuntos(
+    # Appending evidence must never grant deletion after authorization advances.
+    return _can_edit_solicitud_terceros(
         documento,
         empleado,
         solicitud_cancelada=solicitud_cancelada,
@@ -11033,6 +11759,53 @@ def _can_finance_add_comprobante_pago(
     if not can_confirm_payment_run_payment(empleado):
         return False
     return documento.estado == "en_proceso_pago"
+
+
+def _can_finance_replace_comprobante_pago(
+    documento: Documento,
+    empleado: Empleado,
+    *,
+    solicitud_cancelada: bool = False,
+) -> bool:
+    """Authorized Accounting users may correct proof after payment without undoing it."""
+    if (
+        solicitud_cancelada
+        or getattr(documento, "tipo", None) != "SOLICITUD"
+        or getattr(documento, "estado", None) != "pagado"
+        or not getattr(documento, "pagado_en", None)
+    ):
+        return False
+    try:
+        require_payment_run_access(empleado)
+        require_payment_run_payment_confirmation(empleado)
+    except PaymentRunPermissionError:
+        return False
+    return True
+
+
+def _replaceable_solicitud_comprobante_ids(
+    documento: Documento,
+    empleado: Empleado,
+    adjuntos: list,
+    *,
+    solicitud_cancelada: bool = False,
+) -> set[UUIDType]:
+    if not _can_finance_replace_comprobante_pago(
+        documento,
+        empleado,
+        solicitud_cancelada=solicitud_cancelada,
+    ):
+        return set()
+    replaceable: set[UUIDType] = set()
+    for meta in adjuntos:
+        if (getattr(meta, "categoria", None) or "").strip().lower() != "comprobante_pago":
+            continue
+        if getattr(meta, "activo", True) is False:
+            continue
+        adjunto_id = _adjunto_meta_id(meta)
+        if adjunto_id is not None:
+            replaceable.add(adjunto_id)
+    return replaceable
 
 
 def _nueva_solicitud_terceros_form_url(
@@ -11301,22 +12074,52 @@ def _format_authorization_money_value(value: Any) -> str:
         return str(value)
 
 
-def _render_debtor_auxiliary_section(aux: Dict[str, Any], currency: str = "MXN") -> str:
+def _render_debtor_auxiliary_section(
+    aux: Dict[str, Any],
+    currency: str = "MXN",
+    *,
+    employee_paid: float = 0,
+    informe_estado: Optional[str] = None,
+) -> str:
     status = str(aux.get("status") or "pendiente")
+    approved = (informe_estado or "").strip().lower() == "aprobado"
+    if status == "diferencia_contable" and not approved:
+        status = "pendiente"
     status_labels = {
         "saldado": "Saldado",
         "pendiente": "Pendiente",
         "sin_subcuenta": "Sin subcuenta de empleado",
         "diferencia_contable": "Diferencia contable",
+        "pendiente_comprobar": "Pendiente de comprobar",
     }
     status_colors = {
         "saldado": ("#dcfce7", "#166534"),
         "pendiente": ("#fef3c7", "#92400e"),
         "sin_subcuenta": ("#fee2e2", "#991b1b"),
         "diferencia_contable": ("#fee2e2", "#991b1b"),
+        "pendiente_comprobar": ("#fef3c7", "#92400e"),
     }
     bg, fg = status_colors.get(status, ("#f1f5f9", "#334155"))
     lines = list(aux.get("lines") or [])
+    unposted_expenses = max(0, round(employee_paid - (aux.get("comprobado") or 0), 2))
+    unposted_note = ""
+    if unposted_expenses >= 0.01:
+        if approved:
+            unposted_note = (
+                '<div class="notice warn" style="margin:12px 0;">'
+                "Hay gastos de bolsillo sin comprobación reflejada en este auxiliar: "
+                f"{format_currency(unposted_expenses, currency)}. Contabilidad debe conciliar "
+                "las pólizas; esta vista no genera asientos.</div>"
+            )
+        else:
+            unposted_note = (
+                '<div class="notice info" style="margin:12px 0;">'
+                "Gastos pagados por el empleado, capturados y aún sin póliza de comprobación: "
+                f"{format_currency(unposted_expenses, currency)}. "
+                "El Haber deudores y el saldo contable se actualizan al aprobar el informe. "
+                f"Saldo estimado tras esa comprobación: {format_currency((aux.get('saldo') or 0) - unposted_expenses, currency)}."
+                "</div>"
+            )
     rows = ""
     for line in lines:
         poliza = getattr(line, "poliza", None)
@@ -11362,6 +12165,7 @@ def _render_debtor_auxiliary_section(aux: Dict[str, Any], currency: str = "MXN")
                 </span>
             </div>
             {missing_note}
+            {unposted_note}
             <div class="meta-grid" style="margin-top:14px;">
                 <div class="meta-card"><span>Subcuenta empleado</span><strong>{escape(str(aux.get("debtor_account_label") or "Sin cuenta"))}</strong><small>Bloque {escape(debtor_block_label)}</small></div>
                 <div class="meta-card"><span>Debe deudores</span><strong>{format_currency(aux.get("debe") or 0, currency)}</strong><small>Cargos al empleado</small></div>
@@ -12045,11 +12849,12 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
     rol = escape(rol_raw)
     role_norm = (rol_raw or "").strip().lower()
     is_superadmin = role_norm in {"superadmin", "super_admin"}
+    impersonator_id = getattr(current_empleado, "impersonator_empleado_id", None)
     impersonator_name = escape(
         str(getattr(current_empleado, "impersonator_nombre", "") or "")
     )
     impersonation_html = ""
-    if getattr(current_empleado, "impersonator_empleado_id", None):
+    if impersonator_id:
         impersonation_html = f"""
         <div
             style="
@@ -12085,7 +12890,7 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
     if can_nav("panel.home", ("empleado", "coordinador", "finanzas", "admin", "superadmin", "super_admin")):
         links.append(("/panel", "Panel de administración", "panel"))
     if bool(getattr(current_empleado, "direction_entry_visible", False)):
-        links.append(("/direccion/tableros", "Dirección", "direccion"))
+        links.append(("/direccion/inicio", "Dirección", "direccion"))
     if can_nav("panel.operaciones", ("finanzas", "admin", "superadmin", "super_admin")):
         links.append(("/panel/operaciones-console", "Operaciones", "operacion"))
     if can_nav("admin.contabilidad", ('finanzas', 'admin', 'superadmin', 'super_admin')):
@@ -12254,8 +13059,8 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
                             font-size:13px;
                             font-weight:600;
                         "
-                    >Cambiar identidad</a>
-                    ''' if is_superadmin or getattr(current_empleado, "impersonator_empleado_id", None) else ''}
+                    >{'Cambiar identidad (facultad del superadmin)' if impersonator_id else 'Cambiar identidad'}</a>
+                    ''' if is_superadmin or impersonator_id else ''}
                 </div>
             </details>
             <a
@@ -14754,6 +15559,7 @@ async def panel_operaciones_console(
         f"""
         <tr>
             <td><a href="/panel/operaciones-console?tournament_id={quote(str(selected_tournament['id']))}&drill_document={quote(str(item.get('documento_id') or ''))}" style="color:#0f172a;text-decoration:none;font-weight:700;">{escape(str(item.get("numero_referencia") or "-"))}</a></td>
+            <td>{escape(str(item.get("referencia_operaciones") or "—"))}</td>
             <td><span class="ops-pill">{escape(str(item.get("estado") or "-"))}</span></td>
             <td>{escape(str(item.get("proveedor_nombre") or "-"))}</td>
             <td>{escape(str(item.get("concepto_pago") or "-"))}</td>
@@ -15306,6 +16112,7 @@ async def panel_operaciones_console(
                             <thead>
                                 <tr>
                                     <th>Documento</th>
+                                    <th>Referencia Operaciones</th>
                                     <th>Estado</th>
                                     <th>Proveedor</th>
                                     <th>Concepto</th>
@@ -15315,7 +16122,7 @@ async def panel_operaciones_console(
                                 </tr>
                             </thead>
                             <tbody>
-                                {commitment_rows or '<tr><td colspan="7">Sin compromisos visibles para el torneo seleccionado.</td></tr>'}
+                                {commitment_rows or '<tr><td colspan="8">Sin compromisos visibles para el torneo seleccionado.</td></tr>'}
                             </tbody>
                         </table>
                     </div>
@@ -15348,6 +16155,23 @@ async def panel_operaciones_console(
     </html>
     """
     return html
+
+
+async def _amex_entry_destination(session: AsyncSession, actor: Empleado) -> str:
+    """Prefer the direct owner without overriding persisted read restrictions."""
+    legacy = "/admin/contabilidad/amex/estados"
+    direct = legacy + "/directo"
+    if not bool(getattr(actor, "activo", False)) or (
+        str(getattr(actor, "rol", "")).strip().lower() not in FINANCE_AMEX_ROLES
+    ):
+        return legacy
+    try:
+        allowed = await can_defer_path_authorization_to_route_guard(
+            session, actor, direct, "GET"
+        )
+    except AccessControlLookupError:
+        return legacy
+    return direct if allowed else legacy
 
 
 @router.get("/panel", response_class=HTMLResponse)
@@ -15500,7 +16324,7 @@ async def panel(
     if getattr(current_empleado, "direction_entry_visible", False):
         ejecutivo_cards.append(
             (
-                "/direccion/tableros",
+                "/direccion/inicio",
                 "Dirección",
                 "Tableros ejecutivos de solo lectura dentro de tu alcance asignado.",
             )
@@ -15526,11 +16350,17 @@ async def panel(
             </section>
         """
 
+    amex_entry_destination = (
+        await _amex_entry_destination(session, current_empleado)
+        if "admin.gastos.amex" in visible_tool_keys
+        else "/admin/contabilidad/amex/estados"
+    )
     operacion_contable_cards = filter_cards_by_tools([
         ("admin.contabilidad", "/admin/contabilidad/coi", "Vista contable", "Revisa pólizas COI y el detalle de sus cuentas."),
         ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Revisa el vínculo por UUID con empleado y proyecto operativo."),
         ("admin.gastos.cfdi_carga", "/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CSV por UUID para alimentar la revisión de matching."),
-        ("admin.gastos.amex", "/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta para conciliación mensual; requiere piloto UAT antes de operación."),
+        ("admin.gastos.amex", amex_entry_destination, "AMEX",
+         "Carga el estado, revisa CFDI y prepara la póliza de la tarjeta."),
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "Prepara CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
     ], visible_tool_keys)
     if is_superadmin_role(getattr(current_empleado, "rol", None)):
@@ -15754,6 +16584,63 @@ def _documento_status_chip_html(value: Optional[str]) -> str:
         f'style="background:{visual.background};color:{visual.foreground};">'
         f'{escape(visual.label)}</div>'
     )
+
+
+def _latest_document_rejection(approvals: List[Aprobacion]) -> Optional[Aprobacion]:
+    """Read the latest rejection from the already date-descending history."""
+    return next(
+        (
+            approval
+            for approval in approvals
+            if str(getattr(approval, "accion", "") or "").strip().lower()
+            in {"rechazar", "rechazado", "rechazar_control_presupuestal"}
+        ),
+        None,
+    )
+
+
+def _render_document_workflow_guidance_html(
+    guidance: WorkflowGuidance,
+) -> str:
+    """Render read-only workflow orientation without adding action authority."""
+
+    blocker = guidance.blocker or "Sin bloqueo registrado"
+    blocker_tone = "warn" if guidance.blocker else "info"
+    return f"""
+        <section class="surface" data-workflow-guidance>
+            <div class="section-head">
+                <div>
+                    <h2>Qué pasa ahora</h2>
+                    <div class="section-note">
+                        Orientación basada en el estado y evidencia visibles.
+                    </div>
+                </div>
+                <div class="status-chip {escape(guidance.semantic)}">
+                    {escape(guidance.status_label)}
+                </div>
+            </div>
+            <div class="meta-grid">
+                <div class="meta-card">
+                    <span>Por qué está aquí</span>
+                    <strong>{escape(guidance.why_here)}</strong>
+                    <small>{escape(guidance.status_note)}</small>
+                </div>
+                <div class="meta-card">
+                    <span>Siguiente responsable</span>
+                    <strong>{escape(guidance.next_owner)}</strong>
+                    <small>Responsable según el flujo visible actual.</small>
+                </div>
+                <div class="meta-card">
+                    <span>Siguiente acción</span>
+                    <strong>{escape(guidance.next_action)}</strong>
+                    <small>Esta orientación no concede permisos adicionales.</small>
+                </div>
+            </div>
+            <div class="notice {blocker_tone}" style="margin-top:12px;">
+                <strong>Bloqueo o evidencia pendiente:</strong> {escape(blocker)}
+            </div>
+        </section>
+    """
 
 
 def _solicitud_transferencia_list_actions_html(
@@ -17137,7 +18024,9 @@ async def gastos_terceros(
     ).options(
         selectinload(Documento.empleado).selectinload(Empleado.aprobador),
         selectinload(Documento.proveedor_cliente),
-        selectinload(Documento.torneo)
+        selectinload(Documento.torneo),
+        selectinload(Documento.gastos),
+        selectinload(Documento.gasto_generado),
     )
 
     scope_dept = empleado_list_view_department_scope(current_empleado)
@@ -17155,6 +18044,21 @@ async def gastos_terceros(
     result = await session.execute(query)
     documentos = result.scalars().all()
 
+    solicitud_gasto_conceptos_by_doc: Dict[Any, List[str]] = {}
+    if documentos:
+        solicitud_gastos = await session.execute(
+            select(ExpenseReport.solicitud_documento_id, ExpenseReport.concepto).where(
+                ExpenseReport.solicitud_documento_id.in_(
+                    [doc.id for doc in documentos]
+                ),
+                ExpenseReport.estado_gasto != "cancelado",
+            )
+        )
+        for solicitud_doc_id, gasto_concepto in solicitud_gastos.all():
+            solicitud_gasto_conceptos_by_doc.setdefault(solicitud_doc_id, []).append(
+                gasto_concepto or ""
+            )
+
     terceros_adj_meta = await fetch_documento_adjuntos_meta_batch(
         session, [d.id for d in documentos]
     )
@@ -17162,6 +18066,26 @@ async def gastos_terceros(
 
     totals_by_currency: Dict[str, Decimal] = {}
     status_counts = Counter()
+
+    supplier_ids = [
+        d.id for d in documentos if getattr(d, "is_supplier_advance", False)
+    ]
+    supplier_applied = {}
+    if supplier_ids:
+        allocations = await session.execute(
+            select(
+                Documento.supplier_advance_id,
+                func.sum(Documento.supplier_advance_applied),
+            )
+            .where(
+                Documento.supplier_advance_id.in_(supplier_ids),
+                Documento.estado.in_(
+                    ["aprobado", "en_proceso_pago", "pagado", "cerrado"]
+                ),
+            )
+            .group_by(Documento.supplier_advance_id)
+        )
+        supplier_applied = dict(allocations.all())
 
     # Build rows HTML
     rows_html = ""
@@ -17179,16 +18103,48 @@ async def gastos_terceros(
         aprobador_nombre = escape(aprobador_by_doc.get(doc.id, "—"))
         monto_value = float(doc.monto_solicitado or 0)
         doc_currency = currency_for(doc)
-        monto_display = format_currency(monto_value, doc_currency) if doc.monto_solicitado else "—"
+        monto_display = (
+            format_currency(monto_value, doc_currency)
+            if doc.monto_solicitado is not None
+            else "—"
+        )
         fecha_pago_display = format_value(doc.fecha_pago) if doc.fecha_pago else "—"
         fecha_aprobacion_display = (format_value(doc.aprobado_en) if getattr(doc, "aprobado_en", None) else "-")
         concepto_raw = (doc.concepto_pago or "").strip()
         concepto_display = escape(concepto_raw) if concepto_raw else "—"
+        gasto_conceptos = " ".join(
+            str(gasto.concepto or "")
+            for gasto in [
+                *(getattr(doc, "gastos", None) or []),
+                getattr(doc, "gasto_generado", None),
+            ]
+            if gasto is not None
+            and getattr(gasto, "estado_gasto", None) != "cancelado"
+        )
+        busqueda_attr = escape(
+            " ".join((
+                proveedor_raw,
+                concepto_raw,
+                gasto_conceptos,
+                *solicitud_gasto_conceptos_by_doc.get(doc.id, []),
+            )).lower()
+        )
         ref_ops_attr = escape(ro_terc_raw.lower())
         solicitante_attr = escape(solicitante_nombre.lower())
         concepto_attr = escape(concepto_raw.lower())
         proveedor_attr = escape(proveedor_raw.lower())
         estado_display = _documento_human_status_badge(doc.estado)
+        if getattr(doc, "is_supplier_advance", False):
+            estado_display += "<div>Anticipo a proveedor</div>"
+            if doc.estado == "pagado" and doc.pagado_en:
+                pending = max(
+                    Decimal(str(doc.monto_solicitado or 0))
+                    - Decimal(str(supplier_applied.get(doc.id) or 0)),
+                    Decimal("0"),
+                )
+                estado_display += f'<small>{"Pendiente de comprobar" if pending else "Comprobado"}: {format_currency(pending, doc_currency)}</small>'
+        elif getattr(doc, "supplier_advance_id", None):
+            estado_display += "<small>Comprobación de anticipo</small>"
         totals_by_currency[doc_currency] = totals_by_currency.get(
             doc_currency, Decimal("0")
         ) + Decimal(str(monto_value))
@@ -17212,7 +18168,7 @@ async def gastos_terceros(
         )
 
         rows_html += f"""
-        <tr data-ref-ops="{ref_ops_attr}" data-concepto="{concepto_attr}" data-solicitante="{solicitante_attr}" data-proveedor="{proveedor_attr}" data-accion="{accion_attr}">
+        <tr data-ref-ops="{ref_ops_attr}" data-concepto="{concepto_attr}" data-solicitante="{solicitante_attr}" data-proveedor="{proveedor_attr}" data-busqueda="{busqueda_attr}" data-accion="{accion_attr}">
             <td>{doc_link}</td>
             <td style="white-space: nowrap;">{ro_terc_display}</td>
             <td>{solicitante_nombre}</td>
@@ -17321,6 +18277,10 @@ async def gastos_terceros(
                     </div>
                     <div class="terceros-filter-bar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:14px 0 16px 0;padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#f8fafc;">
                         <div>
+                            <label for="terceros-search-texto" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Proveedor o gasto</label>
+                            <input type="search" id="terceros-search-texto" placeholder="Nombre del proveedor o gasto específico…" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                        </div>
+                        <div>
                             <label for="terceros-search-ref" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Referencia Operaciones</label>
                             <input type="search" id="terceros-search-ref" inputmode="numeric" placeholder="Ej. 3" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
@@ -17369,13 +18329,14 @@ async def gastos_terceros(
                 </section>
                 <script>
                     (function() {{
+                        var textoInput = document.getElementById('terceros-search-texto');
                         var refInput = document.getElementById('terceros-search-ref');
                         var proveedorInput = document.getElementById('terceros-search-proveedor');
                         var solicitanteInput = document.getElementById('terceros-search-solicitante');
                         var conInput = document.getElementById('terceros-search-concepto');
                         var accionInput = document.getElementById('terceros-search-accion');
                         var table = document.getElementById('terceros-table');
-                        if (!table || (!refInput && !proveedorInput && !solicitanteInput && !conInput && !accionInput)) return;
+                        if (!table || (!textoInput && !refInput && !proveedorInput && !solicitanteInput && !conInput && !accionInput)) return;
                         var noMatches = document.getElementById('terceros-no-matches');
                         var rows = table.querySelectorAll('tbody tr[data-ref-ops]');
                         function normalizeText(value) {{
@@ -17388,6 +18349,7 @@ async def gastos_terceros(
                                 .trim();
                         }}
                         function applyFilter() {{
+                            var qTexto = normalizeText(textoInput && textoInput.value);
                             var qRef = normalizeText(refInput && refInput.value);
                             var qProveedor = normalizeText(proveedorInput && proveedorInput.value);
                             var qSolicitante = normalizeText(solicitanteInput && solicitanteInput.value);
@@ -17395,6 +18357,7 @@ async def gastos_terceros(
                             var qAccion = normalizeText(accionInput && accionInput.value);
                             var visible = 0;
                             rows.forEach(function(row) {{
+                                var texto = normalizeText(row.getAttribute('data-busqueda'));
                                 var ref = normalizeText(row.getAttribute('data-ref-ops'));
                                 var proveedor = normalizeText(row.getAttribute('data-proveedor'));
                                 var solicitante = normalizeText(row.getAttribute('data-solicitante'));
@@ -17405,7 +18368,8 @@ async def gastos_terceros(
                                 var matchSolicitante = !qSolicitante || solicitante.indexOf(qSolicitante) !== -1;
                                 var matchCon = !qCon || con.indexOf(qCon) !== -1;
                                 var matchAccion = !qAccion || accion.indexOf(qAccion) !== -1;
-                                var match = matchRef && matchProveedor && matchSolicitante && matchCon && matchAccion;
+                                var matchTexto = !qTexto || texto.indexOf(qTexto) !== -1;
+                                var match = matchTexto && matchRef && matchProveedor && matchSolicitante && matchCon && matchAccion;
                                 row.style.display = match ? '' : 'none';
                                 if (match) visible++;
                             }});
@@ -17413,6 +18377,7 @@ async def gastos_terceros(
                                 noMatches.style.display = (rows.length > 0 && visible === 0) ? '' : 'none';
                             }}
                         }}
+                        if (textoInput) textoInput.addEventListener('input', applyFilter);
                         if (refInput) refInput.addEventListener('input', applyFilter);
                         if (proveedorInput) proveedorInput.addEventListener('input', applyFilter);
                         if (solicitanteInput) solicitanteInput.addEventListener('input', applyFilter);
@@ -19338,6 +20303,7 @@ async def crear_gasto(
                     informe_doc = informe_res.scalar_one_or_none()
                     if informe_doc:
                         expense.informe_documento_id = informe_doc.id
+                        await apply_budget_concept_cuenta_mapping(session, expense)
             except (ValueError, TypeError):
                 pass  # ignore invalid UUID; expense remains unassigned
 
@@ -19481,7 +20447,10 @@ async def carga_masiva_amex_get(
                 <strong>Éxito:</strong> {escape(success_msg)}
             </div>
         """
-    hero_actions_html = """
+    amex_entry_destination = await _amex_entry_destination(session, current_empleado)
+    hero_actions_html = f"""
+        <a href="{amex_entry_destination}" class="button primary">
+            Abrir recorrido AMEX</a>
         <a href="/admin/gastos/amex/conciliacion" class="button secondary">Ver conciliación AMEX</a>
         <a href="/admin/gastos" class="button secondary">Volver a finanzas</a>
     """
@@ -19763,225 +20732,57 @@ async def carga_masiva_amex_post(
             )
             cfdi_mensual_report = cfdi_result.scalar_one_or_none()
 
-        # Read and decode CSV file
+        # Shared parsing/intake preserves legacy fiscal matching, without
+        # creating a fabricated statement identity for clients without a period.
         contents = await archivo_csv.read()
-        # Try utf-8-sig first (handles BOM), fallback to utf-8
         try:
-            text = contents.decode('utf-8-sig')
-        except UnicodeDecodeError:
-            try:
-                text = contents.decode('utf-8')
-            except UnicodeDecodeError:
-                return RedirectResponse(
-                    url=_append_error_params(
-                        "/gastos/carga-masiva-amex",
-                        error_msg="El archivo CSV no está en formato UTF-8 válido",
-                    ),
-                    status_code=303
-                )
-
-        # Parse CSV
-        csv_reader = csv.DictReader(io.StringIO(text))
-
-        # Detect column names (case-insensitive)
-        fieldnames = csv_reader.fieldnames
-        if not fieldnames:
+            imported = await import_amex_csv_rows(
+                session=session,
+                employee=empleado,
+                card_account=amex_card_account,
+                content=contents,
+                cfdi_uuid_mensual=cfdi_uuid_mensual_norm,
+            )
+        except StatementValidationError as exc:
+            await session.rollback()
+            validation_messages = {
+                "invalid_utf8": "El archivo CSV no está en formato UTF-8 válido",
+                "missing_headers": "El archivo CSV está vacío o no tiene encabezados",
+                "missing_columns": (
+                    "El archivo debe incluir fecha, descripción e importe."
+                ),
+                "monthly_cfdi_multiple_months": (
+                    "El CFDI mensual consolidado solo puede aplicarse a un mes "
+                    "por carga. Se detectaron movimientos de más de un mes."
+                ),
+            }
             return RedirectResponse(
                 url=_append_error_params(
                     "/gastos/carga-masiva-amex",
-                    error_msg="El archivo CSV está vacío o no tiene encabezados",
-                ),
-                status_code=303
-            )
-
-        # Normalize fieldnames to lowercase for matching
-        fieldnames_lower = {f.lower(): f for f in fieldnames}
-
-        # Find date column (try multiple common names)
-        date_col = None
-        for possible_name in ['fecha de compra', 'date', 'fecha', 'transaction date', 'fecha de transacción']:
-            if possible_name.lower() in fieldnames_lower:
-                date_col = fieldnames_lower[possible_name.lower()]
-                break
-
-        # Find description column
-        desc_col = None
-        for possible_name in ['descripción', 'description', 'merchant', 'descripcion', 'merchant name']:
-            if possible_name.lower() in fieldnames_lower:
-                desc_col = fieldnames_lower[possible_name.lower()]
-                break
-
-        # Find amount column
-        amount_col = None
-        for possible_name in ['importe', 'amount', 'charge amount', 'monto', 'cargo']:
-            if possible_name.lower() in fieldnames_lower:
-                amount_col = fieldnames_lower[possible_name.lower()]
-                break
-
-        # Validate required columns
-        if not date_col or not desc_col or not amount_col:
-            missing = []
-            if not date_col:
-                missing.append("Fecha de compra/Date/Fecha")
-            if not desc_col:
-                missing.append("Descripción/Description/Merchant")
-            if not amount_col:
-                missing.append("Importe/Amount/Charge Amount")
-
-            return RedirectResponse(
-                url=_append_error_params(
-                    "/gastos/carga-masiva-amex",
-                    error_msg=(
-                        "Formato de archivo AMEX no reconocido. Revisa que tenga las columnas: "
-                        + ", ".join(missing)
+                    error_msg=validation_messages.get(
+                        str(exc), "No se pudo validar el archivo AMEX."
                     ),
                 ),
-                status_code=303
+                status_code=303,
             )
-
-        # Process rows
-        total_rows = 0
-        created_count = 0
-        skipped_count = 0
-        auto_cfdi_match_count = 0
-        auto_tip_match_count = 0
-        auto_pase_match_count = 0
-        errors = []
-        cfdi_month_key: Optional[str] = None
-        if not cfdi_uuid_mensual_norm:
-            await _ensure_expense_tip_schema(session)
-
-        for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 (row 1 is header)
-            total_rows += 1
-
-            try:
-                # Extract and validate date
-                date_str = row.get(date_col, '').strip()
-                if not date_str:
-                    skipped_count += 1
-                    errors.append(f"Fila {row_num}: Fecha vacía")
-                    continue
-
-                # Try multiple date formats
-                fecha_dt = None
-                date_formats = [
-                    '%d %b %Y',      # 26 Nov 2025 (AMEX export format)
-                    '%d %B %Y',      # 26 November 2025 (full month name)
-                    '%Y-%m-%d',      # 2025-11-26
-                    '%d/%m/%Y',      # 26/11/2025
-                    '%m/%d/%Y',      # 11/26/2025
-                    '%Y/%m/%d',      # 2025/11/26
-                    '%d-%m-%Y',      # 26-11-2025
-                    '%m-%d-%Y'       # 11-26-2025
-                ]
-                for fmt in date_formats:
-                    try:
-                        fecha_dt = datetime.strptime(date_str, fmt)
-                        break
-                    except ValueError:
-                        continue
-
-                if not fecha_dt:
-                    skipped_count += 1
-                    errors.append(f"Fila {row_num}: Formato de fecha no reconocido: {date_str}")
-                    continue
-
-                if cfdi_uuid_mensual_norm:
-                    row_month_key = f"{fecha_dt.year:04d}-{fecha_dt.month:02d}"
-                    if cfdi_month_key is None:
-                        cfdi_month_key = row_month_key
-                    elif row_month_key != cfdi_month_key:
-                        await session.rollback()
-                        return RedirectResponse(
-                            url=_append_error_params(
-                                "/gastos/carga-masiva-amex",
-                                error_msg="El CFDI mensual consolidado solo puede aplicarse a un mes por carga. Se detectaron movimientos de más de un mes.",
-                            ),
-                            status_code=303
-                        )
-
-                # Extract and validate description
-                descripcion = row.get(desc_col, '').strip()
-                if not descripcion:
-                    skipped_count += 1
-                    errors.append(f"Fila {row_num}: Descripción vacía")
-                    continue
-
-                # Extract and validate amount
-                amount_str = row.get(amount_col, '').strip()
-                if not amount_str:
-                    skipped_count += 1
-                    errors.append(f"Fila {row_num}: Importe vacío")
-                    continue
-
-                # Clean amount string (remove currency symbols, commas, etc.)
-                amount_str = amount_str.replace('$', '').replace(',', '').replace(' ', '')
-                try:
-                    # Handle negative amounts (charges are typically negative in AMEX exports)
-                    # Use Decimal to avoid float precision issues
-                    amount_decimal = Decimal(amount_str)
-                    gasto_cantidad = float(abs(amount_decimal))
-                except (ValueError, Exception):
-                    skipped_count += 1
-                    errors.append(f"Fila {row_num}: Importe inválido: {amount_str}")
-                    continue
-
-                if gasto_cantidad <= 0:
-                    skipped_count += 1
-                    errors.append(f"Fila {row_num}: El importe debe ser mayor a cero")
-                    continue
-
-                # Create expense using the service
-                expense = await create_expense_from_data(
-                    session=session,
-                    concepto=descripcion,
-                    gasto_cantidad=gasto_cantidad,
-                    fecha=fecha_dt,
-                    empleado_id=empleado.id,
-                    nombre_enviador=empleado.nombre,
-                    tipo_gasto="manual",
-                    metodo_pago="TARJETA CREDITO AMEX",
-                    ultimos_4_digitos=amex_card_account.last4,
-                    origen="amex_batch",
-                    # Do NOT set tournament_id, proyecto, rfc_id, or file fields
-                )
-                expense.pagado_con_amex_empresa = True
-
-                if cfdi_uuid_mensual_norm:
-                    expense.cfdi_uuid_manual = cfdi_uuid_mensual_norm
-                    if cfdi_mensual_report:
-                        expense.cfdi_report_id = cfdi_mensual_report.id
-                    session.add(expense)
-                else:
-                    amex_match = await find_amex_cfdi_match(
-                        session,
-                        charge_description=descripcion,
-                        charge_amount=gasto_cantidad,
-                        charge_date=fecha_dt,
-                    )
-                    if amex_match is not None:
-                        expense.cfdi_report_id = amex_match.cfdi.id
-                        expense.cfdi_uuid_manual = (amex_match.cfdi.cfdi_uuid or "").strip().upper() or None
-                        if amex_match.inferred_tip > 0:
-                            try:
-                                expense.propina_no_deducible = round(float(amex_match.inferred_tip), 2)
-                            except Exception:
-                                pass
-                            auto_tip_match_count += 1
-                        elif amex_match.confidence == "pase_monthly":
-                            auto_pase_match_count += 1
-                        else:
-                            auto_cfdi_match_count += 1
-                        session.add(expense)
-
-                created_count += 1
-
-            except Exception as e:
-                skipped_count += 1
-                error_msg = str(e)
-                errors.append(f"Fila {row_num}: {error_msg}")
-                logger.error(f"Error processing row {row_num} in AMEX CSV: {e}", exc_info=True)
-                continue
+        created_count = imported["created_count"]
+        skipped_count = imported["skipped_count"]
+        auto_cfdi_match_count = imported["auto_cfdi_match_count"]
+        auto_tip_match_count = imported["auto_tip_match_count"]
+        auto_pase_match_count = imported["auto_pase_match_count"]
+        row_messages = {
+            "missing_date": "Fecha vacía",
+            "invalid_date": "Formato de fecha no reconocido",
+            "missing_description": "Descripción vacía",
+            "missing_amount": "Importe vacío",
+            "invalid_amount": "Importe inválido",
+        }
+        errors = [
+            f"Fila {row['row_number']}: " + row_messages.get(
+                row.get("reason_code"), "Fila no válida"
+            )
+            for row in imported["rows"] if row["status"] == "skipped"
+        ]
 
         # Commit if at least one expense was created
         if created_count > 0:
@@ -20199,6 +21000,345 @@ async def amex_card_accounts_save(
     )
 
 
+def _amex_identity_card_options(cards: list[AmexCardAccount]) -> str:
+    """Offer explicit active catalog choices without inferring a card."""
+    return '<option value="">-- Selecciona tarjeta AMEX --</option>' + "".join(
+        f'<option value="{card.id}">{escape(card.card_label or "AMEX")} · '
+        f'{escape(card.cardholder_key or "")} · ****{escape(card.last4)}</option>'
+        for card in cards
+        if card.active
+    )
+
+
+async def _require_amex_form_card(
+    session: AsyncSession, card_account_id: Optional[str]
+) -> AmexCardAccount:
+    """Validate user-selected identity through the canonical catalog owner."""
+    try:
+        card_id = UUIDType(str(card_account_id or "").strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Selecciona una tarjeta AMEX activa del catálogo.") from exc
+    card, reason = await validate_amex_card_identity(session, card_id)
+    if card is None or reason:
+        raise ValueError(
+            "La tarjeta AMEX no está activa o su cuenta pasivo no es válida."
+        )
+    return card
+
+
+def _can_identify_amex_card(actor: Empleado) -> bool:
+    """Corporate identity belongs to active Finance roles, independently of facts."""
+    return bool(getattr(actor, "activo", False)) and (
+        str(getattr(actor, "rol", "") or "").strip().lower() in FINANCE_AMEX_ROLES
+    )
+
+
+def _reject_unauthorized_amex_card_submission(
+    actor: Empleado, card_account_id: Optional[str]
+) -> None:
+    if str(card_account_id or "").strip() and not _can_identify_amex_card(actor):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo Finanzas puede identificar la tarjeta AMEX de empresa.",
+        )
+
+
+async def _amex_visible_card_options(
+    session: AsyncSession, actor: Empleado, *, enabled: bool
+) -> str:
+    """Never load the corporate catalog into an owner's capture or edit view."""
+    if not enabled or not _can_identify_amex_card(actor):
+        return ""
+    return _amex_identity_card_options(await list_amex_card_accounts(session))
+
+
+def _amex_identity_control_html(
+    actor: Empleado,
+    *,
+    card_options: str,
+    existing_expense: Optional[ExpenseReport] = None,
+) -> str:
+    if existing_expense is not None and is_company_amex_expense(existing_expense):
+        last4 = str(existing_expense.ultimos_4_digitos or "").strip()
+        if last4:
+            return f"<small>Tarjeta AMEX registrada: ****{escape(last4)}</small>"
+        return (
+            "<small>Pendiente de identificar tarjeta por Finanzas. "
+            '<a href="/admin/gastos/amex/conciliacion#sin-tarjeta">'
+            "Partidas AMEX sin tarjeta</a>.</small>"
+        )
+    if not _can_identify_amex_card(actor):
+        return "<small>Pendiente de identificar tarjeta por Finanzas.</small>"
+    return (
+        "<label>Tarjeta AMEX verificada "
+        '<select name="amex_card_account_id">'
+        f"{card_options}</select></label>"
+    )
+
+
+async def _validated_amex_edit_identity(
+    session: AsyncSession,
+    expense: ExpenseReport,
+    *,
+    actor: Empleado,
+    requested_amex: bool,
+    card_account_id: Optional[str],
+    requested_last4: Optional[str],
+) -> Optional[str]:
+    """Preserve existing identity; only Finance may assign a new corporate card."""
+    _reject_unauthorized_amex_card_submission(actor, card_account_id)
+    existing_last4 = str(expense.ultimos_4_digitos or "").strip() or None
+    if is_company_amex_expense(expense):
+        if requested_last4 not in (None, "", existing_last4) or card_account_id:
+            raise ValueError(
+                "La identidad de una partida AMEX existente no puede cambiarse aquí. "
+                "Usa Partidas AMEX sin tarjeta en Conciliación AMEX "
+                "para identificarla con auditoría."
+            )
+        return existing_last4
+    if not requested_amex:
+        return requested_last4
+    if not _can_identify_amex_card(actor):
+        if (requested_last4 or "").strip():
+            raise HTTPException(
+                status_code=403,
+                detail="Solo Finanzas puede identificar la tarjeta AMEX de empresa.",
+            )
+        reason = await validate_amex_pending_edit_transition(
+            session, expense_id=UUIDType(str(expense.id))
+        )
+        if reason:
+            raise ValueError(
+                "No se puede declarar AMEX: revisa el informe y su estado contable. "
+                "La identidad de tarjeta requiere revisión de Finanzas."
+            )
+        return None
+    try:
+        card_id = UUIDType(str(card_account_id or "").strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Selecciona una tarjeta AMEX activa del catálogo.") from exc
+    selected_card, reason = await validate_amex_card_edit_transition(
+        session, expense_id=UUIDType(str(expense.id)), card_account_id=card_id
+    )
+    if selected_card is None or reason:
+        raise ValueError(
+            "No se puede declarar AMEX: revisa la tarjeta, el informe y su "
+            "estado contable. Una partida vinculada o con corte guardado "
+            "no admite cambios."
+        )
+    return str(selected_card.last4)
+
+
+@router.post("/admin/gastos/amex/conciliacion/identificar-tarjeta")
+async def amex_conciliacion_identify_card(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    expense_ids: List[str] = Form([]),
+    amex_card_account_id: str = Form(""),
+    reason: str = Form(""),
+    confirmed: bool = Form(False),
+    year: Optional[int] = Form(None),
+    month: Optional[int] = Form(None),
+    return_to: Optional[str] = Form(None),
+) -> RedirectResponse:
+    """Identify selected report items; binding and accounting remain separate."""
+    redirect_base = (
+        f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}"
+        f"&month={month or datetime.utcnow().month}"
+    )
+    redirect_base = _amex_reconciliation_return_context(redirect_base, return_to)
+    try:
+        parsed_ids = [UUIDType(value) for value in expense_ids]
+        card_id = UUIDType(amex_card_account_id)
+        if not parsed_ids or len(set(parsed_ids)) != len(parsed_ids):
+            raise ValueError("Selecciona partidas concretas sin duplicados.")
+        if not reason.strip() or not confirmed:
+            raise ValueError(
+                "Indica el motivo y confirma la identificación de tarjeta."
+            )
+        result = await assign_missing_amex_card(
+            session,
+            expense_ids=parsed_ids,
+            card_account_id=card_id,
+            actor_id=UUIDType(str(current_empleado.id)),
+            reason=reason.strip(),
+            confirmed=confirmed,
+        )
+        if result.status not in {"assigned", "unchanged"}:
+            await session.rollback()
+            message = (
+                "No se pudo identificar la tarjeta. Revisa permisos, tarjeta, "
+                "informe y estado contable de todas las partidas seleccionadas "
+                f"({result.reason or 'selección no disponible'})."
+            )
+            parameter = "error_msg"
+        else:
+            await session.commit()
+            message = (
+                f"Tarjeta identificada en {result.updated_count} partida(s); "
+                f"{result.unchanged_count} ya identificada(s). "
+                "Ahora confirma el vínculo del consumo "
+                "y completa la revisión contable. "
+                "No se generó ninguna póliza."
+            )
+            parameter = "msg"
+    except (TypeError, ValueError) as exc:
+        await session.rollback()
+        message = "Selección de tarjeta o partidas inválida. " + str(exc)
+        parameter = "error_msg"
+    return RedirectResponse(
+        url=redirect_base + f"&{parameter}=" + quote(message) + "#sin-tarjeta",
+        status_code=303,
+    )
+
+
+def _amex_bank_reason_text(reason: Optional[str]) -> str:
+    explanations = {
+        "unauthorized_amex_accounting_actor": "Se requiere un perfil activo de Finanzas.",
+        "invalid_amex_bridge_selection": "Selecciona el conjunto completo de consumos reconocidos.",
+        "amex_bridge_requires_report_receipts": "Las fuentes deben tener una póliza contable registrada.",
+        "amex_bridge_requires_complete_cuts": "Cada fuente debe tener un corte inicial completo.",
+        "amex_bridge_source_changed": "La fuente cambió desde su reconocimiento. Revisa la excepción contable.",
+        "amex_bridge_header_conflict": "El cargo bancario ya tiene un uso incompatible con esta asociación.",
+        "amex_report_already_bank_associated": "Una fuente ya está asociada a otro cargo bancario.",
+        "amex_bridge_partition_mismatch": "El cargo ya fue asociado a un conjunto diferente. No se modificó su asociación.",
+        "invalid_amex_statement_source": "El cargo importado ya no está activo o no admite asociación.",
+        "amex_card_currency_date_mismatch": "La tarjeta, moneda y día deben coincidir exactamente.",
+        "amex_representation_amount_mismatch": "La suma de las fuentes debe coincidir con el cargo completo a centavos.",
+        "invalid_amex_liability": "Revisa la tarjeta activa y su cuenta pasivo contable.",
+        "invalid_amex_report_anchor": "La fuente del informe cambió o ya no está disponible.",
+        "missing_amex_representation": "Falta una de las fuentes seleccionadas. Vuelve a revisar el conjunto.",
+        "amex_representation_already_bound": "Una partida ya pertenece a otro vínculo de consumo.",
+        "historical_amex_representation_requires_review": "Requiere revisión histórica AMEX separada.",
+        "amex_statement_only_requires_exception": "Indica el motivo de la excepción para un cargo ajeno al informe.",
+    }
+    return explanations.get(
+        reason or "",
+        "Revisa las fuentes, tarjetas y el conjunto antes de asociar el banco.",
+    )
+
+
+@router.post("/admin/gastos/amex/conciliacion/vincular-consumo")
+async def amex_conciliacion_bind_consumption(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    imported_expense_id: str = Form(...),
+    report_expense_ids: List[str] = Form([]),
+    statement_only: bool = Form(False),
+    year: Optional[int] = Form(None),
+    month: Optional[int] = Form(None),
+    report_consumption_ids: List[str] = Form([]),
+    bank_association_confirmed: bool = Form(False),
+    statement_only_reason: str = Form(""),
+    return_to: Optional[str] = Form(None),
+) -> RedirectResponse:
+    """Confirm which report items and statement charge are one consumption."""
+    redirect_base = (
+        f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}"
+        f"&month={month or datetime.utcnow().month}#consumos"
+    )
+    redirect_base = _amex_reconciliation_return_context(redirect_base, return_to)
+    exception_reason = (
+        statement_only_reason if isinstance(statement_only_reason, str) else ""
+    )
+    bridge_values = (
+        report_consumption_ids if isinstance(report_consumption_ids, list) else []
+    )
+    bridge_confirmed = bank_association_confirmed is True
+    bridge_mode = bool(bridge_values) or bridge_confirmed
+    if bridge_mode and not _can_identify_amex_card(current_empleado):
+        raise HTTPException(403, "Se requiere un perfil activo de Finanzas.")
+    try:
+        imported_id = UUIDType(imported_expense_id)
+        report_ids = [UUIDType(value) for value in report_expense_ids]
+        consumption_ids = [UUIDType(value) for value in bridge_values]
+    except (TypeError, ValueError):
+        return RedirectResponse(
+            url=redirect_base.replace(
+                "#consumos",
+                "&error_msg=" + quote("Selección de consumo inválida.") + "#consumos",
+            ),
+            status_code=303,
+        )
+    if bridge_mode:
+        invalid_selection = (
+            not bridge_confirmed
+            or not consumption_ids
+            or report_ids
+            or statement_only
+            or len(set(consumption_ids)) != len(consumption_ids)
+        )
+        message = (
+            "Selecciona el conjunto completo de consumos reconocidos del informe "
+            "y confirma su asociación bancaria. No combines otros modos."
+        )
+    else:
+        invalid_selection = (not report_ids and not statement_only) or (
+            report_ids and statement_only
+        )
+        message = (
+            "Selecciona las partidas del informe o confirma que el cargo "
+            "no está registrado en un informe."
+        )
+        if statement_only and not exception_reason.strip():
+            invalid_selection = True
+            message = "Indica el motivo de la excepción para un cargo ajeno al informe."
+    if invalid_selection:
+        return RedirectResponse(
+            url=redirect_base.replace(
+                "#consumos", "&error_msg=" + quote(message) + "#consumos"
+            ),
+            status_code=303,
+        )
+    try:
+        if bridge_mode:
+            result = await bind_amex_report_bank_consumptions(
+                session,
+                imported_expense_id=imported_id,
+                report_consumption_ids=consumption_ids,
+                actor_id=UUIDType(str(current_empleado.id)),
+            )
+        elif statement_only:
+            result = await bind_amex_consumption(
+                session,
+                imported_expense_id=imported_id,
+                report_expense_ids=report_ids,
+                actor_id=UUIDType(str(current_empleado.id)),
+                statement_only_reason=exception_reason.strip(),
+            )
+        else:
+            result = await bind_amex_consumption(
+                session,
+                imported_expense_id=imported_id,
+                report_expense_ids=report_ids,
+                actor_id=UUIDType(str(current_empleado.id)),
+            )
+    except Exception:
+        await session.rollback()
+        raise
+    if result.status == "pending":
+        await session.rollback()
+        message = (
+            "No se pudo asociar el banco. " + _amex_bank_reason_text(result.reason)
+            if bridge_mode or statement_only
+            else f"No se pudo vincular el consumo ({result.reason})."
+        )
+        parameter = "error_msg"
+    else:
+        await session.commit()
+        message = (
+            "Asociación bancaria guardada. La póliza y el corte del informe se conservan."
+            if bridge_mode
+            else "Consumo vinculado. Informe y conciliación compartirán su registro contable."
+        )
+        parameter = "msg"
+    return RedirectResponse(
+        url=redirect_base.replace(
+            "#consumos", f"&{parameter}=" + quote(message) + "#consumos"
+        ),
+        status_code=303,
+    )
+
 
 @router.post("/admin/gastos/amex/conciliacion/vincular-cfdi")
 async def amex_conciliacion_link_cfdi(
@@ -20208,8 +21348,10 @@ async def amex_conciliacion_link_cfdi(
     cfdi_report_id: str = Form(...),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
+    return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     redirect_base = f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}&month={month or datetime.utcnow().month}"
+    redirect_base = _amex_reconciliation_return_context(redirect_base, return_to)
     redirect_anchor = "#sugerencias"
     try:
         expense_uuid = UUIDType(expense_id)
@@ -20226,7 +21368,12 @@ async def amex_conciliacion_link_cfdi(
         .where(ExpenseReport.id == expense_uuid)
     )
     expense = result.scalar_one_or_none()
-    if not expense or expense.origen != "amex_batch" or expense.estado_gasto != "activo":
+    if (
+        not expense
+        or expense.origen != "amex_batch"
+        or expense.estado_gasto != "activo"
+        or await is_direct_amex_expense(session, expense_uuid)
+    ):
         return RedirectResponse(
             url=redirect_base + "&error_msg=" + quote("El cargo AMEX ya no está disponible para vinculación.") + redirect_anchor,
             status_code=303,
@@ -20260,8 +21407,10 @@ async def amex_conciliacion_link_cfdi_bulk(
     selected_links: List[str] = Form(default=[]),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
+    return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     redirect_base = f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}&month={month or datetime.utcnow().month}"
+    redirect_base = _amex_reconciliation_return_context(redirect_base, return_to)
     redirect_anchor = "#sugerencias"
     if not selected_links:
         return RedirectResponse(
@@ -20300,6 +21449,7 @@ async def amex_conciliacion_link_cfdi_bulk(
             or expense.origen != "amex_batch"
             or expense.estado_gasto != "activo"
             or expense.cfdi_report_id
+            or await is_direct_amex_expense(session, expense_uuid)
         ):
             skipped_count += 1
             continue
@@ -20325,8 +21475,6 @@ async def amex_conciliacion_link_cfdi_bulk(
     )
 
 
-
-
 @router.post("/admin/gastos/amex/conciliacion/vincular-pase-mensual")
 async def amex_conciliacion_link_pase_monthly_cfdi(
     session: AsyncSession = Depends(get_db_session),
@@ -20335,8 +21483,10 @@ async def amex_conciliacion_link_pase_monthly_cfdi(
     cfdi_report_id: str = Form(...),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
+    return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     redirect_base = f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}&month={month or datetime.utcnow().month}"
+    redirect_base = _amex_reconciliation_return_context(redirect_base, return_to)
     try:
         expense_uuid_list = [UUIDType(raw.strip()) for raw in (expense_ids or "").split(",") if raw.strip()]
         cfdi_uuid = UUIDType(cfdi_report_id)
@@ -20369,6 +21519,16 @@ async def amex_conciliacion_link_pase_monthly_cfdi(
             status_code=303,
         )
 
+    if any(
+        [await is_direct_amex_expense(session, exp.id) for exp in expenses_to_link]
+    ):
+        return RedirectResponse(
+            url=redirect_base
+            + "&error_msg="
+            + quote("El cargo pertenece al recorrido AMEX directo."),
+            status_code=303,
+        )
+
     suggestion = await validate_pase_monthly_cfdi_suggestion(session, expenses_to_link, cfdi_uuid)
     if not suggestion:
         return RedirectResponse(
@@ -20386,8 +21546,6 @@ async def amex_conciliacion_link_pase_monthly_cfdi(
     )
 
 
-
-
 @router.post("/admin/gastos/amex/conciliacion/programar-pago")
 async def amex_conciliacion_schedule_card_payment(
     session: AsyncSession = Depends(get_db_session),
@@ -20398,10 +21556,12 @@ async def amex_conciliacion_schedule_card_payment(
     pago_urgente: Optional[str] = Form(None),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
+    return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     selected_year = year or datetime.utcnow().year
     selected_month = month or datetime.utcnow().month
     redirect_base = f"/admin/gastos/amex/conciliacion?year={selected_year}&month={selected_month}"
+    redirect_base = _amex_reconciliation_return_context(redirect_base, return_to)
     try:
         card_account_uuid = UUIDType(amex_card_account_id)
         payment_request = AmexCardPaymentRequest(
@@ -20432,7 +21592,6 @@ async def amex_conciliacion_schedule_card_payment(
     )
 
 
-
 @router.post("/admin/gastos/amex/conciliacion/validar-notificar")
 async def amex_conciliacion_validate_notify(
     session: AsyncSession = Depends(get_db_session),
@@ -20440,10 +21599,12 @@ async def amex_conciliacion_validate_notify(
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
     amex_card_account_id: str = Form(...),
+    return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     selected_year = year or datetime.utcnow().year
     selected_month = month or datetime.utcnow().month
     redirect_base = f"/admin/gastos/amex/conciliacion?year={selected_year}&month={selected_month}"
+    redirect_base = _amex_reconciliation_return_context(redirect_base, return_to)
     try:
         try:
             card_account_uuid = UUIDType(str(amex_card_account_id or "").strip())
@@ -20497,6 +21658,140 @@ async def amex_conciliacion_validate_notify(
         status_code=303,
     )
 
+
+def _amex_attention_note(decision: Any) -> str:
+    """Explain visible beneficiary exceptions without changing financial state."""
+    reasons = {
+        "amex_attention_missing_beneficiary": "Falta beneficiario explícito",
+        "amex_attention_beneficiary_conflict": "Beneficiarios contradictorios",
+        "amex_attention_multiple_or_missing_informes": "Informe ausente o ambiguo",
+        "amex_attention_ambiguous_beneficiary": "Identidad de beneficiario ambigua",
+        "amex_attention_configuration_disabled": (
+            "Exclusión desactivada: revisar configuración"
+        ),
+    }
+    return reasons.get(str(getattr(decision, "reason", "")), "")
+
+
+async def _load_amex_bank_report_context(
+    session: AsyncSession,
+    *,
+    charge_ids: List[UUIDType],
+    start_dt: datetime,
+    end_dt: datetime,
+) -> Dict[str, Any]:
+    """Read bank headers and fully posted report receipts without inferring matches."""
+    headers = {}
+    associated: Dict[UUIDType, List[UUIDType]] = {}
+    if charge_ids:
+        result = await session.execute(
+            select(AmexRecognitionConsumption).where(
+                AmexRecognitionConsumption.imported_expense_id.in_(charge_ids)
+            )
+        )
+        headers = {row.imported_expense_id: row for row in result.scalars().all()}
+        if headers:
+            result = await session.execute(
+                select(AmexReportBankAssociation).where(
+                    AmexReportBankAssociation.statement_consumption_id.in_(
+                        [row.id for row in headers.values()]
+                    )
+                )
+            )
+            for association in result.scalars().all():
+                associated.setdefault(association.statement_consumption_id, []).append(
+                    association.report_consumption_id
+                )
+    receipt_links: Dict[UUIDType, List[Any]] = {}
+    if associated:
+        result = await session.execute(
+            select(
+                AmexReportBankAssociation.statement_consumption_id,
+                ExpenseReport,
+                AmexAccountingCut,
+            )
+            .join(
+                AmexRecognitionConsumption,
+                AmexRecognitionConsumption.id
+                == AmexReportBankAssociation.report_consumption_id,
+            )
+            .join(
+                ExpenseReport,
+                ExpenseReport.id == AmexRecognitionConsumption.source_report_expense_id,
+            )
+            .join(
+                AmexAccountingCut,
+                AmexAccountingCut.accounting_poliza_id
+                == AmexRecognitionConsumption.accounting_poliza_id,
+            )
+            .where(AmexReportBankAssociation.statement_consumption_id.in_(associated))
+        )
+        for header_id, expense, cut in result.all():
+            receipt_links.setdefault(header_id, []).append((expense, cut))
+    result = await session.execute(
+        select(AmexRecognitionConsumption, ExpenseReport, AmexAccountingCut)
+        .join(
+            ExpenseReport,
+            ExpenseReport.id == AmexRecognitionConsumption.source_report_expense_id,
+        )
+        .join(
+            AmexAccountingCut,
+            AmexAccountingCut.accounting_poliza_id
+            == AmexRecognitionConsumption.accounting_poliza_id,
+        )
+        .where(
+            AmexAccountingCut.kind == "initial",
+            AmexAccountingCut.snapshot_json["source_evidence_id"].astext.isnot(None),
+            AmexRecognitionConsumption.source_kind == "report",
+            AmexRecognitionConsumption.binding_mode == "report",
+            AmexRecognitionConsumption.accounting_poliza_id.isnot(None),
+            ExpenseReport.estado_gasto == "activo",
+            ExpenseReport.fecha >= start_dt - timedelta(days=10),
+            ExpenseReport.fecha < end_dt + timedelta(days=10),
+            ~exists().where(
+                AmexReportBankAssociation.report_consumption_id
+                == AmexRecognitionConsumption.id
+            ),
+        )
+        .order_by(ExpenseReport.fecha.asc(), ExpenseReport.id.asc())
+    )
+    available = list(result.all())
+    attention = await load_amex_attention_context(
+        session, expenses=[expense for _consumption, expense, _cut in available]
+    )
+    available = [
+        row for row in available
+        if attention.expense_decisions.get(row[1].id) is None
+        or attention.expense_decisions[row[1].id].visible
+    ]
+    return {
+        "headers": headers,
+        "associated": associated,
+        "receipt_links": receipt_links,
+        "available": available,
+        "attention_warnings": attention.warnings,
+        "attention_decisions": attention.expense_decisions,
+    }
+
+
+def _amex_report_bank_rows(context: Dict[str, Any]) -> str:
+    rows = []
+    for consumption, expense, cut in context["available"]:
+        attention_note = escape(_amex_attention_note(
+            context.get("attention_decisions", {}).get(expense.id)
+        ))
+        rows.append(
+            f'<tr><td><a href="/gastos/{expense.id}">'
+            f"{escape(str(expense.numero_referencia or expense.id))}</a>"
+            f"<small>{attention_note}</small></td>"
+            f"<td>{consumption.economic_date.isoformat()}</td>"
+            f"<td>{format_currency(consumption.amount, consumption.currency)}</td>"
+            f'<td><a href="/admin/contabilidad/amex/informes/{cut.informe_id}">'
+            "Póliza y corte existentes</a></td><td>Banco pendiente de asociar</td></tr>"
+        )
+    return "".join(rows)
+
+
 @router.get("/admin/gastos/amex/conciliacion", response_class=HTMLResponse)
 async def amex_conciliacion_view(
     request: Request,
@@ -20513,6 +21808,19 @@ async def amex_conciliacion_view(
     - Supports 1 CFDI mensual consolidado -> N cargos
     - Tolerates restaurant tip deltas where CFDI can exclude tip
     """
+    if not _can_identify_amex_card(current_empleado):
+        raise HTTPException(403, "Se requiere un perfil activo de Finanzas.")
+    workflow_return = _amex_statement_return_to(
+        request.query_params.get("return_to") if request is not None else None
+    )
+    workflow_return_input = (
+        f'<input type="hidden" name="return_to" value="{escape(workflow_return)}">'
+        if workflow_return else ""
+    )
+    workflow_return_link = (
+        f'<a href="{escape(workflow_return)}" class="button secondary">'
+        'Volver al estado AMEX</a>' if workflow_return else ""
+    )
     now = datetime.utcnow()
     selected_year = year or now.year
     selected_month = month or now.month
@@ -20530,6 +21838,10 @@ async def amex_conciliacion_view(
         .where(
             and_(
                 ExpenseReport.origen == "amex_batch",
+                ~direct_amex_expense_condition(
+                    ExpenseReport,
+                    effective_sources=await effective_direct_sources_available(session),
+                ),
                 ExpenseReport.estado_gasto == "activo",
                 ExpenseReport.fecha >= start_dt,
                 ExpenseReport.fecha < end_dt,
@@ -20539,6 +21851,233 @@ async def amex_conciliacion_view(
     )
     expenses = expenses_result.scalars().all()
     amex_card_accounts = await list_amex_card_accounts(session)
+
+    bank_context = await _load_amex_bank_report_context(
+        session, charge_ids=[UUIDType(str(expense.id)) for expense in expenses],
+        start_dt=start_dt, end_dt=end_dt,
+    )
+    bank_report_rows = _amex_report_bank_rows(bank_context)
+    cards_by_last4 = {card.last4: card for card in amex_card_accounts}
+    report_result = await session.execute(
+        select(ExpenseReport)
+        .where(
+            company_amex_sql_condition(),
+            or_(ExpenseReport.origen.is_(None), ExpenseReport.origen != "amex_batch"),
+            ExpenseReport.estado_gasto == "activo",
+            ExpenseReport.cuenta_gastos_id.isnot(None),
+            ~exists().where(AmexRecognitionRepresentation.expense_id == ExpenseReport.id),
+            ExpenseReport.fecha >= start_dt - timedelta(days=10),
+            ExpenseReport.fecha < end_dt + timedelta(days=10),
+        )
+        .order_by(ExpenseReport.fecha.asc(), ExpenseReport.id.asc())
+    )
+    report_candidates = list(report_result.scalars().all())
+    report_attention = await load_amex_attention_context(
+        session, expenses=report_candidates
+    )
+    report_candidates = [
+        item for item in report_candidates
+        if report_attention.expense_decisions.get(cast(UUIDType, item.id)) is None
+        or report_attention.expense_decisions[cast(UUIDType, item.id)].visible
+    ]
+    attention_warning = bool(
+        report_attention.warnings or bank_context.get("attention_warnings", ())
+    )
+    attention_notice_html = (
+        '<div class="notice warn">No se pudo verificar la separación de '
+        'atención por informe. Las partidas permanecen visibles para revisión.</div>'
+        if attention_warning else ""
+    )
+    missing_card_items = [
+        item for item in report_candidates if not (item.ultimos_4_digitos or "").strip()
+    ]
+    missing_card_rows = ""
+    informes_by_expense: Dict[UUIDType, List[Documento]] = {}
+    # Keep activation alive so canonical per-item checks reuse the identity map.
+    recognition_activation = None
+    if missing_card_items:
+        recognition_activation = await session.get(AmexRecognitionActivation, 1)
+        informe_result = await session.execute(
+            select(ExpenseReport.id, Documento)
+            .join(Documento, informe_expense_link_condition())
+            .where(
+                ExpenseReport.id.in_([item.id for item in missing_card_items]),
+                Documento.tipo == "INFORME",
+            )
+        )
+        for expense_id, informe in informe_result.all():
+            informes_by_expense.setdefault(expense_id, []).append(informe)
+    for item in missing_card_items:
+        informes = informes_by_expense.get(item.id, [])
+        informe = informes[0] if len(informes) == 1 else None
+        historical_reason = await activation_reason(session, [item])
+        historical_note = (
+            "Requiere revisión histórica AMEX"
+            if historical_reason == "historical_amex_representation_requires_review"
+            else (
+                "Reconocimiento pendiente de activación o fecha fuente"
+                if historical_reason
+                else "Pendiente de identificar tarjeta"
+            )
+        )
+        attention_note = _amex_attention_note(
+            report_attention.expense_decisions.get(cast(UUIDType, item.id))
+        )
+        if attention_note:
+            historical_note += "<br>" + escape(attention_note)
+        informe_label = escape(
+            str(
+                getattr(informe, "numero_referencia", None)
+                or "Informe faltante o ambiguo"
+            )
+        )
+        informe_state = escape(
+            str(getattr(informe, "estado", None) or "Sin estado disponible")
+        )
+        item_label = escape(str(item.numero_referencia or item.id))
+        item_amount = format_currency(
+            float(item.gasto_cantidad or 0), currency_for(item)
+        )
+        missing_card_rows += f"""
+            <tr>
+                <td><input type="checkbox" name="expense_ids" value="{item.id}"
+                    aria-label="Seleccionar {item_label}"></td>
+                <td><a href="/gastos/{item.id}">{item_label}</a>
+                    <br>{escape(str(item.concepto or ''))}</td>
+                <td><a href="/informes-de-gastos/{item.cuenta_gastos_id}">
+                    {informe_label}</a>
+                    <br>{informe_state}</td>
+                <td>{item.fecha.date().isoformat() if item.fecha else '—'}</td>
+                <td>{item_amount}</td>
+                <td>{historical_note}</td>
+            </tr>
+        """
+    missing_identity_body = missing_card_rows or (
+        '<tr><td colspan="6">'
+        "Sin partidas AMEX pendientes de identificar en este período.</td></tr>"
+    )
+    del recognition_activation
+    identity_card_options = _amex_identity_card_options(amex_card_accounts)
+    identity_disabled = "" if amex_card_accounts and missing_card_items else "disabled"
+    consumption_rows_html = ""
+    for charge in expenses:
+        header = bank_context["headers"].get(charge.id)
+        linked_targets = bank_context["associated"].get(header.id, []) if header else []
+        if header is not None and (
+            header.binding_mode != "report_bridge" or linked_targets
+        ):
+            status = (
+                "Banco asociado a fuente contable ya reconocida; no genera otra póliza."
+                if header.binding_mode == "report_bridge" else "Consumo ya vinculado."
+            )
+            receipt_html = "".join(
+                f'<p><a href="/gastos/{item.id}">'
+                f'{escape(str(item.numero_referencia or item.id))}</a> · '
+                f'<a href="/admin/contabilidad/amex/cortes/{cut.id}.xlsx">'
+                'Póliza del corte existente</a></p>'
+                for item, cut in bank_context.get("receipt_links", {}).get(header.id, [])
+            )
+            consumption_rows_html += (
+                f'<tr><td>{escape(str(charge.numero_referencia or "Cargo AMEX"))}</td>'
+                f'<td>{escape(str(charge.concepto or ""))}</td>'
+                f'<td>{format_currency(charge.gasto_cantidad, currency_for(charge))}</td>'
+                f'<td>{status}{receipt_html}</td></tr>'
+            )
+            continue
+        selected_card = cards_by_last4.get(charge.ultimos_4_digitos)
+        bridge_options = "".join(
+            f'<option value="{consumption.id}">'
+            f'{escape(str(item.numero_referencia or item.id))} · '
+            f'{format_currency(consumption.amount, consumption.currency)}</option>'
+            for consumption, item, cut in bank_context["available"]
+            if selected_card is not None
+            and consumption.card_account_id == selected_card.id
+            and charge.fecha is not None
+            and consumption.economic_date == charge.fecha.date()
+            and consumption.currency == currency_for(charge)
+        )
+        bridge_form = f"""
+            <form method="POST" action="/admin/gastos/amex/conciliacion/vincular-consumo">
+                <input type="hidden" name="imported_expense_id" value="{charge.id}">
+                {workflow_return_input}
+                    <input type="hidden" name="year" value="{selected_year}">
+                <input type="hidden" name="month" value="{selected_month}">
+                <label>Consumos del informe con póliza y corte completos
+                    <select name="report_consumption_ids" multiple>{bridge_options}</select>
+                </label>
+                <small>Declara el conjunto completo. Su suma debe corresponder al cargo entero.
+                    Esta asociación bancaria conserva los reconocimientos existentes.</small>
+                <label><input type="checkbox" name="bank_association_confirmed" value="true" required>
+                    Confirmo la asociación bancaria de este conjunto completo</label>
+                <button type="submit" class="button">Asociar banco sin otra póliza</button>
+            </form>
+        """ if bridge_options else ""
+        if header is not None:
+            consumption_rows_html += (
+                f'<tr><td>{escape(str(charge.numero_referencia or "Cargo AMEX"))}</td>'
+                f'<td>{escape(str(charge.concepto or ""))}</td>'
+                f'<td>{format_currency(charge.gasto_cantidad, currency_for(charge))}</td>'
+                f'<td>Asociación bancaria pendiente de revisar.{bridge_form}</td></tr>'
+            )
+            continue
+        options = "".join(
+            f'<option value="{item.id}">'
+            f'{escape(str(item.numero_referencia or "Partida de informe"))} · '
+            f'{escape(str(item.concepto or ""))} · '
+            f'${float(item.gasto_cantidad or 0):,.2f} '
+            f'{escape(_amex_attention_note(
+                report_attention.expense_decisions.get(cast(UUIDType, item.id))
+            ))}</option>'
+            for item in report_candidates
+            if item.ultimos_4_digitos == charge.ultimos_4_digitos
+        )
+        empty_help = ""
+        if not options:
+            if missing_card_items:
+                empty_help = (
+                    '<p class="section-note">'
+                    'Hay partidas AMEX sin identidad de tarjeta. '
+                    '<a href="#sin-tarjeta">Identifica su tarjeta</a> '
+                    'antes de vincularlas.</p>'
+                )
+            elif not report_candidates:
+                empty_help = (
+                    '<p class="section-note">'
+                    'No hay partidas AMEX registradas en informes de este período.</p>'
+                )
+            else:
+                empty_help = (
+                    '<p class="section-note">'
+                    'No hay partidas de esta tarjeta en los informes del período. '
+                    'Revisa tarjeta y fechas del informe.</p>'
+                )
+        consumption_rows_html += f"""
+            <tr>
+                <td>{escape(str(charge.numero_referencia or 'Cargo AMEX'))}</td>
+                <td>{escape(str(charge.concepto or ''))}</td>
+                <td>${float(charge.gasto_cantidad or 0):,.2f}</td>
+                <td>
+                    {bridge_form}
+                    <form method="POST" action="/admin/gastos/amex/conciliacion/vincular-consumo">
+                        <input type="hidden" name="imported_expense_id" value="{charge.id}">
+                        {workflow_return_input}
+                    <input type="hidden" name="year" value="{selected_year}">
+                        <input type="hidden" name="month" value="{selected_month}">
+                        <label>Partidas del informe correspondientes al mismo consumo
+                            <select name="report_expense_ids" multiple>{options}</select>
+                            {empty_help}
+                        </label>
+                        <label><input type="checkbox" name="statement_only" value="true">
+                            Confirmo que este cargo no está registrado en un informe
+                        </label>
+                        <label>Motivo de la excepción si es ajeno al informe
+                            <input name="statement_only_reason" maxlength="1000">
+                        </label>
+                        <button type="submit" class="button">Confirmar vínculo</button>
+                    </form>
+                </td>
+            </tr>
+        """
 
     linked_groups: Dict[tuple, Dict[str, Any]] = {}
     pending_groups: Dict[tuple, Dict[str, Any]] = {}
@@ -20654,6 +22193,7 @@ async def amex_conciliacion_view(
                 <form method="POST" action="/admin/gastos/amex/conciliacion/vincular-cfdi" style="margin:0;">
                     <input type="hidden" name="expense_id" value="{exp.id}">
                     <input type="hidden" name="cfdi_report_id" value="{suggestion.cfdi_report_id}">
+                    {workflow_return_input}
                     <input type="hidden" name="year" value="{selected_year}">
                     <input type="hidden" name="month" value="{selected_month}">
                     <button type="submit" class="button primary" style="padding:8px 10px;">Vincular</button>
@@ -20686,6 +22226,7 @@ async def amex_conciliacion_view(
                 <form method="POST" action="/admin/gastos/amex/conciliacion/vincular-pase-mensual" style="margin:0;">
                     <input type="hidden" name="expense_ids" value="{escape(joined_expense_ids)}">
                     <input type="hidden" name="cfdi_report_id" value="{suggestion.cfdi_report_id}">
+                    {workflow_return_input}
                     <input type="hidden" name="year" value="{selected_year}">
                     <input type="hidden" name="month" value="{selected_month}">
                     <button type="submit" class="button primary" style="padding:8px 10px;">Vincular mes</button>
@@ -20724,7 +22265,8 @@ async def amex_conciliacion_view(
         <a href="/admin/gastos/amex/tarjetas" class="button secondary">Catálogo tarjetas</a>
         <a href="/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}" class="button secondary">Ir a conciliación contable</a>
         <form method="POST" action="/admin/gastos/amex/conciliacion/validar-notificar" style="display:inline-flex;gap:8px;align-items:center;margin:0;" onsubmit="return confirm('Validar la conciliacion AMEX de esta tarjeta y notificar a Benjamin, LAO, FGV y FGN?');">
-            <input type="hidden" name="year" value="{selected_year}">
+            {workflow_return_input}
+                    <input type="hidden" name="year" value="{selected_year}">
             <input type="hidden" name="month" value="{selected_month}">
             <select name="amex_card_account_id" required {card_payment_disabled} style="width:auto;min-width:260px;padding:10px;border-radius:12px;border:1px solid #cbd5e1;">{card_account_options}</select>
             <button type="submit" class="button primary" {card_payment_disabled}>Validar y notificar</button>
@@ -20783,7 +22325,9 @@ async def amex_conciliacion_view(
                 side_html=hero_side_html,
             )}
             <div class="stack">
+            {workflow_return_link}
             {notice_html}
+            {attention_notice_html}
             <section class="surface">
                 <div class="section-head">
                     <div>
@@ -20793,6 +22337,7 @@ async def amex_conciliacion_view(
                     </div>
                 </div>
                 <form method="GET" action="/admin/gastos/amex/conciliacion" class="toolbar">
+                    {workflow_return_input}
                     <div><label>Año</label><select name="year">{year_options}</select></div>
                     <div><label>Mes</label><select name="month">{month_options}</select></div>
                     <div><label>&nbsp;</label><button type="submit" class="button primary">Filtrar</button></div>
@@ -20809,6 +22354,7 @@ async def amex_conciliacion_view(
                     <a href="/admin/finanzas/payment-run" class="button secondary">Abrir Payment Run</a>
                 </div>
                 <form method="POST" action="/admin/gastos/amex/conciliacion/programar-pago" class="toolbar" onsubmit="return confirm('¿Enviar este pago AMEX a Payment Run?');">
+                    {workflow_return_input}
                     <input type="hidden" name="year" value="{selected_year}">
                     <input type="hidden" name="month" value="{selected_month}">
                     <div style="min-width:320px;flex:2;"><label>Tarjeta AMEX</label><select name="amex_card_account_id" required {card_payment_disabled}>{card_account_options}</select></div>
@@ -20881,6 +22427,61 @@ async def amex_conciliacion_view(
                 </div>
             </section>
 
+            <section id="sin-tarjeta" class="surface">
+                <h2>Partidas AMEX sin tarjeta</h2>
+                <p>Selecciona únicamente las partidas cuya tarjeta verificaste.
+                Identificar tarjeta
+                no confirma vínculos, no genera una póliza
+                ni sustituye la revisión histórica AMEX.</p>
+                <form method="POST"
+                    action="/admin/gastos/amex/conciliacion/identificar-tarjeta">
+                    {workflow_return_input}
+                    <input type="hidden" name="year" value="{selected_year}">
+                    <input type="hidden" name="month" value="{selected_month}">
+                    <div class="table-shell"><table>
+                        <thead><tr><th>Seleccionar</th><th>Partida</th>
+                        <th>Informe y estado</th>
+                        <th>Fecha</th><th>Importe</th><th>Revisión</th></tr></thead>
+                        <tbody>{missing_identity_body}</tbody>
+                    </table></div>
+                    <label>Tarjeta AMEX verificada
+                        <select name="amex_card_account_id" required
+                            {identity_disabled}>{identity_card_options}</select>
+                    </label>
+                    <label>Motivo de identificación
+                        <input name="reason" required {identity_disabled}></label>
+                    <label>
+                        <input type="checkbox" name="confirmed" value="true" required
+                            {identity_disabled}>
+                        Confirmo que las partidas seleccionadas
+                        corresponden a esta tarjeta</label>
+                    <button type="submit" class="button primary" {identity_disabled}>
+                        Identificar tarjeta</button>
+                </form>
+                <p><a href="/admin/gastos/amex/tarjetas">Catálogo tarjetas AMEX</a> ·
+                <a href="/admin/contabilidad/amex">Revisión contable AMEX</a></p>
+            </section>
+
+            <section id="consumos" class="surface">
+                <h2>Fuentes contables y asociación bancaria</h2>
+                <p>Las partidas del informe pueden tener póliza y corte completos antes
+                de importar el estado. Asociar el banco después no genera otra póliza.</p>
+                <div class="table-shell"><table>
+                    <thead><tr><th>Partida reconocida</th><th>Fecha</th><th>Importe</th>
+                    <th>Contabilidad</th><th>Estado bancario</th></tr></thead>
+                    <tbody>{bank_report_rows or '<tr><td colspan="5">Sin fuentes de informe pendientes de banco en este período.</td></tr>'}</tbody>
+                </table></div>
+                <h3>Consumos e informes</h3>
+                <p>Relaciona cada cargo con todas las partidas que lo representan en un informe.
+                Esta confirmación evita contabilizar el mismo consumo dos veces; no genera una póliza.</p>
+                <div class="table-shell">
+                    <table>
+                        <thead><tr><th>Cargo</th><th>Concepto</th><th>Importe</th><th>Vínculo</th></tr></thead>
+                        <tbody>{consumption_rows_html or '<tr><td colspan="4">Sin cargos en este período.</td></tr>'}</tbody>
+                    </table>
+                </div>
+            </section>
+
             <section id="sugerencias" class="surface">
                 <div class="section-head">
                     <div>
@@ -20890,6 +22491,7 @@ async def amex_conciliacion_view(
                     </div>
                 </div>
                 <form id="amex-bulk-link-form" method="POST" action="/admin/gastos/amex/conciliacion/vincular-cfdi-masivo#sugerencias" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0;">
+                    {workflow_return_input}
                     <input type="hidden" name="year" value="{selected_year}">
                     <input type="hidden" name="month" value="{selected_month}">
                     <button type="submit" class="button primary" onclick="return confirm('Vincular todas las sugerencias seleccionadas?');">Vincular seleccionados</button>
@@ -20980,7 +22582,6 @@ async def amex_conciliacion_view(
     return html
 
 
-
 def _cxc_can_assign_income_cfdi(current_empleado: Empleado) -> bool:
     return str(getattr(current_empleado, "rol", "") or "").strip().lower() in {
         "superadmin",
@@ -20993,6 +22594,25 @@ def _safe_cxc_return_url(return_to: Optional[str]) -> str:
     if clean.startswith("/admin/contabilidad/cuentas-por-cobrar"):
         return clean
     return "/admin/contabilidad/cuentas-por-cobrar"
+
+
+def _finance_cxc_workbench_href(
+    *,
+    edition_year: Optional[int],
+    tournament_id: Optional[str],
+    client: Optional[str],
+    credit_days: int,
+) -> str:
+    """Return the Finance CxC workbench with only shared filter context."""
+    query = []
+    if edition_year:
+        query.append(("edition_year", str(edition_year)))
+    if tournament_id:
+        query.append(("tournament_id", str(tournament_id)))
+    if client:
+        query.append(("cliente", str(client)))
+    query.append(("dias_credito", str(credit_days)))
+    return "/admin/finanzas/cuentas-por-cobrar?" + urlencode(query)
 
 
 @router.get("/admin/contabilidad/cuentas-por-cobrar", response_class=HTMLResponse)
@@ -21207,6 +22827,13 @@ async def contabilidad_cuentas_por_cobrar_view(
                 </div>
             """
         else:
+            financial_version_id = str(selected_version["id"])
+            if selected_version.get("source") == "distribution_revision":
+                from samchat.budgets.distribution import financial_context
+
+                financial_version_id, _ = await financial_context(
+                    session, selected_version
+                )
             tournament_ctx = await resolve_budget_tournament_context(
                 session, tournament_key=selected_torneo_id
             )
@@ -21224,7 +22851,7 @@ async def contabilidad_cuentas_por_cobrar_view(
                 return_to = f"{return_to}?{request.url.query}"
             unassigned_candidates = await list_psp_cfdi_income_candidates(
                 session,
-                budget_version_id=str(selected_version["id"]),
+                budget_version_id=financial_version_id,
                 unassigned_only=True,
                 limit=250,
             )
@@ -21300,13 +22927,13 @@ async def contabilidad_cuentas_por_cobrar_view(
                 lines=income_lines,
                 candidates=await list_psp_cfdi_income_candidates(
                     session,
-                    budget_version_id=str(selected_version["id"]),
+                    budget_version_id=financial_version_id,
                     tournament_id=(tournament_ctx or {}).get("tournament_id"),
                     assigned_only=True,
                 ),
                 links=await list_budget_cfdi_income_links(
                     session,
-                    budget_version_id=str(selected_version["id"]),
+                    budget_version_id=financial_version_id,
                     tournament_id=(tournament_ctx or {}).get("tournament_id"),
                 ),
                 can_edit=_cxc_can_assign_income_cfdi(current_empleado),
@@ -21357,6 +22984,12 @@ async def contabilidad_cuentas_por_cobrar_view(
     )
     desde_value = escape(from_date.date().isoformat())
     hasta_value = escape((to_date_exclusive.date() - timedelta(days=1)).isoformat())
+    finance_workbench_href = _finance_cxc_workbench_href(
+        edition_year=resolved_edition_year,
+        tournament_id=selected_torneo_id or None,
+        client=cliente_filter or None,
+        credit_days=dias_credito,
+    )
 
     html = f"""
     <!DOCTYPE html>
@@ -21393,8 +23026,13 @@ async def contabilidad_cuentas_por_cobrar_view(
         {f'<div class="card" style="border-color:#bbf7d0;background:#f0fdf4;color:#166534;font-weight:700;">{escape(success_msg)}</div>' if success_msg else ''}
         {f'<div class="card" style="border-color:#fecaca;background:#fef2f2;color:#991b1b;font-weight:700;">{escape(error_msg)}</div>' if error_msg else ''}
         <div class="card">
-            <h1 style="margin:0 0 8px 0;">Cuentas por Cobrar</h1>
-            <p class="muted" style="margin:0;">Facturas emitidas por las RFC activas de Plataforma cruzadas contra ingresos cobrados registrados por UUID. Vista read-only para cartera y cash flow.</p>
+            <h1 style="margin:0 0 8px 0;">Vista contable CxC: CFDI y pólizas</h1>
+            <p class="muted" style="margin:0;">
+                Facturas emitidas por las RFC activas de Plataforma cruzadas contra
+                ingresos cobrados registrados por UUID. Esta vista no acepta ni
+                revierte matches de cobranza; la clasificación de CFDI PSP conserva
+                su permiso restringido.
+            </p>
         </div>
         <div class="card">
             <form method="GET" action="/admin/contabilidad/cuentas-por-cobrar" class="toolbar">
@@ -21408,6 +23046,7 @@ async def contabilidad_cuentas_por_cobrar_view(
                 <div><button type="submit" class="button">Filtrar</button></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cash-flow">Cash Flow</a></div>
                 <div><a class="button secondary" href="/admin/finanzas/cuentas-por-cobrar/export.xlsx?edition_year={resolved_edition_year}&dias_credito={dias_credito}">Excel CxC</a></div>
+                <div><a class="button secondary" href="{escape(finance_workbench_href, quote=True)}">Workbench CxC: facturación y cobranza</a></div>
             </form>
         </div>
         <div class="grid">
@@ -21428,7 +23067,6 @@ async def contabilidad_cuentas_por_cobrar_view(
     </div></body></html>
     """
     return HTMLResponse(content=html)
-
 
 
 @router.post("/admin/contabilidad/cuentas-por-cobrar/cfdi-ingresos/assign")
@@ -21732,7 +23370,11 @@ async def contabilidad_cash_flow_view(
     bank_query = "" if selected_bank_account == "all" else f"&cuenta_bancaria={quote(selected_bank_account)}"
     project_query = "" if selected_project_scope == "all" else f"&proyecto_scope={quote(selected_project_scope)}"
     start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
-    horizon_end = datetime.combine(today + timedelta(days=horizon_days), datetime.min.time())
+    cashflow_window_start = start_dt.date()
+    cashflow_window_end = min(
+        end_dt.date(), cashflow_window_start + timedelta(days=horizon_days + 1)
+    )
+    cashflow_as_of = min(today, cashflow_window_end - timedelta(days=1))
 
     rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
     platform_rfcs = [
@@ -21837,7 +23479,13 @@ async def contabilidad_cash_flow_view(
     committed_conditions = [
         Documento.tipo == "SOLICITUD",
         Documento.estado.in_(["aprobado", "enviado"]),
-        or_(Documento.fecha_pago.is_(None), Documento.fecha_pago <= horizon_end.date()),
+        or_(
+            and_(
+                Documento.fecha_pago >= cashflow_window_start,
+                Documento.fecha_pago < cashflow_window_end,
+            ),
+            and_(Documento.estado == "enviado", Documento.fecha_pago.is_(None)),
+        ),
     ]
     if selected_tournament_id is not None:
         committed_conditions.append(Documento.torneo_id == selected_tournament_id)
@@ -21889,15 +23537,14 @@ async def contabilidad_cash_flow_view(
     emitted_total = sum(float(c.total or 0) for c in emitted_cfdis)
     received_total = sum(float(c.total or 0) for c in received_cfdis)
 
-    receivable_horizon_end = today + timedelta(days=horizon_days)
     receivable_cfdis: List[CFDIReport] = []
     if platform_rfcs:
         receivable_result = await session.execute(
             select(CFDIReport)
             .where(
                 and_(*_append_manual_project_cfdi_filter([
-                    CFDIReport.fecha >= datetime(today.year, 1, 1),
-                    CFDIReport.fecha < datetime.combine(receivable_horizon_end + timedelta(days=1), datetime.min.time()),
+                    CFDIReport.fecha >= datetime(selected_year, 1, 1),
+                    CFDIReport.fecha < datetime.combine(cashflow_window_end, datetime.min.time()),
                     CFDIReport.tipo_de_comprobante == "I",
                     func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs),
                 ]))
@@ -21957,11 +23604,11 @@ async def contabilidad_cash_flow_view(
         saldo = max(total - collected, 0.0)
         if saldo <= 0.01:
             continue
-        issue_date = cfdi.fecha.date() if cfdi.fecha else today
+        issue_date = cfdi.fecha.date() if cfdi.fecha else cashflow_window_start
         due_date = issue_date + timedelta(days=dias_credito)
-        if due_date <= receivable_horizon_end:
+        if cashflow_window_start <= due_date < cashflow_window_end:
             receivable_due_30_total += saldo
-        if due_date < today:
+        if due_date < cashflow_as_of:
             receivable_overdue_total += saldo
         receivable_rows.append({"cfdi": cfdi, "saldo": saldo, "due_date": due_date})
 
@@ -21971,8 +23618,8 @@ async def contabilidad_cash_flow_view(
             select(CFDIReport)
             .where(
                 and_(*_append_manual_project_cfdi_filter([
-                    CFDIReport.fecha >= datetime(today.year, 1, 1),
-                    CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
+                    CFDIReport.fecha >= start_dt,
+                    CFDIReport.fecha < datetime.combine(cashflow_window_end, datetime.min.time()),
                     CFDIReport.tipo_de_comprobante == "I",
                     func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs),
                 ]))
@@ -22088,7 +23735,7 @@ async def contabilidad_cash_flow_view(
         if isinstance(target_date, datetime):
             clean_date = target_date.date()
         else:
-            clean_date = target_date or today
+            clean_date = target_date or cashflow_window_start
         if periodo == "semanal":
             start = clean_date - timedelta(days=clean_date.weekday())
             end = start + timedelta(days=6)
@@ -22199,7 +23846,7 @@ async def contabilidad_cash_flow_view(
     def _cash_bucket_for(target_date: Optional[date]) -> str:
         if target_date is None:
             return "sin_fecha"
-        delta = (target_date - today).days
+        delta = (target_date - cashflow_window_start).days
         if delta < 0:
             return "vencido"
         if delta <= 7:
@@ -22225,7 +23872,7 @@ async def contabilidad_cash_flow_view(
     def _daily_bucket(target_date: Optional[date]) -> Optional[Dict[str, Any]]:
         if target_date is None:
             return None
-        delta = (target_date - today).days
+        delta = (target_date - cashflow_window_start).days
         if delta < 0 or delta > horizon_days:
             return None
         return daily_cash_rows.setdefault(
@@ -22413,6 +24060,7 @@ async def contabilidad_cash_flow_view(
         )
         return (
             f"<tr><td>{escape(document.numero_referencia or '—')}</td>"
+            f"<td>{escape(str(document.referencia_operaciones or '—'))}</td>"
             f"<td>{escape(document.estado or '—')}</td>"
             f"<td>{payment_date}</td>"
             f"<td>{escape(_doc_party(document))}</td>"
@@ -22518,7 +24166,7 @@ async def contabilidad_cash_flow_view(
         {render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("cash_flow")}
         <div class="card">
             <h1 style="margin:0 0 8px 0;">Cash Flow Operativo</h1>
-            <p class="muted" style="margin:0 0 16px 0;">Snapshot read-only: banco real del período, compromisos próximos, cartera CFDI y contexto fiscal SAT. No sustituye el cierre contable; lo prepara. Cuenta bancaria: <strong>{escape(selected_bank_account if selected_bank_account != 'all' else 'Todas')}</strong>. Proyecto operativo: <strong>{escape(selected_project_label)}</strong>. SAT/CxC/CxP CFDI se filtra por asignación manual a proyecto cuando existe; CFDI sin amarre quedan sólo en Todos.</p>
+            <p class="muted" style="margin:0 0 16px 0;">Snapshot read-only del período seleccionado: banco real, compromisos, cartera CFDI y contexto fiscal SAT. No sustituye el cierre contable; lo prepara. Cuenta bancaria: <strong>{escape(selected_bank_account if selected_bank_account != 'all' else 'Todas')}</strong>. Proyecto operativo: <strong>{escape(selected_project_label)}</strong>. SAT/CxC/CxP CFDI se filtra por asignación manual a proyecto cuando existe; CFDI sin amarre quedan sólo en Todos. El banco se filtra por cuenta y período, no por proyecto, porque sus movimientos no tienen atribución de proyecto.</p>
             <form method="GET" action="/admin/contabilidad/cash-flow" class="toolbar">
                 <div><label>Año</label><br><select name="year">{year_options}</select></div>
                 <div><label>Mes</label><br><select name="month">{month_options}</select></div>
@@ -22593,7 +24241,7 @@ async def contabilidad_cash_flow_view(
         </div>
         <div class="card">
             <h2 id="compromisos" style="margin:0 0 12px 0;">Compromisos próximos</h2>
-            <table><thead><tr><th>Documento</th><th>Estado</th><th>Fecha pago</th><th>Beneficiario</th><th>Monto</th><th>Proyecto</th></tr></thead><tbody>{upcoming_rows or '<tr><td colspan="6" class="muted">Sin solicitudes enviadas/aprobadas en horizonte de 30 días.</td></tr>'}</tbody></table>
+            <table><thead><tr><th>Documento</th><th>Referencia Operaciones</th><th>Estado</th><th>Fecha pago</th><th>Beneficiario</th><th>Monto</th><th>Proyecto</th></tr></thead><tbody>{upcoming_rows or '<tr><td colspan="7" class="muted">Sin solicitudes enviadas/aprobadas en horizonte de 30 días.</td></tr>'}</tbody></table>
         </div>
         <div class="card">
             <h2 style="margin:0 0 12px 0;">Cobros esperados / CxC</h2>
@@ -22608,7 +24256,6 @@ async def contabilidad_cash_flow_view(
     </div></body></html>
     """
     return HTMLResponse(content=html)
-
 
 
 @router.get("/admin/contabilidad/cash-flow/export.xlsx")
@@ -22650,7 +24297,11 @@ async def contabilidad_cash_flow_export_xlsx(
     elif selected_project_scope != "all":
         selected_project_scope = "all"
     start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
-    horizon_end = datetime.combine(today + timedelta(days=horizon_days), datetime.min.time())
+    cashflow_window_start = start_dt.date()
+    cashflow_window_end = min(
+        end_dt.date(), cashflow_window_start + timedelta(days=horizon_days + 1)
+    )
+    cashflow_as_of = min(today, cashflow_window_end - timedelta(days=1))
 
     rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
     platform_rfcs = [str(row[0]).strip().upper() for row in rfc_rows.all() if row and row[0] and str(row[0]).strip()]
@@ -22698,7 +24349,13 @@ async def contabilidad_cash_flow_export_xlsx(
     committed_conditions = [
         Documento.tipo == "SOLICITUD",
         Documento.estado.in_(["aprobado", "enviado"]),
-        or_(Documento.fecha_pago.is_(None), Documento.fecha_pago <= horizon_end.date()),
+        or_(
+            and_(
+                Documento.fecha_pago >= cashflow_window_start,
+                Documento.fecha_pago < cashflow_window_end,
+            ),
+            and_(Documento.estado == "enviado", Documento.fecha_pago.is_(None)),
+        ),
     ]
     if selected_tournament_id is not None:
         committed_conditions.append(Documento.torneo_id == selected_tournament_id)
@@ -22740,8 +24397,8 @@ async def contabilidad_cash_flow_export_xlsx(
             select(CFDIReport)
             .where(
                 and_(*_append_manual_project_cfdi_filter([
-                    CFDIReport.fecha >= datetime(today.year, 1, 1),
-                    CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
+                    CFDIReport.fecha >= datetime(selected_year, 1, 1),
+                    CFDIReport.fecha < datetime.combine(cashflow_window_end, datetime.min.time()),
                     CFDIReport.tipo_de_comprobante == "I",
                     func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs),
                 ]))
@@ -22792,11 +24449,11 @@ async def contabilidad_cash_flow_export_xlsx(
         saldo = max(total - collected, 0.0)
         if saldo <= 0.01:
             continue
-        issue_date = cfdi.fecha.date() if cfdi.fecha else today
+        issue_date = cfdi.fecha.date() if cfdi.fecha else cashflow_window_start
         due_date = issue_date + timedelta(days=dias_credito)
-        if due_date <= today + timedelta(days=horizon_days):
+        if cashflow_window_start <= due_date < cashflow_window_end:
             receivable_due_total += saldo
-        if due_date < today:
+        if due_date < cashflow_as_of:
             receivable_overdue_total += saldo
         receivable_rows.append({"cfdi": cfdi, "saldo": saldo, "due_date": due_date})
 
@@ -22806,8 +24463,8 @@ async def contabilidad_cash_flow_export_xlsx(
             select(CFDIReport)
             .where(
                 and_(*_append_manual_project_cfdi_filter([
-                    CFDIReport.fecha >= datetime(today.year, 1, 1),
-                    CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
+                    CFDIReport.fecha >= start_dt,
+                    CFDIReport.fecha < datetime.combine(cashflow_window_end, datetime.min.time()),
                     CFDIReport.tipo_de_comprobante == "I",
                     func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs),
                 ]))
@@ -23166,7 +24823,6 @@ async def contabilidad_cash_flow_export_xlsx(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-
 
 
 @router.get("/admin/contabilidad/tesoreria-matches", response_class=HTMLResponse)
@@ -23606,8 +25262,6 @@ async def contabilidad_tesoreria_matches_view(
     return HTMLResponse(content=html)
 
 
-
-
 @router.post("/admin/contabilidad/tesoreria-matches/accept")
 async def contabilidad_tesoreria_matches_accept(
     request: Request,
@@ -23780,7 +25434,6 @@ async def contabilidad_tesoreria_matches_accept(
     )
     await session.commit()
     return RedirectResponse(url=return_url + "&success_msg=" + quote(f"Match {direction.upper()} aceptado con score {score}. Movimiento marcado como revisado."), status_code=303)
-
 
 
 @router.post("/admin/contabilidad/tesoreria-matches/accept-payment-request")
@@ -26308,6 +27961,8 @@ def _can_access_expense_comprobante(expense: ExpenseReport, empleado: Empleado) 
 
 
 def _can_access_documento_adjunto(documento: Documento, empleado: Empleado) -> bool:
+    if _can_finance_replace_comprobante_pago(documento, empleado):
+        return True
     if _can_access_read_only_informe_document(documento, empleado):
         return True
     if documento.empleado_id == empleado.id:
@@ -26470,6 +28125,19 @@ async def ver_gasto(
     """
     await _ensure_expense_tip_schema(session)
 
+    workflow_return_to = _amex_statement_return_to(
+        request.query_params.get("return_to")
+    )
+    workflow_return_html = (
+        f'<a href="{escape(workflow_return_to)}" class="btn btn-secondary">'
+        'Volver al estado AMEX</a>' if workflow_return_to else ""
+    )
+    edit_expense_url = f"/gastos/{gasto_id}/editar"
+    if workflow_return_to:
+        edit_expense_url = _append_query_params(
+            edit_expense_url, {"return_to": workflow_return_to}
+        )
+
     # Load expense
     result = await session.execute(
         select(ExpenseReport).where(ExpenseReport.id == gasto_id)
@@ -26517,13 +28185,13 @@ async def ver_gasto(
         cfdi_status = "CFDI pendiente (UUID capturado)"
 
     # Get error/success message if present
-    error_msg = request.query_params.get("error_msg", "")
+    error_msg = await _expense_block_message(request, session, current_empleado)
     success_msg = request.query_params.get("success_msg", "")
     message_html = ""
     if error_msg:
         message_html = f"""
             <div style="background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 5px; padding: 15px; margin-bottom: 20px; color: #721c24;">
-                <strong>⚠️ Error:</strong> {error_msg}
+                <strong>⚠️ Error:</strong> {escape(error_msg)}
             </div>
         """
     elif success_msg:
@@ -26821,7 +28489,7 @@ async def ver_gasto(
             {f'''
             <div class="info-section">
                 <h3>Acciones</h3>
-                {f'<a href="/gastos/{gasto_id}/editar" class="btn" style="margin-right: 10px;">✏️ Editar gasto</a>' if can_edit else ''}
+                {f'<a href="{escape(edit_expense_url)}" class="btn" style="margin-right: 10px;">✏️ Editar gasto</a>' if can_edit else ''}
                 {f'''
                 <form method="POST" action="/gastos/{gasto_id}/solicitar-cfdi" style="display: inline;">
                     <button type="submit" class="btn">📄 Solicitar CFDI</button>
@@ -26833,6 +28501,7 @@ async def ver_gasto(
             </div>
             ''' if (can_edit or can_request_cfdi) else ''}
 
+            {workflow_return_html}
             <a href="/informes-de-gastos" class="btn btn-secondary">← Volver a informes de gastos</a>
         </div>
     </body>
@@ -27150,8 +28819,11 @@ async def editar_gasto_form(
         if expense.cuenta_gastos_id
         else ""
     )
+    supplied_return_to = request.query_params.get("return_to")
+    if str(supplied_return_to or "").startswith("/admin/contabilidad/amex/estados"):
+        supplied_return_to = _amex_statement_return_to(supplied_return_to)
     safe_return_to = _safe_internal_next(
-        request.query_params.get("return_to"),
+        supplied_return_to,
         linked_informe_url or f"/gastos/{gasto_id}",
     )
     edit_form_url = f"/gastos/{gasto_id}/editar"
@@ -27181,6 +28853,7 @@ async def editar_gasto_form(
         )
 
     # Determine lock status
+    documento = None
     documento_estado = None
     if expense.documento_id:
         doc_result = await session.execute(
@@ -27207,29 +28880,34 @@ async def editar_gasto_form(
         # Finanzas/admin can edit when locked (except cancelado, already checked)
         can_edit = True
 
-    # Build lock status banner
+    # Build lock status banner from the conditions actually observed.
+    lock_reason = escape(expense_lock_reason(expense, documento))
     lock_banner_html = ""
     if is_locked and not can_edit:
-        lock_banner_html = """
+        lock_banner_html = f"""
             <div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin-bottom: 20px; color: #856404;">
-                <strong>🔒 Gasto Bloqueado:</strong> Este gasto no puede ser editado porque está asociado a un documento enviado/aprobado o tiene una factura en proceso/completada.
+                <strong>🔒 Gasto Bloqueado:</strong>
+                Este gasto no puede ser editado porque {lock_reason}.
+                Solicita a Finanzas y Operaciones que revisen ese registro.
             </div>
         """
     elif is_locked and can_edit:
-        lock_banner_html = """
+        lock_banner_html = f"""
             <div style="background: #d1ecf1; border: 1px solid #0c5460; border-radius: 5px; padding: 15px; margin-bottom: 20px; color: #0c5460;">
-                <strong>⚠️ Gasto Bloqueado:</strong> Este gasto está bloqueado, pero usted tiene permisos de administración para editarlo. Se requiere un motivo para la edición.
+                <strong>⚠️ Gasto Bloqueado:</strong>
+                Este gasto tiene estas restricciones: {lock_reason}.
+                Tu perfil permite editarlo con un motivo auditado.
             </div>
         """
 
     # Get error/success message if present
-    error_msg = request.query_params.get("error_msg", "")
+    error_msg = await _expense_block_message(request, session, current_empleado)
     success_msg = request.query_params.get("success_msg", "")
     message_html = ""
     if error_msg:
         message_html = f"""
             <div style="background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 5px; padding: 15px; margin-bottom: 20px; color: #721c24;">
-                <strong>⚠️ Error:</strong> {error_msg}
+                <strong>⚠️ Error:</strong> {escape(error_msg)}
             </div>
         """
     elif success_msg:
@@ -27248,7 +28926,6 @@ async def editar_gasto_form(
 
     # Prepare cuentas data for JSON
     import json
-    from html import escape
     cuentas_data = []
     for cuenta in cuentas_contables:
         cuentas_data.append({
@@ -27392,13 +29069,21 @@ async def editar_gasto_form(
     company_amex_disabled = "disabled" if disabled_attr else ""
     company_amex_edit_html = ""
     if company_amex_edit_allowed or current_company_amex:
+        edit_amex_options = await _amex_visible_card_options(
+            session, current_empleado, enabled=not current_company_amex
+        )
+        edit_amex_identity_html = _amex_identity_control_html(
+            current_empleado,
+            card_options=edit_amex_options,
+            existing_expense=expense,
+        )
         company_amex_edit_html = f"""
                 <div class="form-group" style="border:1px solid #bfdbfe; border-radius:10px; padding:14px; background:#eff6ff;">
                     <label style="display:flex;align-items:center;gap:10px;margin-bottom:8px;color:#0f172a;">
                         <input type="checkbox" name="pagado_con_amex_empresa" value="1" {company_amex_checked} {company_amex_disabled}>
                         Pago con AMEX empresa
                     </label>
-                    <small>Marcalo solo cuando el gasto se pago con AMEX empresa. Si fue reembolso, dejalo desmarcado.</small>
+                    {edit_amex_identity_html}
                 </div>
         """
 
@@ -27451,6 +29136,12 @@ async def editar_gasto_form(
         report_return_button_html = (
             f'<a href="{escape(safe_return_to)}" class="button secondary">'
             "Volver al informe de gastos</a>"
+        )
+    workflow_return = _amex_statement_return_to(safe_return_to)
+    if workflow_return:
+        report_return_button_html = (
+            f'<a href="{escape(workflow_return)}" class="button secondary">'
+            'Volver al estado AMEX</a>'
         )
     editar_gasto_actions_html = f"""
         {report_return_button_html}
@@ -27602,7 +29293,10 @@ async def editar_gasto_form(
 
                 <div class="form-group">
                     <label for="ultimos_4_digitos">Últimos 4 Dígitos</label>
-                    <input type="text" name="ultimos_4_digitos" id="ultimos_4_digitos" value="{expense.ultimos_4_digitos or ''}" {disabled_attr} maxlength="4" pattern="[0-9]{{4}}" title="Debe ser exactamente 4 dígitos">
+                    <input type="text" name="ultimos_4_digitos" id="ultimos_4_digitos"
+                        value="{expense.ultimos_4_digitos or ''}" {disabled_attr}
+                        {"readonly" if current_company_amex else ""} maxlength="4"
+                        pattern="[0-9]{{4}}" title="Debe ser exactamente 4 dígitos">
                     <small>Ingrese exactamente 4 dígitos (opcional)</small>
                 </div>
 
@@ -27837,6 +29531,7 @@ async def editar_gasto(
     concepto: str = Form(...),
     metodo_pago: Optional[str] = Form(None),
     pagado_con_amex_empresa: Optional[str] = Form(None),
+    amex_card_account_id: Optional[str] = Form(None),
     propina_no_deducible: Optional[str] = Form(None),
     hospedaje_entidad_fiscal: Optional[str] = Form(None),
     hospedaje_tasa_impuesto: Optional[str] = Form(None),
@@ -27863,6 +29558,8 @@ async def editar_gasto(
     """
     from datetime import timezone
 
+    _reject_unauthorized_amex_card_submission(current_empleado, amex_card_account_id)
+
     await _ensure_expense_tip_schema(session)
 
     # Load expense
@@ -27879,6 +29576,10 @@ async def editar_gasto(
         if expense.cuenta_gastos_id
         else ""
     )
+    if isinstance(return_to, str) and return_to.startswith(
+        "/admin/contabilidad/amex/estados"
+    ):
+        return_to = _amex_statement_return_to(return_to)
     safe_return_to = _safe_internal_next(
         return_to,
         linked_informe_url or f"/gastos/{gasto_id}",
@@ -27897,6 +29598,8 @@ async def editar_gasto(
     if not is_owner and not is_finance_admin:
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
+    await _ensure_can_mutate_informe_expense(session, expense, current_empleado)
+
     # Check if cancelled - always blocked
     if expense.estado_gasto == 'cancelado':
         return RedirectResponse(
@@ -27908,6 +29611,7 @@ async def editar_gasto(
         )
 
     # Determine lock status
+    documento = None
     documento_estado = None
     if expense.documento_id:
         doc_result = await session.execute(
@@ -27933,7 +29637,10 @@ async def editar_gasto(
             return RedirectResponse(
                 url=_append_error_params(
                     edit_form_url,
-                    error_msg="Este gasto está bloqueado y no puede ser editado.",
+                    error_msg=(
+                        "Este gasto no puede ser editado porque "
+                        f"{expense_lock_reason(expense, documento)}."
+                    ),
                 ),
                 status_code=303
             )
@@ -27945,7 +29652,11 @@ async def editar_gasto(
                 return RedirectResponse(
                     url=_append_error_params(
                         edit_form_url,
-                        error_msg="Se requiere un motivo para editar gastos bloqueados.",
+                        error_msg=(
+                            "Se requiere un motivo para editar este gasto porque "
+                            f"{expense_lock_reason(expense, documento)}. "
+                            "Captura el motivo de la edición."
+                        ),
                     ),
                     status_code=303
                 )
@@ -28022,6 +29733,52 @@ async def editar_gasto(
                 status_code=303
             )
 
+    if _form_checkbox_checked(pagado_con_amex_empresa):
+        raw_amex_cuenta = str(cuenta_gastos_id or "").strip()
+        invalid_amex_cuenta = False
+        try:
+            requested_amex_cuenta = (
+                UUIDType(raw_amex_cuenta) if raw_amex_cuenta else None
+            )
+        except (TypeError, ValueError):
+            requested_amex_cuenta = None
+            invalid_amex_cuenta = True
+        if (
+            invalid_amex_cuenta
+            or (requested_amex_cuenta is None and not is_company_amex_expense(expense))
+            or requested_amex_cuenta != expense.cuenta_gastos_id
+        ):
+            await session.rollback()
+            return RedirectResponse(
+                url=_append_error_params(
+                    edit_form_url,
+                    error_msg=(
+                        "No puedes cambiar o desvincular el informe al declarar AMEX. "
+                        "Guarda primero el cambio de informe y después marca AMEX "
+                        "con la tarjeta verificada."
+                    ),
+                ),
+                status_code=303,
+            )
+
+    try:
+        ultimos_4_digitos = await _validated_amex_edit_identity(
+            session,
+            expense,
+            actor=current_empleado,
+            requested_amex=_form_checkbox_checked(pagado_con_amex_empresa),
+            card_account_id=amex_card_account_id,
+            requested_last4=ultimos_4_digitos,
+        )
+    except HTTPException:
+        await session.rollback()
+        raise
+    except ValueError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=_append_error_params(edit_form_url, error_msg=str(exc)),
+            status_code=303,
+        )
     # Track changes for audit trail
     changes = []
     old_values = {}
@@ -28274,7 +30031,11 @@ async def editar_gasto(
     company_amex_allowed = bool(
         linked_cuenta_for_amex and _cuenta_allows_company_amex(linked_cuenta_for_amex)
     )
-    if requested_company_amex and not company_amex_allowed:
+    if (
+        requested_company_amex
+        and not company_amex_allowed
+        and not current_company_amex
+    ):
         return RedirectResponse(
             url=_append_error_params(
                 edit_form_url,
@@ -28537,7 +30298,8 @@ async def editar_gasto(
             )
         except (ExpenseCFDIDuplicateError, ValueError) as exc:
             return RedirectResponse(
-                url=_append_error_params(edit_form_url, error_msg=str(exc)), status_code=303
+                url=_append_error_params(edit_form_url, error_msg=exc, request=request),
+                status_code=303,
             )
         if stored_manual_before != expense.cfdi_uuid_manual:
             old_values["cfdi_uuid_manual"] = stored_manual_before
@@ -28616,7 +30378,12 @@ async def editar_gasto(
     return RedirectResponse(
         url=_append_success_params(
             safe_return_to,
-            success_msg="Gasto actualizado exitosamente.",
+            success_msg=(
+                "Gasto actualizado exitosamente. "
+                "Pendiente de identificar tarjeta por Finanzas."
+                if requested_company_amex and not expense.ultimos_4_digitos
+                else "Gasto actualizado exitosamente."
+            ),
         ),
         status_code=303
     )
@@ -28640,13 +30407,18 @@ async def eliminar_comprobante_no_deducible(
     )
     if not is_owner and not is_finance_admin:
         raise HTTPException(status_code=403, detail="Acceso denegado")
+    await _ensure_can_mutate_informe_expense(session, expense, current_empleado)
     documento = await session.get(Documento, expense.documento_id) if expense.documento_id else None
     is_locked = bool(
         (documento and documento.estado != "borrador")
         or expense.estado_factura in ("en_proceso", "completada")
     )
     if is_locked and not is_finance_admin:
-        raise HTTPException(status_code=403, detail="El gasto está bloqueado para edición")
+        raise HTTPException(
+            status_code=403,
+            detail=("El gasto está bloqueado para edición porque "
+                    f"{expense_lock_reason(expense, documento)}."),
+        )
     safe_return_to = _safe_internal_next(return_to, f"/gastos/{gasto_id}/editar")
     try:
         await logically_delete_non_deductible_proof(
@@ -28805,7 +30577,6 @@ async def mis_documentos(
     return html
 
 
-
 async def _budget_concepts_for_document(
     session: AsyncSession,
     documento: Documento,
@@ -28881,6 +30652,17 @@ async def _active_informe_expenses_for_document(
     session: AsyncSession,
     documento: Documento,
 ) -> list[ExpenseReport]:
+    direct_filters = _active_informe_expense_filters(documento)
+    result = await session.execute(
+        select(ExpenseReport)
+        .where(or_(*direct_filters), ExpenseReport.estado_gasto != "cancelado")
+        .order_by(ExpenseReport.numero_referencia.asc(), ExpenseReport.id.asc())
+    )
+    return _unique_expenses(list(result.scalars().unique().all()))
+
+
+def _active_informe_expense_filters(documento: Documento) -> list[Any]:
+    """Canonical report ownership, including unlinked legacy account lines."""
     direct_filters = [
         and_(
             ExpenseReport.documento_id == documento.id,
@@ -28901,12 +30683,7 @@ async def _active_informe_expenses_for_document(
                 ExpenseReport.informe_documento_id.is_(None),
             )
         )
-    result = await session.execute(
-        select(ExpenseReport)
-        .where(or_(*direct_filters), ExpenseReport.estado_gasto != "cancelado")
-        .order_by(ExpenseReport.numero_referencia.asc(), ExpenseReport.id.asc())
-    )
-    return _unique_expenses(list(result.scalars().unique().all()))
+    return direct_filters
 
 
 async def _informe_documento_for_expense(
@@ -29064,6 +30841,7 @@ async def documentos_control_presupuestal(
             selectinload(Documento.empleado),
             selectinload(Documento.beneficiario_empleado),
             selectinload(Documento.proveedor_cliente),
+            selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
             selectinload(Documento.torneo),
             selectinload(Documento.cuenta_gastos)
             .undefer(CuentaDeGastos.fase)
@@ -29407,6 +31185,7 @@ async def _apply_control_presupuestal_assignment(
             "El concepto no corresponde al torneo/fase del documento.",
         )
 
+    await validate_informe_surplus_before_submission(session, documento)
     concept_uuid = UUIDType(str(budget_concept["id"]))
     documento.budget_concept_id = concept_uuid
     now = datetime.utcnow()
@@ -29427,6 +31206,7 @@ async def _apply_control_presupuestal_assignment(
             if not getattr(expense, "budget_concept_id", None):
                 expense.budget_concept_id = concept_uuid
 
+    await prepare_document_authorization_route(session, documento)
     session.add(
         Aprobacion(
             tipo_entidad="documento",
@@ -29562,9 +31342,11 @@ async def _apply_control_presupuestal_expense_assignment(
 
     released = await _informe_budget_assignment_complete(session, documento)
     if released:
+        await validate_informe_surplus_before_submission(session, documento)
         documento.budget_concept_id = concept_uuid
         documento.estado = "enviado"
         documento.enviado_en = now
+        await prepare_document_authorization_route(session, documento)
         session.add(
             Aprobacion(
                 tipo_entidad="documento",
@@ -29863,7 +31645,8 @@ async def documentos_pendientes(
     Show documentos in estado 'enviado' that are pending approval.
 
     Access control:
-    - Superadmin sees ALL documentos with estado 'enviado'.
+    - Superadmin sees all pending documents, including Operations references.
+      Visibility does not grant authority to approve or reject them.
     - Finanzas/admin and assigned approvers can access the inbox.
     - Non-superadmin users only see documents routed to their approval scope.
       If a document has no beneficiary employee, approval falls back to the
@@ -29895,6 +31678,7 @@ async def documentos_pendientes(
             selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
             selectinload(Documento.beneficiario_proveedor_cliente),
             selectinload(Documento.proveedor_cliente),
+            selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
             selectinload(Documento.torneo),
             selectinload(Documento.cuenta_gastos)
             .undefer(CuentaDeGastos.fase)
@@ -29925,19 +31709,16 @@ async def documentos_pendientes(
 
     filters = [Documento.estado == 'enviado', ~already_actioned_by_current_user]
     if current_empleado.rol not in ('superadmin', 'super_admin'):
-        has_no_project_route = text(
-            "NOT EXISTS (SELECT 1 FROM documento_authorization_routes route "
-            "WHERE route.documento_id = documentos.id)"
+        has_no_project_route = and_(
+            func.nullif(func.trim(Documento.referencia_operaciones), "").is_(None),
+            text(
+                "NOT EXISTS (SELECT 1 FROM documento_authorization_routes route "
+                "WHERE route.documento_id = documentos.id)"
+            ),
         )
         filters.append(
             or_(
-                text(
-                    "EXISTS (SELECT 1 FROM documento_authorization_routes route "
-                    "WHERE route.documento_id = documentos.id "
-                    "AND :route_employee_id IN ("
-                    "SELECT jsonb_array_elements_text(route.eligible_empleado_ids)"
-                    "))"
-                ),
+                text(document_route_approver_sql()),
                 and_(
                     has_no_project_route,
                     beneficiario_alias.aprobador_id == current_empleado.id,
@@ -29999,12 +31780,18 @@ async def documentos_pendientes(
         query.where(and_(*filters))
         .order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
     )
-    if current_empleado.rol not in ('superadmin', 'super_admin'):
-        query = query.params(route_employee_id=str(current_empleado.id))
+    query = query.params(route_employee_id=str(current_empleado.id))
 
     result = await session.execute(query)
     documentos = result.scalars().unique().all()
     aprobador_by_doc = await fetch_documento_aprobador_display_batch(session, documentos)
+
+    operations_ids = {
+        documento.id for documento in documentos if has_operations_reference(documento)
+    } if current_empleado.rol in ("superadmin", "super_admin") else set()
+    actionable_operations_ids = await actor_route_approver_document_ids(
+        session, actor_id=current_empleado.id, documento_ids=operations_ids
+    ) if operations_ids else set()
 
     def _pending_torneo_display(documento: Documento) -> str:
         cuenta = getattr(documento, "cuenta_gastos", None)
@@ -30026,7 +31813,16 @@ async def documentos_pendientes(
     next_url = quote(next_path)
 
     rows_html = ""
+    rejection_forms_html = ""
+    actionable_count = 0
     for documento in documentos:
+        can_decide = True
+        if (
+            current_empleado.rol in ("superadmin", "super_admin")
+            and has_operations_reference(documento)
+        ):
+            can_decide = documento.id in actionable_operations_ids
+        actionable_count += int(can_decide)
         row_values = _documentos_todos_reporting_row_values(
             documento,
             aprobador_nombre=aprobador_by_doc.get(documento.id, "\u2014"),
@@ -30055,15 +31851,32 @@ async def documentos_pendientes(
         provider_value = row_values["proveedor"]
         if provider_value and provider_value not in {"-", "?"} and provider_value != beneficiary_provider:
             beneficiary_provider = provider_value
+        rejection_form_id = f"documento-rechazo-{documento.id}"
         actions_html = (
             '<div class="table-actions">'
             f'<button type="submit" formaction="/documentos/{documento.id}/aprobar" name="single_action" value="approve" class="button primary">Aprobar</button>'
-            f'<button type="submit" formaction="/documentos/{documento.id}/rechazar" name="single_action" value="reject" class="button danger">Rechazar</button>'
+            '<details class="approval-rejection">'
+            '<summary class="button danger">Rechazar</summary>'
+            f'<label for="comentario-rechazo-{documento.id}">Motivo de rechazo</label>'
+            f'<textarea id="comentario-rechazo-{documento.id}" name="comentario" form="{rejection_form_id}" required></textarea>'
+            f'<button type="submit" form="{rejection_form_id}" class="button danger">Confirmar rechazo</button>'
+            '</details>'
             '</div>'
+        ) if can_decide else '<span class="muted">Solo consulta</span>'
+        if can_decide:
+            rejection_forms_html += (
+                f'<form id="{rejection_form_id}" method="POST" '
+                f'action="/documentos/{documento.id}/rechazar">'
+                f'<input type="hidden" name="next" value="{escape(next_path)}"></form>'
+            )
+        selection_html = (
+            f'<input type="checkbox" name="documento_ids" value="{documento.id}" '
+            f'aria-label="Seleccionar {escape(row_values["numero_referencia"])}">'
+            if can_decide else ""
         )
         rows_html += f"""
         <tr>
-            <td><input type="checkbox" name="documento_ids" value="{documento.id}" aria-label="Seleccionar {escape(row_values['numero_referencia'])}"></td>
+            <td>{selection_html}</td>
             <td>{doc_link}</td>
             <td data-sort-value="{escape(referencia_operaciones_sort)}">{referencia_operaciones}</td>
             <td>{escape(_pending_torneo_display(documento))}</td>
@@ -30120,7 +31933,6 @@ async def documentos_pendientes(
             </form>
         </section>
     """
-
     pending_amount_by_currency: dict[str, Decimal] = {}
     for documento in documentos:
         row_currency = currency_for(documento)
@@ -30142,7 +31954,7 @@ async def documentos_pendientes(
             <div class="meta-card">
                 <span>Pendientes</span>
                 <strong>{len(documentos)}</strong>
-                <small>Documentos esperando tu decisi\u00f3n con los filtros actuales.</small>
+                <small>Documentos pendientes de aprobaci\u00f3n con los filtros actuales.</small>
             </div>
             <div class="meta-card">
                 <span>Monto acumulado</span>
@@ -30158,14 +31970,20 @@ async def documentos_pendientes(
     """
 
     if rows_html:
-        table_html = f"""
-            <form method="POST" action="/documentos/pendientes/accion-lote">
-                <input type="hidden" name="next" value="{escape(next_path)}">
+        bulk_controls_html = """
                 <div class="table-actions" style="justify-content:flex-end;margin-bottom:12px;">
                     <button type="button" class="button secondary" data-select-all-approval>Seleccionar todo</button>
                     <button type="submit" name="action" value="approve" class="button primary">Aprobar seleccionados</button>
                     <button type="submit" name="action" value="reject" class="button danger">Rechazar seleccionados</button>
                 </div>
+                <label class="form-group">Motivo para rechazo masivo
+                    <textarea name="comentario" id="comentario-rechazo-lote" rows="2" placeholder="Obligatorio al rechazar seleccionados"></textarea>
+                </label>
+        """ if actionable_count else ""
+        table_html = f"""
+            <form method="POST" action="/documentos/pendientes/accion-lote">
+                <input type="hidden" name="next" value="{escape(next_path)}">
+                {bulk_controls_html}
                 <div class="table-shell"><table class="approval-queue-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
                     <thead>
                         <tr>
@@ -30189,6 +32007,7 @@ async def documentos_pendientes(
                     </tbody>
                 </table></div>
             </form>
+            {rejection_forms_html}
         """
     else:
         table_html = """
@@ -30282,17 +32101,31 @@ async def documentos_pendientes_accion_lote(
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
     action: str = Form(...),
+    comentario: Optional[str] = Form(None),
     next: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """Approve or reject multiple pending documents using the canonical workflow gate."""
     if not await _can_review_pending_approvals(session, current_empleado):
-        raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
+        raise HTTPException(
+            status_code=403, detail="Access denied. Insufficient permissions."
+        )
 
     redirect_url = determine_redirect_url(next, None, default_to_detail=False)
     normalized_action = (action or "").strip().lower()
     workflow_action = {"approve": "approve", "reject": "reject"}.get(normalized_action)
     if workflow_action is None:
         raise HTTPException(status_code=400, detail="Acción inválida")
+
+    comentario_normalizado = (comentario or "").strip()
+    if workflow_action == "reject" and not comentario_normalizado:
+        return RedirectResponse(
+            url=_append_error_params(
+                redirect_url,
+                error="rejection_reason_required",
+                error_msg="Indica el motivo de rechazo antes de continuar.",
+            ),
+            status_code=303,
+        )
 
     form = await request.form()
     documento_ids: list[UUIDType] = []
@@ -30304,27 +32137,61 @@ async def documentos_pendientes_accion_lote(
             documento_ids.append(UUIDType(raw_text))
         except ValueError:
             return RedirectResponse(
-                url=_append_error_params(redirect_url, error="invalid_documento_id", error_msg="Selección inválida."),
+                url=_append_error_params(
+                    redirect_url,
+                    error="invalid_documento_id",
+                    error_msg="Selección inválida.",
+                ),
                 status_code=303,
             )
     if not documento_ids:
         return RedirectResponse(
-            url=_append_error_params(redirect_url, error="empty_selection", error_msg="Selecciona al menos un documento."),
+            url=_append_error_params(
+                redirect_url,
+                error="empty_selection",
+                error_msg="Selecciona al menos un documento.",
+            ),
             status_code=303,
         )
 
     ok_count = 0
     errors: list[str] = []
+    reimbursement_warnings: list[str] = []
+    actor_id = UUIDType(str(current_empleado.id))
     for documento_id in documento_ids:
         try:
-            await transition_documento_workflow(
+            workflow_result = await transition_documento_workflow(
                 session,
                 documento_id=documento_id,
-                actor_id=current_empleado.id,
+                actor_id=actor_id,
                 action=workflow_action,
+                comentario=comentario_normalizado or None,
                 request_context=audit_context_from_request(request),
             )
             ok_count += 1
+            if (
+                workflow_action == "approve"
+                and workflow_result.documento.tipo == "INFORME"
+            ):
+                # Approval is already committed. A routing failure must not
+                # count it as failed or prevent the remaining batch approvals.
+                informe_ref = workflow_result.documento.numero_referencia
+                try:
+                    _, warning = await _ensure_reembolso_solicitud_for_approved_informe(
+                        session,
+                        informe_doc=workflow_result.documento,
+                        actor_id=actor_id,
+                        request=request,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to route informe reimbursement after bulk approval",
+                        extra={"documento_id": str(documento_id)},
+                    )
+                    warning = "No se pudo completar automáticamente el reembolso."
+                if warning:
+                    await session.rollback()
+                    reimbursement_warnings.append(f"{informe_ref}: {warning}")
         except DocumentoWorkflowValidationError as exc:
             if exc.code == "documento_not_found":
                 errors.append(f"{documento_id}: no existe")
@@ -30336,32 +32203,69 @@ async def documentos_pendientes_accion_lote(
             await session.rollback()
             logger.exception(
                 "Unexpected error in bulk pending document action",
-                extra={"documento_id": str(documento_id), "actor_id": str(current_empleado.id), "action": workflow_action},
+                extra={
+                    "documento_id": str(documento_id),
+                    "actor_id": str(actor_id),
+                    "action": workflow_action,
+                },
             )
             errors.append("Ocurrió un error al procesar una de las partidas.")
 
     label = "aprobado" if workflow_action == "approve" else "rechazado"
     if errors and ok_count == 0:
         return RedirectResponse(
-            url=_append_error_params(redirect_url, error="bulk_action_failed", error_msg="No se procesó ningún documento: " + errors[0]),
+            url=_append_error_params(
+                redirect_url,
+                error="bulk_action_failed",
+                error_msg="No se procesó ningún documento: " + errors[0],
+            ),
             status_code=303,
+        )
+    reimbursement_feedback = ""
+    if reimbursement_warnings:
+        # Keep redirect feedback bounded, even for a large batch.
+        reimbursement_feedback = (
+            f"{len(reimbursement_warnings)} informe(s) aprobado(s) con "
+            "reembolso pendiente: "
+            + "; ".join(message[:200] for message in reimbursement_warnings[:3])
         )
     if errors:
         return RedirectResponse(
             url=_append_error_params(
-                _append_success_params(redirect_url, success_msg=f"{ok_count} documento(s) {label}(s)."),
+                _append_success_params(
+                    redirect_url, success_msg=f"{ok_count} documento(s) {label}(s)."
+                ),
                 error="bulk_action_partial",
-                error_msg=f"{len(errors)} documento(s) no se pudieron procesar.",
+                error_msg=(
+                    f"{len(errors)} documento(s) no se pudieron procesar. "
+                    + reimbursement_feedback
+                ).strip(),
+            ),
+            status_code=303,
+        )
+    if reimbursement_warnings:
+        return RedirectResponse(
+            url=_append_error_params(
+                _append_success_params(
+                    redirect_url,
+                    success_msg=f"{ok_count} documento(s) {label}(s).",
+                ),
+                error="bulk_reimbursement_partial",
+                error_msg=reimbursement_feedback,
             ),
             status_code=303,
         )
     return RedirectResponse(
-        url=_append_success_params(redirect_url, success_msg=f"{ok_count} documento(s) {label}(s)."),
+        url=_append_success_params(
+            redirect_url, success_msg=f"{ok_count} documento(s) {label}(s)."
+        ),
         status_code=303,
     )
 
 
 def _approval_history_filter_values(values: Optional[List[str]]) -> set[str]:
+    if not isinstance(values, (list, tuple, set)):
+        return set()
     return {
         _normalize_filter_value(value)
         for value in values or []
@@ -30595,11 +32499,31 @@ async def historial_aprobador(
     - Admin/superadmin: see all approvals/rejections in the system
     """
 
-    if not await _can_review_pending_approvals(session, current_empleado):
+    alicia_operations_observer = _is_alicia_operations_reference_observer(
+        current_empleado
+    )
+    if (
+        not alicia_operations_observer
+        and not await _can_review_pending_approvals(session, current_empleado)
+    ):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
 
     # Build query based on role
-    if current_empleado.rol in ('admin', 'superadmin', 'super_admin'):
+    if alicia_operations_observer:
+        # Alicia can review Operations-reference history without receiving
+        # any approval, payment, or other workflow authority.
+        query = select(Aprobacion).join(
+            Documento, Documento.id == Aprobacion.entidad_id
+        ).options(
+            selectinload(Aprobacion.aprobador)
+        ).where(
+            and_(
+                Aprobacion.tipo_entidad == 'documento',
+                Aprobacion.accion.in_(['aprobar', 'rechazar', 'pagar']),
+                _operations_reference_document_filter(),
+            )
+        ).order_by(Aprobacion.fecha.desc())
+    elif current_empleado.rol in ('admin', 'superadmin', 'super_admin'):
         # Admin sees all aprobaciones with accion IN ('aprobar', 'rechazar', 'pagar')
         query = select(Aprobacion).options(
             selectinload(Aprobacion.aprobador)
@@ -30634,6 +32558,7 @@ async def historial_aprobador(
                 selectinload(Documento.beneficiario_proveedor_cliente),
                 selectinload(Documento.proveedor_cliente),
                 selectinload(Documento.budget_concept),
+                selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
                 selectinload(Documento.torneo),
                 selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.fase),
                 selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
@@ -30645,6 +32570,12 @@ async def historial_aprobador(
         documentos_dict = {doc.id: doc for doc in documentos_result.scalars().all()}
     else:
         documentos_dict = {}
+    cfdi_reports_by_id = await _document_cfdi_reports_by_id(
+        session, documentos_dict.values()
+    )
+    informe_expenses_by_id = await _document_informe_expenses_by_id(
+        session, documentos_dict.values()
+    )
 
     selected_torneo = _approval_history_filter_values(torneo)
     selected_concepto = _approval_history_filter_values(concepto)
@@ -30667,6 +32598,18 @@ async def historial_aprobador(
             "empleado": empleado_nombre,
             "tipo": _approval_history_display_value(documento.tipo),
             "estado": _approval_history_display_value(documento.estado),
+            "monto_presupuestal": _document_budget_impact_amount(
+                documento,
+                cfdi_reports_by_id.get(documento.cfdi_report_id),
+                expenses=informe_expenses_by_id.get(documento.id),
+            ),
+            "asignacion_presupuestal": _document_budget_assignment_label(
+                documento, expenses=informe_expenses_by_id.get(documento.id)
+            ),
+            "categorias": _document_reporting_categories(documento),
+            "partidas_presupuestales": _document_reporting_budget_items(
+                documento, expenses=informe_expenses_by_id.get(documento.id)
+            ),
         }
         history_items.append((aprobacion, documento, row_values))
     history_items.sort(
@@ -30735,6 +32678,25 @@ async def historial_aprobador(
                     </form>
     """
 
+    history_export_params = {
+        key: values
+        for key, values in {
+            "torneo": torneo or [],
+            "concepto": concepto or [],
+            "beneficiario": beneficiario or [],
+            "tipo": tipo or [],
+            "estado": estado or [],
+        }.items()
+        if values
+    }
+    history_export_href = "/documentos/historial-aprobador/exportar.xlsx"
+    if history_export_params:
+        history_export_href += "?" + urlencode(history_export_params, doseq=True)
+
+    reporting_return_url = "/documentos/historial-aprobador"
+    if request is not None and request.query_params:
+        reporting_return_url += "?" + str(request.query_params)
+
     # Build rows HTML
     rows_html = ""
     for aprobacion, documento, row_values in history_items:
@@ -30769,6 +32731,12 @@ async def historial_aprobador(
         )
         monto_total_sort = _sort_value_attr(monto_total, kind="money")
         monto_total_display = format_currency(monto_total, currency_for(documento))
+        monto_presupuestal_display = format_currency(
+            row_values["monto_presupuestal"], currency_for(documento)
+        )
+        monto_presupuestal_sort = _sort_value_attr(
+            row_values["monto_presupuestal"], kind="money"
+        )
 
         # Link to documento detail
         doc_link = f'<a href="/documentos/{documento.id}" style="color: #4CAF50; text-decoration: none;">{documento.numero_referencia}</a>'
@@ -30792,6 +32760,9 @@ async def historial_aprobador(
             <td>{escape(row_values["tipo"])}</td>
             <td>{escape(row_values["estado"])}</td>
             <td data-sort-value="{escape(monto_total_sort)}">{escape(monto_total_display)}</td>
+            <td data-sort-value="{escape(monto_presupuestal_sort)}">{escape(monto_presupuestal_display)}<br><small>{escape(row_values["asignacion_presupuestal"])}</small></td>
+            <td>{escape(row_values["categorias"])}</td>
+            <td data-sort-value="{escape(row_values["partidas_presupuestales"])}">{_document_reporting_budget_items_html(documento, expenses=informe_expenses_by_id.get(documento.id), return_url=reporting_return_url, can_view_detail=_can_access_documento_adjunto(documento, current_empleado))}</td>
             <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{comentario_safe}">{comentario_safe}</td>
         </tr>
         """
@@ -30864,6 +32835,7 @@ async def historial_aprobador(
                     '<a href="/documentos/pendientes" class="button secondary">Pendientes</a>'
                     '<a href="/documentos/historial-aprobador" class="button primary">'
                     'Ya autorizadas</a>'
+                    f'<a href="{history_export_href}" class="button secondary">Descargar Excel filtrado</a>'
                     '<a href="/panel" class="button secondary">Volver al panel</a>'
                 ),
                 side_html=historial_side_html,
@@ -30894,6 +32866,9 @@ async def historial_aprobador(
                         <th data-sort-key="tipo" data-sort-type="text">Tipo</th>
                         <th data-sort-key="estado_actual" data-sort-type="text">Estado Actual</th>
                         <th data-sort-key="monto_total" data-sort-type="money">Monto</th>
+                        <th data-sort-key="monto_presupuestal" data-sort-type="money">Monto que afecta presupuesto</th>
+                        <th scope="col" data-sort-key="categorias" data-sort-type="text">Categoría</th>
+                        <th scope="col" data-sort-key="partidas_presupuestales" data-sort-type="text">Partida Presupuestal</th>
                         <th data-sort-key="comentario" data-sort-type="text">Comentario</th>
                     </tr>
                 </thead>
@@ -30916,10 +32891,121 @@ async def historial_aprobador(
     return html
 
 
+@router.get("/documentos/historial-aprobador/exportar.xlsx", response_model=None)
+async def historial_aprobador_exportar_xlsx(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    torneo: Optional[List[str]] = Query(None),
+    concepto: Optional[List[str]] = Query(None),
+    beneficiario: Optional[List[str]] = Query(None),
+    tipo: Optional[List[str]] = Query(None),
+    estado: Optional[List[str]] = Query(None),
+) -> Response:
+    """Export the authorized, currently filtered approval-history events."""
+    alicia_operations_observer = _is_alicia_operations_reference_observer(
+        current_empleado
+    )
+    if (
+        not alicia_operations_observer
+        and not await _can_review_pending_approvals(session, current_empleado)
+    ):
+        raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
+    base_filters = [
+        Aprobacion.tipo_entidad == "documento",
+        Aprobacion.accion.in_(["aprobar", "rechazar", "pagar"]),
+    ]
+    query = select(Aprobacion).options(selectinload(Aprobacion.aprobador))
+    if alicia_operations_observer:
+        query = query.join(Documento, Documento.id == Aprobacion.entidad_id)
+        base_filters.append(_operations_reference_document_filter())
+    elif current_empleado.rol not in ("admin", "superadmin", "super_admin"):
+        base_filters.append(Aprobacion.aprobador_id == current_empleado.id)
+    aprobaciones = (
+        await session.execute(query.where(and_(*base_filters)).order_by(Aprobacion.fecha.desc()))
+    ).scalars().all()
+    documento_ids = [aprobacion.entidad_id for aprobacion in aprobaciones]
+    documentos = []
+    if documento_ids:
+        documentos = (
+            await session.execute(
+                select(Documento).options(
+                    selectinload(Documento.empleado),
+                    selectinload(Documento.beneficiario_empleado),
+                    selectinload(Documento.beneficiario_proveedor_cliente),
+                    selectinload(Documento.proveedor_cliente),
+                    selectinload(Documento.budget_concept),
+                    selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
+                    selectinload(Documento.torneo),
+                    selectinload(Documento.cuenta_gastos)
+                    .undefer(CuentaDeGastos.fase)
+                    .selectinload(CuentaDeGastos.torneo),
+                    undefer(Documento.fase),
+                ).where(Documento.id.in_(documento_ids))
+            )
+        ).scalars().all()
+    documentos_by_id = {documento.id: documento for documento in documentos}
+    cfdi_reports_by_id = await _document_cfdi_reports_by_id(session, documentos)
+    informe_expenses_by_id = await _document_informe_expenses_by_id(session, documentos)
+    selected = {
+        "torneo": _approval_history_filter_values(torneo),
+        "concepto": _approval_history_filter_values(concepto),
+        "beneficiario": _approval_history_filter_values(beneficiario),
+        "tipo": _approval_history_filter_values(tipo),
+        "estado": _approval_history_filter_values(estado),
+    }
+    rows = []
+    for aprobacion in aprobaciones:
+        documento = documentos_by_id.get(aprobacion.entidad_id)
+        if documento is None:
+            continue
+        values = _documentos_todos_reporting_row_values(
+            documento,
+            aprobador_nombre=getattr(aprobacion.aprobador, "nombre", "—"),
+            cfdi_report=cfdi_reports_by_id.get(documento.cfdi_report_id),
+            expenses=informe_expenses_by_id.get(documento.id),
+        )
+        matches = {
+            "torneo": _approval_history_torneo(documento),
+            "concepto": _approval_history_budget_concept(documento),
+            "beneficiario": _approval_history_beneficiario(documento),
+            "tipo": _approval_history_display_value(documento.tipo),
+            "estado": _approval_history_display_value(documento.estado),
+        }
+        if all(
+            not selected[key] or _normalize_filter_value(value) in selected[key]
+            for key, value in matches.items()
+        ):
+            if aprobacion.accion == "aprobar":
+                accion = "Aprobado"
+            elif aprobacion.accion == "rechazar":
+                accion = "Rechazado"
+            elif aprobacion.accion == "pagar":
+                accion = "Pagado"
+            else:
+                accion = (aprobacion.accion or "—").capitalize()
+            values.update(
+                fecha_evento=format_value(aprobacion.fecha),
+                accion_evento=accion,
+                comentario_evento=aprobacion.comentario or "-",
+            )
+            rows.append(values)
+    return _documentos_reporting_xlsx_response(
+        title="Historial de aprobaciones",
+        rows=rows,
+        filename_prefix="historial_aprobaciones",
+        export_kind="historial_aprobaciones",
+    )
+
+
 def _documentos_todos_reporting_type(documento: Documento) -> str:
     doc_type = (getattr(documento, "tipo", None) or "").strip().upper()
     if doc_type == "INFORME":
         return "Informe de gastos"
+    if doc_type == "SOLICITUD" and getattr(documento, "is_supplier_advance", False):
+        return "Anticipo a proveedor"
+    if doc_type == "SOLICITUD" and getattr(documento, "supplier_advance_id", None):
+        return "Comprobación de anticipo a proveedor"
     if doc_type == "SOLICITUD" and is_employee_reimbursement(documento):
         return "Reembolso empleado"
     if doc_type == "SOLICITUD" and getattr(documento, "beneficiario_empleado_id", None):
@@ -30962,8 +33048,221 @@ def _documentos_todos_reporting_description(documento: Documento) -> str:
     return concepto or "—"
 
 
+def _document_budget_impact_amount(
+    documento: Documento,
+    cfdi_report: Optional[CFDIReport] = None,
+    *,
+    expenses: Optional[list[ExpenseReport]] = None,
+) -> Decimal:
+    """Return the state-aware amount from the canonical budget service."""
+    return budget_document_effect_snapshot(documento, cfdi_report, expenses=expenses)[
+        "amount"
+    ]
+
+
+async def _document_cfdi_reports_by_id(
+    session: AsyncSession, documentos: Iterable[Documento]
+) -> dict[Any, CFDIReport]:
+    """Fetch the CFDIs needed for budget-impact reporting in one query."""
+
+    cfdi_ids = {
+        documento.cfdi_report_id
+        for documento in documentos
+        if getattr(documento, "cfdi_report_id", None)
+    }
+    if not cfdi_ids:
+        return {}
+    result = await session.execute(
+        select(CFDIReport).where(CFDIReport.id.in_(cfdi_ids))
+    )
+    return {report.id: report for report in result.scalars().all()}
+
+
+async def _document_informe_expenses_by_id(
+    session: AsyncSession, documentos: Iterable[Documento]
+) -> dict[Any, list[ExpenseReport]]:
+    """Resolve active report lines and attachments in one batch, without writes."""
+    informes = {d.id: d for d in documentos if d.tipo == "INFORME"}
+    if not informes:
+        return {}
+    filters = [
+        condition
+        for documento in informes.values()
+        for condition in _active_informe_expense_filters(documento)
+    ]
+    result = await session.execute(
+        select(ExpenseReport)
+        .options(
+            selectinload(ExpenseReport.adjuntos),
+            selectinload(ExpenseReport.cfdi_report),
+            selectinload(ExpenseReport.budget_concept),
+        )
+        .where(or_(*filters), ExpenseReport.estado_gasto != "cancelado")
+        .order_by(ExpenseReport.numero_referencia.asc(), ExpenseReport.id.asc())
+    )
+    expenses = list(result.scalars().all())
+    legacy_ids = {
+        expense.id
+        for expense in expenses
+        if not getattr(expense, "informe_documento_id", None)
+        and getattr(expense, "documento_id", None) not in informes
+    }
+    legacy_owners = {}
+    if legacy_ids:
+        # Resolve against all reports, not only the visible/filtered subset.
+        # An explicit direct report wins; account-only lines use the primary
+        # report (oldest creado_en), as _informe_documento_for_cuenta does.
+        direct_report = (
+            select(Documento.id)
+            .where(
+                Documento.id == ExpenseReport.documento_id,
+                Documento.tipo == "INFORME",
+            )
+            .correlate(ExpenseReport)
+            .scalar_subquery()
+        )
+        primary_report = (
+            select(Documento.id)
+            .where(
+                Documento.cuenta_gastos_id == ExpenseReport.cuenta_gastos_id,
+                Documento.tipo == "INFORME",
+            )
+            .order_by(Documento.creado_en.asc(), Documento.id.asc())
+            .limit(1)
+            .correlate(ExpenseReport)
+            .scalar_subquery()
+        )
+        owner_rows = await session.execute(
+            select(
+                ExpenseReport.id, func.coalesce(direct_report, primary_report)
+            ).where(ExpenseReport.id.in_(legacy_ids))
+        )
+        legacy_owners = dict(owner_rows.all())
+    by_id = {doc_id: [] for doc_id in informes}
+    for expense in expenses:
+        if getattr(expense, "estado_gasto", None) == "cancelado":
+            continue
+        explicit = getattr(expense, "informe_documento_id", None)
+        direct = getattr(expense, "documento_id", None)
+        owner = explicit or (
+            direct if direct in informes else legacy_owners.get(expense.id)
+        )
+        if owner in informes:
+            by_id[owner].append(expense)
+    return {doc_id: _unique_expenses(expenses) for doc_id, expenses in by_id.items()}
+
+
+def _document_budget_assignment_label(
+    documento: Documento, *, expenses: Optional[list[ExpenseReport]] = None
+) -> str:
+    return budget_document_effect_snapshot(documento, expenses=expenses)[
+        "assignment_label"
+    ]
+
+
+def _document_reporting_categories(documento: Documento) -> str:
+    """Display recorded project categories, never the entire project catalog."""
+    categories = getattr(documento, "categorias", None)
+    if not isinstance(categories, list):
+        return "—"
+    return (
+        ", ".join(
+            dict.fromkeys(
+                value.strip()
+                for value in categories
+                if isinstance(value, str) and value.strip()
+            )
+        )
+        or "—"
+    )
+
+
+def _document_reporting_budget_item_labels(
+    documento: Documento, *, expenses: Optional[list[ExpenseReport]] = None
+) -> list[str]:
+    """Use the same assignment owners as budget_document_effect_snapshot.
+
+    Reports show the distinct assignments of active expenses, not a fallback
+    document classification. Requests show their own assignment. This is a
+    projection only: it never allocates amounts or changes classifications.
+    """
+    records = [documento]
+    if str(getattr(documento, "tipo", "") or "").strip().upper() == "INFORME":
+        records = [
+            expense
+            for expense in (
+                expenses
+                if expenses is not None
+                else (getattr(documento, "gastos", None) or [])
+            )
+            if str(getattr(expense, "estado_gasto", "") or "").strip().lower()
+            != "cancelado"
+        ]
+    items = {}
+    for record in records:
+        concept_id = getattr(record, "budget_concept_id", None)
+        if not concept_id:
+            continue
+        concept = getattr(record, "budget_concept", None)
+        items[str(concept_id)] = str(
+            getattr(concept, "concept_name", None)
+            or getattr(concept, "concept_key", None)
+            or concept_id
+        )
+    return sorted(items.values(), key=_normalize_filter_value)
+
+
+def _document_reporting_budget_items(
+    documento: Documento, *, expenses: Optional[list[ExpenseReport]] = None
+) -> str:
+    """Keep the complete assigned-item list in one spreadsheet cell."""
+    return (
+        "; ".join(_document_reporting_budget_item_labels(documento, expenses=expenses))
+        or "Sin partida"
+    )
+
+
+def _document_reporting_budget_items_html(
+    documento: Documento,
+    *,
+    expenses: Optional[list[ExpenseReport]] = None,
+    return_url: str = "/documentos/todos",
+    can_view_detail: bool = False,
+) -> str:
+    """Compact read-only display; reuse the authorized document detail."""
+    labels = _document_reporting_budget_item_labels(documento, expenses=expenses)
+    if len(labels) < 2:
+        return escape(labels[0] if labels else "Sin partida")
+    label = f"Varias partidas · {len(labels)}"
+    if not can_view_detail:
+        return label
+    reference = escape(
+        str(getattr(documento, "numero_referencia", None) or documento.id)
+    )
+    return (
+        f'<a href="/documentos/{documento.id}?{escape(urlencode({"next": return_url}))}#gastos-asociados" '
+        f'aria-label="{label}. Ver gastos asociados de {reference}">{label}</a>'
+    )
+
+
+def _document_total_reporting_amount(documento: Documento) -> Decimal:
+    """Return a non-negative numeric total suitable for spreadsheet export."""
+    for field in ("monto_total", "monto_solicitado"):
+        value = getattr(documento, field, None)
+        if value is not None:
+            try:
+                return max(Decimal(str(value)), Decimal("0"))
+            except (InvalidOperation, TypeError, ValueError):
+                continue
+    return Decimal("0")
+
+
 def _documentos_todos_reporting_row_values(
-    documento: Documento, *, aprobador_nombre: str = "—"
+    documento: Documento,
+    *,
+    aprobador_nombre: str = "—",
+    cfdi_report: Optional[CFDIReport] = None,
+    expenses: Optional[list[ExpenseReport]] = None,
 ) -> dict[str, Any]:
     parties = _documentos_todos_party_values(documento)
     currency = currency_for(documento)
@@ -30971,10 +33270,12 @@ def _documentos_todos_reporting_row_values(
     torneo = getattr(documento, "torneo", None) or getattr(cuenta, "torneo", None)
     torneo_display = documento_project_name(documento, torneo) or "—"
     fase_display = (
-        getattr(documento, "fase", None)
-        or getattr(cuenta, "fase", None)
-        or "—"
+        getattr(documento, "fase", None) or getattr(cuenta, "fase", None) or "—"
     )
+    budget_effect = budget_document_effect_snapshot(
+        documento, cfdi_report, expenses=expenses
+    )
+    monto_presupuestal = budget_effect["amount"]
     return {
         "id": str(documento.id),
         "numero_referencia": getattr(documento, "numero_referencia", None) or "—",
@@ -30994,7 +33295,17 @@ def _documentos_todos_reporting_row_values(
         "monto_solicitado": format_currency(
             getattr(documento, "monto_solicitado", None), currency
         ),
-        "monto_total": format_currency(getattr(documento, "monto_total", None), currency),
+        "monto_total": format_currency(
+            getattr(documento, "monto_total", None), currency
+        ),
+        "monto_total_valor": _document_total_reporting_amount(documento),
+        "monto_presupuestal": format_currency(monto_presupuestal, currency),
+        "monto_presupuestal_valor": monto_presupuestal,
+        "asignacion_presupuestal": budget_effect["assignment_label"],
+        "categorias": _document_reporting_categories(documento),
+        "partidas_presupuestales": _document_reporting_budget_items(
+            documento, expenses=expenses
+        ),
         "currency": currency,
         "situacion": _documentos_todos_reporting_situation(documento),
         "estado": getattr(documento, "estado", None) or "—",
@@ -31037,13 +33348,31 @@ def _documentos_amount_totals_by_currency(
     return totals
 
 
+def _documento_gasto_concepto_matches(q_filter: str):
+    """Match active expenses explicitly linked to a document, without widening access."""
+    active_concept = and_(
+        ExpenseReport.estado_gasto != "cancelado",
+        ExpenseReport.concepto.ilike(q_filter),
+    )
+    return or_(
+        Documento.gastos.any(active_concept),
+        Documento.gasto_generado.has(active_concept),
+        select(ExpenseReport.id)
+        .where(ExpenseReport.solicitud_documento_id == Documento.id, active_concept)
+        .exists(),
+    )
+
+
 @router.get("/documentos/todos", response_class=HTMLResponse)
 async def documentos_todos(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
-    estado: Optional[str] = None,
-    tipo: Optional[str] = None,
+    estado: Optional[List[str]] = Query(None),
+    tipo: Optional[List[str]] = Query(None),
+    torneo: Optional[List[str]] = Query(None),
+    concepto: Optional[List[str]] = Query(None),
+    beneficiario: Optional[List[str]] = Query(None),
     empleado_nombre: Optional[str] = None,
     q: Optional[str] = None,
     situacion: Optional[str] = None,
@@ -31060,6 +33389,14 @@ async def documentos_todos(
     if not _can_view_documentos_todos(current_empleado):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
 
+    # Keep direct route calls (including unit tests) equivalent to FastAPI's
+    # resolved Query(None) values.
+    estado = estado if isinstance(estado, list) else None
+    tipo = tipo if isinstance(tipo, list) else None
+    torneo = torneo if isinstance(torneo, list) else None
+    concepto = concepto if isinstance(concepto, list) else None
+    beneficiario = beneficiario if isinstance(beneficiario, list) else None
+
     # Build base query
     query = select(Documento).options(
         selectinload(Documento.empleado).selectinload(Empleado.aprobador),
@@ -31067,13 +33404,21 @@ async def documentos_todos(
         selectinload(Documento.beneficiario_proveedor_cliente),
         selectinload(Documento.proveedor_cliente),
         selectinload(Documento.torneo),
+        selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
         selectinload(Documento.cuenta_gastos)
         .undefer(CuentaDeGastos.fase)
         .selectinload(CuentaDeGastos.torneo),
         undefer(Documento.fase),
     )
 
-    scope_dept = empleado_list_view_department_scope(current_empleado)
+    alicia_operations_observer = _is_alicia_operations_reference_observer(
+        current_empleado
+    )
+    scope_dept = (
+        None
+        if alicia_operations_observer
+        else empleado_list_view_department_scope(current_empleado)
+    )
     q_value = (q or "").strip()
     needs_empleado_join = (
         bool(empleado_nombre and empleado_nombre.strip())
@@ -31099,12 +33444,15 @@ async def documentos_todos(
 
     # Apply filters
     filters = []
+    if alicia_operations_observer:
+        filters.append(_operations_reference_document_filter())
     if scope_dept:
         filters.append(departamento_column_matches(Empleado.departamento, scope_dept))
-    if estado and estado.strip():
-        filters.append(Documento.estado == estado.strip())
-    if tipo and tipo.strip():
-        filters.append(Documento.tipo == tipo.strip())
+    selected_estado = _approval_history_filter_values(estado)
+    selected_tipo = _approval_history_filter_values(tipo)
+    selected_torneo = _approval_history_filter_values(torneo)
+    selected_concepto = _approval_history_filter_values(concepto)
+    selected_beneficiario = _approval_history_filter_values(beneficiario)
     situacion_value = (situacion or "").strip().lower()
     if situacion_value == "abiertas":
         filters.append(Documento.estado.notin_(["pagado", "rechazado", "cerrado"]))
@@ -31120,6 +33468,7 @@ async def documentos_todos(
                 Documento.concepto_pago.ilike(q_filter),
                 Documento.referencia_pago.ilike(q_filter),
                 Documento.referencia_operaciones.ilike(q_filter),
+                _documento_gasto_concepto_matches(q_filter),
                 Empleado.nombre.ilike(q_filter),
                 beneficiario_alias.nombre.ilike(q_filter),
                 proveedor_alias.nombre.ilike(q_filter),
@@ -31135,7 +33484,29 @@ async def documentos_todos(
 
     result = await session.execute(query)
     documentos = result.scalars().all()
+    filter_options = {
+        "torneo": [_approval_history_torneo(documento) for documento in documentos],
+        "concepto": [_approval_history_budget_concept(documento) for documento in documentos],
+        "beneficiario": [_approval_history_beneficiario(documento) for documento in documentos],
+        "tipo": [_approval_history_display_value(documento.tipo) for documento in documentos],
+        "estado": [_approval_history_display_value(documento.estado) for documento in documentos],
+    }
+    documentos = [
+        documento
+        for documento in documentos
+        if (not selected_torneo or _normalize_filter_value(_approval_history_torneo(documento)) in selected_torneo)
+        and (not selected_concepto or _normalize_filter_value(_approval_history_budget_concept(documento)) in selected_concepto)
+        and (not selected_beneficiario or _normalize_filter_value(_approval_history_beneficiario(documento)) in selected_beneficiario)
+        and (not selected_tipo or _normalize_filter_value(_approval_history_display_value(documento.tipo)) in selected_tipo)
+        and (not selected_estado or _normalize_filter_value(_approval_history_display_value(documento.estado)) in selected_estado)
+    ]
     aprobador_by_doc = await fetch_documento_aprobador_display_batch(session, documentos)
+    cfdi_reports_by_id = await _document_cfdi_reports_by_id(session, documentos)
+    informe_expenses_by_id = await _document_informe_expenses_by_id(session, documentos)
+
+    reporting_return_url = "/documentos/todos"
+    if request is not None and request.query_params:
+        reporting_return_url += "?" + str(request.query_params)
 
     # Build rows HTML
     rows_html = ""
@@ -31144,6 +33515,8 @@ async def documentos_todos(
         row_values = _documentos_todos_reporting_row_values(
             documento,
             aprobador_nombre=aprobador_nombre,
+            cfdi_report=cfdi_reports_by_id.get(documento.cfdi_report_id),
+            expenses=informe_expenses_by_id.get(documento.id),
         )
 
         # Link to documento detail with next parameter
@@ -31165,6 +33538,9 @@ async def documentos_todos(
             getattr(documento, "monto_total", None),
             kind="money",
         )
+        monto_presupuestal_sort = _sort_value_attr(
+            row_values["monto_presupuestal_valor"], kind="money"
+        )
         creado_sort = _sort_value_attr(getattr(documento, "creado_en", None), kind="date")
         enviado_sort = _sort_value_attr(getattr(documento, "enviado_en", None), kind="date")
         aprobado_sort = _sort_value_attr(getattr(documento, "aprobado_en", None), kind="date")
@@ -31173,6 +33549,7 @@ async def documentos_todos(
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
+            <td data-sort-value="{escape(referencia_operaciones_sort)}">{escape(row_values["referencia_operaciones"])}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{escape(row_values["tipo_documento"])}</td>
             <td>{escape(row_values["tipo_solicitud"])}</td>
@@ -31184,9 +33561,9 @@ async def documentos_todos(
             <td>{escape(row_values["aprobador"])}</td>
             <td>{escape(row_values["concepto"])}</td>
             <td>{escape(row_values["referencia_pago"])}</td>
-            <td data-sort-value="{escape(referencia_operaciones_sort)}">{escape(row_values["referencia_operaciones"])}</td>
             <td data-sort-value="{escape(monto_solicitado_sort)}">{row_values["monto_solicitado"]}</td>
             <td data-sort-value="{escape(monto_total_sort)}">{row_values["monto_total"]}</td>
+            <td data-sort-value="{escape(monto_presupuestal_sort)}">{row_values["monto_presupuestal"]}<br><small>{escape(row_values["asignacion_presupuestal"])}</small></td>
             <td>{escape(row_values["currency"])}</td>
             <td>{escape(row_values["situacion"])}</td>
             <td>{escape(row_values["estado"])}</td>
@@ -31194,6 +33571,8 @@ async def documentos_todos(
             <td data-sort-value="{escape(enviado_sort)}">{row_values["enviado"]}</td>
             <td data-sort-value="{escape(aprobado_sort)}">{row_values["aprobado"]}</td>
             <td data-sort-value="{escape(pagado_sort)}">{row_values["pagado"]}</td>
+            <td>{escape(row_values["categorias"])}</td>
+            <td data-sort-value="{escape(row_values["partidas_presupuestales"])}">{_document_reporting_budget_items_html(documento, expenses=informe_expenses_by_id.get(documento.id), return_url=reporting_return_url, can_view_detail=_can_access_documento_adjunto(documento, current_empleado))}</td>
             <td>{action_link}</td>
         </tr>
         """
@@ -31202,8 +33581,11 @@ async def documentos_todos(
         key: value
         for key, value in {
             "q": q_value,
-            "estado": (estado or "").strip(),
-            "tipo": (tipo or "").strip(),
+            "estado": estado or [],
+            "tipo": tipo or [],
+            "torneo": torneo or [],
+            "concepto": concepto or [],
+            "beneficiario": beneficiario or [],
             "situacion": situacion_value,
             "empleado_nombre": (empleado_nombre or "").strip(),
         }.items()
@@ -31211,14 +33593,17 @@ async def documentos_todos(
     }
     bulk_href = "/documentos/todos/exportar-exceles.zip"
     if bulk_params:
-        bulk_href = f"{bulk_href}?{urlencode(bulk_params)}"
+        bulk_href = f"{bulk_href}?{urlencode(bulk_params, doseq=True)}"
     documents_amount_totals = _documentos_amount_totals_by_currency(documentos)
     active_filter_count = sum(
         1
         for value in (
             q_value,
-            (estado or "").strip(),
-            (tipo or "").strip(),
+            selected_estado,
+            selected_tipo,
+            selected_torneo,
+            selected_concepto,
+            selected_beneficiario,
             situacion_value,
             (empleado_nombre or "").strip(),
         )
@@ -31231,33 +33616,37 @@ async def documentos_todos(
         <div class="section-head" style="margin-bottom:12px;">
             <div>
                 <h2>Filtros</h2>
-                <div class="section-note">Reduce la vista consolidada por referencia, estado, tipo, solicitante, beneficiario, proveedor o concepto.</div>
+                <div class="section-note">Selecciona Tipo: Solicitud y busca por proveedor, descripción de pago o gasto. El selector de concepto es presupuestal.</div>
             </div>
         </div>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; align-items: end;">
             <div>
-                <label for="q" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Búsqueda:</label>
-                <input type="text" name="q" id="q" value="{escape(q_value)}" placeholder="Referencia, proveedor, beneficiario, concepto...">
+                <label for="q" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Proveedor, pago o gasto:</label>
+                <input type="text" name="q" id="q" value="{escape(q_value)}" placeholder="Proveedor o gasto específico...">
             </div>
             <div>
                 <label for="estado" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Estado:</label>
-                <select name="estado" id="estado">
-                    <option value="">Todos</option>
-                    <option value="borrador" {'selected' if estado == 'borrador' else ''}>Borrador</option>
-                    <option value="enviado" {'selected' if estado == 'enviado' else ''}>Enviado</option>
-                    <option value="aprobado" {'selected' if estado == 'aprobado' else ''}>Aprobado</option>
-                    <option value="en_proceso_pago" {'selected' if estado == 'en_proceso_pago' else ''}>En proceso de pago</option>
-                    <option value="rechazado" {'selected' if estado == 'rechazado' else ''}>Rechazado</option>
-                    <option value="pagado" {'selected' if estado == 'pagado' else ''}>Pagado</option>
+                <select name="estado" id="estado" multiple size="4">
+                    {_approval_history_select_options(filter_options["estado"], selected_estado)}
                 </select>
             </div>
             <div>
                 <label for="tipo" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Tipo:</label>
-                <select name="tipo" id="tipo">
-                    <option value="">Todos</option>
-                    <option value="INFORME" {'selected' if tipo == 'INFORME' else ''}>INFORME</option>
-                    <option value="SOLICITUD" {'selected' if tipo == 'SOLICITUD' else ''}>SOLICITUD</option>
+                <select name="tipo" id="tipo" multiple size="4">
+                    {_approval_history_select_options(filter_options["tipo"], selected_tipo)}
                 </select>
+            </div>
+            <div>
+                <label for="todos_torneo" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Torneo:</label>
+                <select name="torneo" id="todos_torneo" multiple size="4">{_approval_history_select_options(filter_options["torneo"], selected_torneo)}</select>
+            </div>
+            <div>
+                <label for="todos_concepto" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Concepto presupuestal:</label>
+                <select name="concepto" id="todos_concepto" multiple size="4">{_approval_history_select_options(filter_options["concepto"], selected_concepto)}</select>
+            </div>
+            <div>
+                <label for="todos_beneficiario" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Beneficiario:</label>
+                <select name="beneficiario" id="todos_beneficiario" multiple size="4">{_approval_history_select_options(filter_options["beneficiario"], selected_beneficiario)}</select>
             </div>
             <div>
                 <label for="situacion" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Situación:</label>
@@ -31303,8 +33692,11 @@ async def documentos_todos(
     bulk_params = {
         key: value
         for key, value in {
-            "estado": (estado or "").strip(),
-            "tipo": (tipo or "").strip(),
+            "estado": estado or [],
+            "tipo": tipo or [],
+            "torneo": torneo or [],
+            "concepto": concepto or [],
+            "beneficiario": beneficiario or [],
             "empleado_nombre": (empleado_nombre or "").strip(),
             "q": q_value,
             "situacion": situacion_value,
@@ -31313,7 +33705,10 @@ async def documentos_todos(
     }
     bulk_href = "/documentos/todos/exportar-exceles.zip"
     if bulk_params:
-        bulk_href += "?" + urlencode(bulk_params)
+        bulk_href += "?" + urlencode(bulk_params, doseq=True)
+    xlsx_href = "/documentos/todos/exportar.xlsx"
+    if bulk_params:
+        xlsx_href += "?" + urlencode(bulk_params, doseq=True)
 
     html = f"""
     <!DOCTYPE html>
@@ -31333,7 +33728,7 @@ async def documentos_todos(
                 eyebrow="Supervisión",
                 title="Todos los documentos",
                 description="Vista consolidada de reportería para finanzas y administración, con tipo de solicitud, solicitante, beneficiario, proveedor, referencias y montos en una sola tabla.",
-                actions_html=f'<a href="/panel" class="button secondary">Volver a Panel</a><a href="{bulk_href}" class="button primary">Descargar Exceles filtrados (ZIP)</a>',
+                actions_html=f'<a href="/panel" class="button secondary">Volver a Panel</a><a href="{xlsx_href}" class="button primary">Descargar Excel filtrado</a><a href="{bulk_href}" class="button secondary">Descargar Exceles (ZIP)</a>',
                 side_html=todos_side_html,
             )}
             <div class="stack">
@@ -31347,10 +33742,11 @@ async def documentos_todos(
                     </div>
             {f'''
             <div class="table-shell">
-                <table data-sortable-table data-default-sort-index="10" data-default-sort-dir="desc">
+                <table data-sortable-table data-default-sort-index="11" data-default-sort-dir="desc">
                     <thead>
                         <tr>
                             <th data-sort-key="numero_referencia" data-sort-type="text">Número de Referencia</th>
+                            <th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia operaciones</th>
                             <th data-sort-key="id_interno" data-sort-type="text">ID Interno</th>
                             <th data-sort-key="tipo" data-sort-type="text">Tipo</th>
                             <th data-sort-key="tipo_solicitud" data-sort-type="text">Tipo solicitud</th>
@@ -31362,9 +33758,9 @@ async def documentos_todos(
                             <th data-sort-key="aprobador" data-sort-type="text">Aprobador</th>
                             <th data-sort-key="concepto" data-sort-type="text">Concepto</th>
                             <th data-sort-key="referencia_pago" data-sort-type="text">Referencia pago</th>
-                            <th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia operaciones</th>
                             <th data-sort-key="monto_solicitado" data-sort-type="money">Monto solicitado</th>
                             <th data-sort-key="monto_total" data-sort-type="money">Monto total</th>
+                            <th data-sort-key="monto_presupuestal" data-sort-type="money">Monto que afecta presupuesto</th>
                             <th data-sort-key="moneda" data-sort-type="text">Moneda</th>
                             <th data-sort-key="situacion" data-sort-type="text">Situación</th>
                             <th data-sort-key="estado" data-sort-type="text">Estado</th>
@@ -31372,6 +33768,8 @@ async def documentos_todos(
                             <th data-sort-key="enviado" data-sort-type="date">Enviado</th>
                             <th data-sort-key="aprobado" data-sort-type="date">Aprobado</th>
                             <th data-sort-key="pagado" data-sort-type="date">Pagado</th>
+                            <th scope="col" data-sort-key="categorias" data-sort-type="text">Categoría</th>
+                            <th scope="col" data-sort-key="partidas_presupuestales" data-sort-type="text">Partida Presupuestal</th>
                             <th>Acción</th>
                         </tr>
                     </thead>
@@ -31395,17 +33793,19 @@ async def documentos_todos(
     return html
 
 
-
-
 async def _query_documentos_todos_for_export(
     session: AsyncSession,
     current_empleado: Empleado,
     *,
-    estado: Optional[str] = None,
-    tipo: Optional[str] = None,
+    estado: Optional[List[str]] = None,
+    tipo: Optional[List[str]] = None,
+    torneo: Optional[List[str]] = None,
+    concepto: Optional[List[str]] = None,
+    beneficiario: Optional[List[str]] = None,
     empleado_nombre: Optional[str] = None,
     q: Optional[str] = None,
     situacion: Optional[str] = None,
+    limit: Optional[int] = 500,
 ) -> list[Documento]:
     if not _can_view_documentos_todos(current_empleado):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
@@ -31415,9 +33815,22 @@ async def _query_documentos_todos_for_export(
         selectinload(Documento.beneficiario_empleado),
         selectinload(Documento.beneficiario_proveedor_cliente),
         selectinload(Documento.proveedor_cliente),
-        selectinload(Documento.cuenta_gastos),
+        selectinload(Documento.budget_concept),
+        selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
+        selectinload(Documento.torneo),
+        selectinload(Documento.cuenta_gastos)
+        .undefer(CuentaDeGastos.fase)
+        .selectinload(CuentaDeGastos.torneo),
+        undefer(Documento.fase),
     )
-    scope_dept = empleado_list_view_department_scope(current_empleado)
+    alicia_operations_observer = _is_alicia_operations_reference_observer(
+        current_empleado
+    )
+    scope_dept = (
+        None
+        if alicia_operations_observer
+        else empleado_list_view_department_scope(current_empleado)
+    )
     q_value = (q or "").strip()
     needs_empleado_join = bool((empleado_nombre or "").strip()) or bool(scope_dept) or bool(q_value)
     if needs_empleado_join:
@@ -31438,12 +33851,10 @@ async def _query_documentos_todos_for_export(
         )
 
     filters = []
+    if alicia_operations_observer:
+        filters.append(_operations_reference_document_filter())
     if scope_dept:
         filters.append(departamento_column_matches(Empleado.departamento, scope_dept))
-    if estado and estado.strip():
-        filters.append(Documento.estado == estado.strip())
-    if tipo and tipo.strip():
-        filters.append(Documento.tipo == tipo.strip())
     situacion_value = (situacion or "").strip().lower()
     if situacion_value == "abiertas":
         filters.append(Documento.estado.notin_(["pagado", "rechazado", "cerrado"]))
@@ -31459,6 +33870,7 @@ async def _query_documentos_todos_for_export(
                 Documento.concepto_pago.ilike(q_filter),
                 Documento.referencia_pago.ilike(q_filter),
                 Documento.referencia_operaciones.ilike(q_filter),
+                _documento_gasto_concepto_matches(q_filter),
                 Empleado.nombre.ilike(q_filter),
                 beneficiario_alias.nombre.ilike(q_filter),
                 proveedor_alias.nombre.ilike(q_filter),
@@ -31467,8 +33879,128 @@ async def _query_documentos_todos_for_export(
         )
     if filters:
         query_stmt = query_stmt.where(and_(*filters))
-    result = await session.execute(query_stmt.order_by(Documento.creado_en.desc()).limit(500))
-    return list(result.scalars().all())
+    if limit is not None:
+        query_stmt = query_stmt.limit(limit)
+    result = await session.execute(query_stmt.order_by(Documento.creado_en.desc()))
+    selected_torneo = _approval_history_filter_values(torneo)
+    selected_concepto = _approval_history_filter_values(concepto)
+    selected_beneficiario = _approval_history_filter_values(beneficiario)
+    selected_tipo = _approval_history_filter_values(tipo)
+    selected_estado = _approval_history_filter_values(estado)
+    return [
+        documento
+        for documento in result.scalars().all()
+        if (not selected_torneo or _normalize_filter_value(_approval_history_torneo(documento)) in selected_torneo)
+        and (not selected_concepto or _normalize_filter_value(_approval_history_budget_concept(documento)) in selected_concepto)
+        and (not selected_beneficiario or _normalize_filter_value(_approval_history_beneficiario(documento)) in selected_beneficiario)
+        and (not selected_tipo or _normalize_filter_value(_approval_history_display_value(documento.tipo)) in selected_tipo)
+        and (not selected_estado or _normalize_filter_value(_approval_history_display_value(documento.estado)) in selected_estado)
+    ]
+
+
+def _documentos_reporting_xlsx_response(
+    *,
+    title: str,
+    rows: Iterable[dict[str, Any]],
+    filename_prefix: str,
+    export_kind: str = "documentos",
+) -> Response:
+    """Build the direct, consolidated XLSX used by reporting views."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    xlsx_rows = list(rows)
+    include_history = export_kind == "historial_aprobaciones"
+    headers = [
+        "Número de referencia", "Tipo", "Torneo", "Fase", "Solicitante",
+        "Beneficiario", "Concepto", "Referencia operaciones", "Monto total",
+        "Monto que afecta presupuesto", "Asignación presupuestal", "Moneda",
+        "Situación", "Estado", "Categoría", "Partida Presupuestal",
+    ]
+    if include_history:
+        headers = ["Fecha", "Acción", *headers, "Comentario"]
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = title[:31]
+    worksheet.append(headers)
+    for cell in worksheet[1]:
+        cell.font = Font(bold=True)
+    total_column = headers.index("Monto total") + 1
+    budget_column = headers.index("Monto que afecta presupuesto") + 1
+    for row_index, row in enumerate(xlsx_rows, start=2):
+        values = [
+            row["numero_referencia"], row["tipo_documento"], row["torneo"],
+            row["fase"], row["solicitante"], row["beneficiario"], row["concepto"],
+            row["referencia_operaciones"], float(row["monto_total_valor"]),
+            float(row["monto_presupuestal_valor"]), row["asignacion_presupuestal"],
+            row["currency"], row["situacion"], row["estado"],
+            row["categorias"], row["partidas_presupuestales"],
+        ]
+        if include_history:
+            values = [
+                row.get("fecha_evento", "—"), row.get("accion_evento", "—"),
+                *values, row.get("comentario_evento", "-"),
+            ]
+        worksheet.append(
+            [
+                _safe_spreadsheet_cell_text(value) if isinstance(value, str) else value
+                for value in values
+            ]
+        )
+        currency_format = f'"{row["currency"]}" #,##0.00'
+        worksheet.cell(row=row_index, column=total_column).number_format = currency_format
+        worksheet.cell(row=row_index, column=budget_column).number_format = currency_format
+    worksheet.freeze_panes = "A2"
+    worksheet.auto_filter.ref = worksheet.dimensions
+    for column in worksheet.columns:
+        letter = column[0].column_letter
+        worksheet.column_dimensions[letter].width = min(
+            max(len(str(cell.value or "")) for cell in column) + 2, 36
+        )
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    filename = f"{filename_prefix}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/documentos/todos/exportar.xlsx", response_model=None)
+async def documentos_todos_exportar_xlsx(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    estado: Optional[List[str]] = Query(None),
+    tipo: Optional[List[str]] = Query(None),
+    torneo: Optional[List[str]] = Query(None),
+    concepto: Optional[List[str]] = Query(None),
+    beneficiario: Optional[List[str]] = Query(None),
+    empleado_nombre: Optional[str] = None,
+    q: Optional[str] = None,
+    situacion: Optional[str] = None,
+) -> Response:
+    documentos = await _query_documentos_todos_for_export(
+        session, current_empleado, estado=estado, tipo=tipo, torneo=torneo,
+        concepto=concepto, beneficiario=beneficiario,
+        empleado_nombre=empleado_nombre, q=q, situacion=situacion, limit=None,
+    )
+    aprobador_by_doc = await fetch_documento_aprobador_display_batch(session, documentos)
+    cfdi_reports_by_id = await _document_cfdi_reports_by_id(session, documentos)
+    informe_expenses_by_id = await _document_informe_expenses_by_id(session, documentos)
+    rows = (
+        _documentos_todos_reporting_row_values(
+            documento,
+            aprobador_nombre=aprobador_by_doc.get(documento.id, "—"),
+            cfdi_report=cfdi_reports_by_id.get(documento.cfdi_report_id),
+            expenses=informe_expenses_by_id.get(documento.id),
+        )
+        for documento in documentos
+    )
+    return _documentos_reporting_xlsx_response(
+        title="Todos los documentos", rows=rows, filename_prefix="documentos",
+    )
 
 
 @router.get("/documentos/todos/exportar-exceles.zip", response_model=None)
@@ -31476,8 +34008,11 @@ async def documentos_todos_exportar_exceles_zip(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
-    estado: Optional[str] = None,
-    tipo: Optional[str] = None,
+    estado: Optional[List[str]] = Query(None),
+    tipo: Optional[List[str]] = Query(None),
+    torneo: Optional[List[str]] = Query(None),
+    concepto: Optional[List[str]] = Query(None),
+    beneficiario: Optional[List[str]] = Query(None),
     empleado_nombre: Optional[str] = None,
     q: Optional[str] = None,
     situacion: Optional[str] = None,
@@ -31488,9 +34023,13 @@ async def documentos_todos_exportar_exceles_zip(
         current_empleado,
         estado=estado,
         tipo=tipo,
+        torneo=torneo,
+        concepto=concepto,
+        beneficiario=beneficiario,
         empleado_nombre=empleado_nombre,
         q=q,
         situacion=situacion,
+        limit=None,
     )
     buffer = io.BytesIO()
     exported = 0
@@ -32491,13 +35030,27 @@ async def rechazar_documento(
     Args:
         next: Optional redirect URL after action (from form field or query param)
     """
+    comentario_normalizado = (comentario or "").strip()
+    if not comentario_normalizado:
+        redirect_url = determine_redirect_url(
+            next, documento_id, default_to_detail=True
+        )
+        return RedirectResponse(
+            url=_append_error_params(
+                redirect_url,
+                error="rejection_reason_required",
+                error_msg="Indica el motivo de rechazo antes de continuar.",
+            ),
+            status_code=303,
+        )
+
     try:
         await transition_documento_workflow(
             session,
             documento_id=documento_id,
             actor_id=current_empleado.id,
             action="reject",
-            comentario=comentario,
+            comentario=comentario_normalizado,
             request_context=audit_context_from_request(request),
         )
     except DocumentoWorkflowPermissionError as exc:
@@ -33121,10 +35674,14 @@ async def _build_documento_coi_bundle(
     documento_id: UUIDType,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
+    *,
+    require_complete_informe: bool = False,
 ) -> tuple[Documento, list[ExpenseReport], list[ExpenseCFDI]]:
     # Load documento
     doc_result = await session.execute(
-        select(Documento).where(Documento.id == documento_id)
+        select(Documento)
+        .options(*coi_document_loader_options())
+        .where(Documento.id == documento_id)
     )
     documento = doc_result.scalar_one_or_none()
 
@@ -33149,7 +35706,12 @@ async def _build_documento_coi_bundle(
             ExpenseReport.informe_documento_id == documento_id,
         ]
         if documento.cuenta_gastos_id:
-            expense_conditions.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
+            expense_conditions.append(
+                and_(
+                    ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id,
+                    ExpenseReport.informe_documento_id.is_(None),
+                )
+            )
         expenses_result = await session.execute(
             select(ExpenseReport)
             .options(selectinload(ExpenseReport.cuenta_contable))
@@ -33187,11 +35749,41 @@ async def _build_documento_coi_bundle(
             detail="No hay gastos activos asociados para exportar.",
         )
 
+    if documento.tipo == "INFORME" and require_complete_informe:
+        if any(is_company_amex_expense(expense) for expense in expenses):
+            cut = await _load_initial_amex_cut(session, documento.id)
+            if cut is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Completa la revisión de partidas y el corte contable AMEX antes de exportar.",
+                )
+            try:
+                return (
+                    documento,
+                    expenses,
+                    group_expense_cfdis_for_document(
+                        cut_expense_cfdis(cut), documento
+                    ),
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not getattr(documento, "aprobado_en", None):
+            raise HTTPException(
+                status_code=400,
+                detail="Falta fecha de aprobación del Informe para definir su periodo COI.",
+            )
+
     expense_cfdi_list: list[ExpenseCFDI] = []
     ready_expenses: list[ExpenseReport] = []
+    blocked_expenses: list[str] = []
     for expense in expenses:
-        ready, _ = await assess_expense_coi_cleanup_ready(session, expense)
+        ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
         if not ready:
+            if documento.tipo == "INFORME" and require_complete_informe:
+                reference = expense.numero_referencia or str(expense.id)[:8]
+                blocked_expenses.append(
+                    f"{reference}: {'; '.join(issues) or 'preparación COI incompleta'}"
+                )
             continue
         try:
             expense_cfdi_list.append(
@@ -33203,11 +35795,26 @@ async def _build_documento_coi_bundle(
             )
             ready_expenses.append(expense)
         except ValueError as exc:
+            if documento.tipo == "INFORME" and require_complete_informe:
+                reference = expense.numero_referencia or str(expense.id)[:8]
+                blocked_expenses.append(f"{reference}: {exc}")
             logger.warning(
                 "Skipping expense %s for documento COI export: %s",
                 expense.id,
                 exc,
             )
+
+    if blocked_expenses:
+        detail = "; ".join(blocked_expenses[:8])
+        if len(blocked_expenses) > 8:
+            detail += f"; y {len(blocked_expenses) - 8} partidas más"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No se generó una póliza parcial. Completa todas las partidas del "
+                f"Informe de Gastos antes de exportar: {detail}"
+            ),
+        )
 
     if not ready_expenses:
         raise HTTPException(
@@ -33218,7 +35825,11 @@ async def _build_documento_coi_bundle(
             ),
         )
 
-    return documento, ready_expenses, expense_cfdi_list
+    return (
+        documento,
+        ready_expenses,
+        group_expense_cfdis_for_document(expense_cfdi_list, documento),
+    )
 
 
 async def _approved_informe_for_cuenta_or_redirect(
@@ -33319,6 +35930,114 @@ async def exportar_coi_poliza_cuenta(
     )
 
 
+@router.get("/informes-de-gastos/{cuenta_id}/papel-poliza.xlsx")
+async def exportar_papel_poliza_informe(
+    cuenta_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+) -> Response:
+    """A DR workpaper for Finance, independent of COI classification readiness."""
+    cuenta = await session.get(CuentaDeGastos, cuenta_id)
+    if cuenta is None:
+        raise HTTPException(status_code=404, detail="Informe de gastos no encontrado.")
+    if not _can_read_cuenta_de_gastos(cuenta, current_empleado):
+        raise HTTPException(status_code=403, detail="Acceso denegado.")
+    informe = await _informe_documento_for_cuenta(session, cuenta_id)
+    if informe is None:
+        raise HTTPException(status_code=409, detail="Falta el documento INFORME vinculado.")
+
+    expenses = (
+        await session.execute(
+            select(ExpenseReport)
+            .options(
+                selectinload(ExpenseReport.cuenta_contable),
+                selectinload(ExpenseReport.cuenta_iva),
+                selectinload(ExpenseReport.contra_cuenta_contable),
+                selectinload(ExpenseReport.cfdi_report),
+            )
+            .where(
+                ExpenseReport.cuenta_gastos_id == cuenta_id,
+                ExpenseReport.estado_gasto != "cancelado",
+            )
+            .order_by(ExpenseReport.created_at.asc(), ExpenseReport.fecha.asc())
+        )
+    ).scalars().all()
+    if not expenses:
+        raise HTTPException(status_code=409, detail="El informe no tiene gastos activos.")
+    currency = str(cuenta.currency or "MXN").upper()
+    if any(str(expense.currency or "MXN").upper() != currency for expense in expenses):
+        raise HTTPException(
+            status_code=409,
+            detail="El informe contiene gastos en distintas monedas; no es posible cuadrarlos juntos.",
+        )
+    employee_paid_expenses = [
+        expense for expense in expenses if not is_company_amex_expense(expense)
+    ]
+    informe_debtor_account = None
+    if employee_paid_expenses:
+        debtor_employee = await resolve_cuenta_debtor_empleado(session, cuenta)
+        informe_debtor_account = await resolve_cuenta_debtor_account(
+            session, cuenta, debtor_employee
+        )
+        if informe_debtor_account is None:
+            block = debtor_account_block_label_for_employee(debtor_employee)
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "No se puede generar el Papel DR: falta la subcuenta contable "
+                    "de detalle del beneficiario del Informe de Gastos "
+                    f"({block})."
+                ),
+            )
+
+    workpaper_expenses = [
+        InformeWorkpaperExpense(
+            source_id=str(expense.id),
+            reference=expense.numero_referencia or "",
+            date=expense.fecha.strftime("%Y-%m-%d") if expense.fecha else "",
+            description=(
+                " / ".join(
+                    part
+                    for part in (
+                        getattr(expense.cfdi_report, "emisor_nombre", None),
+                        expense.concepto,
+                    )
+                    if part
+                )
+            ),
+            amount=float(expense.gasto_cantidad or 0),
+            vat=float(expense.iva) if expense.iva is not None else None,
+            expense_account=getattr(expense.cuenta_contable, "codigo", "") or "",
+            vat_account=getattr(expense.cuenta_iva, "codigo", "") or "",
+            counterpart_account=(
+                (getattr(expense.contra_cuenta_contable, "codigo", "") or "")
+                if is_company_amex_expense(expense)
+                else str(getattr(informe_debtor_account, "codigo", "") or "")
+            ),
+            company_amex=is_company_amex_expense(expense),
+            cfdi_uuid=getattr(expense.cfdi_report, "cfdi_uuid", "") or "",
+        )
+        for expense in expenses
+    ]
+    try:
+        workbook = generate_informe_poliza_workpaper(
+            workpaper_expenses,
+            reference=(informe.referencia_operaciones or cuenta.referencia_base or ""),
+            title=cuenta.nombre or cuenta.referencia_base or "Informe de gastos",
+            currency=currency,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    name = _safe_export_filename(
+        informe.referencia_operaciones or cuenta.referencia_base or str(cuenta.id)[:8]
+    )
+    return Response(
+        content=workbook,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="Papel_poliza_{name}.xlsx"'},
+    )
+
+
 @router.get("/informes-de-gastos/{cuenta_id}/exportar-coi.xlsx", response_model=None)
 async def exportar_coi_poliza_excel_cuenta(
     cuenta_id: UUIDType,
@@ -33350,6 +36069,222 @@ async def preview_coi_poliza_cuenta(
     return RedirectResponse(
         url=f"/documentos/{informe_or_response.id}/preview-coi",
         status_code=303,
+    )
+
+
+@router.get("/admin/contabilidad/diot", response_class=HTMLResponse)
+async def contabilidad_diot_mensual_view(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+) -> str:
+    now = datetime.utcnow()
+    selected_year = year or now.year
+    selected_month = month or now.month
+    error_msg = request.query_params.get("error_msg", "")
+    try:
+        scope = await build_monthly_diot_scope(
+            session, year=selected_year, month=selected_month
+        )
+    except ValueError as exc:
+        scope = await build_monthly_diot_scope(
+            session, year=now.year, month=now.month
+        )
+        selected_year = now.year
+        selected_month = now.month
+        error_msg = str(exc)
+
+    export = build_diot_export(
+        scope.eligible_expenses,
+        effective_payment_dates=scope.effective_payment_dates,
+        shared_cfdi_confirmations=scope.shared_cfdi_confirmations,
+    )
+    base_16 = sum(
+        (row.amounts.get("base_16", Decimal("0")) for row in export.summary_rows),
+        Decimal("0"),
+    )
+    iva = sum(
+        (row.amounts.get("iva_acreditable_16", Decimal("0")) for row in export.summary_rows),
+        Decimal("0"),
+    )
+    iva_retenido = sum(
+        (row.amounts.get("iva_retenido", Decimal("0")) for row in export.summary_rows),
+        Decimal("0"),
+    )
+    eligible_rows = "".join(
+        f"""
+        <tr>
+            <td>{scope.effective_payment_dates[str(expense.id)].isoformat()}</td>
+            <td>{escape(expense.numero_referencia or str(expense.id))}</td>
+            <td>{escape(getattr(expense.cfdi_report, 'cfdi_uuid', '') or '-')}</td>
+            <td>{escape(getattr(expense.cfdi_report, 'emisor_rfc', '') or '-')}</td>
+            <td>{format_currency(expense.gasto_cantidad, currency_for(expense))}</td>
+            <td>{escape(scope.payment_date_sources.get(str(expense.id), '-'))}</td>
+        </tr>
+        """
+        for expense in scope.eligible_expenses[:500]
+    )
+    blocker_rows = "".join(
+        f"""
+        <tr><td>{issue.effective_payment_date.isoformat() if issue.effective_payment_date else '-'}</td>
+        <td>{escape(issue.reference)}</td><td>{escape(issue.code)}</td>
+        <td>{escape(issue.message)}</td><td>{escape(issue.cfdi_uuid or '-')}</td></tr>
+        """
+        for issue in scope.blockers[:500]
+    )
+    undated_rows = "".join(
+        f"""
+        <tr><td>{escape(issue.reference)}</td><td>{escape(issue.code)}</td>
+        <td>{escape(issue.message)}</td><td>{escape(issue.cfdi_uuid or '-')}</td></tr>
+        """
+        for issue in scope.undated[:500]
+    )
+    query = urlencode({"year": selected_year, "month": selected_month})
+    txt_button = (
+        f'<a class="button" href="/admin/contabilidad/diot/export.txt?{query}">Descargar DIOT SAT (.txt)</a>'
+        if scope.can_export_txt
+        else '<button class="button" disabled>TXT bloqueado</button>'
+    )
+    return f"""
+    <!DOCTYPE html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>DIOT mensual</title>
+    <style>
+    body {{ font-family:Arial,sans-serif;background:#f6f8fb;margin:0;padding:20px;color:#111827; }}
+    .container {{ max-width:1540px;margin:0 auto; }}
+    .card {{ background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin-bottom:16px; }}
+    .grid {{ display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px; }}
+    .metric {{ padding:14px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb; }}
+    .metric strong {{ display:block;font-size:24px;margin-top:6px; }}
+    .toolbar {{ display:flex;gap:10px;flex-wrap:wrap;align-items:end; }}
+    input {{ width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;box-sizing:border-box; }}
+    table {{ width:100%;border-collapse:collapse; }}
+    th,td {{ padding:10px 12px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:13px;vertical-align:top; }}
+    th {{ background:#f3f4f6; }}
+    .button {{ display:inline-block;padding:10px 14px;border-radius:8px;text-decoration:none;background:#111827;color:#fff;border:none;cursor:pointer; }}
+    .button.secondary {{ background:#e5e7eb;color:#111827; }}
+    .button:disabled {{ background:#9ca3af;cursor:not-allowed; }}
+    .muted {{ color:#6b7280;font-size:13px; }}
+    .error {{ background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:10px;padding:12px 14px; }}
+    .warning {{ background:#fffbeb;color:#92400e;border:1px solid #fde68a;border-radius:10px;padding:12px 14px; }}
+    </style></head>
+    <body><div class="container">{render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("diot")}
+        <div class="card">
+            <h1 style="margin:0 0 8px 0;">DIOT mensual</h1>
+            <p class="muted">Consolidado por fecha efectiva de pago. El sistema no asigna fechas faltantes ni inventa retenciones.</p>
+            {f'<div class="error"><strong>Error:</strong> {escape(error_msg)}</div>' if error_msg else ''}
+            <form method="GET" action="/admin/contabilidad/diot" class="toolbar" style="margin-top:14px;">
+                <div><label>Año</label><input type="number" name="year" min="2000" max="2100" value="{selected_year}" required></div>
+                <div><label>Mes</label><input type="number" name="month" min="1" max="12" value="{selected_month}" required></div>
+                <div><button class="button secondary" type="submit">Generar vista previa</button></div>
+                <div><a class="button secondary" href="/admin/contabilidad/diot/export.xlsx?{query}">Descargar auditoría Excel</a></div>
+                <div>{txt_button}</div>
+            </form>
+        </div>
+        <div class="card"><div class="grid">
+            <div class="metric">Movimientos elegibles<strong>{len(scope.eligible_expenses)}</strong></div>
+            <div class="metric">Bloqueos del periodo<strong>{len(scope.blockers)}</strong></div>
+            <div class="metric">Sin fecha efectiva<strong>{len(scope.undated)}</strong></div>
+            <div class="metric">Base 16%<strong>{format_currency(base_16)}</strong></div>
+            <div class="metric">IVA acreditable<strong>{format_currency(iva)}</strong></div>
+            <div class="metric">IVA retenido<strong>{format_currency(iva_retenido)}</strong></div>
+        </div></div>
+        {f'<div class="warning"><strong>TXT bloqueado:</strong> corrige los {len(scope.blockers)} movimiento(s) del periodo antes de generar el archivo SAT.</div>' if scope.blockers else ''}
+        <div class="card"><h2>Movimientos elegibles</h2><table>
+            <thead><tr><th>Pago efectivo</th><th>Referencia</th><th>UUID</th><th>RFC</th><th>Importe</th><th>Fuente fecha</th></tr></thead>
+            <tbody>{eligible_rows or '<tr><td colspan="6" class="muted">No hay movimientos elegibles para el periodo.</td></tr>'}</tbody>
+        </table></div>
+        <div class="card"><h2>Bloqueos del periodo</h2><table>
+            <thead><tr><th>Pago efectivo</th><th>Referencia</th><th>Código</th><th>Detalle</th><th>UUID</th></tr></thead>
+            <tbody>{blocker_rows or '<tr><td colspan="5" class="muted">Sin bloqueos del periodo.</td></tr>'}</tbody>
+        </table></div>
+        <div class="card"><h2>Movimientos sin fecha efectiva</h2><p class="muted">No se asignan a ningún mes hasta corregir su vínculo de pago.</p><table>
+            <thead><tr><th>Referencia</th><th>Código</th><th>Detalle</th><th>UUID</th></tr></thead>
+            <tbody>{undated_rows or '<tr><td colspan="4" class="muted">Sin movimientos pendientes de fecha.</td></tr>'}</tbody>
+        </table></div>
+    </div></body></html>
+    """
+
+
+@router.get("/admin/contabilidad/diot/export.txt", response_model=None)
+async def exportar_diot_mensual_txt(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: int = Query(...),
+    month: int = Query(...),
+) -> Union[Response, RedirectResponse]:
+    redirect = f"/admin/contabilidad/diot?{urlencode({'year': year, 'month': month})}"
+    try:
+        scope = await build_monthly_diot_scope(session, year=year, month=month)
+    except ValueError as exc:
+        return RedirectResponse(
+            url=redirect + "&error_msg=" + quote(str(exc)), status_code=303
+        )
+    if scope.blockers:
+        return RedirectResponse(
+            url=redirect
+            + "&error_msg="
+            + quote("El TXT está bloqueado por movimientos fiscales pendientes."),
+            status_code=303,
+        )
+    if not scope.eligible_expenses:
+        return RedirectResponse(
+            url=redirect + "&error_msg=" + quote("No hay movimientos elegibles."),
+            status_code=303,
+        )
+    export = build_diot_export(
+        scope.eligible_expenses,
+        effective_payment_dates=scope.effective_payment_dates,
+        shared_cfdi_confirmations=scope.shared_cfdi_confirmations,
+    )
+    return Response(
+        content=generate_diot_txt(export),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="DIOT_{year}_{month:02d}.txt"'
+            )
+        },
+    )
+
+
+@router.get("/admin/contabilidad/diot/export.xlsx", response_model=None)
+async def exportar_diot_mensual_excel(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: int = Query(...),
+    month: int = Query(...),
+) -> Union[Response, RedirectResponse]:
+    redirect = f"/admin/contabilidad/diot?{urlencode({'year': year, 'month': month})}"
+    try:
+        scope = await build_monthly_diot_scope(session, year=year, month=month)
+    except ValueError as exc:
+        return RedirectResponse(
+            url=redirect + "&error_msg=" + quote(str(exc)), status_code=303
+        )
+    export = build_diot_export(
+        scope.eligible_expenses,
+        effective_payment_dates=scope.effective_payment_dates,
+        shared_cfdi_confirmations=scope.shared_cfdi_confirmations,
+    )
+    content = create_diot_excel(
+        export,
+        audit_issues={
+            "Bloqueos": [issue.as_row() for issue in scope.blockers],
+            "Sin fecha efectiva": [issue.as_row() for issue in scope.undated],
+        },
+    )
+    return Response(
+        content=content,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="DIOT_{year}_{month:02d}.xlsx"'
+            )
+        },
     )
 
 
@@ -33489,9 +36424,47 @@ async def exportar_coi_poliza_gasto_excel(
     ):
         raise HTTPException(status_code=403, detail="Access denied")
 
+    informe_documento = None
+    if expense.informe_documento_id:
+        informe_documento = await session.get(
+            Documento, expense.informe_documento_id
+        )
+    if informe_documento is None and expense.documento_id:
+        candidate = await session.get(Documento, expense.documento_id)
+        if candidate is not None and candidate.tipo == "INFORME":
+            informe_documento = candidate
+    if informe_documento is None and expense.cuenta_gastos_id:
+        informe_documento = await _informe_documento_for_cuenta(
+            session, expense.cuenta_gastos_id
+        )
+    if informe_documento is not None:
+        return RedirectResponse(
+            url=f"/documentos/{informe_documento.id}/exportar-coi.xlsx",
+            status_code=303,
+        )
+
+    if is_company_amex_expense(expense):
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/gastos/{gasto_id}",
+                error="amex_accounting_cut_required",
+                error_msg="Vincula el consumo a su informe y completa el corte contable AMEX.",
+            ),
+            status_code=303,
+        )
+
     try:
         expense_cfdi = await build_expense_cfdi_for_export(session, expense)
-        xlsx_bytes = generate_coi_poliza_xlsx([expense_cfdi])
+        source_document = (
+            getattr(expense, "solicitud_documento", None)
+            or getattr(expense, "documento", None)
+        )
+        expense_cfdis = [expense_cfdi]
+        if source_document is not None:
+            expense_cfdis = group_expense_cfdis_for_document(
+                expense_cfdis, source_document
+            )
+        xlsx_bytes = generate_coi_poliza_xlsx(expense_cfdis)
     except ValueError as exc:
         return RedirectResponse(
             url=_append_error_params(
@@ -33542,15 +36515,18 @@ async def exportar_coi_poliza(
     """
     try:
         documento, _, expense_cfdi_list = await _build_documento_coi_bundle(
-            documento_id, session, current_empleado
+            documento_id,
+            session,
+            current_empleado,
+            require_complete_informe=True,
         )
     except HTTPException as exc:
         if exc.status_code == 400:
             return RedirectResponse(
                 url=_append_error_params(
                     f"/documentos/{documento_id}",
-                    error="no_gastos",
-                    error_msg="No hay gastos activos asociados para exportar.",
+                    error="coi_informe_incomplete",
+                    error_msg=str(exc.detail),
                 ),
                 status_code=303
             )
@@ -33602,15 +36578,18 @@ async def exportar_coi_poliza_excel(
     """
     try:
         documento, _, expense_cfdi_list = await _build_documento_coi_bundle(
-            documento_id, session, current_empleado
+            documento_id,
+            session,
+            current_empleado,
+            require_complete_informe=True,
         )
     except HTTPException as exc:
         if exc.status_code == 400:
             return RedirectResponse(
                 url=_append_error_params(
                     f"/documentos/{documento_id}",
-                    error="no_gastos",
-                    error_msg="No hay gastos activos asociados para exportar.",
+                    error="coi_informe_incomplete",
+                    error_msg=str(exc.detail),
                 ),
                 status_code=303,
             )
@@ -33659,15 +36638,18 @@ async def preview_coi_poliza(
 ) -> Union[HTMLResponse, RedirectResponse]:
     try:
         documento, expenses, expense_cfdi_list = await _build_documento_coi_bundle(
-            documento_id, session, current_empleado
+            documento_id,
+            session,
+            current_empleado,
+            require_complete_informe=True,
         )
     except HTTPException as exc:
         if exc.status_code == 400:
             return RedirectResponse(
                 url=_append_error_params(
                     f"/documentos/{documento_id}",
-                    error="no_gastos",
-                    error_msg="No hay gastos activos asociados para previsualizar.",
+                    error="coi_informe_incomplete",
+                    error_msg=str(exc.detail),
                 ),
                 status_code=303
             )
@@ -33815,13 +36797,52 @@ def _informe_expense_export_amounts(
     """
     Build informe Excel row amounts.
 
-    importe_sin_iva maps to CFDI SubTotal when available.
+    importe_sin_iva includes identified ISH in the capture base, not fiscal data.
     iva column stores net tax effect (trasladados - retenciones) for template math.
     ExpenseReport.iva remains IVA 002 only for accounting compatibility.
     """
     total_val = round(float(expense.gasto_cantidad or 0), 2)
     cfdi_rec = cfdi_linked or cfdi
+    capture_taxes = None
     if cfdi_rec is not None:
+        capture_taxes = quick_expense_tax_components_from_parsed(
+            {
+                "subtotal": cfdi_rec.subtotal,
+                "descuento": getattr(cfdi_rec, "descuento", None),
+                "total": cfdi_rec.total,
+                "total_impuestos_trasladados": getattr(
+                    cfdi_rec, "total_impuestos_trasladados", None
+                ),
+                "impuestos_detalle": getattr(cfdi_rec, "impuestos_detalle", None),
+            }
+        )
+    if cfdi_rec is not None and getattr(expense, "cfdi_compartido_confirmado", False):
+        fiscal_total = Decimal(str(cfdi_rec.total or 0))
+        if fiscal_total > 0:
+            tip = Decimal(str(getattr(expense, "propina_no_deducible", None) or 0))
+            applied = Decimal(str(total_val)) - tip
+            net_base = (
+                capture_taxes.subtotal_captura
+                - Decimal(str(getattr(cfdi_rec, "descuento", None) or 0))
+            )
+            applied_base = (net_base * applied / fiscal_total).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            return {
+                "importe_sin_iva": float(applied_base + tip),
+                "iva": float(applied - applied_base),
+                "total": total_val,
+            }
+    if cfdi_rec is not None:
+        if capture_taxes.ish:
+            tip = Decimal(str(getattr(expense, "propina_no_deducible", None) or 0))
+            return {
+                "importe_sin_iva": float(
+                    capture_taxes.subtotal_captura - capture_taxes.descuento + tip
+                ),
+                "iva": float(capture_taxes.impuestos_y_retenciones),
+                "total": total_val,
+            }
         subtotal = round(float(cfdi_rec.subtotal or 0), 2)
         traslados = round(float(cfdi_rec.total_impuestos_trasladados or 0), 2)
         if traslados == 0:
@@ -33929,7 +36950,12 @@ async def exportar_informe_gastos(
             ExpenseReport.informe_documento_id == documento_id,
         ]
         if documento.cuenta_gastos_id:
-            expense_conditions.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
+            expense_conditions.append(
+                and_(
+                    ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id,
+                    ExpenseReport.informe_documento_id.is_(None),
+                )
+            )
         expenses_result = await session.execute(
             select(ExpenseReport)
             .where(
@@ -34562,6 +37588,7 @@ async def documentos_pendientes_pago(
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
+            <td>{escape(str(documento.referencia_operaciones or "—"))}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{empleado_nombre}</td>
             <td>{documento.tipo}</td>
@@ -34603,6 +37630,7 @@ async def documentos_pendientes_pago(
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
+            <td>{escape(str(documento.referencia_operaciones or "—"))}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{empleado_nombre}</td>
             <td>{documento.tipo}</td>
@@ -34706,6 +37734,7 @@ async def documentos_pendientes_pago(
                             <thead>
                                 <tr>
                                     <th>Número de referencia</th>
+                                    <th>Referencia Operaciones</th>
                                     <th>ID interno</th>
                                     <th>Empleado</th>
                                     <th>Tipo</th>
@@ -35068,7 +38097,27 @@ async def _render_solicitud_terceros_form(
     # El concepto presupuestal ya no se captura al crear solicitudes.
     # Flujo canonico: usuario captura operacion -> Control Presupuestal asigna.
     budget_concept_row_terceros = ""
+    advance_checked = bool(getattr(edit_documento, "is_supplier_advance", False))
+    advance_due = getattr(edit_documento, "supplier_advance_due_date", None)
+    advance_controls_html = (
+        f'<input type="checkbox" id="is_supplier_advance" checked hidden disabled><div class="notice info"><strong>Anticipo a proveedor</strong> · Comprobación esperada: {escape(str(advance_due or ""))}</div>'
+        if edit_documento and advance_checked
+        else (
+            ""
+            if edit_documento
+            else '<label><input type="checkbox" name="is_supplier_advance" id="is_supplier_advance" value="1"> Anticipo a proveedor</label>'
+            "<p>El anticipo pasa a Aprobación y Programación de Pagos. Después del pago podrás comprobarlo con la factura.</p>"
+            '<label>Fecha esperada de comprobación <input type="date" name="supplier_advance_due_date" id="supplier_advance_due_date"></label>'
+            '<script>document.addEventListener("DOMContentLoaded", function() {'
+            'const flag=document.getElementById("is_supplier_advance"); const due=document.getElementById("supplier_advance_due_date");'
+            'const xml=document.getElementById("archivo_xml"); const pdf=document.getElementById("archivo_pdf");'
+            'function sync(){due.required=flag.checked; due.disabled=!flag.checked; if(xml){xml.disabled=flag.checked;if(flag.checked)xml.value="";}document.querySelectorAll("[name=referencia_factura_compartida],[name=cfdi_compartido_confirmado]").forEach(function(el){el.disabled=flag.checked;if(flag.checked){el.value="";el.checked=false;}});'
+            'if(pdf){const row=pdf.closest(".st-doc-row");const label=row&&row.querySelector(".st-doc-label");if(label)label.textContent=flag.checked?"PDF de soporte:":"CFDI PDF:";}}'
+            'flag.addEventListener("change",sync);sync();});</script>'
+        )
+    )
     support_section_html = f"""
+                    {advance_controls_html}
                     <div class="st-support-section">
                         <h3>Documentación de soporte</h3>
                         <div class="st-doc-row st-support-cfdi-pdf-row">
@@ -35677,6 +38726,8 @@ async def crear_nueva_solicitud_terceros(
     cfdi_compartido_confirmado: Optional[str] = Form(None),
     client_submission_id: Optional[str] = Form(None),
     submit_mode: str = Form("create"),
+    is_supplier_advance: Optional[str] = Form(None),
+    supplier_advance_due_date: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """
     Create a new SOLICITUD a terceros (requires proveedor/cliente).
@@ -35716,7 +38767,7 @@ async def crear_nueva_solicitud_terceros(
                 )
             )
 
-        # Toda solicitud entra primero a Control Presupuestal; la partida se asigna ahi.
+        # La factura se clasifica en Control Presupuestal; el anticipo inicial omite esta etapa.
         budget_concept_id = None
 
         fase_err, fase_final = await _validate_solicitud_terceros_fase(
@@ -35764,16 +38815,20 @@ async def crear_nueva_solicitud_terceros(
             pdf_bytes=pdf_bytes,
             pdf_filename=pdf_filename,
             attachments=attachments,
-            **(
-                {"cfdi_uuid_manual": cfdi_uuid_manual}
-                if cfdi_uuid_manual
-                else {}
-            ),
+            **({"cfdi_uuid_manual": cfdi_uuid_manual} if cfdi_uuid_manual else {}),
             pago_urgente=pago_urgente in ("1", "true", "on", "yes"),
             cfdi_compartido_confirmado=(
                 cfdi_compartido_confirmado in ("1", "true", "on", "yes")
             ),
             client_submission_id=client_submission_id,
+            **(
+                {
+                    "is_supplier_advance": True,
+                    "supplier_advance_due_date": supplier_advance_due_date,
+                }
+                if is_supplier_advance in ("1", "true", "on", "yes")
+                else {}
+            ),
             can_disclose_cfdi_conflict=(
                 (getattr(current_empleado, "rol", None) or "").strip().lower()
                 in {"admin", "superadmin", "super_admin", "finanzas"}
@@ -36022,7 +39077,7 @@ async def editar_solicitud_terceros_post(
             archivos_generales=archivos_generales,
         )
 
-        # Toda solicitud entra primero a Control Presupuestal; la partida se asigna ahi.
+        # La factura se clasifica en Control Presupuestal; el anticipo inicial omite esta etapa.
         budget_concept_id = None
 
         fase_err, fase_final = await _validate_solicitud_terceros_fase(
@@ -36139,9 +39194,10 @@ async def agregar_documento_adjuntos(
         DocumentoPaymentValidationError,
         register_document_payment,
     )
+    actor_id = current_empleado.id
 
     doc_result = await session.execute(
-        select(Documento).where(Documento.id == documento_id)
+        select(Documento).where(Documento.id == documento_id).with_for_update()
     )
     documento = doc_result.scalar_one_or_none()
     if not documento:
@@ -36234,7 +39290,7 @@ async def agregar_documento_adjuntos(
             await register_document_payment(
                 session,
                 documento_id=documento.id,
-                actor_id=current_empleado.id,
+                actor_id=actor_id,
                 actor=current_empleado,
             )
             payment_registered = True
@@ -36243,6 +39299,9 @@ async def agregar_documento_adjuntos(
                 session,
                 documento=documento,
                 attachments=uploads,
+                evidence_only=documento.estado not in {"borrador", "control_presupuestal"}
+                or bool(getattr(documento, "budget_concept_id", None)),
+                actor_id=actor_id,
             )
     except SolicitudValidationError as exc:
         await session.rollback()
@@ -36278,7 +39337,7 @@ async def agregar_documento_adjuntos(
             "Unexpected error adding solicitud attachment",
             extra={
                 "documento_id": str(documento_id),
-                "empleado_id": str(current_empleado.id),
+                "empleado_id": str(actor_id),
                 "categoria": categoria_norm,
                 "upload_count": len(uploads),
             },
@@ -36296,6 +39355,11 @@ async def agregar_documento_adjuntos(
         )
 
     success_detail = f"{count} archivo(s) adjuntado(s) exitosamente."
+    if categoria_norm in {"cfdi_xml", "cfdi_pdf"} and (
+        documento.estado not in {"borrador", "control_presupuestal"}
+        or bool(getattr(documento, "budget_concept_id", None))
+    ):
+        success_detail += " Factura conservada como evidencia; revisión contable pendiente."
     if categoria_norm == "comprobante_pago" and payment_registered:
         success_detail = (
             f"{count} comprobante(s) de pago adjuntado(s) y solicitud marcada como pagada."
@@ -36989,16 +40053,25 @@ async def ver_documento(
     if (
         documento.empleado_id != current_empleado.id
         and current_empleado.rol
-        not in ['coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin']
+        not in ["coordinador", "finanzas", "admin", "superadmin", "super_admin"]
         and not _can_access_read_only_informe_document(documento, current_empleado)
+        and not _can_finance_replace_comprobante_pago(documento, current_empleado)
     ):
         return _render_documento_access_denied_page(current_empleado)
 
-    if ensure_fecha_pago_for_approved_solicitud(documento):
+    is_read_only_operations_observer = (
+        _is_alicia_operations_reference_observer(current_empleado)
+        and _is_operations_reference_document(documento)
+    )
+    if (
+        not is_read_only_operations_observer
+        and ensure_fecha_pago_for_approved_solicitud(documento)
+    ):
         await session.commit()
 
     if (
-        documento.tipo == "SOLICITUD"
+        not is_read_only_operations_observer
+        and documento.tipo == "SOLICITUD"
         and documento.estado == "aprobado"
         and not documento.gasto_generado_id
     ):
@@ -37035,14 +40108,17 @@ async def ver_documento(
             ).scalar_one_or_none()
             is not None
         )
-        if route_exists:
+        if route_exists or has_operations_reference(documento):
             can_approve_or_reject = (
                 await actor_is_route_approver(
                     session,
                     actor_id=current_empleado.id,
                     documento_id=documento.id,
                 )
-                or current_empleado.rol in ("superadmin", "super_admin")
+                or (
+                    not has_operations_reference(documento)
+                    and current_empleado.rol in ("superadmin", "super_admin")
+                )
             )
         else:
             approval_subject = approval_subject_empleado(documento) or empleado
@@ -37098,19 +40174,11 @@ async def ver_documento(
     # Load related expenses (exclude cancelled).
     # For INFORME: also include expenses linked via informe_documento_id (cuenta-based attach).
     if documento.tipo == 'INFORME':
-        expenses_result = await session.execute(
-            select(ExpenseReport)
-            .options(selectinload(ExpenseReport.budget_concept))
-            .where(
-                and_(
-                    or_(
-                        ExpenseReport.documento_id == documento_id,
-                        ExpenseReport.informe_documento_id == documento_id
-                    ),
-                    ExpenseReport.estado_gasto != 'cancelado'
-                )
-            )
-            .order_by(ExpenseReport.fecha.desc())
+        report_expenses = await _document_informe_expenses_by_id(session, [documento])
+        expenses = sorted(
+            report_expenses[documento.id],
+            key=lambda expense: _datetime_sort_timestamp(expense.fecha),
+            reverse=True,
         )
     else:
         expenses_result = await session.execute(
@@ -37124,7 +40192,7 @@ async def ver_documento(
             )
             .order_by(ExpenseReport.fecha.desc())
         )
-    expenses = expenses_result.scalars().all()
+        expenses = expenses_result.scalars().all()
 
     ids_with_comprobante_doc = await fetch_expense_ids_with_archivo_data(
         session, [e.id for e in expenses]
@@ -37336,8 +40404,11 @@ async def ver_documento(
                 f' &middot; <a href="/gastos/{expense.id}/editar" class="text-link">Editar</a>'
             )
         elif expense_locked_for_actions:
+            lock_document = documento if expense.documento_id == documento.id else None
+            lock_title = escape(expense_lock_reason(expense, lock_document))
             expense_actions += (
-                ' <span class="muted" title="Gasto bloqueado por documento enviado/aprobado o CFDI en proceso/completado">Bloqueado</span>'
+                f' <span class="muted" title="{lock_title}. '
+                'Solicita revisión a Finanzas.">Bloqueado</span>'
             )
         budget_concept_name = getattr(
             expense.budget_concept, "concept_name", None
@@ -37526,6 +40597,44 @@ async def ver_documento(
         f'color:{workflow_visual.foreground};">{escape(workflow_badge)}</span>'
     )
     estado_display_detail = workflow_badge
+    latest_rejection = _latest_document_rejection(aprobaciones)
+    rejection_actor = None
+    rejection_reason = None
+    if latest_rejection is not None:
+        rejection_reason = str(
+            getattr(latest_rejection, "comentario", "") or ""
+        ).strip()
+        rejection_employee = getattr(latest_rejection, "aprobador", None)
+        rejection_actor = str(
+            getattr(rejection_employee, "nombre", "") or ""
+        ).strip()
+    has_payment_proof = any(
+        str(getattr(meta, "categoria", "") or "").strip().lower()
+        == "comprobante_pago"
+        for meta in adjuntos_doc
+    )
+    workflow_guidance = build_document_workflow_guidance(
+        state=workflow_value,
+        document_type=documento.tipo,
+        is_owner=documento.empleado_id == current_empleado.id,
+        can_approve_or_reject=can_approve_or_reject,
+        rejection_reason=rejection_reason,
+        rejection_actor=rejection_actor,
+        locked_reason=locked_reason,
+        has_payment_timestamp=documento.pagado_en is not None,
+        has_payment_proof=has_payment_proof,
+    )
+    workflow_guidance_html = _render_document_workflow_guidance_html(
+        workflow_guidance
+    )
+    if getattr(documento, "is_supplier_advance", False) or getattr(
+        documento, "supplier_advance_id", None
+    ):
+        from .supplier_advance_routes import render_supplier_advance_controls
+
+        workflow_guidance_html += await render_supplier_advance_controls(
+            session, documento, current_empleado
+        )
 
     return_links = []
     if can_edit_solicitud_terceros:
@@ -37609,7 +40718,8 @@ async def ver_documento(
                 {f'<div class="meta-card"><span>Aprobado</span><strong>{format_value(documento.aprobado_en)}</strong><small>Momento de aprobación.</small></div>' if documento.aprobado_en else ''}
                 {f'<div class="meta-card"><span>Pagado</span><strong>{format_value(documento.pagado_en)}</strong><small>Momento de pago.</small></div>' if documento.pagado_en else ''}
             </div>
-            {f'<div class="notice info" style="margin-top:16px;"><strong>Notas:</strong> {documento.notas}</div>' if documento.notas else ''}
+            {f'<div class="notice info" style="margin-top:16px;"><strong>Motivo del solicitante para comprobar parcialmente:</strong> {escape(documento.motivo_comprobacion_parcial)}</div>' if documento.informe_origen_id else ''}
+            {f'<div class="notice info" style="margin-top:16px;"><strong>Notas:</strong> {escape(documento.notas)}</div>' if documento.notas else ''}
         </section>
     """
 
@@ -37757,8 +40867,14 @@ async def ver_documento(
         </section>
         """
 
-    if _is_solicitud_terceros(documento):
+    if documento.tipo == "SOLICITUD":
         removable_adjunto_ids = _removable_solicitud_adjunto_ids(
+            documento,
+            current_empleado,
+            adjuntos_doc,
+            solicitud_cancelada=solicitud_cancelada,
+        )
+        replaceable_comprobante_ids = _replaceable_solicitud_comprobante_ids(
             documento,
             current_empleado,
             adjuntos_doc,
@@ -37769,9 +40885,18 @@ async def ver_documento(
                 documento_id,
                 adjuntos_doc,
                 removable_adjunto_ids=removable_adjunto_ids,
+                replaceable_adjunto_ids=replaceable_comprobante_ids,
             )
             if adjuntos_doc
             else "—"
+        )
+        cfdi_attachment_options = (
+            ""
+            if (
+                getattr(documento, "is_supplier_advance", False)
+                or getattr(documento, "supplier_advance_id", None)
+            )
+            else '<option value="cfdi_pdf">CFDI PDF</option><option value="cfdi_xml">CFDI XML</option>'
         )
         upload_form_html = ""
         if can_add_solicitud_adjuntos:
@@ -37781,8 +40906,7 @@ async def ver_documento(
                     <label for="adjunto_categoria">Tipo de archivo</label>
                     <select name="categoria" id="adjunto_categoria" required>
                         <option value="supporting">Materialidades / soporte</option>
-                        <option value="cfdi_pdf">CFDI PDF</option>
-                        <option value="cfdi_xml">CFDI XML</option>
+                        {cfdi_attachment_options}
                     </select>
                 </div>
                 <div class="form-group">
@@ -37790,6 +40914,7 @@ async def ver_documento(
                     <input type="file" name="archivos" id="adjunto_archivos" multiple required
                            accept=".pdf,.xml,.jpg,.jpeg,.png,.gif,.webp,.txt,.csv,.doc,.docx,.xls,.xlsx,application/pdf,application/xml,text/xml,image/*,text/plain,text/csv,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
                     <small>Puede seleccionar uno o varios archivos.</small>
+                    <small>Después de la clasificación o autorización, la factura se conserva como evidencia pendiente de revisión contable. Adjuntarla no modifica el gasto, la póliza ni el pago. En anticipos utilice Comprobar anticipo.</small>
                 </div>
                 <button type="submit" class="button primary">Adjuntar archivos</button>
             </form>
@@ -37870,35 +40995,56 @@ async def ver_documento(
         </form>
         """
 
+    cancel_linked_informe_html = ""
+    if (
+        documento.tipo == "INFORME"
+        and cuenta_vinculada is not None
+        and documento.estado == "borrador"
+        and cuenta_vinculada.estado == "abierta"
+        and not expenses
+        and not reembolsos
+        and not adjuntos_doc
+        and _can_cancel_empty_informe_draft(current_empleado, cuenta_vinculada)
+        and (
+            await _count_blocking_informe_solicitudes(session, cuenta_vinculada.id)
+        ) == 0
+    ):
+        cancel_linked_informe_html = _cancel_empty_informe_form_html(cuenta_vinculada.id)
+
     informe_settlement_html = ""
     if documento.tipo == "INFORME" and cuenta_vinculada is not None and cuenta_saldo_ctx:
         saldo_doc = float(cuenta_saldo_ctx["saldo_raw"] or 0)
         active_settlements_doc = int(cuenta_saldo_ctx["active_settlement_count"] or 0)
-        if active_settlements_doc > 0:
-            informe_settlement_html = """
-            <div class="status-chip info">Liquidación en curso</div>
-            """
+        if cuenta_saldo_ctx.get("advance_return_stale") or active_settlements_doc > 0:
+            _, informe_settlement_html = _cuenta_settlement_status_html(
+                stale_return=bool(cuenta_saldo_ctx.get("advance_return_stale")),
+                has_active_settlement=active_settlements_doc > 0,
+                saldo=saldo_doc,
+            )
         elif abs(saldo_doc) < 0.005:
             informe_settlement_html = """
             <div class="status-chip info">Cuenta saldada</div>
             """
-        elif documento.estado != "aprobado":
+        elif documento.estado not in PREAPPROVAL_INFORME_STATES | {"aprobado"}:
             informe_settlement_html = """
             <div class="section-note">La liquidación se habilita cuando el informe sea aprobado.</div>
             """
-        elif saldo_doc > 0 and _can_submit_settlement(
-            cuenta_vinculada, current_empleado, "devolucion"
+        elif saldo_doc > 0:
+            informe_settlement_html = _devolucion_sobrante_action_html(
+                cuenta_id=cuenta_vinculada.id,
+                informe_estado=documento.estado,
+                saldo=saldo_doc,
+                monto_entregado=cuenta_saldo_ctx["monto_entregado"],
+                has_active_settlement=False,
+                can_submit=_can_submit_settlement(
+                    cuenta_vinculada, current_empleado, "devolucion"
+                ),
+            )
+        elif (
+            saldo_doc < 0
+            and documento.estado == "aprobado"
+            and rol_actual in finance_admin_roles
         ):
-            informe_settlement_html = f"""
-            <div>
-                <a href="/informes-de-gastos/{documento.cuenta_gastos_id}/saldar"
-                   class="button primary">Registrar devolución de sobrantes</a>
-                <div class="section-note" style="margin-top:8px;">
-                    El empleado devuelve el sobrante del anticipo a la empresa.
-                </div>
-            </div>
-            """
-        elif saldo_doc < 0 and rol_actual in finance_admin_roles:
             informe_settlement_html = f"""
             <div>
                 <a href="/informes-de-gastos/{documento.cuenta_gastos_id}/saldar" class="button primary">Registrar reembolso</a>
@@ -38025,6 +41171,7 @@ async def ver_documento(
             {summary_cards}
             <div class="stack">
                 {message_html}
+                {workflow_guidance_html}
                 {base_info_cards}
                 {solicitud_transferencia_html}
                 {comprobante_pago_html}
@@ -38033,7 +41180,7 @@ async def ver_documento(
                 {authorization_strategy_html}
                 {authorization_route_warning_html}
                 {authorization_pre_send_preview_html}
-                <section class="surface">
+                <section class="surface" id="gastos-asociados">
                     <div class="section-head">
                         <div>
                             <h2>Gastos asociados</h2>
@@ -38125,6 +41272,7 @@ async def ver_documento(
 
                 <!-- Cerrar informe / Enviar para aprobación -->
                 {close_linked_informe_html}
+                {cancel_linked_informe_html}
                 {f'''<form method="POST" action="/documentos/{documento_id}/enviar" class="inline-form">
                     {f'<input type="hidden" name="next" value="{return_url}">' if return_url else ''}
                     <button type="submit" class="button primary">Enviar para autorización</button>
@@ -38159,9 +41307,10 @@ async def ver_documento(
                         <summary class="button primary">Aprobar</summary>
                         <form method="POST" action="/documentos/{documento_id}/aprobar" class="form-section" style="margin-top: 10px;">
                             {f'<input type="hidden" name="next" value="{return_url}">' if return_url else ''}
+                            {f'<div class="notice info"><strong>Motivo del solicitante:</strong> {escape(documento.motivo_comprobacion_parcial)}</div>' if documento.informe_origen_id else ''}
                             <div class="form-group">
-                                <label for="comentario_aprobar">Comentario (opcional)</label>
-                                <textarea name="comentario" id="comentario_aprobar"></textarea>
+                                <label for="comentario_aprobar">{'Comentarios sobre el motivo y la comprobación (obligatorios)' if documento.informe_origen_id else 'Comentario (opcional)'}</label>
+                                <textarea name="comentario" id="comentario_aprobar" {'required' if documento.informe_origen_id else ''}></textarea>
                             </div>
                             <button type="submit" class="button primary">Confirmar aprobación</button>
                         </form>
@@ -38892,6 +42041,8 @@ def _can_edit_cuenta_before_budget_assignment(
     informe_doc: Optional[Documento],
 ) -> bool:
     """Allow edits after close only while linked INFORME waits for Control Presupuestal."""
+    if getattr(cuenta, "comprobacion_parcial", False):
+        return False
     if (getattr(cuenta, "estado", None) or "").strip().lower() == "abierta":
         return True
     if informe_doc is None:
@@ -38935,15 +42086,119 @@ def _append_success_params(
 def _append_error_params(
     url: str,
     *,
-    error_msg: Optional[str] = None,
+    error_msg: Optional[Union[str, ValueError]] = None,
     error: Optional[str] = None,
+    request: Optional[Request] = None,
 ) -> str:
     params: Dict[str, str] = {}
+    if isinstance(error_msg, ExpenseCFDIDuplicateError):
+        params["error"] = "expense_cfdi_duplicate"
+        if request is not None and "session" in request.scope:
+            contexts = dict(request.session.get("expense_block_contexts", {}))
+            target = urlparse(url).path
+            contexts[target] = {
+                "expense_id": str(error_msg.duplicate_id or ""),
+                "fiscal_uuid": error_msg.fiscal_uuid,
+            }
+            while len(contexts) > 8:
+                del contexts[next(iter(contexts))]
+            request.session["expense_block_contexts"] = contexts
+        return _append_query_params(url, params)
     if error is not None:
         params["error"] = error
     if error_msg is not None:
-        params["error_msg"] = error_msg
+        params["error_msg"] = str(error_msg)
     return _append_query_params(url, params)
+
+
+async def _expense_block_message(
+    request: Request,
+    session: AsyncSession,
+    actor: Empleado,
+    *,
+    current_document: Optional[Documento] = None,
+) -> str:
+    """Resolve duplicate evidence after page authorization, never in a URL."""
+    if request.query_params.get("error") != "expense_cfdi_duplicate":
+        return (request.query_params.get("error_msg") or "").strip()
+    fallback = (
+        "La factura está vinculada a otra partida activa. "
+        "Los detalles deben revisarse con Finanzas y Operaciones. "
+        "Esto no significa que tú la hayas usado antes. "
+        "No marques ‘Factura compartida’ para continuar."
+    )
+    unavailable = (
+        "No se pudo confirmar la vinculación activa que provocó el bloqueo. "
+        "Solicita a Finanzas y Operaciones que revisen la factura antes de continuar."
+    )
+    try:
+        browser_session = request.scope.get("session", {})
+        contexts = dict(browser_session.get("expense_block_contexts", {}))
+        context = contexts.pop(request.scope.get("path", ""), {})
+        browser_session["expense_block_contexts"] = contexts
+        duplicate_id = UUIDType(context.get("expense_id", ""))
+        fiscal_uuid = normalize_cfdi_uuid_to_canonical(
+            context.get("fiscal_uuid", "")
+        )
+    except (ValueError, TypeError):
+        return unavailable
+    expense = await session.get(ExpenseReport, duplicate_id)
+    if expense is None or expense.estado_gasto in {None, "cancelado"}:
+        return unavailable
+    if not await _can_access_read_only_informe_expense(session, expense, actor):
+        return fallback
+    stored_uuid = (expense.cfdi_uuid_manual or "").strip().upper()
+    if stored_uuid != fiscal_uuid:
+        report = (
+            await session.get(CFDIReport, expense.cfdi_report_id)
+            if expense.cfdi_report_id
+            else None
+        )
+        if report is None or (report.cfdi_uuid or "").strip().upper() != fiscal_uuid:
+            return unavailable
+    document_id = expense.informe_documento_id or expense.documento_id
+    document = await session.get(Documento, document_id) if document_id else None
+    cuenta = (
+        await session.get(CuentaDeGastos, expense.cuenta_gastos_id)
+        if expense.cuenta_gastos_id
+        else None
+    )
+    beneficiary = None
+    # Same party precedence as effective_document_beneficiary, with explicit reads.
+    for model, party_id in (
+        (Empleado, getattr(document, "beneficiario_empleado_id", None)),
+        (
+            ProveedorCliente,
+            getattr(document, "beneficiario_proveedor_cliente_id", None),
+        ),
+        (Empleado, getattr(cuenta, "beneficiario_empleado_id", None)),
+        (ProveedorCliente, getattr(cuenta, "beneficiario_proveedor_cliente_id", None)),
+        (Empleado, getattr(cuenta, "empleado_id", None)),
+        (ProveedorCliente, getattr(document, "proveedor_cliente_id", None)),
+        (Empleado, getattr(document, "empleado_id", None)),
+    ):
+        if party_id:
+            beneficiary = await session.get(model, party_id)
+            if beneficiary is not None:
+                break
+    return duplicate_invoice_message(
+        amount=Decimal(str(expense.gasto_cantidad)),
+        currency=currency_for(expense),
+        expense_reference=expense.numero_referencia,
+        report_reference=document.numero_referencia if document else None,
+        document_type=getattr(document, "tipo", None),
+        operations_reference=document.referencia_operaciones if document else None,
+        report_name=cuenta.nombre if cuenta else None,
+        beneficiary=beneficiary.nombre if beneficiary else None,
+        state=document.estado if document else expense.estado_gasto,
+        current_reference=(
+            current_document.numero_referencia if current_document else None
+        ),
+        current_operations=(
+            current_document.referencia_operaciones if current_document else None
+        ),
+        current_document_type=getattr(current_document, "tipo", None),
+    )
 
 
 def _render_transient_message_query_cleanup_script() -> str:
@@ -39004,6 +42259,7 @@ async def _sync_informe_documento_to_enviado(
             "El informe debe tener al menos un gasto activo antes de poder cerrarse.",
         )
 
+    await validate_informe_surplus_before_submission(session, informe_doc)
     await reserve_documento_cfdis_or_raise(session, informe_doc, actor)
     now = datetime.utcnow()
     if (
@@ -39024,6 +42280,7 @@ async def _sync_informe_documento_to_enviado(
         aprobacion_comentario = (
             "Enviado automaticamente al cerrar el informe de gastos."
         )
+    await prepare_document_authorization_route(session, informe_doc)
     session.add(
         Aprobacion(
             tipo_entidad="documento",
@@ -39846,7 +43103,10 @@ async def adjuntar_gastos_a_cuenta(
                 url=_append_error_params(
                     "/informes-de-gastos",
                     error="currency_mismatch",
-                    error_msg="No se pueden crear informes con gastos de monedas distintas.",
+                    error_msg=(
+                        "No se pueden crear informes con gastos de monedas distintas: "
+                        + ", ".join(sorted(expense_currencies)) + "."
+                    ),
                 ),
                 status_code=303,
             )
@@ -40119,8 +43379,119 @@ def _derive_informe_operational_status(
 
 
 def _render_informe_operational_status_badge(**kwargs: Any) -> str:
+    partial_mode = kwargs.pop("partial_mode", False)
+    if partial_mode:
+        label = (
+            "Abierto · comprobación parcial"
+            if kwargs.get("cuenta_estado") == "abierta"
+            else "Comprobado y cerrado"
+        )
+        return _informe_status_badge(
+            label,
+            color="#d97706" if kwargs.get("cuenta_estado") == "abierta" else "#0f766e",
+        )
     label, color = _derive_informe_operational_status(**kwargs)
     return _informe_status_badge(label, color=color)
+
+
+def _informe_reembolso_payment_state(
+    *, solicitudes: List[Any], reembolsos: List[Any], saldo: float
+) -> Tuple[str, Optional[Any], Optional[Any]]:
+    """Keep authorization separate from actual payment evidence."""
+    reimbursement_docs = [
+        doc for doc in solicitudes
+        if str(getattr(doc, "concepto_pago", "") or "").strip().startswith(
+            EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX
+        )
+        and str(getattr(doc, "estado", "") or "").lower()
+        not in {"rechazado", "cancelado"}
+    ]
+    paid_docs = [
+        doc for doc in reimbursement_docs
+        if (
+            str(getattr(doc, "estado", "") or "").lower() == "pagado"
+            or getattr(doc, "pagado_en", None) is not None
+        )
+    ]
+    paid_settlements = [
+        item for item in reembolsos
+        if str(getattr(item, "tipo", "") or "").lower() == "reembolso"
+        and str(getattr(item, "estado", "") or "").lower() == "pagado"
+    ]
+    if paid_docs:
+        return "pagado", paid_docs[0], None
+    if paid_settlements:
+        return "pagado", None, paid_settlements[0]
+    if reimbursement_docs:
+        return "pendiente", reimbursement_docs[0], None
+    if float(saldo or 0) < -0.005:
+        return "sin_solicitud", None, None
+    return "no_aplica", None, None
+
+
+def _informe_reembolso_proof_links(
+    *, cuenta_id: UUIDType, documento: Optional[Any], settlement: Optional[Any],
+    documento_metas: Dict[Any, List[Any]], settlement_metas: Dict[Any, List[Any]],
+) -> List[str]:
+    links: List[str] = []
+    if documento is not None:
+        for meta in documento_metas.get(documento.id, []):
+            if (getattr(meta, "categoria", "") or "").strip().lower() == "comprobante_pago":
+                links.append(
+                    f'<a href="/documentos/{documento.id}/adjuntos/{meta.id}" '
+                    f'target="_blank" rel="noopener noreferrer">Ver comprobante de transferencia</a>'
+                )
+    if settlement is not None:
+        for meta in settlement_metas.get(settlement.id, []):
+            links.append(
+                f'<a href="/informes-de-gastos/{cuenta_id}/reembolsos/'
+                f'{settlement.id}/adjuntos/{meta.id}" target="_blank" '
+                f'rel="noopener noreferrer">Ver comprobante de transferencia</a>'
+            )
+    return links
+
+
+def _render_informe_reembolso_payment_html(
+    *, cuenta_id: UUIDType, state: str, documento: Optional[Any],
+    settlement: Optional[Any], documento_metas: Dict[Any, List[Any]],
+    settlement_metas: Dict[Any, List[Any]],
+) -> str:
+    if state == "no_aplica":
+        return ""
+    labels = {
+        "pagado": "Pagado",
+        "pendiente": "Pendiente de pago",
+        "sin_solicitud": "Saldo a favor · sin solicitud registrada",
+    }
+    proofs = _informe_reembolso_proof_links(
+        cuenta_id=cuenta_id,
+        documento=documento if state == "pagado" else None,
+        settlement=settlement if state == "pagado" else None,
+        documento_metas=documento_metas,
+        settlement_metas=settlement_metas,
+    )
+    source = (
+        f'<a href="/documentos/{documento.id}">Solicitud '
+        f'{escape(documento.numero_referencia or "")}</a>'
+        if documento is not None else (
+            f'<a href="/informes-de-gastos/{cuenta_id}/reembolsos/'
+            f'{settlement.id}">Registro del reembolso</a>'
+            if settlement is not None else ""
+        )
+    )
+    proof_html = " · ".join(proofs) or (
+        "Comprobante pendiente de adjuntar" if state == "pagado" else ""
+    )
+    return (
+        '<section class="surface"><div class="section-head"><div>'
+        '<h2>Pago del reembolso al empleado</h2>'
+        '<div class="section-note">La aprobación del informe no confirma la transferencia.</div>'
+        '</div></div>'
+        f'<p><strong>{escape(labels[state])}</strong></p>'
+        f'<p>{source}</p>'
+        f'<p>{proof_html}</p>'
+        '</section>'
+    )
 
 
 @router.get("/informes-de-gastos", response_class=HTMLResponse)
@@ -40128,6 +43499,7 @@ async def cuentas_de_gastos_list(
     request: Request,
     q: Optional[str] = Query(None),
     estado: Optional[str] = Query(None),
+    reembolso: Optional[str] = Query(None),
     empleado_nombre: Optional[str] = Query(None),
     torneo_nombre: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_db_session),
@@ -40201,6 +43573,17 @@ async def cuentas_de_gastos_list(
                     ro = (inf.referencia_operaciones or "").strip() or None
                     informe_ro_by_cuenta_id[cid] = ro
                     informe_doc_by_cuenta_id[cid] = inf
+        reembolsos_by_cuenta_id: Dict[UUIDType, List[Reembolso]] = {}
+        if cuentas:
+            reembolsos_result = await session.execute(
+                select(Reembolso).where(
+                    Reembolso.cuenta_gastos_id.in_(cuenta_ids),
+                    Reembolso.tipo == "reembolso",
+                    Reembolso.estado != "cancelado",
+                )
+            )
+            for item in reembolsos_result.scalars().all():
+                reembolsos_by_cuenta_id.setdefault(item.cuenta_gastos_id, []).append(item)
     except (ProgrammingError, OperationalError):
         return _schema_outdated_html_response()
 
@@ -40229,9 +43612,19 @@ async def cuentas_de_gastos_list(
                 ).order_by(Documento.creado_en.desc())
             )
             solicitudes_list = solicitudes_result.scalars().all()
-            monto_solicitado = sum(float(d.monto_solicitado or 0) for d in solicitudes_list)
+            monto_solicitado = sum_active_solicitud_amounts(solicitudes_list)
             monto_entregado = sum_paid_solicitud_amounts(solicitudes_list)
             num_solicitudes = len(solicitudes_list)
+            blocking_solicitud_count = num_solicitudes
+            informe_for_cancel = informe_doc_by_cuenta_id.get(cuenta.id)
+            if (
+                informe_for_cancel
+                and informe_for_cancel.estado == "borrador"
+                and not expenses
+            ):
+                blocking_solicitud_count = await _count_blocking_informe_solicitudes(
+                    session, cuenta.id
+                )
 
             try:
                 settled_amount_list, settled_count_list = (
@@ -40257,12 +43650,32 @@ async def cuentas_de_gastos_list(
                 'saldo': saldo,
                 'num_expenses': len(expenses),
                 'num_solicitudes': num_solicitudes,
+                'blocking_solicitud_count': blocking_solicitud_count,
                 'settlement_count': settled_count_list,
                 'solicitudes': solicitudes_list,
                 'informe_doc': informe_doc_by_cuenta_id.get(cuenta.id),
+                'reembolsos': reembolsos_by_cuenta_id.get(cuenta.id, []),
+                'reembolso_payment': _informe_reembolso_payment_state(
+                    solicitudes=solicitudes_list,
+                    reembolsos=reembolsos_by_cuenta_id.get(cuenta.id, []),
+                    saldo=saldo,
+                ),
             })
     except (ProgrammingError, OperationalError):
         return _schema_outdated_html_response()
+
+    reembolso_solicitudes = [
+        doc for item in cuenta_data for doc in item['solicitudes']
+        if str(getattr(doc, 'concepto_pago', '') or '').strip().startswith(
+            EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX
+        )
+    ]
+    reembolso_adj_by_doc = await fetch_documento_adjuntos_meta_batch(
+        session, [doc.id for doc in reembolso_solicitudes]
+    )
+    reembolso_adj_by_id = await fetch_reembolso_adjuntos_meta_batch(
+        session, [r.id for item in cuenta_data for r in item['reembolsos']]
+    )
 
     def _informe_filter_blob(item: Dict[str, Any]) -> str:
         cuenta = item["cuenta"]
@@ -40317,6 +43730,7 @@ async def cuentas_de_gastos_list(
     empleado_norm = _normalize_employee_identity_text(empleado_nombre or "")
     torneo_norm = _normalize_employee_identity_text(torneo_nombre or "")
     estado_norm = (estado or "").strip().lower()
+    reembolso_norm = (reembolso if isinstance(reembolso, str) else "").strip().lower()
     filtered_cuenta_data = []
     for item in cuenta_data:
         blob = _informe_filter_blob(item)
@@ -40339,6 +43753,11 @@ async def cuentas_de_gastos_list(
         if torneo_norm and torneo_norm not in proyecto_blob:
             continue
         if estado_norm and _estado_filter_value(item) != estado_norm:
+            continue
+        payment_state = item['reembolso_payment'][0]
+        if reembolso_norm == 'pendiente' and payment_state not in {'pendiente', 'sin_solicitud'}:
+            continue
+        if reembolso_norm == 'pagado' and payment_state != 'pagado':
             continue
         filtered_cuenta_data.append(item)
     cuenta_data = filtered_cuenta_data
@@ -40366,6 +43785,7 @@ async def cuentas_de_gastos_list(
             and str(getattr(informe_doc, "estado", "") or "").strip().lower() == "cancelado"
         )
         estado_badge = _render_informe_operational_status_badge(
+            partial_mode=bool(getattr(cuenta, "comprobacion_parcial", False)),
             cuenta_estado=cuenta.estado,
             informe_estado=getattr(informe_doc, "estado", None),
             solicitudes=data.get("solicitudes", []),
@@ -40379,6 +43799,35 @@ async def cuentas_de_gastos_list(
 
         saldo_color = '#f44336' if data['saldo'] > 0 else '#4CAF50'
         saldo_label = 'A pagar' if data['saldo'] > 0 else ('A favor' if data['saldo'] < 0 else 'Saldado')
+        payment_state, payment_doc, payment_settlement = data['reembolso_payment']
+        payment_labels = {
+            'pagado': 'Pagado',
+            'pendiente': 'Pendiente de pago',
+            'sin_solicitud': 'Saldo a favor · sin solicitud',
+            'no_aplica': 'No aplica',
+        }
+        proof_links = _informe_reembolso_proof_links(
+            cuenta_id=cuenta.id,
+            documento=payment_doc if payment_state == 'pagado' else None,
+            settlement=payment_settlement if payment_state == 'pagado' else None,
+            documento_metas=reembolso_adj_by_doc,
+            settlement_metas=reembolso_adj_by_id,
+        )
+        payment_link = (
+            f'<a href="/documentos/{payment_doc.id}">Ver solicitud</a>'
+            if payment_doc is not None else (
+                f'<a href="/informes-de-gastos/{cuenta.id}/reembolsos/'
+                f'{payment_settlement.id}">Ver reembolso</a>'
+                if payment_settlement is not None else ''
+            )
+        )
+        proof_html = ' · '.join(proof_links) if proof_links else (
+            'Comprobante pendiente' if payment_state == 'pagado' else ''
+        )
+        reembolso_cell = (
+            f'{escape(payment_labels[payment_state])}<br><small>{payment_link}'
+            f'{" · " if payment_link and proof_html else ""}{proof_html}</small>'
+        )
 
         nombre_display = getattr(cuenta, "nombre", None) and (cuenta.nombre or "").strip()
         titulo_cuenta = escape(nombre_display) if nombre_display else escape(cuenta.referencia_base)
@@ -40443,7 +43892,7 @@ async def cuentas_de_gastos_list(
             and informe_doc.estado == "borrador"
             and cuenta.estado == "abierta"
             and data['num_expenses'] == 0
-            and data['num_solicitudes'] == 0
+            and data['blocking_solicitud_count'] == 0
             and data['settlement_count'] == 0
             and _can_cancel_empty_informe_draft(current_empleado, cuenta)
         ):
@@ -40481,6 +43930,7 @@ async def cuentas_de_gastos_list(
             <td class="table-value-nowrap" data-sort-value="{escape(_sort_value_attr(data['saldo'], kind='money'))}" style="color: {saldo_color}; font-weight: bold;">
                 {format_currency(abs(data['saldo']), cuenta_currency)} <small>({saldo_label})</small>
             </td>
+            <td data-sort-value="{escape(payment_state)}">{reembolso_cell}</td>
             <td data-sort-value="{escape(_sort_value_attr(cuenta.created_at, kind='date'))}">{cuenta.created_at.strftime('%Y-%m-%d') if cuenta.created_at else '-'}</td>
             <td class="table-actions-cell">
                 <div class="table-actions inline-actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;min-width:150px;">
@@ -40536,19 +43986,24 @@ async def cuentas_de_gastos_list(
         f'<option value="{escape(value)}" {"selected" if value == estado_value else ""}>{escape(label)}</option>'
         for value, label in estado_options
     )
-    filters_active = sum(1 for value in (q_value, estado_value, empleado_value, torneo_value) if value)
+    reembolso_options_html = "".join(
+        f'<option value="{value}" {"selected" if value == reembolso_norm else ""}>{label}</option>'
+        for value, label in (("", "Todos"), ("pendiente", "Pendiente"), ("pagado", "Pagado"))
+    )
+    filters_active = sum(1 for value in (q_value, estado_value, reembolso_norm, empleado_value, torneo_value) if value)
     cuentas_filters_html = f'''
                 <section class="surface">
                     <div class="section-head">
                         <div>
                             <h2>Buscar informes</h2>
-                            <div class="section-note">Filtra por referencia de operaciones, solicitante, beneficiario, torneo, concepto o estado.</div>
+                            <div class="section-note">Filtra por referencia, persona, torneo, estado o pago de reembolso.</div>
                         </div>
                         <span class="badge">{filters_active} filtros activos</span>
                     </div>
-                    <form method="GET" action="/informes-de-gastos" class="form-grid" style="grid-template-columns:2fr 1fr 1.4fr 1.4fr auto auto;align-items:end;">
+                    <form method="GET" action="/informes-de-gastos" class="form-grid" style="grid-template-columns:2fr 1fr 1fr 1.4fr 1.4fr auto auto;align-items:end;">
                         <label>Búsqueda<br><input type="text" name="q" value="{q_value}" placeholder="Ref., concepto, descripción..."></label>
                         <label>Estado<br><select name="estado">{estado_options_html}</select></label>
+                        <label>Reembolso<br><select name="reembolso">{reembolso_options_html}</select></label>
                         <label>Solicitante / beneficiario<br><input type="text" name="empleado_nombre" value="{empleado_value}" placeholder="Ej. Alicia, Bibiana..."></label>
                         <label>Torneo / fase<br><input type="text" name="torneo_nombre" value="{torneo_value}" placeholder="Ej. Telmex, Béisbol..."></label>
                         <button class="button primary" type="submit">Filtrar</button>
@@ -40637,13 +44092,14 @@ async def cuentas_de_gastos_list(
                         <th class="table-value-nowrap" data-sort-key="solicitado" data-sort-type="money">Solicitado</th>
                         <th class="table-value-nowrap" data-sort-key="moneda" data-sort-type="text">Moneda</th>
                         <th class="table-value-nowrap" data-sort-key="saldo" data-sort-type="money">Saldo</th>
+                        <th data-sort-key="reembolso" data-sort-type="text">Pago de reembolso / comprobante</th>
                         <th data-sort-key="creada" data-sort-type="date">Creada</th>
                         <th class="table-actions-cell">Acciones</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {rows_html if rows_html else '<tr><td colspan="14" style="text-align: center; padding: 20px;">No hay informes de gastos. Crea uno desde "Mis Gastos".</td></tr>'}
-                    <tr id="informes-no-matches" data-sort-ignore style="display:none;"><td colspan="14" style="text-align:center; padding:20px; color:#6b7280;">No hay informes que coincidan con tu búsqueda.</td></tr>
+                    {rows_html if rows_html else '<tr><td colspan="15" style="text-align: center; padding: 20px;">No hay informes de gastos. Crea uno desde "Mis Gastos".</td></tr>'}
+                    <tr id="informes-no-matches" data-sort-ignore style="display:none;"><td colspan="15" style="text-align:center; padding:20px; color:#6b7280;">No hay informes que coincidan con tu búsqueda.</td></tr>
                 </tbody>
             </table>
                     </div>
@@ -40750,17 +44206,7 @@ async def cancelar_informe_vacio_borrador(
         ).scalar_one()
         or 0
     )
-    solicitud_count = int(
-        (
-            await session.execute(
-                select(func.count(Documento.id)).where(
-                    Documento.cuenta_gastos_id == cuenta.id,
-                    Documento.tipo == "SOLICITUD",
-                )
-            )
-        ).scalar_one()
-        or 0
-    )
+    solicitud_count = await _count_blocking_informe_solicitudes(session, cuenta.id)
     settlement_count = int(
         (
             await session.execute(
@@ -40874,6 +44320,36 @@ def _can_create_solicitud_from_cuenta(
     )
 
 
+def _quick_capture_block_reason(
+    cuenta: CuentaDeGastos,
+    informe_doc: Optional[Documento],
+    actor: Empleado,
+) -> str:
+    """Explain the first failing existing capture condition without leaking state."""
+    if cuenta.empleado_id != actor.id and actor.rol not in (
+        "admin",
+        "finanzas",
+        "superadmin",
+        "super_admin",
+    ):
+        return "No tienes permiso para capturar gastos en este informe."
+    if cuenta.estado != "abierta":
+        return (
+            "No se pueden capturar gastos porque la cuenta está "
+            f"en estado {cuenta.estado}."
+        )
+    if informe_doc is None:
+        return (
+            "El informe no tiene documento INFORME vinculado; "
+            "solicita revisión a Soporte."
+        )
+    return (
+        "No se pueden capturar gastos porque el informe "
+        f"{informe_doc.numero_referencia} "
+        f"está en estado {informe_doc.estado}; la captura requiere un borrador."
+    )
+
+
 def _quick_expense_decimal(
     value: Optional[str],
     label: str,
@@ -40891,6 +44367,8 @@ def _quick_expense_decimal(
         parsed = Decimal(raw).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     except Exception as exc:
         raise ValueError(f"{label} debe ser un número válido") from exc
+    if not parsed.is_finite():
+        raise ValueError(f"{label} debe ser un número válido")
     if parsed < 0 and not allow_negative:
         raise ValueError(f"{label} no puede ser negativo")
     return parsed
@@ -40928,6 +44406,8 @@ def _quick_expense_values(
     impuestos_y_retenciones: Optional[str],
     propina_no_deducible: Optional[str] = None,
     xml_data: Optional[Dict[str, Any]] = None,
+    factura_compartida: bool = False,
+    cfdi_source: Optional[str] = None,
 ) -> Dict[str, Any]:
     xml_data = xml_data or {}
     concepto_final = (concepto or "").strip()
@@ -40937,11 +44417,33 @@ def _quick_expense_values(
         required=False,
     )
     if xml_data:
+        source = (
+            "PDF"
+            if cfdi_source == "PDF" or "_pdf_explicit_fields" in xml_data
+            else "XML"
+        )
+        if xml_data.get("_pdf_ambiguous_fields"):
+            raise ValueError(
+                "El PDF contiene importes ambiguos. "
+                "Revisa el PDF o adjunta el CFDI XML original."
+            )
+        missing = [
+            label
+            for key, label in (("subtotal", "Sub total"), ("total", "TOTAL"))
+            if xml_data.get(key) in (None, "")
+        ]
+        if missing:
+            raise ValueError(
+                f"No se pudo leer {', '.join(missing)} del {source} de la factura. "
+                f"Revisa el {source} o adjunta el CFDI XML original."
+            )
         fecha_xml = xml_data.get("fecha")
         fecha_final = fecha_xml.strftime("%Y-%m-%d") if fecha_xml else (fecha or "").strip()
         numero_final = (xml_data.get("cfdi_uuid") or numero_factura or "").strip()
         taxes = quick_expense_tax_components_from_parsed(xml_data)
-        subtotal_amount = _quick_expense_decimal(str(taxes.subtotal), "Sub total")
+        subtotal_amount = _quick_expense_decimal(
+            str(taxes.subtotal_captura), "Sub total"
+        )
         descuento_amount = taxes.descuento.quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
@@ -40957,10 +44459,37 @@ def _quick_expense_values(
         )
         if abs(calculated_total - xml_total) > Decimal("0.01"):
             raise ValueError(
-                "El TOTAL del XML no coincide con Sub total - Descuento + "
-                "Impuestos y retenciones"
+                f"El TOTAL del {source} no coincide con Sub total - Descuento + "
+                f"Impuestos y retenciones. TOTAL {source}: ${xml_total:,.2f}; "
+                f"total calculado: ${calculated_total:,.2f}. Diferencia: "
+                f"${abs(xml_total - calculated_total):,.2f}. "
+                f"Revisa el {source} de la factura."
             )
-        calculated_total = xml_total + propina_amount
+        if factura_compartida:
+            subtotal_amount = _quick_expense_decimal(subtotal, "Sub total aplicado")
+            descuento_amount = _quick_expense_decimal(
+                descuento, "Descuento aplicado", required=False
+            )
+            impuestos_net = _quick_expense_decimal(
+                impuestos_y_retenciones,
+                "Impuestos y retenciones aplicados",
+                required=False,
+                allow_negative=True,
+            )
+            applied_total = compute_quick_expense_total(
+                subtotal_amount, descuento_amount, impuestos_net
+            )
+            if applied_total <= 0 or applied_total > xml_total:
+                raise ValueError(
+                    "El monto aplicado debe ser mayor a cero y no exceder "
+                    "el total fiscal de la factura compartida."
+                )
+            iva_amount = (taxes.iva * applied_total / xml_total).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            calculated_total = applied_total + propina_amount
+        else:
+            calculated_total = xml_total + propina_amount
     else:
         fecha_final = (fecha or "").strip()
         numero_final = (numero_factura or "").strip()
@@ -40981,7 +44510,8 @@ def _quick_expense_values(
             descuento_amount,
             impuestos_net,
         ) + propina_amount
-        iva_amount = max(impuestos_net, Decimal("0"))
+        # A net fiscal amount does not identify IVA without a tax breakdown.
+        iva_amount = None
 
     if not concepto_final:
         raise ValueError("Descripción del gasto es requerida")
@@ -41016,9 +44546,35 @@ def _quick_expense_values(
     }
 
 
+async def _validate_quick_shared_cfdi_amount(
+    session: AsyncSession,
+    expense: ExpenseReport,
+    cuenta: CuentaDeGastos,
+    values: Dict[str, Any],
+) -> None:
+    """Reserve only this report's fiscal share, excluding its own row and tip."""
+    if not expense.cfdi_report_id:
+        raise ValueError(
+            "Factura compartida requiere un CFDI válido vinculado "
+            "para verificar su saldo disponible."
+        )
+    shared_report = await session.get(CFDIReport, expense.cfdi_report_id)
+    if shared_report is None:
+        raise ValueError("No se encontró el CFDI de la factura compartida.")
+    if (shared_report.moneda or "MXN").upper() != currency_for(cuenta):
+        raise ValueError("La moneda de la factura debe coincidir con el informe.")
+    await validate_shared_cfdi_payment_amount(
+        session,
+        cfdi_report=shared_report,
+        requested_amount=values["total"] - values["propina"],
+        exclude_expense_id=expense.id,
+    )
+
+
 @router.post("/informes-de-gastos/{cuenta_id}/gastos/quick")
 async def crear_gasto_rapido_en_informe(
     cuenta_id: UUIDType,
+    request: Request = None,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
     concepto: Optional[str] = Form(None),
@@ -41030,6 +44586,7 @@ async def crear_gasto_rapido_en_informe(
     impuestos_y_retenciones: Optional[str] = Form("0"),
     propina_no_deducible: Optional[str] = Form("0"),
     pagado_con_amex_empresa: Optional[str] = Form(None),
+    amex_card_account_id: Optional[str] = Form(None),
     cfdi_xml: Optional[UploadFile] = File(None),
     cfdi_pdf: Optional[UploadFile] = File(None),
     comprobante_no_deducible: Optional[UploadFile] = File(None),
@@ -41041,13 +44598,20 @@ async def crear_gasto_rapido_en_informe(
     asiento_preferencial_cfdi_pdf: Optional[UploadFile] = File(None),
     asiento_preferencial_numero_factura: Optional[str] = Form(None),
     asiento_preferencial_subtotal: Optional[str] = Form(None),
+    asiento_preferencial_descuento: Optional[str] = Form("0"),
+    asiento_preferencial_cfdi_compartido_confirmado: Optional[str] = Form(None),
+    asiento_preferencial_cfdi_compartido_motivo: Optional[str] = Form(None),
     asiento_preferencial_impuestos_y_retenciones: Optional[str] = Form("0"),
     exceso_equipaje_cfdi_xml: Optional[UploadFile] = File(None),
     exceso_equipaje_cfdi_pdf: Optional[UploadFile] = File(None),
     exceso_equipaje_numero_factura: Optional[str] = Form(None),
     exceso_equipaje_subtotal: Optional[str] = Form(None),
+    exceso_equipaje_descuento: Optional[str] = Form("0"),
+    exceso_equipaje_cfdi_compartido_confirmado: Optional[str] = Form(None),
+    exceso_equipaje_cfdi_compartido_motivo: Optional[str] = Form(None),
     exceso_equipaje_impuestos_y_retenciones: Optional[str] = Form("0"),
 ) -> RedirectResponse:
+    _reject_unauthorized_amex_card_submission(current_empleado, amex_card_account_id)
     redirect_base = f"/informes-de-gastos/{cuenta_id}"
     try:
         cuenta_result = await session.execute(
@@ -41079,14 +44643,19 @@ async def crear_gasto_rapido_en_informe(
         if not _can_quick_capture_expense(cuenta, informe_doc, current_empleado):
             raise HTTPException(
                 status_code=403,
-                detail="La captura rápida solo está disponible para informes abiertos en borrador",
+                detail=_quick_capture_block_reason(
+                    cuenta, informe_doc, current_empleado
+                ),
             )
 
         xml_bytes: Optional[bytes] = None
         if cfdi_xml and cfdi_xml.filename:
             xml_bytes = await cfdi_xml.read()
             if xml_bytes and len(xml_bytes) > MAX_SOLICITUD_ATTACHMENT_BYTES:
-                raise ValueError("El CFDI XML excede el tamaño máximo permitido")
+                raise ValueError(
+                    f"El CFDI XML mide {len(xml_bytes):,} bytes y excede "
+                    f"el máximo de {MAX_SOLICITUD_ATTACHMENT_BYTES:,} bytes."
+                )
             if xml_bytes and not xml_bytes.strip():
                 xml_bytes = None
 
@@ -41096,7 +44665,10 @@ async def crear_gasto_rapido_en_informe(
             if not pdf_bytes:
                 raise ValueError("El CFDI PDF está vacío")
             if len(pdf_bytes) > MAX_SOLICITUD_PDF_BYTES:
-                raise ValueError("El CFDI PDF excede el tamaño máximo permitido")
+                raise ValueError(
+                    f"El CFDI PDF mide {len(pdf_bytes):,} bytes y excede "
+                    f"el máximo de {MAX_SOLICITUD_PDF_BYTES:,} bytes."
+                )
             if not is_pdf_content(pdf_bytes):
                 raise ValueError("El archivo CFDI PDF debe ser un PDF válido")
 
@@ -41163,6 +44735,10 @@ async def crear_gasto_rapido_en_informe(
             impuestos_y_retenciones=impuestos_y_retenciones,
             propina_no_deducible=propina_no_deducible,
             xml_data=xml_data,
+            factura_compartida=_form_checkbox_checked(cfdi_compartido_confirmado),
+            cfdi_source=(
+                "XML" if resolved_cfdi and resolved_cfdi.from_uploaded_xml else "PDF"
+            ),
         )
         if no_deducible_material:
             values["numero_factura"] = "no facturable"
@@ -41186,6 +44762,37 @@ async def crear_gasto_rapido_en_informe(
         if quick_company_amex_requested and not _cuenta_allows_company_amex(cuenta):
             raise ValueError("AMEX empresa sólo aplica para Odilón, Luis Ángel y los Federicos.")
 
+        quick_amex_card = None
+        has_air_supplement = any(
+            [
+                (asiento_preferencial_numero_factura or "").strip(),
+                (asiento_preferencial_subtotal or "").strip(),
+                bool(
+                    asiento_preferencial_cfdi_xml
+                    and asiento_preferencial_cfdi_xml.filename
+                ),
+                bool(
+                    asiento_preferencial_cfdi_pdf
+                    and asiento_preferencial_cfdi_pdf.filename
+                ),
+                (exceso_equipaje_numero_factura or "").strip(),
+                (exceso_equipaje_subtotal or "").strip(),
+                bool(exceso_equipaje_cfdi_xml and exceso_equipaje_cfdi_xml.filename),
+                bool(exceso_equipaje_cfdi_pdf and exceso_equipaje_cfdi_pdf.filename),
+            ]
+        )
+        quick_amex_identity_required = quick_company_amex_requested or (
+            has_air_supplement
+            and is_company_amex_account(cuenta.beneficiario_proveedor_cliente)
+        )
+        amex_identity_pending = False
+        if quick_amex_identity_required:
+            if _can_identify_amex_card(current_empleado):
+                quick_amex_card = await _require_amex_form_card(
+                    session, amex_card_account_id
+                )
+            else:
+                amex_identity_pending = True
         expense = await create_expense_from_data(
             session=session,
             empleado_id=cuenta.empleado_id,
@@ -41197,7 +44804,7 @@ async def crear_gasto_rapido_en_informe(
             tipo_gasto="manual",
             departamento=(owner.departamento if owner else None) or "Operaciones",
             fase_torneo=(cuenta.fase or "").strip() or "No Aplica",
-            iva=float(values["iva"]),
+            iva=float(values["iva"]) if values["iva"] is not None else None,
             origen="informe_quick_entry",
             skip_initial_tocino=True,
             categorias=list(getattr(cuenta, "categorias", None) or []),
@@ -41209,6 +44816,9 @@ async def crear_gasto_rapido_en_informe(
         if quick_company_amex_requested:
             expense.pagado_con_amex_empresa = True
             expense.metodo_pago = "TARJETA CREDITO AMEX"
+            expense.ultimos_4_digitos = (
+                quick_amex_card.last4 if quick_amex_card is not None else None
+            )
         else:
             expense.pagado_con_amex_empresa = False
 
@@ -41217,6 +44827,7 @@ async def crear_gasto_rapido_en_informe(
         expense.cuenta_gastos_id = cuenta.id
         expense.referencia_base = cuenta.referencia_base
         expense.informe_documento_id = informe_doc.id
+        await apply_budget_concept_cuenta_mapping(session, expense)
 
         if resolved_cfdi is not None:
             ingestion = await ingest_cfdi_from_upload(
@@ -41248,6 +44859,9 @@ async def crear_gasto_rapido_en_informe(
                 shared_reason=cfdi_compartido_motivo,
                 actor_id=current_empleado.id,
             )
+
+        if _form_checkbox_checked(cfdi_compartido_confirmado):
+            await _validate_quick_shared_cfdi_amount(session, expense, cuenta, values)
 
         if no_deducible_material:
             raw_bytes, mime_type, filename, _categoria = no_deducible_material
@@ -41289,6 +44903,9 @@ async def crear_gasto_rapido_en_informe(
             label: str,
             invoice_number: Optional[str],
             subtotal_raw: Optional[str],
+            descuento_raw: Optional[str],
+            shared_confirmed: Optional[str],
+            shared_reason: Optional[str],
             impuestos_raw: Optional[str],
             xml_upload: Optional[UploadFile],
             pdf_upload: Optional[UploadFile],
@@ -41338,10 +44955,16 @@ async def crear_gasto_rapido_en_informe(
                 fecha=values["fecha"].strftime("%Y-%m-%d"),
                 numero_factura=invoice_number,
                 subtotal=subtotal_raw,
-                descuento="0",
+                descuento=descuento_raw,
                 impuestos_y_retenciones=impuestos_raw,
                 propina_no_deducible="0",
                 xml_data=supplement_cfdi.parsed if supplement_cfdi else {},
+                factura_compartida=_form_checkbox_checked(shared_confirmed),
+                cfdi_source=(
+                    "XML"
+                    if supplement_cfdi and supplement_cfdi.from_uploaded_xml
+                    else "PDF"
+                ),
             )
             supplement_expense = await create_expense_from_data(
                 session=session,
@@ -41354,7 +44977,11 @@ async def crear_gasto_rapido_en_informe(
                 tipo_gasto="manual",
                 departamento=(owner.departamento if owner else None) or "Operaciones",
                 fase_torneo=(cuenta.fase or "").strip() or "No Aplica",
-                iva=float(supplement_values["iva"]),
+                iva=(
+                    float(supplement_values["iva"])
+                    if supplement_values["iva"] is not None
+                    else None
+                ),
                 origen="informe_quick_entry",
                 skip_initial_tocino=True,
                 categorias=list(getattr(cuenta, "categorias", None) or []),
@@ -41366,10 +44993,14 @@ async def crear_gasto_rapido_en_informe(
             if is_company_amex_account(cuenta.beneficiario_proveedor_cliente):
                 supplement_expense.pagado_con_amex_empresa = True
                 supplement_expense.metodo_pago = "TARJETA CREDITO AMEX"
+                supplement_expense.ultimos_4_digitos = (
+                    quick_amex_card.last4 if quick_amex_card is not None else None
+                )
             supplement_expense.numero_factura = supplement_values["numero_factura"]
             supplement_expense.cuenta_gastos_id = cuenta.id
             supplement_expense.referencia_base = cuenta.referencia_base
             supplement_expense.informe_documento_id = informe_doc.id
+            await apply_budget_concept_cuenta_mapping(session, supplement_expense)
 
             if supplement_cfdi is not None:
                 ingestion = await ingest_cfdi_from_upload(
@@ -41386,8 +45017,8 @@ async def crear_gasto_rapido_en_informe(
                         session,
                         supplement_expense,
                         require_unique=True,
-                        allow_shared=_form_checkbox_checked(cfdi_compartido_confirmado),
-                        shared_reason=cfdi_compartido_motivo,
+                        allow_shared=_form_checkbox_checked(shared_confirmed),
+                        shared_reason=shared_reason,
                         actor_id=current_empleado.id,
                     )
             elif supplement_values["numero_factura"]:
@@ -41397,9 +45028,14 @@ async def crear_gasto_rapido_en_informe(
                     supplement_expense,
                     clear_report_if_no_match=False,
                     require_unique=True,
-                    allow_shared=_form_checkbox_checked(cfdi_compartido_confirmado),
-                    shared_reason=cfdi_compartido_motivo,
+                    allow_shared=_form_checkbox_checked(shared_confirmed),
+                    shared_reason=shared_reason,
                     actor_id=current_empleado.id,
+                )
+
+            if _form_checkbox_checked(shared_confirmed):
+                await _validate_quick_shared_cfdi_amount(
+                    session, supplement_expense, cuenta, supplement_values
                 )
 
             if supplement_pdf is not None:
@@ -41430,6 +45066,9 @@ async def crear_gasto_rapido_en_informe(
             label="Asiento preferencial",
             invoice_number=asiento_preferencial_numero_factura,
             subtotal_raw=asiento_preferencial_subtotal,
+            descuento_raw=asiento_preferencial_descuento,
+            shared_confirmed=asiento_preferencial_cfdi_compartido_confirmado,
+            shared_reason=asiento_preferencial_cfdi_compartido_motivo,
             impuestos_raw=asiento_preferencial_impuestos_y_retenciones,
             xml_upload=asiento_preferencial_cfdi_xml,
             pdf_upload=asiento_preferencial_cfdi_pdf,
@@ -41438,6 +45077,9 @@ async def crear_gasto_rapido_en_informe(
             label="Exceso de equipaje",
             invoice_number=exceso_equipaje_numero_factura,
             subtotal_raw=exceso_equipaje_subtotal,
+            descuento_raw=exceso_equipaje_descuento,
+            shared_confirmed=exceso_equipaje_cfdi_compartido_confirmado,
+            shared_reason=exceso_equipaje_cfdi_compartido_motivo,
             impuestos_raw=exceso_equipaje_impuestos_y_retenciones,
             xml_upload=exceso_equipaje_cfdi_xml,
             pdf_upload=exceso_equipaje_cfdi_pdf,
@@ -41460,7 +45102,11 @@ async def crear_gasto_rapido_en_informe(
             url=_append_success_params(
                 redirect_base,
                 success="gasto_rapido_creado",
-                msg="Gasto guardado exitosamente.",
+                msg=(
+                    "Gasto guardado exitosamente. "
+                    "Pendiente de identificar tarjeta por Finanzas."
+                    if amex_identity_pending else "Gasto guardado exitosamente."
+                ),
             ),
             status_code=303,
         )
@@ -41470,7 +45116,7 @@ async def crear_gasto_rapido_en_informe(
     except ValueError as exc:
         await session.rollback()
         return RedirectResponse(
-            url=_append_error_params(redirect_base, error_msg=str(exc)),
+            url=_append_error_params(redirect_base, error_msg=exc, request=request),
             status_code=303,
         )
     except Exception as exc:
@@ -41491,6 +45137,8 @@ async def actualizar_gastos_amex_en_informe(
     current_empleado: Empleado = Depends(get_current_empleado),
     expense_ids: List[str] = Form([]),
     amex_action: str = Form(...),
+    amex_card_account_id: Optional[str] = Form(None),
+    amex_reason: Optional[str] = Form(None),
 ) -> RedirectResponse:
     role = (current_empleado.rol or "").strip().lower()
     if role not in FINANCE_AMEX_ROLES:
@@ -41517,6 +45165,11 @@ async def actualizar_gastos_amex_en_informe(
     cuenta = cuenta_result.scalar_one_or_none()
     if cuenta is None:
         raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
+    if getattr(cuenta, "comprobacion_parcial", False):
+        raise HTTPException(
+            status_code=409,
+            detail="La comprobación parcial de anticipo no admite cambios a AMEX empresa.",
+        )
     if not _cuenta_allows_company_amex(cuenta):
         return RedirectResponse(
             url=_append_error_params(
@@ -41547,12 +45200,26 @@ async def actualizar_gastos_amex_en_informe(
                 status_code=303,
             )
 
+        selected_card_id = None
+        if amex_action == "mark":
+            try:
+                selected_card_id = UUIDType(str(amex_card_account_id or "").strip())
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "Selecciona una tarjeta AMEX activa del catálogo."
+                ) from exc
+            if not (amex_reason or "").strip():
+                raise ValueError(
+                    "Indica el motivo de identificación de tarjeta al marcar AMEX."
+                )
         changed = await set_company_amex_status(
             session,
             cuenta_id=cuenta_id,
             expense_ids=parsed_ids,
             mark_as_amex=amex_action == "mark",
             actor=current_empleado,
+            card_account_id=selected_card_id,
+            reason=(amex_reason or "").strip(),
         )
         await session.commit()
     except (ValueError, AmexExpenseError, AmexFeeInterestError) as exc:
@@ -41572,6 +45239,82 @@ async def actualizar_gastos_amex_en_informe(
         ),
         status_code=303,
     )
+
+
+async def _build_partial_comprobacion_controls(
+    session: AsyncSession,
+    *,
+    cuenta: CuentaDeGastos,
+    informe_doc: Optional[Documento],
+    active_expenses: list[ExpenseReport],
+    monto_entregado: float,
+    total_amex: float,
+    is_owner: bool,
+    can_manage: bool,
+    cerrar_informe_form_html: str,
+) -> tuple[str, str, str]:
+    """Render the confirmed new lot, prior approvals and zero-balance closure."""
+    partial_actions_html = ""
+    partial_history_html = ""
+    if informe_doc and monto_entregado > 0 and total_amex == 0:
+        lots = list(
+            (
+                await session.execute(
+                    select(Documento)
+                    .where(Documento.informe_origen_id == informe_doc.id)
+                    .order_by(Documento.creado_en.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        partial_history_html = '<div class="surface"><h3>Comprobaciones parciales</h3>'
+        for lot in lots:
+            partial_history_html += (
+                f'<p><a href="/documentos/{lot.id}">{escape(lot.numero_referencia)}</a> '
+                f"{_documento_human_status_badge(lot.estado)} "
+                f"{format_currency(lot.monto_total, currency_for(cuenta))}</p>"
+            )
+        partial_history_html += "<p>Cada lote aprobado genera su propia póliza. Capturar gastos no reduce el saldo contable hasta su aprobación.</p></div>"
+        fresh = [
+            e
+            for e in active_expenses
+            if e.informe_documento_id in (None, informe_doc.id)
+        ]
+        fresh_total = sum(
+            (Decimal(str(e.gasto_cantidad or 0)) for e in fresh), Decimal(0)
+        ).quantize(Decimal("0.01"))
+        if (
+            is_owner
+            and can_manage
+            and cuenta.estado == "abierta"
+            and informe_doc.estado == "borrador"
+            and fresh
+        ):
+            partial_actions_html = (
+                f'<form method="POST" action="/informes-de-gastos/{cuenta.id}/comprobacion-parcial">'
+                f'<input type="hidden" name="submission_id" value="{uuid4()}">'
+                f'<input type="hidden" name="expense_ids" value="{",".join(str(e.id) for e in fresh)}">'
+                f'<input type="hidden" name="expected_total" value="{fresh_total}">'
+                f"<p>{len(fresh)} gastos nuevos: {format_currency(fresh_total, currency_for(cuenta))}</p>"
+                "<label>Motivo para enviar una comprobación con saldo pendiente</label>"
+                '<textarea name="motivo" required maxlength="2000" placeholder="Explica por qué queda saldo pendiente y qué falta por comprobar."></textarea>'
+                '<button type="submit" class="button primary" '
+                "onclick=\"return confirm('¿Confirmas el motivo y el envío de estos gastos nuevos a aprobación y mantener abierto el informe?')\">"
+                "Enviar comprobación parcial</button></form>"
+            )
+        if cuenta.comprobacion_parcial:
+            cerrar_informe_form_html = (
+                (
+                    f'<form method="POST" action="/informes-de-gastos/{cuenta.id}/cerrar">'
+                    '<button type="submit" class="button warning" '
+                    "onclick=\"return confirm('¿Cerrar el informe? Requiere todos los lotes aprobados y saldo contable en cero.')\">"
+                    "Cerrar informe saldado</button></form>"
+                )
+                if can_manage and cuenta.estado == "abierta"
+                else ""
+            )
+    return partial_actions_html, partial_history_html, cerrar_informe_form_html
 
 
 @router.get("/informes-de-gastos/{cuenta_id}", response_class=HTMLResponse)
@@ -41690,13 +45433,13 @@ async def cuenta_de_gastos_detail(
         session, [r.id for r in cuenta_reembolsos]
     )
 
-    # Compute totals (sum of all solicitudes' monto_solicitado)
+    # Cancelled/rejected requests remain in the audit trail, not in the total.
     active_expenses = [e for e in expenses if e.estado_gasto != 'cancelado']
     expense_totals = calculate_informe_expense_totals(active_expenses)
     total_gastos = expense_totals.total_reported
     total_amex = expense_totals.company_amex
     total_pagado_empleado = expense_totals.employee_paid
-    monto_solicitado = sum(float(d.monto_solicitado or 0) for d in solicitudes_list)
+    monto_solicitado = sum_active_solicitud_amounts(solicitudes_list)
     monto_entregado = sum_paid_solicitud_amounts(solicitudes_list)
     saldo_breakdown = compute_informe_saldo(
         employee_paid=total_pagado_empleado,
@@ -41704,6 +45447,33 @@ async def cuenta_de_gastos_detail(
         settled_amount=settled_amount_cuenta,
     )
     saldo = saldo_breakdown.saldo
+    advance_return_stale = not cuenta.comprobacion_parcial and advance_return_is_stale(
+        saldo_gross=saldo_breakdown.saldo_gross,
+        returned_amount=sum(
+            (
+                Decimal(str(r.monto or 0))
+                for r in active_cuenta_reembolsos
+                if r.tipo == "devolucion"
+            ),
+            Decimal("0.00"),
+        ),
+    )
+
+    reembolso_state, reembolso_doc, reembolso_settlement = (
+        _informe_reembolso_payment_state(
+            solicitudes=solicitudes_list,
+            reembolsos=active_cuenta_reembolsos,
+            saldo=saldo,
+        )
+    )
+    reembolso_payment_html = _render_informe_reembolso_payment_html(
+        cuenta_id=cuenta.id,
+        state=reembolso_state,
+        documento=reembolso_doc,
+        settlement=reembolso_settlement,
+        documento_metas=solicitud_adj_by_doc,
+        settlement_metas=reembolso_adj_by_id,
+    )
 
     # Build Movimientos: expenses + solicitudes + reembolsos (newest first)
     def _movimiento_sort_dt(*candidates: object) -> datetime:
@@ -41852,9 +45622,9 @@ async def cuenta_de_gastos_detail(
     movimientos_entries.sort(key=lambda item: item[0])
     movimientos_rows = "".join(row for _, row in movimientos_entries)
 
-
     # Estado operativo: derived from workflow, payment, settlement and proof signals.
     estado_badge = _render_informe_operational_status_badge(
+        partial_mode=cuenta.comprobacion_parcial,
         cuenta_estado=cuenta.estado,
         informe_estado=getattr(informe_doc, "estado", None),
         solicitudes=solicitudes_list,
@@ -41879,6 +45649,8 @@ async def cuenta_de_gastos_detail(
         bool(informe_doc)
         and informe_doc_estado == "borrador"
         and bool(active_expenses)
+        and saldo <= 0.005
+        and not advance_return_stale
         and _can_manage_cuenta
         and cuenta.estado in {"abierta", "cerrada"}
     )
@@ -41939,20 +45711,14 @@ async def cuenta_de_gastos_detail(
         and informe_doc.estado == "borrador"
         and cuenta.estado == "abierta"
         and not expenses
-        and not solicitudes_list
         and not cuenta_reembolsos
         and _can_cancel_empty_informe_draft(current_empleado, cuenta)
+        and await _count_blocking_informe_solicitudes(session, cuenta.id) == 0
     ):
-        cancelar_borrador_form_html = (
-            f'<form method="POST" action="/informes-de-gastos/{cuenta.id}/cancelar-borrador" '
-            'style="display:inline;">'
-            '<button type="submit" class="button" style="background:#991b1b;" '
-            'onclick="return confirm(\'¿Cancelar este informe vacío? El registro se conservará para auditoría.\')">'
-            'Cancelar borrador vacío</button></form>'
-        )
+        cancelar_borrador_form_html = _cancel_empty_informe_form_html(cuenta.id)
 
     informe_not_approved_note = ""
-    if saldo != 0 and not informe_doc_approved and not informe_doc_can_close:
+    if saldo < 0 and not informe_doc_approved and not informe_doc_can_close:
         if informe_doc_estado == "enviado":
             informe_not_approved_note = (
                 '<div class="section-note" style="margin-top:10px;">'
@@ -41964,14 +45730,19 @@ async def cuenta_de_gastos_detail(
                 'La liquidación se habilita cuando el documento INFORME esté aprobado.</div>'
             )
 
-    # Direction-aware CTA + active-settlement awareness after approval.
+    # Returns precede approval; reimbursements still require an approved report.
     has_active_settlement = len(active_cuenta_reembolsos) > 0
     saldar_cta_html = ""
     saldar_chip_html = ""
-    if saldo > 0 and informe_doc_approved and _can_manage_cuenta and not has_active_settlement:
-        saldar_cta_html = (
-            f'<a href="/informes-de-gastos/{cuenta.id}/saldar" class="button primary" '
-            f'style="margin-top:10px;display:inline-block;">Registrar devolución de sobrantes</a>'
+    if saldo > 0:
+        saldar_cta_html = _devolucion_sobrante_action_html(
+            cuenta_id=cuenta.id,
+            informe_estado=informe_doc_estado,
+            saldo=saldo,
+            monto_entregado=monto_entregado,
+            has_active_settlement=has_active_settlement
+            and not cuenta.comprobacion_parcial,
+            can_submit=_can_submit_settlement(cuenta, current_empleado, "devolucion"),
         )
     elif saldo < 0 and informe_doc_approved:
         rol_lower = (current_empleado.rol or "").strip().lower()
@@ -41987,12 +45758,12 @@ async def cuenta_de_gastos_detail(
             )
     elif informe_not_approved_note:
         saldar_cta_html = informe_not_approved_note
-    if saldo == 0 and not has_active_settlement:
-        saldar_chip_html = '<div class="status-chip info" style="margin-top:10px;">Saldado</div>'
-    if has_active_settlement:
-        saldar_chip_html = (
-            '<div class="status-chip info" style="margin-top:10px;">Liquidación en curso</div>'
-        )
+    return_status_label, saldar_chip_html = _cuenta_settlement_status_html(
+        stale_return=advance_return_stale,
+        has_active_settlement=has_active_settlement,
+        saldo=saldo,
+    )
+    saldo_label = return_status_label or saldo_label
 
     # Document links: only INFORME in "Documentos vinculados"; banner if missing
     informe_link = f'<a href="/documentos/{informe_doc.id}" style="color: #4CAF50; text-decoration: none;">I-{escape(cuenta.referencia_base)}</a> <small style="color: #666;">({informe_doc.estado})</small>' if informe_doc else None
@@ -42010,6 +45781,7 @@ async def cuenta_de_gastos_detail(
         solicitudes_section_rows += (
             f"<tr><td><a href=\"/documentos/{d.id}\" style=\"color: #4CAF50;\">"
             f"{escape(d.numero_referencia)}</a></td>"
+            f"<td>{escape(str(d.referencia_operaciones or '—'))}</td>"
             f"<td>{_documento_human_status_badge(d.estado)}</td>"
             f"<td>{format_currency(d.monto_solicitado, currency_for(d))}</td>"
             f"<td>{escape(currency_for(d))}</td>"
@@ -42033,8 +45805,8 @@ async def cuenta_de_gastos_detail(
                 {nueva_solicitud_btn_html}
                 <div class="table-shell">
                 <table>
-                    <thead><tr><th>Referencia</th><th>Estado</th><th>Monto</th><th>Moneda</th><th>Fecha</th><th>Archivos</th><th>Acción</th></tr></thead>
-                    <tbody>{solicitudes_section_rows if solicitudes_section_rows else '<tr><td colspan="7" style="text-align: center; color: #666;">No hay solicitudes de transferencia vinculadas a este informe.</td></tr>'}</tbody>
+                    <thead><tr><th>Referencia</th><th>Referencia Operaciones</th><th>Estado</th><th>Monto</th><th>Moneda</th><th>Fecha</th><th>Archivos</th><th>Acción</th></tr></thead>
+                    <tbody>{solicitudes_section_rows if solicitudes_section_rows else '<tr><td colspan="8" style="text-align: center; color: #666;">No hay solicitudes de transferencia vinculadas a este informe.</td></tr>'}</tbody>
                 </table>
                 </div>
             </div>'''
@@ -42056,7 +45828,9 @@ async def cuenta_de_gastos_detail(
             f'{success_actions_html}'
             '</div>'
         )
-    error_message = (request.query_params.get("error_msg") or "").strip()
+    error_message = await _expense_block_message(
+        request, session, current_empleado, current_document=informe_doc
+    )
     error_msg_html = (
         '<div class="notice warn"><strong>Error:</strong> '
         f'{escape(error_message)}</div>'
@@ -42124,7 +45898,15 @@ async def cuenta_de_gastos_detail(
         """
     coi_actions_html = ""
     diot_actions_html = ""
+    papel_poliza_html = ""
     if informe_doc and active_expenses:
+        if (current_empleado.rol or "").strip().lower() in {
+            "finanzas", "admin", "superadmin", "super_admin"
+        }:
+            papel_poliza_html = (
+                f'<a href="/informes-de-gastos/{cuenta.id}/papel-poliza.xlsx" '
+                'class="button secondary">Armar papel de póliza (Excel)</a>'
+            )
         if informe_doc_approved:
             coi_actions_html = f"""
         <a href="/informes-de-gastos/{cuenta.id}/preview-coi" class="button secondary">Vista previa COI</a>
@@ -42142,27 +45924,46 @@ async def cuenta_de_gastos_detail(
             )
             diot_actions_html = (
                 '<span class="section-note">'
-                'La DIOT se habilita cuando el INFORME esté aprobado.'
-                '</span>'
+                "La DIOT se habilita cuando el INFORME esté aprobado."
+                "</span>"
             )
+    devolver_sobrante_actions_html = saldar_cta_html if saldo > 0 else ""
+    partial_actions_html, partial_history_html, cerrar_informe_form_html = (
+        await _build_partial_comprobacion_controls(
+            session,
+            cuenta=cuenta,
+            informe_doc=informe_doc,
+            active_expenses=active_expenses,
+            monto_entregado=monto_entregado,
+            total_amex=total_amex,
+            is_owner=_is_cuenta_owner,
+            can_manage=_can_manage_cuenta,
+            cerrar_informe_form_html=cerrar_informe_form_html,
+        )
+    )
+
     detail_actions_html = f"""
         <a href="/informes-de-gastos" class="button secondary">Volver a mis informes</a>
         {informe_support_actions_html}
+        {papel_poliza_html}
         {coi_actions_html}
         {diot_actions_html}
         {f'<a href="/informes-de-gastos/{cuenta.id}/editar" class="button primary">Editar informe</a>' if _can_manage_cuenta and _can_edit_cuenta_before_budget_assignment(cuenta, informe_doc) else ''}
+        {devolver_sobrante_actions_html}
         {cerrar_informe_form_html}
         {cancelar_borrador_form_html}
+        {partial_actions_html}
+        {partial_history_html}
     """
     detail_side_html = f"""
         <div class="eyebrow">Estado del informe</div>
         <div style="margin-bottom:12px;">{estado_badge}</div>
         <div class="meta-grid">
             <div class="meta-card">
-                <span>Saldo</span>
+                <span>{'Saldo de captura' if cuenta.comprobacion_parcial else 'Saldo'}</span>
                 <strong style="color:{saldo_color};">{format_currency(abs(saldo), currency_for(cuenta))}</strong>
                 <small>{saldo_label}</small>
-                {saldar_cta_html}
+                {saldar_cta_html if saldo <= 0 else ""}
                 {saldar_chip_html}
             </div>
             <div class="meta-card">
@@ -42172,6 +45973,14 @@ async def cuenta_de_gastos_detail(
             </div>
         </div>
     """
+    informe_amex_card_options = await _amex_visible_card_options(
+        session,
+        current_empleado,
+        enabled=(
+            _cuenta_allows_company_amex(cuenta)
+            or is_company_amex_account(cuenta.beneficiario_proveedor_cliente)
+        ),
+    )
     amex_bulk_controls = (
         f"""
         <form method="POST" action="/informes-de-gastos/{cuenta.id}/gastos/amex">
@@ -42182,6 +45991,11 @@ async def cuenta_de_gastos_detail(
                     <option value="unmark">Desmarcar gasto de AMEX</option>
                     <option value="p1218_fee_interest">Clasificar comisión/interés AMEX → P1218</option>
                 </select>
+                <label>Tarjeta para marcar AMEX
+                    <select name="amex_card_account_id">
+                        {informe_amex_card_options}</select>
+                </label>
+                <label>Motivo al marcar AMEX <input name="amex_reason"></label>
                 <button type="submit" class="button primary">Aplicar a seleccionados</button>
             </div>
         """
@@ -42206,11 +46020,25 @@ async def cuenta_de_gastos_detail(
             required=True,
         )
     quick_company_amex_allowed = _cuenta_allows_company_amex(cuenta)
-    quick_company_amex_header = "<th>AMEX empresa</th>" if quick_company_amex_allowed else ""
-    quick_company_amex_cell = (
-        '<td><label style="display:flex;align-items:center;gap:8px;font-weight:700;white-space:nowrap;">'
-        '<input type="checkbox" name="pagado_con_amex_empresa" value="1"> AMEX empresa</label></td>'
+    quick_provider_amex = is_company_amex_account(cuenta.beneficiario_proveedor_cliente)
+    quick_amex_controls_visible = quick_company_amex_allowed or quick_provider_amex
+    quick_company_amex_header = (
+        "<th>AMEX empresa</th>" if quick_amex_controls_visible else ""
+    )
+    quick_company_amex_checkbox = (
+        '<label><input type="checkbox" name="pagado_con_amex_empresa" value="1"> '
+        "AMEX empresa</label>"
         if quick_company_amex_allowed
+        else ""
+    )
+    quick_company_amex_cell = (
+        "<td>"
+        + quick_company_amex_checkbox
+        + _amex_identity_control_html(
+            current_empleado, card_options=informe_amex_card_options
+        )
+        + "</td>"
+        if quick_amex_controls_visible
         else ""
     )
     if _can_quick_capture_expense(cuenta, informe_doc, current_empleado):
@@ -42224,7 +46052,6 @@ async def cuenta_de_gastos_detail(
                     </div>
                     <div id="quick_cfdi_autofill_notice" class="notice info" hidden style="margin-bottom:12px;background:#eff6ff;color:#1e3a8a;border:1px solid #bfdbfe;border-radius:12px;padding:12px 14px;"></div>
                     <form id="quick-expense-form" method="POST" action="/informes-de-gastos/{cuenta.id}/gastos/quick" enctype="multipart/form-data">
-                        <input type="hidden" name="descuento" id="quick-descuento" value="0">
                         <input type="hidden" name="es_no_deducible" id="quick-es-no-deducible" value="0">
                         <div class="table-shell quick-expense-shell">
                             <table class="quick-expense-table">
@@ -42238,6 +46065,7 @@ async def cuenta_de_gastos_detail(
                                         <th>FECHA DEL GASTO</th>
                                         <th>No. Factura</th>
                                         <th>Sub total</th>
+                                        <th>Descuento aplicado</th>
                                         <th>Impuestos y retenciones</th>
                                         <th class="quick-tip-col" hidden>Propina</th>
                                         <th>TOTAL</th>
@@ -42256,6 +46084,7 @@ async def cuenta_de_gastos_detail(
                                             <input type="file" name="comprobante_no_deducible" id="quick-comprobante-no-deducible" accept=".pdf,image/*,application/pdf" style="display:block;margin-top:8px;max-width:190px;">
                                             <label style="display:block;margin-top:8px;font-size:12px;"><input type="checkbox" name="cfdi_compartido_confirmado" value="1"> Factura compartida</label>
                                             <input type="text" name="cfdi_compartido_motivo" placeholder="Motivo compartida" style="display:block;margin-top:4px;max-width:190px;">
+                                            <small style="display:block;margin-top:4px;max-width:190px;">Para factura compartida, ajuste Sub total, Descuento e Impuestos al importe que aplica a este informe. TOTAL muestra el importe aplicado, más propina si corresponde.</small>
                                         </td>
                                         <td><input name="concepto" id="quick-concepto" required></td>
                                         <td{quick_budget_style}><select name="{quick_budget_name}" id="quick-budget-concept" {"required" if quick_budget_concepts_filtered and can_manage_budget_classification else ""}>{quick_budget_concept_options or '<option value="">&mdash; Sin concepto &mdash;</option>'}</select></td>
@@ -42268,7 +46097,8 @@ async def cuenta_de_gastos_detail(
                                             </datalist>
                                         </td>
                                         <td><input type="number" min="0" step="0.01" name="subtotal" id="quick-subtotal" required></td>
-                                        <td><input type="number" step="0.01" name="impuestos_y_retenciones" id="quick-impuestos-y-retenciones" value="0" required></td>
+                                        <td><input type="number" min="0" step="0.01" name="descuento" id="quick-descuento" value="0" aria-label="Descuento aplicado"></td>
+                                        <td><input type="number" step="0.01" name="impuestos_y_retenciones" id="quick-impuestos-y-retenciones" value="0" required><small>Sin XML, este neto no identifica IVA ni retenciones; Contabilidad debe revisar el desglose.</small></td>
                                         <td class="quick-tip-col" hidden><input type="number" min="0" step="0.01" name="propina_no_deducible" id="quick-propina" value="0" aria-label="Propina no deducible"></td>
                                         <td><input type="text" id="quick-total" value="0.00" readonly></td>
                                         <td><input type="text" value="{escape(currency_for(cuenta))}" readonly></td>
@@ -42300,28 +46130,34 @@ async def cuenta_de_gastos_detail(
                                 <thead>
                                     <tr>
                                         <th>Concepto</th>
+                                        <th>Factura compartida</th>
                                         <th>CFDI XML</th>
                                         <th>CFDI PDF</th>
                                         <th>No. Factura</th>
                                         <th>Sub total</th>
+                                        <th>Descuento aplicado</th>
                                         <th>Impuestos y retenciones</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <tr>
                                         <td>Asiento preferencial</td>
+                                        <td><label><input form="quick-expense-form" type="checkbox" name="asiento_preferencial_cfdi_compartido_confirmado" value="1"> Factura compartida</label><input form="quick-expense-form" name="asiento_preferencial_cfdi_compartido_motivo" placeholder="Motivo compartida"></td>
                                         <td><input form="quick-expense-form" type="file" name="asiento_preferencial_cfdi_xml" accept=".xml,application/xml,text/xml"></td>
                                         <td><input form="quick-expense-form" type="file" name="asiento_preferencial_cfdi_pdf" accept=".pdf,application/pdf"></td>
                                         <td><input form="quick-expense-form" name="asiento_preferencial_numero_factura" placeholder="UUID o folio"></td>
                                         <td><input form="quick-expense-form" type="number" min="0" step="0.01" name="asiento_preferencial_subtotal"></td>
+                                        <td><input form="quick-expense-form" type="number" min="0" step="0.01" name="asiento_preferencial_descuento" value="0" aria-label="Descuento aplicado"></td>
                                         <td><input form="quick-expense-form" type="number" step="0.01" name="asiento_preferencial_impuestos_y_retenciones" value="0"></td>
                                     </tr>
                                     <tr>
                                         <td>Exceso de equipaje</td>
+                                        <td><label><input form="quick-expense-form" type="checkbox" name="exceso_equipaje_cfdi_compartido_confirmado" value="1"> Factura compartida</label><input form="quick-expense-form" name="exceso_equipaje_cfdi_compartido_motivo" placeholder="Motivo compartida"></td>
                                         <td><input form="quick-expense-form" type="file" name="exceso_equipaje_cfdi_xml" accept=".xml,application/xml,text/xml"></td>
                                         <td><input form="quick-expense-form" type="file" name="exceso_equipaje_cfdi_pdf" accept=".pdf,application/pdf"></td>
                                         <td><input form="quick-expense-form" name="exceso_equipaje_numero_factura" placeholder="UUID o folio"></td>
                                         <td><input form="quick-expense-form" type="number" min="0" step="0.01" name="exceso_equipaje_subtotal"></td>
+                                        <td><input form="quick-expense-form" type="number" min="0" step="0.01" name="exceso_equipaje_descuento" value="0" aria-label="Descuento aplicado"></td>
                                         <td><input form="quick-expense-form" type="number" step="0.01" name="exceso_equipaje_impuestos_y_retenciones" value="0"></td>
                                     </tr>
                                 </tbody>
@@ -42332,9 +46168,17 @@ async def cuenta_de_gastos_detail(
         """
 
     debtor_aux = await build_cuenta_debtor_auxiliary(session, cuenta_id=cuenta.id)
+    if cuenta.comprobacion_parcial:
+        detail_side_html += (
+            '<div class="meta-card"><span>Saldo contable pendiente</span>'
+            f'<strong>{format_currency(debtor_aux["saldo"], currency_for(cuenta))}</strong>'
+            "<small>Se reduce con comprobaciones aprobadas y devoluciones registradas.</small></div>"
+        )
     debtor_aux_html = _render_debtor_auxiliary_section(
         debtor_aux,
         currency_for(cuenta),
+        employee_paid=total_pagado_empleado,
+        informe_estado=getattr(informe_doc, "estado", None),
     )
 
     html = f"""
@@ -42436,6 +46280,7 @@ async def cuenta_de_gastos_detail(
                 {success_msg}
                 {error_msg_html}
                 {sin_informe_banner}
+                {reembolso_payment_html}
                 <section class="surface">
                     {clasificacion_info}
                     <div class="meta-grid" style="margin-top:14px;">
@@ -42457,7 +46302,7 @@ async def cuenta_de_gastos_detail(
                         <div class="meta-card">
                             <span>Monto solicitado</span>
                             <strong>{format_currency(monto_solicitado, currency_for(cuenta))}</strong>
-                            <small>Suma de solicitudes ligadas (incluye pendientes).</small>
+                            <small>Solicitudes vigentes, incluidas las pendientes; excluye rechazadas y canceladas.</small>
                         </div>
                         <div class="meta-card">
                             <span>Entregado por la empresa</span>
@@ -43421,6 +47266,58 @@ async def nueva_solicitud_desde_cuenta_submit(
     )
 
 
+@router.post("/informes-de-gastos/{cuenta_id}/comprobacion-parcial")
+async def enviar_comprobacion_parcial(
+    cuenta_id: UUIDType,
+    request: Request,
+    submission_id: str = Form(...),
+    expense_ids: str = Form(...),
+    expected_total: str = Form(...),
+    motivo: str = Form(...),
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    cuenta = await session.get(CuentaDeGastos, cuenta_id)
+    if cuenta is None:
+        raise HTTPException(status_code=404, detail="Informe no encontrado")
+    if not _can_mutate_cuenta_de_gastos(cuenta, current_empleado):
+        raise HTTPException(status_code=403, detail="Acceso de solo lectura al informe")
+    try:
+        amount = Decimal(expected_total)
+        if not amount.is_finite() or amount <= 0:
+            raise ValueError("Monto inválido")
+        lot = await submit_partial_advance_lot(
+            session,
+            cuenta_id=cuenta_id,
+            actor=current_empleado,
+            submission_id=UUIDType(submission_id),
+            expected_expense_ids={UUIDType(value) for value in expense_ids.split(",")},
+            expected_total=amount,
+            motivo=motivo,
+        )
+    except (
+        PartialAdvanceError,
+        ValueError,
+        ArithmeticError,
+        DocumentoWorkflowValidationError,
+    ) as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/informes-de-gastos/{cuenta_id}", error_msg=str(exc)
+            ),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=_append_success_params(
+            f"/informes-de-gastos/{cuenta_id}",
+            success="comprobacion_enviada",
+            msg=f"{lot.numero_referencia} enviado a revisión. El informe permanece abierto.",
+        ),
+        status_code=303,
+    )
+
+
 @router.post("/informes-de-gastos/{cuenta_id}/cerrar")
 async def cerrar_cuenta_de_gastos(
     cuenta_id: UUIDType,
@@ -43472,8 +47369,40 @@ async def cerrar_cuenta_de_gastos(
                 redirect_url,
                 {
                     "error": "invalid_estado",
-                    "error_msg": "El informe no está en un estado que pueda cerrarse.",
+                    "error_msg": (
+                        "El informe no puede cerrarse porque su estado "
+                        f"actual es {cuenta.estado}."
+                    ),
                 },
+            ),
+            status_code=303,
+        )
+
+    if cuenta.comprobacion_parcial:
+        try:
+            await finalize_partial_advance(session, cuenta=cuenta, informe=informe_doc)
+            session.add(
+                Aprobacion(
+                    tipo_entidad="documento",
+                    entidad_id=informe_doc.id,
+                    aprobador_id=current_empleado.id,
+                    accion="cerrar_comprobacion_parcial",
+                    comentario="Informe cerrado con todos sus lotes aprobados y saldo contable en cero.",
+                    fecha=datetime.now(timezone.utc),
+                )
+            )
+            await session.commit()
+        except PartialAdvanceError as exc:
+            await session.rollback()
+            return RedirectResponse(
+                url=_append_error_params(redirect_url, error_msg=str(exc)),
+                status_code=303,
+            )
+        return RedirectResponse(
+            url=_append_success_params(
+                redirect_url,
+                success="cerrada",
+                msg="Informe cerrado; las pólizas de sus lotes se conservan.",
             ),
             status_code=303,
         )
@@ -43744,6 +47673,16 @@ async def _compute_cuenta_saldo_context(
         monto_entregado=monto_entregado,
         settled_amount=settled_amount,
     )
+    cuenta = await session.get(CuentaDeGastos, cuenta_id)
+    partial_mode = bool(getattr(cuenta, "comprobacion_parcial", False))
+    advance_return_stale = (
+        not partial_mode
+        and bool(active_count)
+        and advance_return_is_stale(
+            saldo_gross=saldo_breakdown.saldo_gross,
+            returned_amount=await sum_active_advance_returns(session, cuenta_id),
+        )
+    )
     return {
         "total_gastos": total_pagado_empleado,
         "total_pagado_empleado": total_pagado_empleado,
@@ -43751,6 +47690,8 @@ async def _compute_cuenta_saldo_context(
         "monto_entregado": monto_entregado,
         "settled_amount": settled_amount,
         "active_settlement_count": active_count,
+        "partial_mode": partial_mode,
+        "advance_return_stale": advance_return_stale,
         "saldo_gross": saldo_breakdown.saldo_gross,
         "saldo_raw": saldo_breakdown.saldo,
         "tipo": saldo_breakdown.settlement_tipo,
@@ -43764,6 +47705,58 @@ def _can_access_reembolso_cuenta(cuenta: CuentaDeGastos, empleado: Empleado) -> 
         return True
     rol = (empleado.rol or "").strip().lower()
     return rol in {"admin", "finanzas", "coordinador", "superadmin", "super_admin"}
+
+
+def _cuenta_settlement_status_html(
+    *, stale_return: bool, has_active_settlement: bool, saldo: float
+) -> tuple[str, str]:
+    """Present a stale return explicitly rather than labelling it settled."""
+    if stale_return:
+        return (
+            "Devolución debe recalcularse",
+            '<div class="section-note">Los gastos cambiaron después de devolver. '
+            'Solicita a Finanzas cancelar la devolución y recalcular el saldo '
+            'antes de enviar el informe.</div>',
+        )
+    if has_active_settlement:
+        return (
+            "",
+            '<div class="status-chip info" style="margin-top:10px;">Liquidación en curso</div>',
+        )
+    if saldo == 0:
+        return (
+            "",
+            '<div class="status-chip info" style="margin-top:10px;">Saldado</div>',
+        )
+    return "", ""
+
+
+def _devolucion_sobrante_action_html(
+    *,
+    cuenta_id: UUIDType,
+    informe_estado: str,
+    saldo: float,
+    monto_entregado: float,
+    has_active_settlement: bool,
+    can_submit: bool,
+) -> str:
+    """Render the same paid-advance return action on both report surfaces."""
+    if saldo <= 0 or has_active_settlement or not can_submit:
+        return ""
+    try:
+        validate_settlement_eligibility(
+            informe_estado=informe_estado,
+            tipo="devolucion",
+            monto_entregado=monto_entregado,
+        )
+    except CuentaSettlementValidationError:
+        return ""
+    return (
+        f'<a href="/informes-de-gastos/{cuenta_id}/saldar" class="button primary">'
+        'Registrar devolución de sobrantes</a>'
+        '<div class="section-note" style="margin-top:8px;">'
+        'El empleado devuelve el sobrante del anticipo a la empresa.</div>'
+    )
 
 
 def _can_submit_settlement(
@@ -43834,13 +47827,7 @@ async def saldar_cuenta_form(
             '<div class="notice warn"><strong>Sin documento INFORME.</strong> '
             'No se puede liquidar una cuenta sin documento vinculado.</div>'
         )
-    elif informe_doc.estado != "aprobado":
-        blocked = True
-        notice_html = (
-            '<div class="notice warn"><strong>Informe no aprobado.</strong> '
-            'La liquidación se habilita cuando el informe sea aprobado.</div>'
-        )
-    elif saldo_ctx["active_settlement_count"] > 0:
+    elif saldo_ctx["active_settlement_count"] > 0 and not saldo_ctx.get("partial_mode"):
         blocked = True
         notice_html = (
             '<div class="notice warn"><strong>Ya existe una liquidación activa.</strong> '
@@ -43863,6 +47850,17 @@ async def saldar_cuenta_form(
             notice_html = (
                 '<div class="notice warn">Solo el dueño del informe o finanzas pueden registrar una devolución.</div>'
             )
+
+    if not blocked:
+        try:
+            validate_settlement_eligibility(
+                informe_estado=informe_doc.estado,
+                tipo=tipo,
+                monto_entregado=saldo_ctx["monto_entregado"],
+            )
+        except CuentaSettlementValidationError as exc:
+            blocked = True
+            notice_html = f'<div class="notice warn">{escape(exc.message)}</div>'
 
     if error_msg:
         notice_html = (
@@ -43898,6 +47896,28 @@ async def saldar_cuenta_form(
             if tipo == "devolucion"
             else "Registrar liquidación"
         )
+        partial_controls = ""
+        if (
+            tipo == "devolucion"
+            and informe_doc.estado == "borrador"
+            and cuenta.estado == "abierta"
+        ):
+            partial_controls = (
+                "<label>Monto que efectivamente devuelve</label>"
+                f'<input type="number" name="monto" min="0.01" max="{saldo_abs:.2f}" step="0.01" value="{saldo_abs:.2f}" required>'
+                + (
+                    '<input type="hidden" name="allow_partial" value="1">'
+                    if cuenta.comprobacion_parcial
+                    else '<label><input type="checkbox" name="allow_partial" value="1"> Mantener abierto para comprobaciones parciales de anticipo (sin AMEX)</label>'
+                )
+                + f'<input type="hidden" name="client_submission_id" value="{uuid4()}">'
+                '<div class="section-note">Puedes devolver una parte. El informe queda abierto y el resto permanece a cargo del colaborador.</div>'
+            )
+        else:
+            partial_controls = (
+                f'<input type="hidden" name="monto" value="{saldo_abs:.2f}">'
+                '<div class="section-note">El reembolso liquida el saldo completo.</div>'
+            )
         form_html = f"""
         <form method="POST" action="/informes-de-gastos/{cuenta_id}/saldar"
               enctype="multipart/form-data" class="surface" style="padding:20px;">
@@ -43909,9 +47929,8 @@ async def saldar_cuenta_form(
             <div class="form-group">
                 <label>Monto a liquidar</label>
                 <div style="font-size:1.3rem;"><strong>{saldo_display}</strong> MXN</div>
-                <input type="hidden" name="monto" value="{saldo_abs:.2f}">
+                {partial_controls}
                 <input type="hidden" name="saldo_snapshot" value="{saldo_abs:.2f}">
-                <div class="section-note">Se liquida el saldo completo; no se permiten pagos parciales.</div>
             </div>
             <div class="form-group">
                 <label for="metodo_pago_sld">Método de pago</label>
@@ -43925,7 +47944,7 @@ async def saldar_cuenta_form(
             </div>
             <div class="form-group">
                 <label for="fecha_pago_sld">Fecha del pago</label>
-                <input type="date" name="fecha_pago" id="fecha_pago_sld" value="{today_iso}">
+                <input type="date" name="fecha_pago" id="fecha_pago_sld" value="{today_iso}" required>
             </div>
             <div class="form-group">
                 <label for="referencia_pago_sld">Referencia / folio</label>
@@ -44039,6 +48058,8 @@ async def saldar_cuenta_submit(
     referencia_pago: Optional[str] = Form(None),
     notas: Optional[str] = Form(None),
     comprobante: Optional[UploadFile] = File(None),
+    allow_partial: Optional[str] = Form(None),
+    client_submission_id: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """Register a full-settlement reembolso/devolucion for the cuenta."""
     cuenta_row = await session.execute(
@@ -44051,12 +48072,12 @@ async def saldar_cuenta_submit(
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
     informe_doc = await _informe_documento_for_cuenta(session, cuenta_id)
-    if informe_doc is None or informe_doc.estado != "aprobado":
+    if informe_doc is None:
         return RedirectResponse(
             url=_append_error_params(
                 f"/informes-de-gastos/{cuenta_id}/saldar",
-                error="informe_not_approved",
-                error_msg="La cuenta solo puede liquidarse cuando el informe esté aprobado.",
+                error="missing_informe_documento",
+                error_msg="La cuenta requiere un documento INFORME vinculado.",
             ),
             status_code=303,
         )
@@ -44084,8 +48105,13 @@ async def saldar_cuenta_submit(
             comprobante_filename=comprobante_filename,
             comprobante_mime=comprobante_mime,
             saldo_snapshot=saldo_snapshot,
+            allow_partial=allow_partial == "1",
+            client_submission_id=(
+                client_submission_id if isinstance(client_submission_id, str) else None
+            ),
         )
     except CuentaSettlementPermissionError as exc:
+        await session.rollback()
         return RedirectResponse(
             url=_append_error_params(
                 f"/informes-de-gastos/{cuenta_id}/saldar",
@@ -44095,6 +48121,7 @@ async def saldar_cuenta_submit(
             status_code=303,
         )
     except CuentaSettlementValidationError as exc:
+        await session.rollback()
         if exc.code == "cuenta_not_found":
             raise HTTPException(status_code=404, detail=exc.message)
         return RedirectResponse(
@@ -44138,7 +48165,11 @@ async def saldar_cuenta_submit(
         if result.tipo == "reembolso"
         else "Devolución de Sobrantes"
     )
-    success_msg = f"{label} registrado exitosamente. Cuenta saldada."
+    success_msg = f"{label} registrado exitosamente."
+    if getattr(cuenta, "comprobacion_parcial", False):
+        success_msg += " El informe permanece abierto; revisa el saldo contable en el auxiliar de deudores."
+    else:
+        success_msg += " Cuenta saldada."
     return RedirectResponse(
         url=_append_success_params(
             f"/informes-de-gastos/{cuenta_id}",
@@ -44414,7 +48445,7 @@ async def descargar_reembolso_adjunto(
     cuenta = cuenta_result.scalar_one_or_none()
     if cuenta is None:
         raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
-    if not _can_access_reembolso_cuenta(cuenta, current_empleado):
+    if not _can_read_cuenta_de_gastos(cuenta, current_empleado):
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
     reembolso_result = await session.execute(
@@ -44448,3 +48479,8 @@ async def descargar_reembolso_adjunto(
         media_type=media_type,
         headers={"Content-Disposition": disposition},
     )
+
+
+from .supplier_advance_routes import router as supplier_advance_router
+
+router.include_router(supplier_advance_router)

@@ -1528,19 +1528,24 @@ async def operations_tournament_registration_executive_reports_adapter(
     payload: Dict[str, Any],
 ) -> AdapterResult:
     tournament_slug = (
-        payload.get("tournament_slug")
-        or payload.get("slug")
-        or context.tournament_name
+        payload.get("tournament_slug") or payload.get("slug") or context.tournament_name
     )
     tournament_key = (
-        payload.get("tournament_key")
-        or context.sport
-        or tournament_slug
-        or "all"
+        payload.get("tournament_key") or context.sport or tournament_slug or "all"
     )
     result = await tournament_registration_executive_reports(
         session,
         tournament_key=str(tournament_key or "all"),
+        tournament_id=(
+            str(payload.get("tournament_id") or context.tournament_id)
+            if payload.get("tournament_id") or context.tournament_id
+            else None
+        ),
+        edition_year=(
+            int(str(payload.get("edition_year") or context.edition))
+            if payload.get("edition_year") or context.edition
+            else None
+        ),
         tournament_slug=str(tournament_slug) if tournament_slug else None,
         as_of_date=(
             str(payload.get("as_of_date")) if payload.get("as_of_date") else None
@@ -1565,7 +1570,6 @@ async def operations_tournament_registration_executive_reports_adapter(
             sport=context.sport or str(tournament_key or ""),
         ),
     )
-
 
 async def operations_update_commitment_adapter(
     session: AsyncSession,

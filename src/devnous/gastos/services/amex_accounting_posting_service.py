@@ -9,14 +9,14 @@ partial journal.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
-from decimal import Decimal, ROUND_HALF_UP
-import re
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import and_, select, text
+from sqlalchemy import and_, exists, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -27,14 +27,16 @@ from ..models import (
     Documento,
     ExpenseReport,
 )
+from .amex_accounting_identity_service import (
+    amex_bank_header_condition,
+    accounting_expense_condition,
+)
 from .amex_cfdi_matching_service import is_pase_expense
 from .amex_expense_service import company_amex_sql_condition
 from .employee_debtor_accounting_service import _create_poliza, _existing_poliza
 from .expense_accounting_service import build_expense_accounting_preview
 
-
 MONEY = Decimal("0.01")
-AMEX_REPORT_DEBTOR_CODE = "1170-002-004"
 SANTANDER_BANK_CODE = "1120-001-001"
 ALLOWED_AMEX_LIABILITY_CODES = frozenset(
     {
@@ -73,13 +75,21 @@ def _uuid(value: Any) -> Optional[UUID]:
         return None
 
 
-def amex_payment_card_marker(card_account_id: UUID | str) -> str:
+def amex_payment_card_marker(
+    card_account_id: UUID | str, *, liability_account_id: UUID | str | None = None
+) -> str:
     """Return the durable card binding embedded in an AMEX payment request."""
 
     card_id = _uuid(card_account_id)
     if card_id is None:
         raise ValueError("invalid AMEX card account id")
-    return f"{AMEX_PAYMENT_CARD_MARKER}={card_id}"
+    marker = f"{AMEX_PAYMENT_CARD_MARKER}={card_id}"
+    if liability_account_id is not None:
+        liability_id = _uuid(liability_account_id)
+        if liability_id is None:
+            raise ValueError("invalid AMEX liability account id")
+        marker += f"\nSAMCHAT_AMEX_LIABILITY_ACCOUNT_ID={liability_id}"
+    return marker
 
 
 def parse_amex_payment_card_id(documento: Documento) -> Optional[UUID]:
@@ -88,6 +98,15 @@ def parse_amex_payment_card_id(documento: Documento) -> Optional[UUID]:
     if str(getattr(documento, "metodo_pago", "") or "").strip().upper() != "AMEX":
         return None
     match = _CARD_MARKER_RE.search(str(getattr(documento, "notas", "") or ""))
+    return _uuid(match.group(1)) if match else None
+
+
+def parse_amex_payment_liability_id(documento: Documento) -> Optional[UUID]:
+    """Read the liability frozen when the payment request was prepared."""
+    match = re.search(
+        r"(?:^|\n)SAMCHAT_AMEX_LIABILITY_ACCOUNT_ID=([0-9a-fA-F-]{36})(?:\n|$)",
+        str(getattr(documento, "notas", "") or ""),
+    )
     return _uuid(match.group(1)) if match else None
 
 
@@ -106,9 +125,7 @@ async def _lock_event(session: AsyncSession, event_key: str) -> None:
     )
 
 
-async def _active_account(
-    session: AsyncSession, code: str
-) -> Optional[CuentaContable]:
+async def _active_account(session: AsyncSession, code: str) -> Optional[CuentaContable]:
     result = await session.execute(
         select(CuentaContable).where(
             CuentaContable.codigo == code,
@@ -169,6 +186,13 @@ async def _single_expense_fiscal_lines(
     *,
     meta: dict[str, Any],
 ) -> tuple[Optional[list[dict[str, Any]]], Decimal, Optional[str]]:
+    header = await session.scalar(
+        select(amex_bank_header_condition(ExpenseReport)).where(
+            ExpenseReport.id == expense.id
+        )
+    )
+    if header is True:
+        return None, Decimal("0.00"), "amex_bridge_header_not_postable"
     account = getattr(expense, "cuenta_contable", None)
     if account is None and getattr(expense, "cuenta_contable_id", None):
         account = await session.get(CuentaContable, expense.cuenta_contable_id)
@@ -276,6 +300,16 @@ async def _pase_group_fiscal_lines(
     *,
     meta: dict[str, Any],
 ) -> tuple[Optional[list[dict[str, Any]]], Decimal, Optional[str]]:
+    header_present = await session.scalar(
+        select(
+            exists().where(
+                ExpenseReport.id.in_([expense.id for expense in expenses]),
+                amex_bank_header_condition(ExpenseReport),
+            )
+        )
+    )
+    if header_present is True:
+        return None, Decimal("0.00"), "amex_bridge_header_not_postable"
     """Post one global PASE CFDI once, never once per individual toll."""
 
     first = expenses[0]
@@ -313,7 +347,7 @@ async def _pase_group_fiscal_lines(
     if base < 0:
         return None, Decimal("0.00"), f"pase_negative_base:{cfdi.id}"
 
-    account = await session.get(CuentaContable, next(iter(account_ids)))
+    account: Any = await session.get(CuentaContable, next(iter(account_ids)))
     if account is None or not getattr(account, "activo", False):
         return None, Decimal("0.00"), f"pase_missing_expense_account:{cfdi.id}"
     common = {
@@ -376,7 +410,9 @@ async def _fiscal_lines_for_expenses(
 ) -> tuple[Optional[list[dict[str, Any]]], Decimal, Optional[str]]:
     by_cfdi: dict[Optional[UUID], list[ExpenseReport]] = {}
     for expense in expenses:
-        by_cfdi.setdefault(expense.cfdi_report_id, []).append(expense)
+        by_cfdi.setdefault(
+            UUID(str(expense.cfdi_report_id)) if expense.cfdi_report_id else None, []
+        ).append(expense)
 
     rows: list[dict[str, Any]] = []
     net_total = Decimal("0.00")
@@ -405,9 +441,7 @@ async def _existing_after_lock(
     session: AsyncSession, *, origin: str, number: str, event_key: str
 ) -> Optional[AccountingPoliza]:
     await _lock_event(session, event_key)
-    return await _existing_poliza(
-        session, origen=origin, numero_poliza=number
-    )
+    return await _existing_poliza(session, origen=origin, numero_poliza=number)
 
 
 async def ensure_amex_report_approval_posting(
@@ -415,7 +449,7 @@ async def ensure_amex_report_approval_posting(
     *,
     informe_documento: Documento,
 ) -> AmexPostingResult:
-    """Rule 9: approved AMEX report -> fiscal debits / 1170-002-004."""
+    """Prepare AMEX review; only the explicit Finance cut creates a journal."""
 
     if informe_documento.tipo != "INFORME" or not informe_documento.cuenta_gastos_id:
         return AmexPostingResult(status="skipped", reason="not_expense_report")
@@ -439,54 +473,10 @@ async def ensure_amex_report_approval_posting(
     if not expenses:
         return AmexPostingResult(status="skipped", reason="no_report_amex_expenses")
 
-    origin = "amex_informe_aprobado"
-    number = f"AMX-REP-{str(informe_documento.id)[:8]}"
-    existing = await _existing_after_lock(
-        session,
-        origin=origin,
-        number=number,
-        event_key=f"{origin}:{informe_documento.id}",
-    )
-    if existing is not None:
-        return AmexPostingResult(status="exists", poliza=existing)
+    from .amex_recognition_service import recognize_expenses
 
-    debtor = await _active_account(session, AMEX_REPORT_DEBTOR_CODE)
-    if debtor is None:
-        return AmexPostingResult(status="pending", reason="missing_amex_partner_debtor")
-    meta = {
-        "origin": origin,
-        "documento_id": str(informe_documento.id),
-        "cuenta_gastos_id": str(informe_documento.cuenta_gastos_id),
-    }
-    rows, net, reason = await _fiscal_lines_for_expenses(session, expenses, meta=meta)
-    if reason:
-        return AmexPostingResult(status="pending", reason=reason)
-    if net <= 0:
-        return AmexPostingResult(status="pending", reason="invalid_amex_report_total")
-    concept = f"Informe AMEX aprobado - {informe_documento.numero_referencia}"
-    rows = list(rows or [])
-    rows.append(
-        _credit_line(
-            code=debtor.codigo,
-            account_id=debtor.id,
-            amount=net,
-            concept=concept,
-            meta=meta,
-            movement="haber_deudor_socio_amex",
-        )
-    )
-    if not posting_is_balanced(rows):
-        return AmexPostingResult(status="pending", reason="unbalanced_amex_report")
-    poliza = await _create_poliza(
-        session,
-        origen=origin,
-        numero_poliza=number,
-        fecha=informe_documento.aprobado_en or datetime.utcnow(),
-        beneficiario_nombre=debtor.nombre,
-        concepto=concept,
-        lines=rows,
-    )
-    return AmexPostingResult(status="created", poliza=poliza)
+    preparation = await recognize_expenses(session, expenses)
+    return AmexPostingResult(preparation.status, preparation.reason, preparation.poliza)
 
 
 async def ensure_amex_reconciliation_posting(
@@ -496,7 +486,7 @@ async def ensure_amex_reconciliation_posting(
     month: int,
     card_account: AmexCardAccount,
 ) -> AmexPostingResult:
-    """Rule 10: validated AMEX reconciliation -> fiscal debits / card liability."""
+    """Prepare reconciliation without duplicating the Finance accounting cut."""
 
     if not 1 <= month <= 12 or not getattr(card_account, "active", False):
         return AmexPostingResult(status="pending", reason="invalid_card_period")
@@ -524,6 +514,7 @@ async def ensure_amex_reconciliation_posting(
         .where(
             and_(
                 ExpenseReport.origen == "amex_batch",
+                accounting_expense_condition(ExpenseReport),
                 ExpenseReport.estado_gasto == "activo",
                 ExpenseReport.ultimos_4_digitos == card_account.last4,
                 ExpenseReport.fecha >= start,
@@ -535,56 +526,10 @@ async def ensure_amex_reconciliation_posting(
     expenses = list(result.scalars().all())
     if not expenses:
         return AmexPostingResult(status="pending", reason="no_amex_charges")
-    if any(not expense.cfdi_report_id for expense in expenses):
-        return AmexPostingResult(status="pending", reason="unlinked_amex_charges")
+    from .amex_recognition_service import recognize_expenses
 
-    origin = "amex_conciliacion"
-    number = f"AMX-REC-{year:04d}{month:02d}-{card_account.last4}"
-    existing = await _existing_after_lock(
-        session,
-        origin=origin,
-        number=number,
-        event_key=f"{origin}:{year:04d}-{month:02d}:{card_account.id}",
-    )
-    if existing is not None:
-        return AmexPostingResult(status="exists", poliza=existing)
-
-    meta = {
-        "origin": origin,
-        "year": year,
-        "month": month,
-        "amex_card_account_id": str(card_account.id),
-        "card_last4": card_account.last4,
-    }
-    rows, net, reason = await _fiscal_lines_for_expenses(session, expenses, meta=meta)
-    if reason:
-        return AmexPostingResult(status="pending", reason=reason)
-    if net <= 0:
-        return AmexPostingResult(status="pending", reason="invalid_reconciliation_total")
-    concept = f"Conciliacion AMEX {year:04d}-{month:02d} ****{card_account.last4}"
-    rows = list(rows or [])
-    rows.append(
-        _credit_line(
-            code=liability.codigo,
-            account_id=liability.id,
-            amount=net,
-            concept=concept,
-            meta=meta,
-            movement="haber_pasivo_amex",
-        )
-    )
-    if not posting_is_balanced(rows):
-        return AmexPostingResult(status="pending", reason="unbalanced_reconciliation")
-    poliza = await _create_poliza(
-        session,
-        origen=origin,
-        numero_poliza=number,
-        fecha=datetime.utcnow(),
-        beneficiario_nombre=card_account.cardholder_name or card_account.card_label,
-        concepto=concept,
-        lines=rows,
-    )
-    return AmexPostingResult(status="created", poliza=poliza)
+    preparation = await recognize_expenses(session, expenses)
+    return AmexPostingResult(preparation.status, preparation.reason, preparation.poliza)
 
 
 async def ensure_amex_payment_posting(
@@ -595,6 +540,9 @@ async def ensure_amex_payment_posting(
 ) -> AmexPostingResult:
     """Rule 11: confirmed AMEX payment -> card liability / Santander."""
 
+    from .amex_recognition_service import lock_recognition, period_reason
+
+    await lock_recognition(session)
     card_id = parse_amex_payment_card_id(documento)
     if card_id is None:
         return AmexPostingResult(status="pending", reason="missing_amex_card_binding")
@@ -602,18 +550,54 @@ async def ensure_amex_payment_posting(
         select(AmexCardAccount)
         .options(selectinload(AmexCardAccount.liability_cuenta_contable))
         .where(AmexCardAccount.id == card_id, AmexCardAccount.active.is_(True))
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     card = result.scalar_one_or_none()
     if card is None:
         return AmexPostingResult(status="pending", reason="inactive_amex_card")
-    liability = card.liability_cuenta_contable
+    liability: Any = await session.get(
+        CuentaContable,
+        card.liability_cuenta_contable_id,
+        populate_existing=True,
+        with_for_update=True,
+    )
     if (
         liability is None
         or not getattr(liability, "activo", False)
         or liability.codigo not in ALLOWED_AMEX_LIABILITY_CODES
     ):
         return AmexPostingResult(status="pending", reason="invalid_amex_liability")
-    bank = await _active_account(session, SANTANDER_BANK_CODE)
+    snapshot_id = parse_amex_payment_liability_id(documento)
+    if snapshot_id is None:
+        return AmexPostingResult(
+            status="pending", reason="missing_amex_liability_snapshot"
+        )
+    if snapshot_id != liability.id:
+        return AmexPostingResult(
+            status="pending", reason="amex_liability_mapping_changed"
+        )
+    from ..models import AmexRecognitionConsumption
+
+    history = await session.execute(
+        select(AmexRecognitionConsumption).where(
+            AmexRecognitionConsumption.card_account_id == card.id,
+            AmexRecognitionConsumption.binding_mode != "report_bridge",
+            AmexRecognitionConsumption.accounting_poliza_id.is_not(None),
+            or_(
+                AmexRecognitionConsumption.liability_account_id != liability.id,
+                AmexRecognitionConsumption.liability_code != liability.codigo,
+            ),
+        )
+    )
+    if history.scalars().first() is not None:
+        return AmexPostingResult(
+            status="pending", reason="amex_liability_mapping_changed"
+        )
+    reason = await period_reason(session, payment_date)
+    if reason:
+        return AmexPostingResult(status="pending", reason=reason)
+    bank: Any = await _active_account(session, SANTANDER_BANK_CODE)
     if bank is None:
         return AmexPostingResult(status="pending", reason="missing_santander_bank")
     amount = _money(documento.monto_solicitado or documento.monto_total)
@@ -665,7 +649,7 @@ async def ensure_amex_payment_posting(
         origen=origin,
         numero_poliza=number,
         fecha=when,
-        beneficiario_nombre=card.cardholder_name or card.card_label,
+        beneficiario_nombre=str(card.cardholder_name or card.card_label),
         concepto=concept,
         lines=rows,
     )
@@ -675,7 +659,6 @@ async def ensure_amex_payment_posting(
 __all__ = [
     "ALLOWED_AMEX_LIABILITY_CODES",
     "AMEX_PAYMENT_CARD_MARKER",
-    "AMEX_REPORT_DEBTOR_CODE",
     "SANTANDER_BANK_CODE",
     "AmexPostingResult",
     "amex_payment_card_marker",
@@ -683,5 +666,6 @@ __all__ = [
     "ensure_amex_reconciliation_posting",
     "ensure_amex_report_approval_posting",
     "parse_amex_payment_card_id",
+    "parse_amex_payment_liability_id",
     "posting_is_balanced",
 ]

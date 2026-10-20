@@ -1,0 +1,286 @@
+{
+  "actual_csv": {
+    "source_sha256": "ab641fa6ccafcfc046bf213764f41a61a969d05ce022899d217aa8ab3ea3cd4c",
+    "bytes": 10232,
+    "rows": 148,
+    "profile": "debit_positive",
+    "profile_note": "Isolated QA explicit positive-charge profile; no serving data copied",
+    "movement_kinds": {
+      "debit": 145,
+      "credit": 3
+    },
+    "imported": 140,
+    "credits": 3,
+    "skipped": 5,
+    "unknown": 0,
+    "exact_source_preserved": true,
+    "idempotency_pass": true,
+    "match_states": {
+      "pending": 148
+    },
+    "match_reasons": {
+      "merchant_identity_or_fresh_sat_evidence_pending": 140,
+      "fiscal_identity_pending": 8
+    },
+    "budget_states": {
+      "unclassified": 148
+    },
+    "accounting_preview": "pending",
+    "blockers": {
+      "exceptions": [
+        "merchant_identity_or_fresh_sat_evidence_pending",
+        "budget_assignment_required",
+        "budget_account_mapping_required",
+        "budget_assignment_changed",
+        "statement_row_unresolved",
+        "credit_exclusion_required"
+      ],
+      "new_count": 140,
+      "prior_count": 0,
+      "lines": []
+    },
+    "polizas": 0,
+    "synthetic_dependencies": false,
+    "live_cfdis_loaded": false,
+    "sat_network_calls": 0
+  },
+  "synthetic_positive_path": {
+    "label": "SYNTHETIC ONLY. Does not post or validate actual activity.csv charges",
+    "source": "Single synthetic CSV debit116.00",
+    "cfdi": "Synthetic XML and substituted external SAT status transport",
+    "catalogue": "Synthetic approved budget,line,concept,accounts,people,card and authorized context",
+    "steps": [
+      "CSV imported",
+      "exact merchant alias confirmed",
+      "status transport substituted with observed vigente",
+      "canonical automatic reconciliation",
+      "Finance category and project assigned",
+      "sent to Control Presupuestal",
+      "separate CP actor assigned budget line",
+      "whole-statement accounting preview ready",
+      "atomic accounting cut and balanced journal posted",
+      "identical confirmation replay reused cut",
+      "frozen COI XLSX exported",
+      "catalogue change did not alter frozen export"
+    ],
+    "polizas": 1,
+    "debit": "116.0",
+    "credit": "116.0",
+    "lines": [
+      {
+        "cuenta_codigo": "5300-001-001",
+        "debe": 100.0,
+        "haber": 0.0
+      },
+      {
+        "cuenta_codigo": "1180-001-001",
+        "debe": 16.0,
+        "haber": 0.0
+      },
+      {
+        "cuenta_codigo": "2120-002-062",
+        "debe": 0.0,
+        "haber": 116.0
+      }
+    ],
+    "xlsx": "/tmp/amex-qa-isolated-SYNTHETIC-poliza-coi.xlsx",
+    "xlsx_bytes": 6876,
+    "xlsx_rows": 10,
+    "rfc_trimmed": true,
+    "idempotent_cut": true,
+    "immutable_export": true,
+    "live_sat": false,
+    "production_writes": 0
+  },
+  "actual_csv_extended": {
+    "outside_period_rows": [
+      {
+        "row_number": 145,
+        "reason": "row_outside_declared_period",
+        "date": "2026-08-31 00:00:00"
+      },
+      {
+        "row_number": 146,
+        "reason": "row_outside_declared_period",
+        "date": "2026-08-31 00:00:00"
+      },
+      {
+        "row_number": 147,
+        "reason": "row_outside_declared_period",
+        "date": "2026-08-31 00:00:00"
+      },
+      {
+        "row_number": 148,
+        "reason": "row_outside_declared_period",
+        "date": "2026-08-31 00:00:00"
+      },
+      {
+        "row_number": 149,
+        "reason": "row_outside_declared_period",
+        "date": "2026-08-31 00:00:00"
+      }
+    ],
+    "all_three_credits_explicitly_excluded_in_isolation": true,
+    "remaining_blockers": [
+      "merchant_identity_or_fresh_sat_evidence_pending",
+      "budget_assignment_required",
+      "budget_account_mapping_required",
+      "budget_assignment_changed",
+      "statement_row_unresolved"
+    ],
+    "incomplete_confirm_denied": true,
+    "production_writes": 0
+  },
+  "actual_csv_cross_month_control": {
+    "label": "Fresh isolated database only, not correction of serving state",
+    "period_start": "2026-08-31",
+    "period_end": "2026-09-30",
+    "source_bytes_unchanged": true,
+    "imported_debits": 145,
+    "credits": 3,
+    "skipped": 0,
+    "subsequent_same_source_changed_period_status": "pending",
+    "subsequent_same_source_changed_period_reason": "file_context_conflict",
+    "no_bypass_or_source_modification": true,
+    "production_writes": 0
+  },
+  "two_charge_export_minimal": {
+    "debits": 2,
+    "polizas": 1,
+    "journal_balanced": true,
+    "total": "348.00",
+    "global_line_count": 6,
+    "flattened_line_count": 6,
+    "ordered_identity_equal": false,
+    "multiset_identity_equal": true,
+    "global_movements": [
+      "debit",
+      "debit",
+      "debit",
+      "debit",
+      "credit",
+      "credit"
+    ],
+    "flattened_movements": [
+      "debit",
+      "debit",
+      "credit",
+      "debit",
+      "debit",
+      "credit"
+    ],
+    "synthetic": true
+  },
+  "two_charge_export_errors": {
+    "xlsx": {
+      "type": "ValueError",
+      "message": "El corte no contiene un desglose completo de su p\u00f3liza."
+    },
+    "csv": {
+      "type": "ValueError",
+      "message": "El corte no contiene un desglose completo de su p\u00f3liza."
+    },
+    "zip": {
+      "type": "ValueError",
+      "message": "El corte no contiene un desglose completo de su p\u00f3liza."
+    }
+  },
+  "full_actual_csv_synthetic_dependencies": {
+    "label": "FULL ORIGINAL148ROWS,145synthetic CFDI/budget dependencies, initial cross-month CONTROL not actualstate repair",
+    "source_sha256": "ab641fa6ccafcfc046bf213764f41a61a969d05ce022899d217aa8ab3ea3cd4c",
+    "source_unchanged": true,
+    "control_period": [
+      "2026-08-31",
+      "2026-09-30"
+    ],
+    "counts": {
+      "polizas": 1,
+      "consumptions": 145,
+      "recognized": 145,
+      "assignments": 145,
+      "excluded_credits": 3,
+      "receipts": 145,
+      "synthetic_aliases": 47,
+      "synthetic_cfdis": 145
+    },
+    "journal_balanced": true,
+    "global_lines": 290,
+    "flattened_lines": 290,
+    "ordered_identity_equal": false,
+    "multiset_identity_equal": true,
+    "partidas_count": 148,
+    "cut_confirmation_replay_same": true,
+    "export_xlsx": "FAILED_VALUE_ERROR_INCOMPLETE_JOURNAL_BREAKDOWN",
+    "xlsx_file_created": false,
+    "pytest_seconds": 288.71,
+    "pytest_status": "1FAILED_export_1ERROR_teardown",
+    "teardown_error_attribution": "Isolated test observer and DROP SCHEMA deadlock. Separate infrastructure issue; does not cause earlier export ValueError.",
+    "actions": [
+      {
+        "action": "automatic_match",
+        "n": 80,
+        "first_event": "2026-10-15 17:16:09.115307+00:00",
+        "last_event": "2026-10-15 17:18:12.809573+00:00"
+      },
+      {
+        "action": "budget_assignment",
+        "n": 145,
+        "first_event": "2026-10-15 17:20:21.431650+00:00",
+        "last_event": "2026-10-15 17:20:32.129953+00:00"
+      },
+      {
+        "action": "budget_submission",
+        "n": 145,
+        "first_event": "2026-10-15 17:20:20.527197+00:00",
+        "last_event": "2026-10-15 17:20:20.527197+00:00"
+      },
+      {
+        "action": "classification",
+        "n": 145,
+        "first_event": "2026-10-15 17:20:19.378606+00:00",
+        "last_event": "2026-10-15 17:20:19.378606+00:00"
+      },
+      {
+        "action": "context_revision",
+        "n": 148,
+        "first_event": "2026-10-15 17:16:05.219355+00:00",
+        "last_event": "2026-10-15 17:16:05.219355+00:00"
+      },
+      {
+        "action": "credit_exclusion",
+        "n": 3,
+        "first_event": "2026-10-15 17:20:17.981127+00:00",
+        "last_event": "2026-10-15 17:20:18.919829+00:00"
+      },
+      {
+        "action": "manual_match",
+        "n": 65,
+        "first_event": "2026-10-15 17:19:13.455777+00:00",
+        "last_event": "2026-10-15 17:20:17.056956+00:00"
+      },
+      {
+        "action": "match_pending",
+        "n": 174,
+        "first_event": "2026-10-15 17:16:09.115307+00:00",
+        "last_event": "2026-10-15 17:18:12.809573+00:00"
+      }
+    ],
+    "production_writes": 0
+  },
+  "full_csv_cp_post_poliza_queue": {
+    "queue_count": 145,
+    "recognized_still_listed": 145,
+    "frozen_reassignment_reason": "direct_cut_immutable"
+  },
+  "full_csv_timing_observations": {
+    "status_lot_starts": [
+      "2026-10-15T17:16:07.614171+00:00",
+      "2026-10-15T17:16:56.542621+00:00",
+      "2026-10-15T17:18:11.014601+00:00"
+    ],
+    "observed": 145,
+    "total": 145,
+    "running": false,
+    "timing_limit": "Intervals between SAT owner lot starts include list-view reads and local reconciliation; not isolated request timings, not production SAT latency benchmark."
+  }
+}

@@ -17,7 +17,6 @@ from samchat.finance_platform.service import (
     build_finance_source_snapshot,
 )
 
-
 COMMON_SAFETY_LABELS = [
     "read_only",
     "canonical_finance_source",
@@ -64,6 +63,7 @@ ALLOWED_INTENTS = (
     "budget.vs_actual",
     "finance.platform",
     "finance.exports",
+    "finance.vat_paid",
 )
 
 
@@ -202,6 +202,32 @@ async def run_finance_read_adapter(
     limit: int = 500,
 ) -> dict[str, Any]:
     """Route approved assistant finance read intents to canonical sources only."""
+
+    if intent == "finance.vat_paid":
+        # No canonical allocation/deduplication contract exists in this adapter.
+        # A missing capability is not a query returning zero financial records.
+        return {
+            "ok": False,
+            "read_only": True,
+            "intent": intent,
+            "status": "capability_unavailable",
+            "metric": "paid_vat",
+            "period": {"year": year, "month": month},
+            "amount": None,
+            "evidence": [],
+            "coverage": "not_queried",
+            "missing_capabilities": [
+                "canonical_vat_breakdown",
+                "payment_evidence_and_date",
+                "shared_cfdi_deduplication_and_partial_payment_allocation",
+                "complete_approved_request_and_expense_report_population",
+            ],
+            "clarification": (
+                "¿Buscas IVA de documentos ingresados y aprobados en el mes, "
+                "o IVA efectivamente pagado en ese mes? Son criterios distintos."
+            ),
+            "safety_labels": _safety_labels("no_estimated_tax_aggregate"),
+        }
 
     if intent == "ar.summary":
         if not budget_version_id:
@@ -381,6 +407,7 @@ async def run_finance_read_adapter(
                 "+ build_finance_platform_snapshot"
             ),
             "payload": payload,
+            "source_status": source_snapshot.get("source_status"),
             "source_notes": _source_notes(
                 payload,
                 "finance platform snapshot is read-only",

@@ -20,7 +20,8 @@ from .payment_run_service import (
 DATE_COLUMNS = {
     "solicitud": "creado_en",
     "programacion": "fecha_pago",
-    "pago": "pagado_en",
+    "pago": "fecha_pago_efectiva",
+    "captura": "pagado_en",
 }
 SORT_COLUMNS = {
     "solicitud": "numero_referencia",
@@ -31,7 +32,8 @@ SORT_COLUMNS = {
     "fecha_solicitud": "creado_en",
     "fecha_aprobacion": "aprobado_en",
     "fecha_programacion": "fecha_pago",
-    "fecha_pagada": "pagado_en",
+    "fecha_pagada": "fecha_pago_efectiva",
+    "fecha_captura": "pagado_en",
     "monto": "monto",
     "estado": "status_sort",
 }

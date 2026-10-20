@@ -1,0 +1,18 @@
+[Unit]
+Description=Verify and expire only SamChat fmfg daily audit files
+
+[Service]
+Type=oneshot
+User=agentius-samchat
+Group=agentius-executor
+WorkingDirectory=/opt/agentius-samchat/readonly-20261009-v1
+Environment=PYTHONPATH=/opt/agentius-samchat/readonly-20261009-v1/src
+EnvironmentFile=/etc/samchat-readonly/fmfg/admission.env
+ExecStart=/srv/samchat/venvs/release-598e7a286/bin/python -m samchat.readonly_gateway.service --prune
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/agentius-samchat/readonly-audit/fmfg
+RestrictAddressFamilies=AF_UNIX

@@ -5,11 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Iterable, List, Optional, Sequence
+from typing import Any, Iterable, List, Optional, Sequence
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from ..models import Aprobacion, Empleado, ExpenseReport
 from .budget_concept_account_service import apply_budget_concept_cuenta_mapping
@@ -66,6 +67,24 @@ def sum_paid_solicitud_amounts(documentos: Iterable[object]) -> float:
             _quantize_money(getattr(doc, "monto_solicitado", 0) or 0)
             for doc in documentos
             if (getattr(doc, "estado", None) or "").strip().lower() == "pagado"
+        ),
+        Decimal("0"),
+    )
+    return float(total)
+
+
+def sum_active_solicitud_amounts(documentos: Iterable[object]) -> float:
+    """Sum linked requests still in the workflow, including unpaid requests.
+
+    Rejected and cancelled requests remain visible in the audit trail but no
+    longer represent money requested from the company.
+    """
+    excluded = {"rechazado", "rechazada", "cancelado", "cancelada", "anulado", "anulada"}
+    total = sum(
+        (
+            _quantize_money(getattr(doc, "monto_solicitado", 0) or 0)
+            for doc in documentos
+            if (getattr(doc, "estado", None) or "").strip().lower() not in excluded
         ),
         Decimal("0"),
     )
@@ -162,12 +181,15 @@ def is_company_amex_expense(expense: ExpenseReport) -> bool:
     return (getattr(expense, "origen", None) or "").strip().lower() == "amex_batch"
 
 
-def company_amex_sql_condition():
+def company_amex_sql_condition(
+    expense_model: Any = ExpenseReport,
+) -> ColumnElement[bool]:
+    """Company-paid AMEX predicate, including aliased expense queries."""
     return or_(
-        ExpenseReport.pagado_con_amex_empresa.is_(True),
+        expense_model.pagado_con_amex_empresa.is_(True),
         and_(
-            ExpenseReport.pagado_con_amex_empresa.is_(None),
-            ExpenseReport.origen == "amex_batch",
+            expense_model.pagado_con_amex_empresa.is_(None),
+            expense_model.origen == "amex_batch",
         ),
     )
 
@@ -210,7 +232,31 @@ async def set_company_amex_status(
     expense_ids: Iterable[UUID],
     mark_as_amex: bool,
     actor: Empleado,
+    card_account_id: UUID | None = None,
+    reason: str = "Identificación de tarjeta al marcar AMEX.",
 ) -> List[ExpenseReport]:
+    from .amex_recognition_service import (
+        _card_identity_eligibility,
+        _write_card_identity,
+        lock_recognition,
+        validate_amex_card_identity,
+    )
+
+    card = None
+    await lock_recognition(session)
+    actor = await session.get(
+        Empleado, actor.id, populate_existing=True, with_for_update=True
+    )
+    if actor is None or not actor.activo:
+        raise AmexExpensePermissionError("Actor AMEX inactivo o inexistente.")
+    if mark_as_amex:
+        if card_account_id is None:
+            raise AmexExpenseValidationError("Selecciona una tarjeta AMEX explícita.")
+        if not reason or not reason.strip():
+            raise AmexExpenseValidationError("Indica el motivo de identificación AMEX.")
+        card, invalid = await validate_amex_card_identity(session, card_account_id)
+        if invalid:
+            raise AmexExpenseValidationError(invalid)
     role = (actor.rol or "").strip().lower()
     if role not in FINANCE_AMEX_ROLES:
         raise AmexExpensePermissionError(
@@ -224,7 +270,9 @@ async def set_company_amex_status(
     result = await session.execute(
         select(ExpenseReport)
         .where(ExpenseReport.id.in_(unique_ids))
+        .order_by(ExpenseReport.id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     expenses = list(result.scalars().all())
     if len(expenses) != len(unique_ids):
@@ -236,11 +284,26 @@ async def set_company_amex_status(
     if any(expense.estado_gasto == "cancelado" for expense in expenses):
         raise AmexExpenseValidationError("No se pueden modificar gastos cancelados.")
 
+    identity_changed_ids = set()
+    invalid = await _card_identity_eligibility(
+        session, expenses, card, require_amex=False
+    )
+    if invalid:
+        raise AmexExpenseValidationError(invalid)
+    if mark_as_amex:
+        assert card is not None  # Validated before any source mutation.
+        identity_changed_ids = {
+            e.id for e in expenses if e.ultimos_4_digitos != card.last4
+        }
+        _write_card_identity(session, expenses, card, actor_id=actor.id, reason=reason)
+
     changed: List[ExpenseReport] = []
     now = datetime.now(timezone.utc)
     for expense in expenses:
         previous = is_company_amex_expense(expense)
         if previous == mark_as_amex:
+            if expense.id in identity_changed_ids:
+                changed.append(expense)
             continue
         expense.pagado_con_amex_empresa = mark_as_amex
         mapped_from_partida = False

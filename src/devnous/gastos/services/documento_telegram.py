@@ -695,6 +695,10 @@ async def build_documento_telegram_context(
     ctx["proyecto"] = project
     ctx["etapa"] = phase
 
+    if isinstance(getattr(documento, "informe_origen_id", None), UUID):
+        ctx["monto_line"] = _fmt_mxn(documento.monto_total)
+        return ctx
+
     if documento.tipo == "INFORME":
         expenses = await load_informe_active_expenses(session, documento)
         expense_totals = calculate_informe_expense_totals(expenses)
@@ -741,7 +745,19 @@ def format_documento_resumen_es(
     saldo_line = context.get("saldo_line")
     saldo_txt = escape_markdown_light(str(saldo_line)) if saldo_line else None
 
-    if documento.tipo == "SOLICITUD":
+    if isinstance(getattr(documento, "informe_origen_id", None), UUID):
+        reason = escape_markdown_light(
+            (documento.motivo_comprobacion_parcial or "")[:1000]
+        )
+        lines = [
+            *_leading_identity_lines(documento),
+            f"*Comprobación parcial* `{ref}` · *Estado* {estado}",
+            f"*Solicitante* {sol}",
+            f"*Monto de este lote* {escape_markdown_light(str(context.get('monto_line') or '—'))}",
+            f"*Motivo del solicitante* {reason}",
+            "El informe original permanece abierto. Revisa el motivo completo y registra tus comentarios en la pantalla del documento.",
+        ]
+    elif documento.tipo == "SOLICITUD":
         ro = escape_markdown_light(str(context.get("referencia_operaciones") or "—"))
         monto_val = escape_markdown_light(str(context.get("monto_line") or "—"))
         lines = [
@@ -789,12 +805,29 @@ def format_documento_resumen_es(
     lines.append(f"*Aprobado* {_fmt_dt(documento.aprobado_en)}")
     if include_actions_hint:
         lines.append("")
-        lines.append("Usa los botones de abajo o el comando /pendientes.")
+        lines.append(
+            "Usa el enlace para revisar el motivo y registrar comentarios."
+            if isinstance(getattr(documento, "informe_origen_id", None), UUID)
+            else "Usa los botones de abajo o el comando /pendientes."
+        )
     return "\n".join(lines)
 
 
-def approval_inline_keyboard(documento_id: UUID) -> Dict[str, Any]:
+def approval_inline_keyboard(
+    documento_id: UUID, *, partial: bool = False
+) -> Dict[str, Any]:
     sid = str(documento_id)
+    if partial:
+        return {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "Revisar motivo y registrar comentarios",
+                        "url": f"https://sam.chat/documentos/{sid}",
+                    }
+                ]
+            ]
+        }
     return {
         "inline_keyboard": [
             [
@@ -843,10 +876,16 @@ async def load_documento_for_telegram(
     return result.scalar_one_or_none()
 
 
-def approver_can_see_document_in_queue(empleado: Empleado, documento: Documento) -> bool:
+def approver_can_see_document_in_queue(
+    empleado: Empleado, documento: Documento
+) -> bool:
     """Current actionable Telegram approval guard for stale inline buttons."""
     if documento.estado != "enviado":
         return False
+    from .project_authorization_service import has_operations_reference
+
+    if has_operations_reference(documento):
+        return False  # The live guard must resolve position-backed authority.
     role = (getattr(empleado, "rol", "") or "").strip().lower()
     if role in SUPERADMIN_ROLES:
         return True
@@ -862,9 +901,17 @@ async def approver_can_see_document_in_queue_live(
     """Apply a persisted project route before falling back to the legacy lane."""
     if documento.estado != "enviado":
         return False
+    from .project_authorization_service import (
+        actor_is_route_approver,
+        has_operations_reference,
+    )
+
+    if has_operations_reference(documento):
+        return await actor_is_route_approver(
+            session, actor_id=empleado.id, documento_id=documento.id
+        )
     if (getattr(empleado, "rol", "") or "").strip().lower() in SUPERADMIN_ROLES:
         return True
-    from .project_authorization_service import actor_is_route_approver
 
     route_exists = (
         await session.execute(
@@ -892,6 +939,7 @@ async def query_pending_documentos_for_approver(
     *,
     limit: int = 30,
 ) -> List[Documento]:
+    """List visible pending documents, prioritizing a superadmin's decisions."""
     base_opts = (
         selectinload(Documento.empleado),
         selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
@@ -899,20 +947,32 @@ async def query_pending_documentos_for_approver(
         selectinload(Documento.torneo),
         selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
     )
+    from .project_authorization_service import document_route_approver_sql
+
     role = (getattr(empleado, "rol", "") or "").strip().lower()
     if role in SUPERADMIN_ROLES:
         result = await session.execute(
             select(Documento)
             .options(*base_opts)
             .where(Documento.estado == "enviado")
-            .order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
+            .order_by(
+                or_(
+                    func.nullif(func.trim(Documento.referencia_operaciones), "").is_(None),
+                    text(document_route_approver_sql()),
+                ).desc(),
+                Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc(),
+            )
+            .params(route_employee_id=str(empleado.id))
             .limit(limit)
         )
         return list(result.scalars().all())
 
     solicitante_alias = aliased(Empleado)
     beneficiario_alias = aliased(Empleado)
+    # Shared policy retains eligible_empleado_ids from valid route snapshots.
+
     has_no_project_route = text(
+        "NULLIF(BTRIM(documentos.referencia_operaciones), '') IS NULL AND "
         "NOT EXISTS (SELECT 1 FROM documento_authorization_routes route "
         "WHERE route.documento_id = documentos.id)"
     )
@@ -928,11 +988,7 @@ async def query_pending_documentos_for_approver(
             and_(
                 Documento.estado == "enviado",
                 or_(
-                    text(
-                        "EXISTS (SELECT 1 FROM documento_authorization_routes route "
-                        "WHERE route.documento_id = documentos.id "
-                        "AND :route_employee_id IN (SELECT jsonb_array_elements_text(route.eligible_empleado_ids)))"
-                    ),
+                    text(document_route_approver_sql()),
                     and_(
                         has_no_project_route,
                         beneficiario_alias.aprobador_id == empleado.id,
@@ -1095,7 +1151,16 @@ async def notify_assigned_approver_new_request(
             chat_id=chat_id,
             documento_id=documento.id,
             recipient_empleado_id=recipient.id,
-            reply_markup=approval_inline_keyboard(documento.id) if chat_id else None,
+            reply_markup=(
+                approval_inline_keyboard(
+                    documento.id,
+                    partial=bool(
+                        isinstance(getattr(documento, "informe_origen_id", None), UUID)
+                    ),
+                )
+                if chat_id
+                else None
+            ),
         )
 
 

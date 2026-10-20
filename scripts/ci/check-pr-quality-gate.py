@@ -7,7 +7,6 @@ from pathlib import Path
 
 import yaml
 
-
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "test.yml"
 MANDATORY_JOBS = {
@@ -62,6 +61,22 @@ def validate(document: dict, workflow_text: str) -> list[str]:
         errors.append(
             "integration-tests does not invoke pytest directly on tests/integration"
         )
+    for label, blocks, runner, coverage_file in (
+        ("unit", unit, "run_offline_tests.py", "reports/private-plugin/unit.coverage"),
+        (
+            "integration",
+            integration,
+            "run_postgres_tests.py",
+            "reports/private-plugin/integration.coverage",
+        ),
+    ):
+        if f"scripts/private_plugin/{runner}" not in blocks:
+            errors.append(f"{label} tests omit the isolated private-plugin runner")
+        combine = next(
+            (line for line in blocks.splitlines() if "coverage combine" in line), ""
+        )
+        if coverage_file not in combine:
+            errors.append(f"{label} coverage omits isolated private-plugin results")
     if "--fail-under=85" not in coverage:
         errors.append("changed-code coverage threshold is not 85%")
     policy = "\n".join(_run_blocks(jobs.get("policy", {})))

@@ -6,7 +6,7 @@ import uuid
 from functools import lru_cache
 from collections import defaultdict
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any, Optional
@@ -16,6 +16,8 @@ import unicodedata
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from devnous.gastos.services.amex_accounting_identity_service import accounting_expense_sql
 
 from samchat.budgets.deduplication import (
     budget_concept_semantic_identity,
@@ -553,6 +555,7 @@ def _merge_breakdown_row(
     store: dict[str, dict[str, Any]],
     *,
     label: Any,
+    concept_id: str | None = None,
     budget_total: float = 0.0,
     reference_total: float = 0.0,
     variance_total: float = 0.0,
@@ -565,11 +568,13 @@ def _merge_breakdown_row(
     document_count: int = 0,
     expense_count: int = 0,
 ) -> None:
-    bucket = _safe_str(label) or "Sin dato"
+    display_label = _safe_str(label) or "Sin dato"
+    bucket = f"concept:{concept_id}" if concept_id is not None else display_label
     entry = store.setdefault(
         bucket,
         {
-            "label": bucket,
+            "label": display_label,
+            **({"concept_id": concept_id} if concept_id is not None else {}),
             "budget_total": 0.0,
             "reference_total": 0.0,
             "variance_total": 0.0,
@@ -583,6 +588,8 @@ def _merge_breakdown_row(
             "expense_count": 0,
         },
     )
+    if concept_id is not None:
+        entry["label"] = display_label
     entry["budget_total"] += float(budget_total or 0)
     entry["reference_total"] += float(reference_total or 0)
     entry["variance_total"] += float(variance_total or 0)
@@ -599,13 +606,16 @@ def _merge_breakdown_row(
 def _finalize_breakdown_store(
     store: dict[str, dict[str, Any]],
     *,
-    limit: int = 6,
+    limit: int | None = 6,
 ) -> list[dict[str, Any]]:
     rows = []
     for entry in store.values():
         rows.append(
             {
                 "label": _safe_str(entry.get("label")) or "Sin dato",
+                **(
+                    {"concept_id": entry["concept_id"]} if "concept_id" in entry else {}
+                ),
                 "budget_total": round(float(entry.get("budget_total") or 0), 2),
                 "reference_total": round(float(entry.get("reference_total") or 0), 2),
                 "variance_total": round(float(entry.get("variance_total") or 0), 2),
@@ -634,11 +644,14 @@ def _finalize_breakdown_store(
             item["label"],
         )
     )
-    return rows[: max(1, limit)]
+    return rows if limit is None else rows[: max(1, limit)]
 
 
 def _build_budget_line_breakdowns(
     rows: list[dict[str, Any]],
+    *,
+    concept_limit: int | None = 6,
+    concept_identity: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     by_concept = _new_breakdown_store()
     by_phase = _new_breakdown_store()
@@ -651,7 +664,16 @@ def _build_budget_line_breakdowns(
         variance_total = _safe_decimal(row.get("variance_amount"))
         _merge_breakdown_row(
             by_concept,
-            label=row.get("concept_name"),
+            label=(
+                (row.get("current_concept_name") or row.get("concept_name"))
+                if concept_identity
+                else row.get("concept_name")
+            ),
+            concept_id=(
+                (_safe_str(row.get("budget_concept_id")) or "__unassigned__")
+                if concept_identity
+                else None
+            ),
             budget_total=budget_total,
             reference_total=reference_total,
             variance_total=variance_total,
@@ -692,7 +714,7 @@ def _build_budget_line_breakdowns(
             line_count=1,
         )
     return {
-        "by_concept": _finalize_breakdown_store(by_concept),
+        "by_concept": _finalize_breakdown_store(by_concept, limit=concept_limit),
         "by_phase": _finalize_breakdown_store(by_phase),
         "by_entity": _finalize_breakdown_store(by_entity),
         "by_owner": _finalize_breakdown_store(by_owner),
@@ -731,6 +753,8 @@ def _build_budget_scope_filters(
     tournament_code: Optional[str],
     document_tournament_id_sql: str = "d.torneo_id",
     expense_tournament_id_sql: str = "d.torneo_id",
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
 ) -> tuple[list[str], list[str], dict[str, Any]]:
     tournament_scope_requested = bool(
         _safe_str(tournament_name) or _safe_str(tournament_code)
@@ -739,7 +763,10 @@ def _build_budget_scope_filters(
         _safe_str(tournament_name),
         _safe_str(tournament_code),
     )
-    date_from, date_to = _edition_bounds(edition_year)
+    edition_from, edition_to = _edition_bounds(edition_year)
+    date_from, date_to = date_from or edition_from, date_to or edition_to
+    if not edition_from <= date_from <= date_to <= edition_to:
+        raise ValueError("Budget period must stay within the selected edition")
     document_filter = [
         "d.tipo = 'SOLICITUD'",
         "COALESCE(d.concepto_pago, '') NOT ILIKE 'Reembolso de saldo a favor%'",
@@ -748,17 +775,14 @@ def _build_budget_scope_filters(
     ]
     expense_filter = [
         "e.estado_gasto != 'cancelado'",
+        accounting_expense_sql("e"),
         "DATE(e.fecha) >= :date_from",
         "DATE(e.fecha) <= :date_to",
     ]
     params: dict[str, Any] = {"date_from": date_from, "date_to": date_to}
     if tournament_id:
-        document_filter.append(
-            f"({document_tournament_id_sql} = :tournament_id)"
-        )
-        expense_filter.append(
-            f"({expense_tournament_id_sql} = :tournament_id)"
-        )
+        document_filter.append(f"({document_tournament_id_sql} = :tournament_id)")
+        expense_filter.append(f"({expense_tournament_id_sql} = :tournament_id)")
         params["tournament_id"] = tournament_id
     elif aliases:
         alias_clauses = []
@@ -780,59 +804,229 @@ def _build_budget_scope_filters(
     return document_filter, expense_filter, params
 
 
-def _budget_expense_base_amount_sql(
-    expense_alias: str = "e",
-    cfdi_alias: str = "cfdi",
-) -> str:
-    """Return SQL for the amount that should affect budget before taxes."""
+_BUDGET_NON_IMPACT_DOCUMENT_STATES = {"borrador", "control_presupuestal", "rechazado", "cancelado"}
+_BUDGET_REQUESTED_DOCUMENT_STATES = {"enviado"}
+_BUDGET_COMMITTED_DOCUMENT_STATES = {"aprobado", "en_proceso_pago"}
+_BUDGET_EFFECT_TERMINAL_DOCUMENT_STATES = {"pagado", "cerrado", "comprobado", "reembolsado", "aplicado", "liquidado"}
+
+
+def _budget_decimal_amount(value: Any) -> Decimal:
+    try:
+        amount = Decimal(str(value if value is not None else 0))
+        if not amount.is_finite():
+            return Decimal("0")
+        return max(amount, Decimal("0"))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal("0")
+
+
+def _budget_round_amount(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def budget_expense_effect_amount(expense: Any, cfdi_report: Any = None) -> Decimal:
+    """Canonical budget base for one active expense line."""
+    if str(getattr(expense, "estado_gasto", "") or "").strip().lower() == "cancelado":
+        return Decimal("0")
+    total = _budget_decimal_amount(getattr(expense, "gasto_cantidad", None))
+    if any(
+        bool(getattr(a, "activo", False))
+        and getattr(a, "categoria", None) == "comprobante_no_deducible"
+        for a in (getattr(expense, "adjuntos", None) or [])
+    ):
+        return _budget_round_amount(total)
+    tip = _budget_decimal_amount(getattr(expense, "propina_no_deducible", None))
+    lodging = _budget_decimal_amount(getattr(expense, "hospedaje_impuesto_monto", None))
+    iva = getattr(expense, "iva", None)
+    if iva is not None:
+        return _budget_round_amount(
+            max(total - _budget_decimal_amount(iva), Decimal("0")) + lodging
+        )
+    if cfdi_report is not None and getattr(cfdi_report, "subtotal", None) is not None:
+        base = max(
+            _budget_decimal_amount(getattr(cfdi_report, "subtotal", None))
+            - _budget_decimal_amount(getattr(cfdi_report, "descuento", None)),
+            Decimal("0"),
+        )
+        fiscal_total = _budget_decimal_amount(getattr(cfdi_report, "total", None))
+        applied = max(total - tip, Decimal("0"))
+        if fiscal_total > 0:
+            base *= min(applied / fiscal_total, Decimal("1"))
+        return _budget_round_amount(base + lodging + tip)
+    return _budget_round_amount(total)
+
+
+def budget_document_effect_snapshot(
+    documento: Any, cfdi_report: Any = None, *, expenses: Any = None
+) -> dict[str, Any]:
+    """State-aware budget effect for document reporting surfaces."""
+    state = str(getattr(documento, "estado", "") or "").strip().lower()
+    doc_type = str(getattr(documento, "tipo", "") or "").strip().upper()
+    expenses = [
+        e
+        for e in (
+            expenses
+            if expenses is not None
+            else (getattr(documento, "gastos", None) or [])
+        )
+        if str(getattr(e, "estado_gasto", "") or "").strip().lower() != "cancelado"
+    ]
+    doc_concept = getattr(documento, "budget_concept_id", None)
+    if doc_type == "INFORME":
+        assigned = [
+            e for e in expenses if getattr(e, "budget_concept_id", None)
+        ]
+        if expenses:
+            assignment = (
+                "Sin asignar"
+                if not assigned
+                else "Asignado"
+                if len(assigned) == len(expenses)
+                else "Parcial"
+            )
+        else:
+            assignment = "Sin asignar"
+    else:
+        assigned = []
+        assignment = "Asignado" if doc_concept else "Sin asignar"
+
+    allowed = _BUDGET_REQUESTED_DOCUMENT_STATES | _BUDGET_COMMITTED_DOCUMENT_STATES | _BUDGET_EFFECT_TERMINAL_DOCUMENT_STATES
+    is_derived_reimbursement = (
+        doc_type == "SOLICITUD"
+        and str(getattr(documento, "concepto_pago", "") or "")
+        .strip()
+        .lower()
+        .startswith("reembolso de saldo a favor")
+    )
+    if (
+        state in _BUDGET_NON_IMPACT_DOCUMENT_STATES
+        or state not in allowed
+        or is_derived_reimbursement
+        or bool(getattr(documento, "is_supplier_advance", False))
+    ):
+        return {
+            "amount": Decimal("0"),
+            "assignment_label": assignment,
+            "stage": "No afecta",
+            "affects_budget": False,
+        }
+
+    if doc_type == "INFORME":
+        amount = sum(
+            (
+                budget_expense_effect_amount(e, getattr(e, "cfdi_report", None))
+                for e in assigned
+            ),
+            Decimal("0"),
+        )
+    elif doc_concept:
+        if cfdi_report is not None and getattr(cfdi_report, "subtotal", None) is not None:
+            amount = max(
+                _budget_decimal_amount(getattr(cfdi_report, "subtotal", None))
+                - _budget_decimal_amount(getattr(cfdi_report, "descuento", None)),
+                Decimal("0"),
+            )
+            fiscal_total = _budget_decimal_amount(
+                getattr(cfdi_report, "total", None)
+            )
+            applied = _budget_decimal_amount(
+                getattr(documento, "monto_solicitado", None)
+                if getattr(documento, "monto_solicitado", None) is not None
+                else getattr(documento, "monto_total", None)
+            )
+            if getattr(documento, "supplier_advance_id", None):
+                applied = _budget_decimal_amount(
+                    getattr(documento, "supplier_invoice_total", None)
+                )
+            if fiscal_total > 0:
+                amount *= min(applied / fiscal_total, Decimal("1"))
+        else:
+            amount = _budget_decimal_amount(
+                getattr(documento, "monto_solicitado", None)
+                if getattr(documento, "monto_solicitado", None) is not None
+                else getattr(documento, "monto_total", None)
+            )
+    else:
+        amount = Decimal("0")
+
+    stage = (
+        "Solicitado" if state in _BUDGET_REQUESTED_DOCUMENT_STATES
+        else "Comprometido" if state in _BUDGET_COMMITTED_DOCUMENT_STATES
+        else "Pagado" if state in {"pagado", "cerrado"} or getattr(documento, "pagado_en", None)
+        else "Ejercido"
+    )
+    amount = _budget_round_amount(amount)
+    return {"amount": amount, "assignment_label": assignment, "stage": stage, "affects_budget": amount > 0 and assignment != "Sin asignar"}
+
+
+def _budget_expense_base_amount_sql(expense_alias: str = "e", cfdi_alias: str = "cfdi") -> str:
+    """SQL for canonical budget base of an expense."""
     expense = _safe_str(expense_alias) or "e"
     cfdi = _safe_str(cfdi_alias) or "cfdi"
     return f"""
-        GREATEST(
+        ROUND(CAST(GREATEST(
             CASE
-                WHEN {cfdi}.subtotal IS NOT NULL
-                THEN (
-                    GREATEST(COALESCE({cfdi}.subtotal, 0) - COALESCE({cfdi}.descuento, 0), 0)
-                    / GREATEST((
-                        SELECT COUNT(*)
-                        FROM expense_reports budget_cfdi_expense
-                        WHERE budget_cfdi_expense.cfdi_report_id = {cfdi}.id
-                          AND budget_cfdi_expense.estado_gasto != 'cancelado'
-                    ), 1)
-                ) + COALESCE({expense}.propina_no_deducible, 0)
+                WHEN EXISTS (
+                    SELECT 1 FROM adjuntos budget_nd
+                    WHERE budget_nd.gasto_id = {expense}.id
+                      AND budget_nd.categoria = 'comprobante_no_deducible'
+                      AND budget_nd.activo = TRUE
+                ) THEN COALESCE({expense}.gasto_cantidad, 0)
                 WHEN {expense}.iva IS NOT NULL
                 THEN COALESCE({expense}.gasto_cantidad, 0) - COALESCE({expense}.iva, 0)
+                   + COALESCE({expense}.hospedaje_impuesto_monto, 0)
+                WHEN {cfdi}.subtotal IS NOT NULL THEN (
+                    GREATEST(
+                        COALESCE({cfdi}.subtotal, 0) - COALESCE({cfdi}.descuento, 0), 0
+                    ) * CASE
+                        WHEN COALESCE({cfdi}.total, 0) > 0 THEN LEAST(
+                            GREATEST(
+                                (COALESCE({expense}.gasto_cantidad, 0)
+                                 - COALESCE({expense}.propina_no_deducible, 0))
+                                / {cfdi}.total, 0
+                            ), 1
+                        )
+                        ELSE 1
+                    END
+                ) + COALESCE({expense}.hospedaje_impuesto_monto, 0)
+                  + COALESCE({expense}.propina_no_deducible, 0)
                 ELSE COALESCE({expense}.gasto_cantidad, 0)
             END,
             0
-        )
+        ) AS NUMERIC), 2)
     """
 
 
-def _budget_document_base_amount_sql(
-    document_alias: str = "d",
-    cfdi_alias: str = "document_cfdi",
-) -> str:
-    """Return the best available pre-tax amount for a budget document."""
+def _budget_document_base_amount_sql(document_alias: str = "d", cfdi_alias: str = "document_cfdi") -> str:
+    """SQL for canonical budget base of an assigned document."""
     document = _safe_str(document_alias) or "d"
     cfdi = _safe_str(cfdi_alias) or "document_cfdi"
     return f"""
-        GREATEST(
+        ROUND(CAST(GREATEST(
             CASE
-                WHEN {cfdi}.subtotal IS NOT NULL
-                THEN GREATEST(
-                    COALESCE({cfdi}.subtotal, 0)
-                    - COALESCE({cfdi}.descuento, 0),
-                    0
+                WHEN {document}.is_supplier_advance THEN 0
+                WHEN {cfdi}.subtotal IS NOT NULL THEN (
+                    GREATEST(COALESCE({cfdi}.subtotal, 0) - COALESCE({cfdi}.descuento, 0), 0)
+                    * CASE
+                        WHEN COALESCE({cfdi}.total, 0) > 0
+                        THEN LEAST(
+                            GREATEST(
+                                COALESCE(
+                                    {document}.supplier_invoice_total,
+                                    {document}.monto_solicitado,
+                                    {document}.monto_total,
+                                    0
+                                ) / {cfdi}.total,
+                                0
+                            ),
+                            1
+                        )
+                        ELSE 1
+                    END
                 )
-                ELSE COALESCE(
-                    {document}.monto_total,
-                    {document}.monto_solicitado,
-                    0
-                )
-            END,
-            0
-        )
+                ELSE COALESCE({document}.supplier_invoice_total, COALESCE({document}.monto_solicitado, {document}.monto_total, 0))
+            END, 0
+        ) AS NUMERIC), 2)
     """
 
 
@@ -843,12 +1037,18 @@ async def _build_budget_finance_breakdowns(
     tournament_id: Optional[str],
     tournament_name: Optional[str],
     tournament_code: Optional[str],
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    concept_limit: int | None = 6,
+    concept_identity: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     document_filter, expense_filter, params = _build_budget_scope_filters(
         edition_year=edition_year,
         tournament_id=tournament_id,
         tournament_name=tournament_name,
         tournament_code=tournament_code,
+        date_from=date_from,
+        date_to=date_to,
     )
     by_provider = _new_breakdown_store()
     by_concept = _new_breakdown_store()
@@ -856,21 +1056,21 @@ async def _build_budget_finance_breakdowns(
     document_provider_rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
                     COALESCE(NULLIF(TRIM(pc.nombre), ''), 'Sin proveedor asignado') AS label,
-                    COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado') THEN COALESCE(d.monto_solicitado, d.monto_total, 0) ELSE 0 END), 0) AS requested_total,
-                    COALESCE(SUM(CASE WHEN d.estado IN ('aprobado', 'pagado', 'cerrado') THEN COALESCE(d.monto_solicitado, d.monto_total, 0) ELSE 0 END), 0) AS committed_total,
-                    COALESCE(SUM(CASE WHEN d.estado IN ('pagado', 'cerrado') OR d.pagado_en IS NOT NULL THEN COALESCE(d.monto_total, d.monto_solicitado, 0) ELSE 0 END), 0) AS paid_total,
-                    COUNT(*) FILTER (WHERE d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado')) AS document_count
+                    COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'en_proceso_pago', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS requested_total,
+                    COALESCE(SUM(CASE WHEN d.estado IN ('aprobado', 'en_proceso_pago', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS committed_total,
+                    COALESCE(SUM(CASE WHEN d.estado IN ('pagado', 'cerrado') OR d.pagado_en IS NOT NULL THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS paid_total,
+                    COUNT(*) FILTER (WHERE d.estado IN ('enviado', 'aprobado', 'en_proceso_pago', 'pagado', 'cerrado')) AS document_count
                 FROM documentos d
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
+                LEFT JOIN cfdi_reports document_cfdi ON document_cfdi.id = d.cfdi_report_id
                 LEFT JOIN proveedores_clientes pc ON pc.id = d.proveedor_cliente_id
                 WHERE {' AND '.join(document_filter)}
+                  AND d.budget_concept_id IS NOT NULL
                 GROUP BY 1
-                """
-                ),
+                """),
                 params,
             )
         )
@@ -894,8 +1094,7 @@ async def _build_budget_finance_breakdowns(
     expense_provider_rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
                     COALESCE(NULLIF(TRIM(pc.nombre), ''), 'Sin proveedor asignado') AS label,
                     COALESCE(SUM({_budget_expense_base_amount_sql('e', 'cfdi')}), 0) AS actual_total,
@@ -906,9 +1105,9 @@ async def _build_budget_finance_breakdowns(
                 LEFT JOIN proveedores_clientes pc ON pc.id = d.proveedor_cliente_id
                 LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
+                  AND COALESCE(e.budget_concept_id, CASE WHEN d.tipo = 'SOLICITUD' THEN d.budget_concept_id END) IS NOT NULL
                 GROUP BY 1
-                """
-                ),
+                """),
                 params,
             )
         )
@@ -926,21 +1125,22 @@ async def _build_budget_finance_breakdowns(
     document_concept_rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
                     COALESCE(NULLIF(TRIM(bc.concept_name), ''), 'Sin partida asignada') AS label,
-                    COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado') THEN COALESCE(d.monto_solicitado, d.monto_total, 0) ELSE 0 END), 0) AS requested_total,
-                    COALESCE(SUM(CASE WHEN d.estado IN ('aprobado', 'pagado', 'cerrado') THEN COALESCE(d.monto_solicitado, d.monto_total, 0) ELSE 0 END), 0) AS committed_total,
-                    COALESCE(SUM(CASE WHEN d.estado IN ('pagado', 'cerrado') OR d.pagado_en IS NOT NULL THEN COALESCE(d.monto_total, d.monto_solicitado, 0) ELSE 0 END), 0) AS paid_total,
-                    COUNT(*) FILTER (WHERE d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado')) AS document_count
+                    {"bc.id::text AS concept_id," if concept_identity else ""}
+                    COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'en_proceso_pago', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS requested_total,
+                    COALESCE(SUM(CASE WHEN d.estado IN ('aprobado', 'en_proceso_pago', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS committed_total,
+                    COALESCE(SUM(CASE WHEN d.estado IN ('pagado', 'cerrado') OR d.pagado_en IS NOT NULL THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS paid_total,
+                    COUNT(*) FILTER (WHERE d.estado IN ('enviado', 'aprobado', 'en_proceso_pago', 'pagado', 'cerrado')) AS document_count
                 FROM documentos d
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
+                LEFT JOIN cfdi_reports document_cfdi ON document_cfdi.id = d.cfdi_report_id
                 LEFT JOIN budget_concepts bc ON bc.id = d.budget_concept_id
                 WHERE {' AND '.join(document_filter)}
-                GROUP BY 1
-                """
-                ),
+                  AND d.budget_concept_id IS NOT NULL
+                GROUP BY 1 {", bc.id" if concept_identity else ""}
+                """),
                 params,
             )
         )
@@ -954,6 +1154,11 @@ async def _build_budget_finance_breakdowns(
         _merge_breakdown_row(
             by_concept,
             label=row.get("label"),
+            concept_id=(
+                (_safe_str(row.get("concept_id")) or "__unassigned__")
+                if concept_identity
+                else None
+            ),
             requested_total=requested_total,
             committed_total=committed_total,
             paid_total=paid_total,
@@ -964,21 +1169,21 @@ async def _build_budget_finance_breakdowns(
     expense_concept_rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
                     COALESCE(NULLIF(TRIM(bc.concept_name), ''), 'Sin partida asignada') AS label,
+                    {"bc.id::text AS concept_id," if concept_identity else ""}
                     COALESCE(SUM({_budget_expense_base_amount_sql('e', 'cfdi')}), 0) AS actual_total,
                     COUNT(*) AS expense_count
                 FROM expense_reports e
                 LEFT JOIN documentos d ON d.id = e.documento_id
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
-                LEFT JOIN budget_concepts bc ON bc.id = e.budget_concept_id
+                LEFT JOIN budget_concepts bc ON bc.id = COALESCE(e.budget_concept_id, CASE WHEN d.tipo = 'SOLICITUD' THEN d.budget_concept_id END)
                 LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
-                GROUP BY 1
-                """
-                ),
+                  AND COALESCE(e.budget_concept_id, CASE WHEN d.tipo = 'SOLICITUD' THEN d.budget_concept_id END) IS NOT NULL
+                GROUP BY 1 {", bc.id" if concept_identity else ""}
+                """),
                 params,
             )
         )
@@ -989,13 +1194,18 @@ async def _build_budget_finance_breakdowns(
         _merge_breakdown_row(
             by_concept,
             label=row.get("label"),
+            concept_id=(
+                (_safe_str(row.get("concept_id")) or "__unassigned__")
+                if concept_identity
+                else None
+            ),
             actual_total=_safe_decimal(row.get("actual_total")),
             expense_count=int(row.get("expense_count") or 0),
         )
 
     return {
         "by_provider": _finalize_breakdown_store(by_provider),
-        "by_concept": _finalize_breakdown_store(by_concept),
+        "by_concept": _finalize_breakdown_store(by_concept, limit=concept_limit),
     }
 
 
@@ -1022,6 +1232,7 @@ async def list_budget_tournament_commitments(
                 SELECT
                     CAST(d.id AS text) AS documento_id,
                     d.numero_referencia,
+                    d.referencia_operaciones,
                     d.estado,
                     d.concepto_pago,
                     COALESCE(NULLIF(TRIM(bc_doc.concept_name), ''), NULL) AS budget_concept_name,
@@ -1063,7 +1274,7 @@ async def list_budget_tournament_commitments(
                         ) AS related_expense_total,
                         MAX(e.fecha) FILTER (WHERE e.estado_gasto != 'cancelado') AS related_expense_latest_date
                     FROM expense_reports e
-                    WHERE (
+                    WHERE {accounting_expense_sql('e')} AND (
                         e.id = d.gasto_generado_id
                         OR e.documento_id = d.id
                         OR e.solicitud_documento_id = d.id
@@ -1086,6 +1297,7 @@ async def list_budget_tournament_commitments(
         {
             "documento_id": _safe_str(row.get("documento_id")) or None,
             "numero_referencia": _safe_str(row.get("numero_referencia")) or None,
+            "referencia_operaciones": _safe_str(row.get("referencia_operaciones")) or None,
             "estado": _safe_str(row.get("estado")) or None,
             "concepto_pago": _safe_str(row.get("concepto_pago")) or None,
             "budget_concept_name": _safe_str(row.get("budget_concept_name")) or None,
@@ -2011,18 +2223,9 @@ def resolve_definitive_budget_version_from_versions(
     versions: list[dict[str, Any]],
 ) -> Optional[dict[str, Any]]:
     """Return the operational budget version from an already-loaded list."""
-    if not versions:
-        return None
+    from .distribution import select_version
 
-    def _sort_key(item: dict[str, Any]) -> tuple[int, int, str]:
-        status = _normalize_budget_status(item.get("status"))
-        return (
-            _DEFINITIVE_VERSION_STATUS_ORDER.get(status, 99),
-            -int(item.get("line_count") or 0),
-            _safe_str(item.get("updated_at")) or _safe_str(item.get("created_at")),
-        )
-
-    return sorted(versions, key=_sort_key)[0]
+    return select_version(versions)
 
 
 def _scoped_budget_concept_key(partida: str, subproyecto: str = "") -> str:
@@ -3140,8 +3343,10 @@ async def create_budget_concept(
     commit: bool = True,
     concept_key: Optional[str] = None,
     extra_metadata: Optional[dict[str, Any]] = None,
+    ensure_schema: bool = True,
 ) -> dict[str, Any]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     tournament = await _resolve_tournament_for_budget_concept(
         session,
         tournament_id=tournament_id,
@@ -4129,6 +4334,8 @@ async def import_budget_lines_upload(
     )
     if not _editable_version_status(current.get("status")):
         raise ValueError("Only draft or reforecast versions allow line imports")
+    if current.get("source") == "distribution_revision":
+        raise ValueError("La revisión de distribución no admite reimportar partidas")
     rows = _load_tabular_upload_rows(file_bytes=file_bytes, filename=filename)
     if not rows:
         raise ValueError("El archivo no contiene líneas presupuestales.")
@@ -5129,7 +5336,10 @@ async def list_budget_audit_events(
 
 
 async def _link_budget_lines_to_tournaments(
-    session: AsyncSession, *, budget_version_id: str
+    session: AsyncSession,
+    *,
+    budget_version_id: str,
+    line_ids: Optional[list[str]] = None,
 ) -> None:
     tournament_rows = await _load_tournament_rows(session)
     if not tournament_rows:
@@ -5137,14 +5347,17 @@ async def _link_budget_lines_to_tournaments(
     line_rows = (
         (
             await session.execute(
-                text(
-                    """
+                text("""
                 SELECT id, tournament_code, tournament_name
                 FROM budget_lines
                 WHERE budget_version_id = :budget_version_id
-                """
-                ),
-                {"budget_version_id": budget_version_id},
+                  AND (:all_lines OR id::text = ANY(CAST(:line_ids AS text[])))
+                """),
+                {
+                    "budget_version_id": budget_version_id,
+                    "all_lines": line_ids is None,
+                    "line_ids": line_ids or [],
+                },
             )
         )
         .mappings()
@@ -5159,13 +5372,11 @@ async def _link_budget_lines_to_tournaments(
         if not tournament_id:
             continue
         await session.execute(
-            text(
-                """
+            text("""
                 UPDATE budget_lines
                 SET tournament_id = :tournament_id, updated_at = NOW()
                 WHERE id = :line_id
-                """
-            ),
+                """),
             {"line_id": row["id"], "tournament_id": tournament_id},
         )
 
@@ -5382,8 +5593,7 @@ async def list_budget_versions(
     rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
                     v.id,
                     v.edition_year,
@@ -5398,18 +5608,23 @@ async def list_budget_versions(
                     COUNT(l.id) AS line_count,
                     COALESCE(SUM(l.budget_amount), 0) AS budget_total,
                     COALESCE(SUM(l.reference_amount), 0) AS reference_total,
-                    MAX(a.approved_at) AS latest_approved_at
+                    (SELECT MAX(approval.approved_at)
+                     FROM budget_approvals approval
+                     WHERE approval.budget_version_id=v.id) AS latest_approved_at,
+                    (SELECT log.payload->>'source_version_id'
+                     FROM budget_version_audit_log log
+                     WHERE log.budget_version_id=v.id
+                       AND log.event_type='distribution_revision_created'
+                     ORDER BY log.created_at DESC LIMIT 1) AS distribution_source_version_id
                 FROM budget_versions v
                 LEFT JOIN budget_lines l ON l.budget_version_id = v.id
-                LEFT JOIN budget_approvals a ON a.budget_version_id = v.id
                 {where_clause}
                 GROUP BY
                     v.id, v.edition_year, v.version_name, v.status, v.source,
                     v.notes, v.artifact_path, v.created_by_empleado_id,
                     v.created_at, v.updated_at
                 ORDER BY v.edition_year DESC, v.updated_at DESC, v.created_at DESC
-                """
-                ),
+                """),
                 params,
             )
         )
@@ -5423,6 +5638,7 @@ async def list_budget_versions(
             "version_name": _safe_str(row["version_name"]),
             "status": _safe_str(row["status"]),
             "source": _safe_str(row["source"]),
+            "distribution_source_version_id": row.get("distribution_source_version_id"),
             "notes": _safe_str(row["notes"]) or None,
             "artifact_path": _safe_str(row["artifact_path"]) or None,
             "created_by_empleado_id": _safe_str(row["created_by_empleado_id"]) or None,
@@ -5460,34 +5676,54 @@ async def create_budget_line(
     criteria_note: Optional[str] = None,
     observations: Optional[str] = None,
     commit: bool = True,
+    ensure_schema: bool = True,
+    extra_metadata: Optional[dict[str, Any]] = None,
+    tournament_id: Optional[str] = None,
 ) -> dict[str, Any]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     current = await get_budget_version(
         session, version_id=version_id, ensure_schema=False
     )
     if not _editable_version_status(current.get("status")):
         raise ValueError("Only draft or reforecast versions allow line creation")
+    if current.get("source") == "distribution_revision":
+        raise ValueError("La revisión de distribución conserva las partidas originales")
 
     clean_direction = normalize_budget_line_direction(line_direction)
     clean_concept = _safe_str(concept_name)
-    concept = await resolve_budget_concept(
-        session,
-        budget_concept_id=budget_concept_id,
-        tournament_code=tournament_code,
-        budget_direction=clean_direction,
-    )
+    if tournament_id:
+        concept = await get_budget_concept(
+            session, concept_id=_safe_str(budget_concept_id), ensure_schema=False
+        )
+        if concept is not None and (
+            not concept.get("active")
+            or normalize_budget_line_direction(concept.get("budget_direction"))
+            != clean_direction
+        ):
+            concept = None
+    else:
+        concept = await resolve_budget_concept(
+            session,
+            budget_concept_id=budget_concept_id,
+            tournament_code=tournament_code,
+            budget_direction=clean_direction,
+        )
     if concept is not None:
         clean_concept = _safe_str(concept.get("concept_name"))
         tournament_code = _safe_str(concept.get("tournament_code")) or tournament_code
         tournament_name = _safe_str(concept.get("tournament_name")) or tournament_name
+    if tournament_id and (
+        concept is None or str(concept.get("tournament_id")) != str(tournament_id)
+    ):
+        raise ValueError("Budget concept does not belong to the exact tournament")
     if not clean_concept:
         raise ValueError("Budget line concept is required")
     amount = _safe_decimal(budget_amount)
     reference = _safe_decimal(reference_amount)
     line_id = str(uuid.uuid4())
     await session.execute(
-        text(
-            """
+        text("""
             INSERT INTO budget_lines (
                 id, budget_version_id, budget_concept_id, tournament_code, tournament_name, phase,
                 concept_name, line_direction, account_code_suggested, account_code_final,
@@ -5501,8 +5737,7 @@ async def create_budget_line(
                 :owner_name, :criteria_note, :observations, CAST(:metadata AS jsonb),
                 NOW(), NOW()
             )
-            """
-        ),
+            """),
         {
             "id": line_id,
             "budget_version_id": version_id,
@@ -5522,10 +5757,25 @@ async def create_budget_line(
             "owner_name": _safe_str(owner_name) or None,
             "criteria_note": _safe_str(criteria_note) or None,
             "observations": _safe_str(observations) or None,
-            "metadata": json.dumps({"created_from": "ui_manual"}, ensure_ascii=False),
+            "metadata": json.dumps(
+                {"created_from": "ui_manual", **(extra_metadata or {})},
+                ensure_ascii=False,
+            ),
         },
     )
-    await _link_budget_lines_to_tournaments(session, budget_version_id=version_id)
+    if tournament_id:
+        await session.execute(
+            text(
+                "UPDATE budget_lines SET tournament_id = :tournament_id "
+                "WHERE id = :line_id"
+            ),
+            {"tournament_id": tournament_id, "line_id": line_id},
+        )
+    else:
+        await _link_budget_lines_to_tournaments(
+            session, budget_version_id=version_id, line_ids=[line_id]
+        )
+
     await _audit_budget_event(
         session,
         budget_version_id=version_id,
@@ -5548,7 +5798,11 @@ async def create_budget_line(
     else:
         await session.flush()
     lines = await list_budget_lines(
-        session, version_id=version_id, limit=500, ensure_schema=False
+        session,
+        version_id=version_id,
+        tournament_id=tournament_id,
+        limit=5000,
+        ensure_schema=False,
     )
     for line in lines:
         if line["id"] == line_id:
@@ -5568,14 +5822,12 @@ async def transition_budget_version(
     current = (
         (
             await session.execute(
-                text(
-                    """
-                SELECT id, status
+                text("""
+                SELECT id, status, source, edition_year
                 FROM budget_versions
                 WHERE id = :version_id
-                LIMIT 1
-                """
-                ),
+                FOR UPDATE
+                """),
                 {"version_id": version_id},
             )
         )
@@ -5594,6 +5846,56 @@ async def transition_budget_version(
         raise ValueError(
             f"Invalid budget status transition: {from_status} -> {to_status}"
         )
+
+    from .distribution import guard_source_transition
+
+    if (
+        current.get("source") == "distribution_revision"
+        and from_status in {"approved", "frozen"}
+        and to_status in {"reforecast", "closed"}
+    ):
+        raise ValueError(
+            "La distribución aprobada conserva su historial; prepara otra revisión para ajustar semanas"
+        )
+    await guard_source_transition(session, version_id, to_status)
+
+    if to_status in {"approved", "frozen"}:
+        from .distribution import revision_context, validate_revision, schedule_state
+
+        if current.get("source") == "distribution_revision":
+            context = await revision_context(session, version_id)
+            await validate_revision(session, context)
+        else:
+            lines = (
+                (
+                    await session.execute(
+                        text("""
+                SELECT id::text AS id, budget_amount,
+                       COALESCE(line_direction, 'expense') AS line_direction
+                FROM budget_lines WHERE budget_version_id=CAST(:id AS uuid)
+                FOR UPDATE
+            """),
+                        {"id": version_id},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            plans = await list_monthly_plan_for_lines(
+                session, line_ids=[l["id"] for l in lines], ensure_schema=False
+            )
+            for line in lines:
+                if line.get(
+                    "line_direction", "expense"
+                ) == "expense" and schedule_state(line, plans.get(line["id"], {}))[
+                    "status"
+                ] in {
+                    "invalid",
+                    "mismatch",
+                }:
+                    raise ValueError(
+                        "La distribución existente no concilia con el autorizado; completa o corrige las semanas"
+                    )
 
     await session.execute(
         text(
@@ -5814,15 +6116,19 @@ async def update_budget_line(
     actor_empleado_id: Optional[str] = None,
     updates: dict[str, Any],
     commit: bool = True,
+    ensure_schema: bool = True,
+    extra_metadata: Optional[dict[str, Any]] = None,
+    tournament_id: Optional[str] = None,
 ) -> dict[str, Any]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     current = (
         (
             await session.execute(
-                text(
-                    """
+                text("""
                 SELECT
                     l.id,
+                    l.tournament_id,
                     l.budget_version_id,
                     l.budget_concept_id,
                     l.tournament_code,
@@ -5839,13 +6145,13 @@ async def update_budget_line(
                     l.criteria_note,
                     l.observations,
                     l.metadata,
-                    v.status AS version_status
+                    v.status AS version_status,
+                    v.source AS version_source
                 FROM budget_lines l
                 JOIN budget_versions v ON v.id = l.budget_version_id
                 WHERE l.id = :line_id
-                LIMIT 1
-                """
-                ),
+                FOR UPDATE OF l, v
+                """),
                 {"line_id": line_id},
             )
         )
@@ -5854,6 +6160,8 @@ async def update_budget_line(
     )
     if not current:
         raise ValueError("Budget line not found")
+    if tournament_id and str(current.get("tournament_id")) != str(tournament_id):
+        raise ValueError("Budget line does not belong to the exact tournament")
     if not _editable_version_status(current.get("version_status")):
         raise ValueError("Only draft or reforecast versions allow line edits")
 
@@ -5873,6 +6181,20 @@ async def update_budget_line(
     }
     if not requested_fields:
         raise ValueError("No editable budget line fields were provided")
+    if current.get("version_source") == "distribution_revision":
+        if (
+            extra_metadata
+            or any(key != "budget_amount" for key in requested_fields)
+            or (
+                "budget_amount" in requested_fields
+                and _safe_decimal(requested_fields["budget_amount"])
+                != _safe_decimal(current["budget_amount"])
+            )
+        ):
+            raise ValueError(
+                "Esta revisión permite sólo distribuir el importe autorizado original"
+            )
+        return dict(current)
 
     concept = None
     if "budget_concept_id" in requested_fields:
@@ -5925,6 +6247,10 @@ async def update_budget_line(
         or _safe_str(current["observations"])
         or None,
         "variance_amount": variance_amount,
+        "metadata": json.dumps(
+            {**(current.get("metadata") or {}), **(extra_metadata or {})},
+            ensure_ascii=False,
+        ),
     }
     await session.execute(
         text(
@@ -5940,6 +6266,7 @@ async def update_budget_line(
                 criteria_note = :criteria_note,
                 observations = :observations,
                 variance_amount = :variance_amount,
+                metadata = CAST(:metadata AS jsonb),
                 updated_at = NOW()
             WHERE id = :line_id
             """
@@ -5980,7 +6307,8 @@ async def update_budget_line(
     lines = await list_budget_lines(
         session,
         version_id=_safe_str(current["budget_version_id"]),
-        limit=500,
+        tournament_id=tournament_id,
+        limit=5000 if tournament_id else 500,
         ensure_schema=False,
     )
     for line in lines:
@@ -6010,16 +6338,7 @@ async def _select_budget_version(
         for version in versions:
             if version["id"] == version_id:
                 return version
-    if not versions:
-        return None
-    latest_by_priority = sorted(versions, key=_budget_version_sort_key)
-    preferred_status = _safe_str(latest_by_priority[0].get("status"))
-    same_status_versions = [
-        version
-        for version in versions
-        if _safe_str(version.get("status")) == preferred_status
-    ]
-    return same_status_versions[0] if same_status_versions else latest_by_priority[0]
+    return resolve_definitive_budget_version_from_versions(versions)
 
 
 async def _build_budget_finance_comparison(
@@ -6030,12 +6349,16 @@ async def _build_budget_finance_comparison(
     tournament_name: Optional[str],
     tournament_code: Optional[str],
     budget_total: float,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
 ) -> dict[str, Any]:
     document_filter, expense_filter, params = _build_budget_scope_filters(
         edition_year=edition_year,
         tournament_id=tournament_id,
         tournament_name=tournament_name,
         tournament_code=tournament_code,
+        date_from=date_from,
+        date_to=date_to,
     )
     today = date.today()
     next_30 = today + timedelta(days=30)
@@ -6043,22 +6366,22 @@ async def _build_budget_finance_comparison(
     document_row = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
-                    COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado') THEN COALESCE(d.monto_solicitado, d.monto_total, 0) ELSE 0 END), 0) AS requested_total,
-                    COALESCE(SUM(CASE WHEN d.estado IN ('aprobado', 'pagado', 'cerrado') THEN COALESCE(d.monto_solicitado, d.monto_total, 0) ELSE 0 END), 0) AS committed_total,
-                    COALESCE(SUM(CASE WHEN d.estado IN ('pagado', 'cerrado') OR d.pagado_en IS NOT NULL THEN COALESCE(d.monto_total, d.monto_solicitado, 0) ELSE 0 END), 0) AS paid_total,
-                    COALESCE(SUM(CASE WHEN d.estado NOT IN ('pagado', 'cerrado') AND d.fecha_pago IS NOT NULL AND d.fecha_pago < :today THEN COALESCE(d.monto_total, d.monto_solicitado, 0) ELSE 0 END), 0) AS overdue_open_total,
-                    COALESCE(SUM(CASE WHEN d.estado NOT IN ('pagado', 'cerrado') AND d.fecha_pago IS NOT NULL AND d.fecha_pago >= :today AND d.fecha_pago <= :next_30 THEN COALESCE(d.monto_total, d.monto_solicitado, 0) ELSE 0 END), 0) AS due_next_30_total,
-                    COUNT(*) FILTER (WHERE d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado')) AS document_count,
+                    COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'en_proceso_pago', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS requested_total,
+                    COALESCE(SUM(CASE WHEN d.estado IN ('aprobado', 'en_proceso_pago', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS committed_total,
+                    COALESCE(SUM(CASE WHEN d.estado IN ('pagado', 'cerrado') OR d.pagado_en IS NOT NULL THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS paid_total,
+                    COALESCE(SUM(CASE WHEN d.estado NOT IN ('pagado', 'cerrado') AND d.fecha_pago IS NOT NULL AND d.fecha_pago < :today THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS overdue_open_total,
+                    COALESCE(SUM(CASE WHEN d.estado NOT IN ('pagado', 'cerrado') AND d.fecha_pago IS NOT NULL AND d.fecha_pago >= :today AND d.fecha_pago <= :next_30 THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS due_next_30_total,
+                    COUNT(*) FILTER (WHERE d.estado IN ('enviado', 'aprobado', 'en_proceso_pago', 'pagado', 'cerrado')) AS document_count,
                     COUNT(*) FILTER (WHERE d.estado NOT IN ('pagado', 'cerrado') AND d.fecha_pago IS NOT NULL AND d.fecha_pago < :today) AS overdue_open_count,
                     COUNT(*) FILTER (WHERE d.estado NOT IN ('pagado', 'cerrado') AND d.fecha_pago IS NOT NULL AND d.fecha_pago >= :today AND d.fecha_pago <= :next_30) AS due_next_30_count
                 FROM documentos d
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
+                LEFT JOIN cfdi_reports document_cfdi ON document_cfdi.id = d.cfdi_report_id
                 WHERE {' AND '.join(document_filter)}
-                """
-                ),
+                  AND d.budget_concept_id IS NOT NULL
+                """),
                 {**params, "today": today, "next_30": next_30},
             )
         )
@@ -6068,8 +6391,7 @@ async def _build_budget_finance_comparison(
     expense_row = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
                     COALESCE(SUM({_budget_expense_base_amount_sql('e', 'cfdi')}), 0) AS actual_total,
                     COUNT(*) AS expense_count
@@ -6078,8 +6400,8 @@ async def _build_budget_finance_comparison(
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
                 LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
-                """
-                ),
+                  AND COALESCE(e.budget_concept_id, CASE WHEN d.tipo = 'SOLICITUD' THEN d.budget_concept_id END) IS NOT NULL
+                """),
                 params,
             )
         )
@@ -6174,6 +6496,47 @@ def _empty_budget_snapshot(
     }
 
 
+async def build_executive_monthly_actuals(
+    session: AsyncSession,
+    *,
+    tournament_id: str,
+    edition_year: int,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> list[dict[str, Any]]:
+    """Read monthly execution using the same scope and tax base as the aggregate."""
+    if not tournament_id:
+        raise ValueError("Executive monthly reads require a tournament UUID")
+    _, filters, params = _build_budget_scope_filters(
+        edition_year=edition_year,
+        tournament_id=tournament_id,
+        tournament_name=None,
+        tournament_code=None,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    rows = (
+        (
+            await session.execute(
+                text(f"""
+        SELECT EXTRACT(MONTH FROM e.fecha)::int AS month,
+            SUM({_budget_expense_base_amount_sql('e', 'cfdi')}) AS actual_total
+        FROM expense_reports e
+        LEFT JOIN documentos d ON d.id = e.documento_id
+        LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
+        WHERE {' AND '.join(filters)}
+          AND COALESCE(e.budget_concept_id, CASE WHEN d.tipo = 'SOLICITUD' THEN d.budget_concept_id END) IS NOT NULL
+        GROUP BY EXTRACT(MONTH FROM e.fecha) ORDER BY month
+    """),
+                params,
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return [dict(row) for row in rows]
+
+
 async def build_budget_snapshot(
     session: AsyncSession,
     *,
@@ -6184,6 +6547,9 @@ async def build_budget_snapshot(
     version_id: Optional[str] = None,
     ensure_schema: bool = True,
     strict_tournament_scope: bool = False,
+    executive_read: bool = False,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
 ) -> dict[str, Any]:
     if ensure_schema:
         await ensure_budget_schema(session)
@@ -6193,6 +6559,20 @@ async def build_budget_snapshot(
         version_id=version_id,
         ensure_schema=ensure_schema,
     )
+    period_kwargs = (
+        {"date_from": date_from, "date_to": date_to}
+        if date_from is not None or date_to is not None
+        else {}
+    )
+    if executive_read and (
+        not selected_version
+        or selected_version.get("status") not in {"approved", "frozen"}
+    ):
+        return _empty_budget_snapshot(
+            edition_year=edition_year,
+            source="budget_scope_unavailable",
+            version=selected_version,
+        )
     aliases = budget_alias_candidates(tournament_name or "", tournament_slug or "")
 
     if strict_tournament_scope and not tournament_id:
@@ -6246,6 +6626,8 @@ async def build_budget_snapshot(
         return artifact_snapshot
 
     filters = ["l.budget_version_id = :version_id"]
+    if executive_read:
+        filters.append("COALESCE(l.line_direction, 'expense') = 'expense'")
     params: dict[str, Any] = {"version_id": selected_version["id"]}
     if tournament_id:
         if strict_tournament_scope:
@@ -6264,13 +6646,15 @@ async def build_budget_snapshot(
     rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
+                    l.id,
                     l.tournament_id,
                     l.tournament_code,
                     l.tournament_name,
                     l.concept_name,
+                    l.budget_concept_id,
+                    bc.concept_name AS current_concept_name,
                     l.account_code_final,
                     l.account_code_suggested,
                     l.phase,
@@ -6280,10 +6664,10 @@ async def build_budget_snapshot(
                     l.reference_amount,
                     l.variance_amount
                 FROM budget_lines l
+                LEFT JOIN budget_concepts bc ON bc.id = l.budget_concept_id
                 WHERE {' AND '.join(filters)}
                 ORDER BY l.tournament_name ASC, l.budget_amount DESC, l.concept_name ASC
-                """
-                ),
+                """),
                 params,
             )
         )
@@ -6364,13 +6748,18 @@ async def build_budget_snapshot(
         "due_next_30_total": 0.0,
     }
     forecast_health_counts = {"healthy": 0, "at_risk": 0, "over_budget": 0}
-    summary_breakdowns = _build_budget_line_breakdowns([dict(row) for row in rows])
+    summary_breakdowns = _build_budget_line_breakdowns(
+        [dict(row) for row in rows],
+        **({"concept_limit": None, "concept_identity": True} if executive_read else {}),
+    )
     summary_finance_breakdowns = await _build_budget_finance_breakdowns(
         session,
         edition_year=edition_year,
         tournament_id=tournament_id,
         tournament_name=tournament_name,
         tournament_code=None,
+        **period_kwargs,
+        **({"concept_limit": None, "concept_identity": True} if executive_read else {}),
     )
     by_concept_store = _new_breakdown_store()
     for item in summary_breakdowns.get("by_concept", []):
@@ -6389,6 +6778,7 @@ async def build_budget_snapshot(
             tournament_name=name,
             tournament_code=_safe_str(items[0].get("tournament_code")) or None,
             budget_total=round(budget_total, 2),
+            **period_kwargs,
         )
         for key in summary_comparison:
             summary_comparison[key] += float(comparison.get(key) or 0)
@@ -6407,6 +6797,7 @@ async def build_budget_snapshot(
             tournament_id=_safe_str(items[0].get("tournament_id")) or tournament_id,
             tournament_name=name,
             tournament_code=_safe_str(items[0].get("tournament_code")) or None,
+            **period_kwargs,
         )
         tournament_concept_store = _new_breakdown_store()
         for item in tournament_line_breakdowns.get("by_concept", []):
@@ -6491,9 +6882,104 @@ async def build_budget_snapshot(
         "forecast_health_counts": forecast_health_counts,
     }
 
+    quality_gaps = []
+    if executive_read:
+        document_filters, expense_filters, quality_params = _build_budget_scope_filters(
+            edition_year=edition_year,
+            tournament_id=tournament_id,
+            tournament_name=tournament_name,
+            tournament_code=None,
+            **period_kwargs,
+        )
+        quality = (
+            (
+                await session.execute(
+                    text(f"""
+            SELECT COUNT(*) FILTER (WHERE e.cfdi_compartido_confirmado IS TRUE
+                OR EXISTS (SELECT 1 FROM expense_reports sibling
+                    WHERE sibling.cfdi_report_id = e.cfdi_report_id
+                      AND sibling.id <> e.id AND sibling.estado_gasto <> 'cancelado'
+                      AND {accounting_expense_sql('sibling')})) AS shared_count,
+                COUNT(*) FILTER (WHERE COALESCE(e.currency, '') <> 'MXN') AS currency_count,
+                COUNT(*) FILTER (WHERE e.gasto_cantidad IS NULL) AS missing_amount_count
+            FROM expense_reports e
+            LEFT JOIN documentos d ON d.id = e.documento_id
+            LEFT JOIN tournaments t ON t.id = d.torneo_id
+            WHERE {' AND '.join(expense_filters)}
+        """),
+                    quality_params,
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if quality and int(quality.get("shared_count") or 0):
+            quality_gaps.append("shared_cfdi_allocation_requires_reconciliation")
+        if quality and int(quality.get("currency_count") or 0):
+            quality_gaps.append("mixed_or_unknown_currency")
+        if quality and int(quality.get("missing_amount_count") or 0):
+            quality_gaps.append("expense_amount_missing")
+        document_quality = (
+            (
+                await session.execute(
+                    text(f"""
+            SELECT COUNT(*) FILTER (WHERE COALESCE(d.currency, '') <> 'MXN') AS currency_count,
+                COUNT(*) FILTER (WHERE d.monto_total IS NULL AND d.monto_solicitado IS NULL) AS missing_amount_count
+            FROM documentos d LEFT JOIN tournaments t ON t.id = d.torneo_id
+            WHERE {' AND '.join(document_filters)}
+        """),
+                    quality_params,
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if document_quality and int(document_quality.get("currency_count") or 0):
+            quality_gaps.append("mixed_or_unknown_currency")
+        if document_quality and int(document_quality.get("missing_amount_count") or 0):
+            quality_gaps.append("document_amount_missing")
+
+    executive_monthly = (
+        await build_executive_monthly_actuals(
+            session,
+            tournament_id=tournament_id,
+            edition_year=edition_year,
+            **period_kwargs,
+        )
+        if executive_read and tournament_id
+        else None
+    )
+    distribution = None
+    if executive_read:
+        from .distribution import period_projection
+
+        distribution_lines = [dict(row) for row in rows if row.get("id")]
+        plan = await list_monthly_plan_for_lines(
+            session,
+            line_ids=[str(row["id"]) for row in distribution_lines],
+            ensure_schema=False,
+        )
+        distribution = period_projection(
+            distribution_lines,
+            plan,
+            edition_year,
+            date_to or date(edition_year, 12, 31),
+        )
     return {
         "ok": True,
         "source": "budget_db",
+        **(
+            {
+                "executive_quality_gaps": sorted(set(quality_gaps)),
+                "executive_monthly_actuals": executive_monthly,
+                "budget_distribution": distribution,
+                "executive_concepts": _finalize_breakdown_store(
+                    by_concept_store, limit=None
+                ),
+            }
+            if executive_read
+            else {}
+        ),
         "version": {
             "id": selected_version["id"],
             "name": selected_version["version_name"],
@@ -6831,8 +7317,10 @@ async def upsert_budget_line_for_concept(
     monthly_allocations: Optional[dict[int, Any]] = None,
     commit: bool = True,
     preserve_existing: bool = False,
+    ensure_schema: bool = True,
 ) -> dict[str, Any]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     clean_direction = normalize_budget_line_direction(line_direction)
     concept = await resolve_budget_concept(
         session,
@@ -6845,16 +7333,14 @@ async def upsert_budget_line_for_concept(
     existing = (
         (
             await session.execute(
-                text(
-                    """
-                SELECT id
-                FROM budget_lines
-                WHERE budget_version_id = :version_id
-                  AND budget_concept_id = :budget_concept_id
-                  AND COALESCE(line_direction, 'expense') = :line_direction
+                text("""
+                SELECT l.id, v.source AS version_source
+                FROM budget_lines l JOIN budget_versions v ON v.id=l.budget_version_id
+                WHERE l.budget_version_id = :version_id
+                  AND l.budget_concept_id = :budget_concept_id
+                  AND COALESCE(l.line_direction, 'expense') = :line_direction
                 LIMIT 1
-                """
-                ),
+                """),
                 {
                     "version_id": version_id,
                     "budget_concept_id": _safe_str(budget_concept_id),
@@ -6869,6 +7355,10 @@ async def upsert_budget_line_for_concept(
     metadata = (
         concept.get("metadata") if isinstance(concept.get("metadata"), dict) else {}
     )
+    if existing and existing.get("version_source") == "distribution_revision":
+        raise ValueError(
+            "La revisión de distribución no altera partidas ni conciliaciones financieras"
+        )
     phase_labels = metadata.get("applicable_phase_labels") or []
     resolved_phase = _safe_str(phase) or (
         str(phase_labels[0]).strip() if phase_labels else None
@@ -6908,6 +7398,7 @@ async def upsert_budget_line_for_concept(
                 line_direction=clean_direction,
                 budget_amount=amount,
                 commit=commit,
+                ensure_schema=False,
             )
             line_id = line["id"]
 
@@ -6936,16 +7427,19 @@ async def upsert_budget_line_for_concept(
 
 
 def budget_movement_key(movement: dict[str, Any]) -> str:
-    """Return the stable source identity used for budget reconciliation."""
-    document_id = _safe_str(movement.get("document_id"))
-    if document_id:
-        return f"document:{document_id}"
-    expense_id = _safe_str(movement.get("expense_id"))
-    if expense_id:
-        return f"expense:{expense_id}"
+    """Identify a posting or expense without merging report concepts."""
     accounting_line_id = _safe_str(movement.get("accounting_line_id"))
     if accounting_line_id:
         return f"accounting:{accounting_line_id}"
+    expense_id = _safe_str(movement.get("expense_id"))
+    if expense_id:
+        return f"expense:{expense_id}"
+    document_id = _safe_str(movement.get("document_id"))
+    if document_id:
+        concept_id = _safe_str(movement.get("concept_key"))
+        if concept_id and concept_id != _UNASSIGNED_BUDGET_CONCEPT_KEY:
+            return f"document:{document_id}:concept:{concept_id}"
+        return f"document:{document_id}"
     return ""
 
 
@@ -6958,16 +7452,96 @@ async def assign_budget_movement_to_line(
     movement_key: str,
     actor_empleado_id: Optional[str],
     ensure_schema: bool = True,
+    source_kind: Optional[str] = None,
 ) -> None:
     """Persist an explicit, per-movement assignment for a budget version."""
     clean_key = _safe_str(movement_key)
     if not clean_key or ":" not in clean_key:
         raise ValueError("Budget movement key is required")
+    if source_kind not in {None, "amex_direct"}:
+        raise ValueError("Unsupported budget movement source")
+    if source_kind == "amex_direct" and ensure_schema:
+        raise ValueError("AMEX direct assignments require owner-installed schema")
     if ensure_schema:
         await ensure_budget_schema(session)
-    await session.execute(
-        text(
+    target_sql = """SELECT l.tournament_id::text AS tournament_id, v.edition_year,
+                      v.status AS version_status
+            FROM budget_lines l JOIN budget_versions v ON v.id=l.budget_version_id
+            WHERE l.id=CAST(:line_id AS uuid)
+              AND l.budget_version_id=CAST(:version_id AS uuid)
+              AND l.budget_concept_id=CAST(:concept_id AS uuid)
+              AND COALESCE(l.line_direction, 'expense')='expense'
+              AND v.source <> 'distribution_revision'
             """
+    target_params = {
+        "line_id": _safe_str(budget_line_id),
+        "version_id": _safe_str(budget_version_id),
+        "concept_id": _safe_str(budget_concept_id),
+    }
+    target_result = await session.execute(text(target_sql), target_params)
+    target = target_result.mappings().first()
+    if target is None:
+        raise ValueError("Partida inválida para esta versión o concepto presupuestal.")
+    if source_kind == "amex_direct":
+        from devnous.gastos.services.amex_direct_budget_service import (
+            budget_assignment_source,
+        )
+
+        movement, permitted_version = await budget_assignment_source(
+            session,
+            movement_key=clean_key,
+            tournament_id=target["tournament_id"],
+            edition_year=int(target["edition_year"]),
+            budget_concept_id=_safe_str(budget_concept_id),
+            version_status=target["version_status"],
+            actor_empleado_id=actor_empleado_id,
+        )
+        if not permitted_version or budget_movement_key(movement) != clean_key:
+            raise ValueError("Fuente AMEX o versión presupuestal no autorizada.")
+        # Source proof acquires import/global locks first. Lock the actual line
+        # and version afterwards and reject changes made while waiting.
+        locked_result = await session.execute(
+            text(target_sql + " FOR UPDATE OF l,v"), target_params
+        )
+        locked_target = locked_result.mappings().first()
+        if locked_target is None or dict(locked_target) != dict(target):
+            raise ValueError("La partida o versión cambió; recarga el contexto AMEX")
+        candidates = [movement]
+    else:
+        if not _editable_version_status(target["version_status"]):
+            raise ValueError(
+                "Partida inválida para esta versión o concepto presupuestal."
+            )
+        snapshot = await build_budget_actuals_snapshot(
+            session,
+            edition_year=int(target["edition_year"]),
+            version_id=_safe_str(budget_version_id),
+            tournament_id=target["tournament_id"],
+        )
+        candidates = [
+            movement
+            for movement in snapshot["movements"]
+            if budget_movement_key(movement) == clean_key
+            or (
+                movement.get("document_id")
+                and clean_key == f"document:{movement['document_id']}"
+            )
+        ]
+    if source_kind is None and any(
+        movement.get("source_kind") == "amex_direct"
+        or movement.get("origen") == "amex_direct"
+        for movement in candidates
+    ):
+        raise ValueError("El origen AMEX directo requiere su autoridad presupuestal")
+    if not candidates or any(
+        _safe_str(movement.get("concept_key")) != _safe_str(budget_concept_id)
+        for movement in candidates
+    ):
+        raise ValueError(
+            "El movimiento no corresponde a esta partida; recarga el detalle."
+        )
+    await session.execute(
+        text("""
             INSERT INTO budget_movement_assignments (
                 id, budget_version_id, budget_concept_id, budget_line_id,
                 movement_key, assigned_by_empleado_id, created_at, updated_at
@@ -6980,8 +7554,7 @@ async def assign_budget_movement_to_line(
                 budget_line_id = EXCLUDED.budget_line_id,
                 assigned_by_empleado_id = EXCLUDED.assigned_by_empleado_id,
                 updated_at = NOW()
-            """
-        ),
+            """),
         {
             "id": str(uuid.uuid4()),
             "budget_version_id": _safe_str(budget_version_id),
@@ -7033,38 +7606,32 @@ async def _apply_explicit_movement_assignments(
     assignment_rows = (
         (
             await session.execute(
-                text(
-                    """
-                    SELECT movement_key, budget_concept_id::text AS budget_concept_id,
+                text("""
+                    SELECT id::text AS assignment_id, movement_key,
+                           budget_concept_id::text AS budget_concept_id,
                            budget_line_id::text AS budget_line_id
                     FROM budget_movement_assignments
                     WHERE budget_version_id = CAST(:budget_version_id AS uuid)
-                    """
-                ),
+                    """),
                 {"budget_version_id": _safe_str(budget_version_id)},
             )
         )
         .mappings()
         .all()
     )
-    assignments = {
-        _safe_str(row["movement_key"]): _safe_str(row["budget_line_id"])
-        for row in assignment_rows
-    }
+    assignments = {_safe_str(row["movement_key"]): row for row in assignment_rows}
     activated_concepts = {
         _safe_str(row["budget_concept_id"]) for row in assignment_rows
     }
     line_rows = (
         (
             await session.execute(
-                text(
-                    """
+                text("""
                     SELECT id::text AS id, budget_concept_id::text AS budget_concept_id
                     FROM budget_lines
                     WHERE budget_version_id = CAST(:budget_version_id AS uuid)
                       AND COALESCE(line_direction, 'expense') = 'expense'
-                    """
-                ),
+                    """),
                 {"budget_version_id": _safe_str(budget_version_id)},
             )
         )
@@ -7075,6 +7642,9 @@ async def _apply_explicit_movement_assignments(
         _safe_str(row["budget_concept_id"]): _safe_str(row["id"])
         for row in line_rows
         if _safe_str(row["budget_concept_id"])
+    }
+    line_concepts = {
+        _safe_str(row["id"]): _safe_str(row["budget_concept_id"]) for row in line_rows
     }
     # Lightweight unit seams and versions with no expense lines retain the
     # legacy concept-keyed actuals; there is nothing to reconcile to yet.
@@ -7092,8 +7662,33 @@ async def _apply_explicit_movement_assignments(
     for movement in movements:
         concept_id = _safe_str(movement.get("concept_key"))
         movement_key = budget_movement_key(movement)
-        line_id = assignments.get(movement_key)
-        if not line_id and concept_id not in activated_concepts:
+        # Old document-level assignments remain valid for their own concept.
+        # Never carry a hotel assignment onto food/transport in the same report.
+        candidate_keys = [movement_key]
+        if movement.get("expense_id"):
+            candidate_keys.append(f"expense:{movement['expense_id']}")
+        if movement.get("document_id"):
+            candidate_keys.append(f"document:{movement['document_id']}")
+        line_id = None
+        is_direct = movement.get("source_kind") == "amex_direct"
+        for candidate_key in candidate_keys:
+            assignment = assignments.get(candidate_key)
+            if assignment is None:
+                continue
+            if is_direct and (
+                not movement.get("budget_assignment_id")
+                or _safe_str(assignment.get("assignment_id"))
+                != _safe_str(movement["budget_assignment_id"])
+            ):
+                continue
+            assigned_line = _safe_str(assignment["budget_line_id"])
+            if (
+                _safe_str(assignment["budget_concept_id"]) == concept_id
+                and line_concepts.get(assigned_line) == concept_id
+            ):
+                line_id = assigned_line
+                break
+        if not line_id and not is_direct and concept_id not in activated_concepts:
             line_id = legacy_lines.get(concept_id)
         movement["movement_key"] = movement_key or None
         movement["budget_line_id"] = line_id or None
@@ -7192,27 +7787,28 @@ async def replace_budget_line_monthly_plan(
     budget_line_id: str,
     plan: dict[int, dict[str, Any]],
     actor_empleado_id: Optional[str] = None,
+    ensure_schema: bool = True,
 ) -> list[dict[str, Any]]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     clean_line_id = _safe_str(budget_line_id)
     if not clean_line_id:
         raise ValueError("Budget line id is required")
     current = (
         (
             await session.execute(
-                text(
-                    """
+                text("""
                 SELECT
                     l.budget_version_id,
                     l.budget_amount,
                     COALESCE(l.line_direction, 'expense') AS line_direction,
-                    v.status AS version_status
+                    v.status AS version_status,
+                    v.source AS version_source
                 FROM budget_lines l
                 JOIN budget_versions v ON v.id = l.budget_version_id
                 WHERE l.id = :budget_line_id
-                LIMIT 1
-                """
-                ),
+                FOR UPDATE OF l, v
+                """),
                 {"budget_line_id": clean_line_id},
             )
         )
@@ -7223,14 +7819,42 @@ async def replace_budget_line_monthly_plan(
         raise ValueError("Budget line not found")
     if not _editable_version_status(current.get("version_status")):
         raise ValueError("Only draft or reforecast versions allow line edits")
+    if (
+        current.get("version_source") == "distribution_revision"
+        and normalize_budget_line_direction(current.get("line_direction")) != "expense"
+    ):
+        raise ValueError(
+            "Esta revisión completa sólo la distribución del gasto autorizado"
+        )
+    from .distribution import money
+
+    for week, values in plan.items():
+        if not 1 <= int(week) <= BUDGET_WEEK_COUNT:
+            raise ValueError("Semana fuera de 1–52")
+        money(values.get("budget_expense_amount", 0))
+        money(values.get("expected_income_amount", 0))
     if normalize_budget_line_direction(current.get("line_direction")) == "expense":
         validate_budget_expense_plan_total(
             plan,
             budget_amount=current.get("budget_amount"),
         )
     before_plan = (
-        await list_monthly_plan_for_lines(session, line_ids=[clean_line_id])
+        await list_monthly_plan_for_lines(
+            session, line_ids=[clean_line_id], ensure_schema=False
+        )
     ).get(clean_line_id, {})
+    if current.get("version_source") == "distribution_revision":
+        plan = {week: dict(values) for week, values in plan.items()}
+        for week in set(plan) | set(before_plan):
+            income = before_plan.get(week, {}).get("expected_income_amount", 0)
+            if "expected_income_amount" in plan.get(week, {}) and money(
+                plan[week]["expected_income_amount"]
+            ) != money(income):
+                raise ValueError("Esta revisión no cambia ingresos esperados")
+            if week in plan or income:
+                plan.setdefault(week, {"budget_expense_amount": 0})[
+                    "expected_income_amount"
+                ] = income
     await session.execute(
         text(
             """
@@ -7280,8 +7904,11 @@ async def replace_budget_line_monthly_plan(
         session,
         budget_line_id=clean_line_id,
         allocations=expense_allocations,
+        ensure_schema=False,
     )
-    rows = await list_monthly_plan_for_lines(session, line_ids=[clean_line_id])
+    rows = await list_monthly_plan_for_lines(
+        session, line_ids=[clean_line_id], ensure_schema=False
+    )
     line_plan = rows.get(clean_line_id, {})
     await _audit_budget_event(
         session,
@@ -7356,6 +7983,237 @@ _BUDGET_TERMINAL_DOCUMENT_STATES = {
 }
 
 
+async def _load_paid_report_reimbursement_dates(
+    session: AsyncSession, *, report_ids: list[str]
+) -> dict[str, date | datetime]:
+    """Recognize full paid reimbursements using the canonical employee saldo.
+
+    This is read-only. A closed account, AMEX charge, partial transfer, or an
+    approved but unpaid request is never sufficient evidence of reimbursement.
+    Account-level matching requires exactly one INFORME to avoid ambiguity.
+    """
+    from types import SimpleNamespace
+
+    from devnous.gastos.services.amex_expense_service import (
+        calculate_informe_expense_totals,
+        compute_informe_saldo,
+        sum_paid_solicitud_amounts,
+    )
+
+    if not report_ids:
+        return {}
+    reports = (
+        (
+            await session.execute(
+                text("""/* budget_report_settlement_reports */
+                    SELECT report.id::text AS document_id,
+                           report.cuenta_gastos_id::text AS cuenta_gastos_id,
+                           (SELECT COUNT(*) FROM documentos sibling
+                            WHERE sibling.cuenta_gastos_id = report.cuenta_gastos_id
+                              AND sibling.tipo = 'INFORME') AS report_count
+                    FROM documentos report
+                    WHERE report.id::text = ANY(CAST(:report_ids AS text[]))
+                      AND report.tipo = 'INFORME' AND report.estado = 'aprobado'
+                      AND report.cuenta_gastos_id IS NOT NULL
+                    """),
+                {"report_ids": report_ids},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    reports = [row for row in reports if row["report_count"] == 1]
+    account_ids = list({row["cuenta_gastos_id"] for row in reports})
+    if not account_ids:
+        return {}
+
+    async def account_rows(query: str) -> list[dict[str, Any]]:
+        result = await session.execute(text(query), {"account_ids": account_ids})
+        return [dict(row) for row in result.mappings().all()]
+
+    requests = await account_rows("""/* budget_report_settlement_requests */
+        SELECT cuenta_gastos_id::text AS cuenta_gastos_id, tipo, estado,
+               monto_solicitado, concepto_pago, pagado_en, fecha_pago
+        FROM documentos
+        WHERE cuenta_gastos_id::text = ANY(CAST(:account_ids AS text[]))
+          AND tipo = 'SOLICITUD'
+        """)
+    expenses = await account_rows("""/* budget_report_settlement_expenses */
+        SELECT cuenta_gastos_id::text AS cuenta_gastos_id, gasto_cantidad,
+               pagado_con_amex_empresa, origen, estado_gasto
+        FROM expense_reports
+        WHERE cuenta_gastos_id::text = ANY(CAST(:account_ids AS text[]))
+        """)
+    adjustments = await account_rows("""/* budget_report_settlement_adjustments */
+        SELECT cuenta_gastos_id::text AS cuenta_gastos_id, monto
+        FROM reembolsos
+        WHERE cuenta_gastos_id::text = ANY(CAST(:account_ids AS text[]))
+          AND estado <> 'cancelado'
+        """)
+    dates: dict[str, date | datetime] = {}
+    for report in reports:
+        account_id = report["cuenta_gastos_id"]
+        account_requests = [
+            SimpleNamespace(**row)
+            for row in requests
+            if row["cuenta_gastos_id"] == account_id
+        ]
+        paid_refunds = [
+            row
+            for row in account_requests
+            if _safe_str(row.estado).lower() == "pagado"
+            and _safe_str(row.concepto_pago)
+            .lower()
+            .startswith("reembolso de saldo a favor")
+            and _safe_decimal(row.monto_solicitado) > 0
+            and (row.pagado_en or row.fecha_pago) is not None
+        ]
+        if not paid_refunds:
+            continue
+        totals = calculate_informe_expense_totals(
+            [
+                SimpleNamespace(**row)
+                for row in expenses
+                if row["cuenta_gastos_id"] == account_id
+            ]
+        )
+        saldo = compute_informe_saldo(
+            employee_paid=totals.employee_paid,
+            monto_entregado=sum_paid_solicitud_amounts(account_requests),
+            settled_amount=sum(
+                _safe_decimal(row["monto"])
+                for row in adjustments
+                if row["cuenta_gastos_id"] == account_id
+            ),
+        )
+        if totals.employee_paid > 0 and saldo.saldo == 0:
+            dates[report["document_id"]] = max(
+                (row.pagado_en or row.fecha_pago for row in paid_refunds),
+                key=lambda value: value.isoformat(),
+            )
+    return dates
+
+
+async def _append_direct_budget_movements(
+    session: AsyncSession,
+    *,
+    edition_year: int,
+    version_id: str,
+    tournament_id: Optional[str],
+    tournament_scope_requested: bool,
+    aliases: list[str],
+    phase_filter: Optional[str],
+    movements: list[dict[str, Any]],
+    store: dict[str, dict[int, dict[str, float]]],
+) -> None:
+    """Project evidenced direct commitments once, without estimating fiscal base."""
+    from devnous.gastos.services.amex_direct_budget_service import (
+        list_budget_direct_movements,
+    )
+
+    rows = await list_budget_direct_movements(
+        session,
+        edition_year=edition_year,
+        version_id=version_id,
+        tournament_id=tournament_id,
+        phase_filter=phase_filter,
+    )
+    seen_expenses = {
+        _safe_str(row.get("expense_id")) for row in movements if row.get("expense_id")
+    }
+    for original in rows:
+        row = dict(original)
+        expense_id = _safe_str(row.get("expense_id"))
+        if not expense_id or expense_id in seen_expenses:
+            continue
+        if tournament_id:
+            if _safe_str(row.get("tournament_id")) != _safe_str(tournament_id):
+                continue
+        elif tournament_scope_requested:
+            row_aliases = budget_alias_candidates(
+                _safe_str(row.get("tournament_name")),
+                _safe_str(row.get("tournament_code")),
+            )
+            if not set(aliases).intersection(row_aliases):
+                continue
+        movement_date = row.get("movement_date")
+        if not _date_in_edition_year(movement_date, edition_year):
+            raise ValueError("Fuente AMEX directa sin fecha económica en la edición")
+        kind = row.get("kind")
+        if kind not in {"commitment", "pending_fiscal_evidence"}:
+            raise ValueError("Proyección AMEX directa incompatible")
+        amount = row.get("amount")
+        if kind == "commitment" and (amount is None or amount < 0):
+            raise ValueError("Compromiso AMEX sin base fiscal evidenciada")
+        if kind == "pending_fiscal_evidence" and amount is not None:
+            raise ValueError("Pendiente fiscal AMEX con base inventada")
+        week = _budget_week_number(movement_date, edition_year)
+        concept_key = _safe_str(row.get("concept_key"))
+        if not concept_key:
+            raise ValueError("Fuente AMEX directa sin categoría presupuestal")
+        if kind == "commitment":
+            _merge_monthly_actual(
+                store,
+                concept_key=concept_key,
+                month_number=week,
+                committed_unpaid=_safe_decimal(amount),
+            )
+        row["month_number"] = week
+        row["source_kind"] = "amex_direct"
+        movements.append(row)
+        seen_expenses.add(expense_id)
+
+
+async def _scope_direct_ledger_to_budget_version(
+    session: AsyncSession,
+    *,
+    ledger_rows: list[Any],
+    version_id: str,
+) -> list[Any]:
+    """Retain direct costs only in their evidenced assignment's budget version."""
+    direct_rows = [row for row in ledger_rows if row.get("origen") == "amex_direct"]
+    if not direct_rows:
+        return ledger_rows
+    assignment_ids = sorted(
+        {
+            _safe_str((row.get("source_metadata") or {}).get("budget_assignment_id"))
+            for row in direct_rows
+        }
+        - {""}
+    )
+    assignments = {}
+    if assignment_ids:
+        result = await session.execute(
+            text(
+                """
+                SELECT id::text AS assignment_id, movement_key,
+                       budget_concept_id::text AS concept_id
+                FROM budget_movement_assignments
+                WHERE budget_version_id = CAST(:version_id AS uuid)
+                  AND id::text = ANY(CAST(:assignment_ids AS text[]))
+                """
+            ),
+            {"version_id": version_id, "assignment_ids": assignment_ids},
+        )
+        assignments = {row["assignment_id"]: row for row in result.mappings().all()}
+    scoped = []
+    for row in ledger_rows:
+        if row.get("origen") != "amex_direct":
+            scoped.append(row)
+            continue
+        assignment_id = _safe_str(
+            (row.get("source_metadata") or {}).get("budget_assignment_id")
+        )
+        assignment = assignments.get(assignment_id)
+        if (
+            assignment is not None
+            and assignment["movement_key"] == f"expense:{row.get('expense_id')}"
+            and assignment["concept_id"] == row.get("concept_key")
+        ):
+            scoped.append(row)
+    return scoped
+
+
 async def build_budget_actuals_snapshot(
     session: AsyncSession,
     *,
@@ -7365,6 +8223,7 @@ async def build_budget_actuals_snapshot(
     tournament_name: Optional[str] = None,
     tournament_code: Optional[str] = None,
     phase_filter: Optional[str] = None,
+    version_context: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Return budget actuals backed by balanced accounting result lines.
 
@@ -7373,6 +8232,30 @@ async def build_budget_actuals_snapshot(
     commitments. Terminal documents without a result posting are surfaced as
     pending accounting instead of being converted into an estimated tax base.
     """
+    if version_context and version_context.get("source") == "distribution_revision":
+        from .distribution import financial_context
+
+        financial_id, line_map = await financial_context(session, version_context)
+        snapshot = await build_budget_actuals_snapshot(
+            session,
+            edition_year=edition_year,
+            version_id=financial_id,
+            tournament_id=tournament_id,
+            tournament_name=tournament_name,
+            tournament_code=tournament_code,
+            phase_filter=phase_filter,
+        )
+        snapshot["monthly"] = {
+            line_map.get(key, key): values
+            for key, values in snapshot["monthly"].items()
+        }
+        for movement in snapshot["movements"]:
+            old_id = movement.get("budget_line_id")
+            if old_id in line_map:
+                movement["financial_budget_line_id"] = old_id
+                movement["budget_line_id"] = line_map[old_id]
+        snapshot["financial_version_id"] = financial_id
+        return snapshot
     tournament_scope_requested = bool(
         _safe_str(tournament_name) or _safe_str(tournament_code)
     )
@@ -7421,8 +8304,7 @@ async def build_budget_actuals_snapshot(
     ledger_rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                     WITH candidate_lines AS (
                         SELECT
                             apl.*,
@@ -7606,6 +8488,7 @@ async def build_budget_actuals_snapshot(
                         scoped.poliza_id::text AS poliza_id,
                         scoped.numero_poliza,
                         scoped.origen,
+                        scoped.raw_row_json AS source_metadata,
                         scoped.fecha_poliza,
                         scoped.cuenta_codigo,
                         scoped.effective_document_id::text AS document_id,
@@ -7691,8 +8574,7 @@ async def build_budget_actuals_snapshot(
                       )
                       {phase_clause}
                     ORDER BY scoped.fecha_poliza, scoped.numero_poliza, scoped.line_no
-                    """
-                ),
+                    """),
                 params,
             )
         )
@@ -7700,12 +8582,36 @@ async def build_budget_actuals_snapshot(
         .all()
     )
 
+    ledger_rows = await _scope_direct_ledger_to_budget_version(
+        session, ledger_rows=ledger_rows, version_id=version_id
+    )
+    reimbursement_dates = await _load_paid_report_reimbursement_dates(
+        session,
+        report_ids=list(
+            {
+                _safe_str(row.get("document_id"))
+                for row in ledger_rows
+                if _safe_str(row.get("document_type")).upper() == "INFORME"
+                and _safe_str(row.get("document_state")).lower() == "aprobado"
+                and row.get("settlement_at") is None
+            }
+        ),
+    )
     store = _monthly_actual_store()
     movements: list[dict[str, Any]] = []
     ledger_document_ids: set[str] = set()
     included_document_ids: set[str] = set()
     for raw_row in ledger_rows:
         row = dict(raw_row)
+        if row.get("origen") == "amex_direct":
+            row["source_kind"] = "amex_direct"
+            row["budget_assignment_id"] = (
+                row.get("source_metadata") or {}
+            ).get("budget_assignment_id")
+        if row.get("settlement_at") is None:
+            row["settlement_at"] = reimbursement_dates.get(
+                _safe_str(row.get("document_id"))
+            )
         account_code = _safe_str(row.get("cuenta_codigo"))
         is_income = account_code == "4100" or account_code.startswith("4100-")
         amount = (
@@ -7723,12 +8629,10 @@ async def build_budget_actuals_snapshot(
         ).lower().startswith("reembolso de saldo a favor")
         is_settled_report = (
             _safe_str(row.get("document_type")).upper() == "INFORME"
-            and row.get("settlement_at") is not None
+            and _date_in_edition_year(row.get("settlement_at"), edition_year)
         )
         recognition_date = row.get("fecha_poliza")
-        if is_settled_report and _date_in_edition_year(
-            row.get("settlement_at"), edition_year
-        ):
+        if is_settled_report:
             recognition_date = row.get("settlement_at")
         elif document_id and document_state in _BUDGET_COMMITMENT_DOCUMENT_STATES:
             commitment_at = row.get("document_commitment_at")
@@ -7937,8 +8841,7 @@ async def build_budget_actuals_snapshot(
     report_expense_rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                     SELECT
                         e.id::text AS expense_id,
                         e.fecha AS expense_date,
@@ -8021,16 +8924,33 @@ async def build_budget_actuals_snapshot(
                           'aplicado', 'liquidado'
                       )
                     ORDER BY d.creado_en, d.numero_referencia, e.fecha, e.id
-                    """
-                ),
+                    """),
                 document_params,
             )
         )
         .mappings()
         .all()
     )
+    reimbursement_dates.update(
+        await _load_paid_report_reimbursement_dates(
+            session,
+            report_ids=list(
+                {
+                    _safe_str(row.get("document_id"))
+                    for row in report_expense_rows
+                    if _safe_str(row.get("document_id")) not in ledger_document_ids
+                    and _safe_str(row.get("document_state")).lower() == "aprobado"
+                    and row.get("settlement_at") is None
+                }
+            ),
+        )
+    )
     for raw_row in report_expense_rows:
         row = dict(raw_row)
+        if row.get("settlement_at") is None:
+            row["settlement_at"] = reimbursement_dates.get(
+                _safe_str(row.get("document_id"))
+            )
         document_id = _safe_str(row.get("document_id"))
         if document_id in ledger_document_ids:
             continue
@@ -8038,7 +8958,7 @@ async def build_budget_actuals_snapshot(
         if solicitud_documento_id in included_document_ids:
             continue
         state = _safe_str(row.get("document_state")).lower()
-        is_settled = row.get("settlement_at") is not None
+        is_settled = _date_in_edition_year(row.get("settlement_at"), edition_year)
         amount = _safe_decimal(row.get("amount"))
         concept_key = (
             _safe_str(row.get("budget_concept_id"))
@@ -8204,6 +9124,18 @@ async def build_budget_actuals_snapshot(
             real_income=_safe_decimal(row["income_total"]),
         )
 
+    await _append_direct_budget_movements(
+        session,
+        edition_year=edition_year,
+        version_id=version_id,
+        tournament_id=tournament_id,
+        tournament_scope_requested=tournament_scope_requested,
+        aliases=aliases,
+        phase_filter=phase_filter,
+        movements=movements,
+        store=store,
+    )
+
     await _apply_explicit_movement_assignments(
         session,
         budget_version_id=version_id,
@@ -8271,6 +9203,7 @@ async def build_budget_monthly_actuals(
     tournament_name: Optional[str] = None,
     tournament_code: Optional[str] = None,
     phase_filter: Optional[str] = None,
+    version_context: Optional[dict[str, Any]] = None,
 ) -> dict[str, dict[int, dict[str, float]]]:
     snapshot = await build_budget_actuals_snapshot(
         session,
@@ -8280,6 +9213,7 @@ async def build_budget_monthly_actuals(
         tournament_name=tournament_name,
         tournament_code=tournament_code,
         phase_filter=phase_filter,
+        **({"version_context": version_context} if version_context else {}),
     )
     return snapshot["monthly"]
 

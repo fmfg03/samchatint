@@ -395,6 +395,7 @@ async def test_adapter_blocks_unsupported_intent_without_fallback():
         "budget.vs_actual",
         "finance.platform",
         "finance.exports",
+        "finance.vat_paid",
     ]
     assert "source_function" not in result
     assert "no_free_sql_recompute" in result["safety_labels"]

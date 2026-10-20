@@ -4,6 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+from devnous.gastos.routes.user_routes import _finance_cxc_workbench_href
+
 from devnous.gastos.services.employee_debtor_accounting_service import (
     DEBTOR_ACCOUNT_PREFIXES,
     SANTANDER_BANK_ACCOUNT_CODE,
@@ -226,3 +228,21 @@ def test_cuentas_por_cobrar_has_accounting_breadcrumb_context():
     assert "_gastos_breadcrumb_html([" in body
     assert '("Contabilidad", "/admin/contabilidad/estado")' in body
     assert '("Cuentas por Cobrar", None)' in body
+    assert "Vista contable CxC: CFDI y pólizas" in body
+    assert "Workbench CxC: facturación y cobranza" in body
+    assert "_finance_cxc_workbench_href(" in body
+    assert "edition_year=resolved_edition_year" in body
+
+
+def test_finance_workbench_href_preserves_only_shared_cxc_context():
+    href = _finance_cxc_workbench_href(
+        edition_year=2026,
+        tournament_id="torneo-1",
+        client="Cliente UX",
+        credit_days=30,
+    )
+
+    assert href == (
+        "/admin/finanzas/cuentas-por-cobrar?edition_year=2026"
+        "&tournament_id=torneo-1&cliente=Cliente+UX&dias_credito=30"
+    )

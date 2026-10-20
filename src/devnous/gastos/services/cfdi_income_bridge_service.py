@@ -119,26 +119,56 @@ async def _load_budget_line(
     budget_line_id: str,
 ) -> dict[str, Any]:
     row = (
-        await session.execute(
-            text(
-                """
+        (
+            await session.execute(
+                text("""
                 SELECT bl.id, bl.budget_version_id, bl.budget_concept_id, bl.tournament_id,
                        bl.tournament_code, bl.tournament_name, bl.phase, bl.concept_name,
-                       bl.account_code_final, bl.account_code_suggested,
+                       bl.account_code_final, bl.account_code_suggested, bl.metadata,
+                       v.source AS version_source, v.edition_year,
                        bc.cxc_cuenta_contable_id,
                        COALESCE(bl.line_direction, 'expense') AS line_direction
                 FROM budget_lines bl
+                JOIN budget_versions v ON v.id=bl.budget_version_id
                 LEFT JOIN budget_concepts bc ON bc.id = bl.budget_concept_id
                 WHERE bl.id = CAST(:budget_line_id AS uuid)
                 LIMIT 1
-                """
-            ),
-            {"budget_line_id": str(budget_line_id)},
+                """),
+                {"budget_line_id": str(budget_line_id)},
+            )
         )
-    ).mappings().first()
+        .mappings()
+        .first()
+    )
     if not row:
         raise CFDIIncomeBridgeError("Concepto no encontrado.")
     line = dict(row)
+    financial_line_id = (line.get("metadata") or {}).get(
+        "distribution_financial_line_id"
+    )
+    if line.get("version_source") == "distribution_revision":
+        from samchat.budgets.distribution import revision_context, financial_context
+
+        context = await revision_context(session, str(line["budget_version_id"]))
+        financial_id, line_map = await financial_context(session, context)
+        roots = [old for old, new in line_map.items() if new == str(line["id"])]
+        if roots != [str(financial_line_id)]:
+            raise CFDIIncomeBridgeError("Linaje financiero de distribución inválido.")
+        original = await _load_budget_line(session, roots[0])
+        if str(original["budget_version_id"]) != financial_id or any(
+            original.get(field) != line.get(field)
+            for field in (
+                "tournament_id",
+                "budget_concept_id",
+                "phase",
+                "line_direction",
+                "edition_year",
+            )
+        ):
+            raise CFDIIncomeBridgeError(
+                "La fuente financiera no corresponde a esta partida."
+            )
+        return original
     if str(line.get("line_direction") or "expense").strip().lower() != "income":
         raise CFDIIncomeBridgeError(
             "El concepto debe ser de ingresos para vincular CFDI PSP."
@@ -286,7 +316,7 @@ async def list_psp_cfdi_income_candidates(
         await session.execute(
             text(
                 f"""
-                SELECT c.id, c.cfdi_uuid, c.fecha, c.total,
+                SELECT c.id, c.cfdi_uuid, c.fecha, c.total, c.moneda,
                        c.total_impuestos_trasladados, c.emisor_rfc,
                        c.emisor_nombre, c.receptor_rfc, c.receptor_nombre,
                        c.descripcion_concepto_principal,
@@ -541,7 +571,7 @@ async def list_budget_cfdi_income_links(
                        l.tournament_id, l.phase, l.budget_concept_id, l.amount,
                        l.income_date, l.source, l.status, l.collection_date,
                        l.collection_poliza_id, l.created_at, l.unlinked_at,
-                       c.cfdi_uuid, c.fecha AS cfdi_fecha,
+                       c.cfdi_uuid, c.fecha AS cfdi_fecha, c.moneda,
                        c.total_impuestos_trasladados,
                        c.emisor_rfc, c.emisor_nombre,
                        c.receptor_rfc, c.receptor_nombre,

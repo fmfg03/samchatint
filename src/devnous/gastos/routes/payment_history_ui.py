@@ -68,7 +68,8 @@ def render_history(
         [
             ("solicitud", "Solicitud"),
             ("programacion", "Programación"),
-            ("pago", "Pago"),
+            ("pago", "Pago efectivo"),
+            ("captura", "Captura de confirmación"),
         ],
     )
     for name, label, kind in [
@@ -96,7 +97,8 @@ def render_history(
         ("fecha_solicitud", "Fecha solicitud"),
         ("fecha_aprobacion", "Fecha aprobación"),
         ("fecha_programacion", "Fecha programación"),
-        ("fecha_pagada", "Fecha pagada"),
+        ("fecha_pagada", "Fecha efectiva de pago"),
+        ("fecha_captura", "Capturado como pagado"),
     ]:
         active = values["sort"] == key
         direction = "asc" if active and values["direction"] == "desc" else "desc"
@@ -125,7 +127,13 @@ def render_history(
             f'<td>{value("beneficiario_nombre")}</td>',
             f'<td>{value("proveedor_nombre")}</td>',
         ]
-        for key in ("creado_en", "aprobado_en", "fecha_pago", "pagado_en"):
+        for key in (
+            "creado_en",
+            "aprobado_en",
+            "fecha_pago",
+            "fecha_pago_efectiva",
+            "pagado_en",
+        ):
             cells.append(
                 f'<td>{escape(str(row[key])[:10]) if row.get(key) else "No disponible"}</td>'
             )
@@ -164,4 +172,4 @@ def render_history(
         <p>Totales de todos los resultados filtrados, separados por moneda. Haz clic en un encabezado para cambiar el orden de todos los resultados.</p>
         <nav aria-label="Paginación">{pagination}</nav>
         <div style="overflow-x:auto"><table class="payment-table"><thead><tr>{''.join(headers)}</tr></thead>
-        <tbody>{''.join(rows) or '<tr><td colspan="11">Sin solicitudes para estos filtros.</td></tr>'}</tbody></table></div>"""
+        <tbody>{''.join(rows) or '<tr><td colspan="12">Sin solicitudes para estos filtros.</td></tr>'}</tbody></table></div>"""

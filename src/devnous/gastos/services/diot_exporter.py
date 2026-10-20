@@ -16,7 +16,16 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
@@ -356,7 +365,12 @@ def _iva_retenido(cfdi_report: Any) -> Decimal:
     return total
 
 
-def build_diot_export(expenses: Sequence[Any]) -> DiotExport:
+def build_diot_export(
+    expenses: Sequence[Any],
+    *,
+    effective_payment_dates: Optional[Mapping[str, Any]] = None,
+    shared_cfdi_confirmations: Optional[Mapping[str, bool]] = None,
+) -> DiotExport:
     detail_rows: List[DiotDetailRow] = []
     warnings: List[str] = []
 
@@ -399,9 +413,44 @@ def build_diot_export(expenses: Sequence[Any]) -> DiotExport:
         )
         iva_ret = _iva_retenido(cfdi) if cfdi else Decimal("0")
 
+        shared_confirmed = bool(
+            (shared_cfdi_confirmations or {}).get(str(expense.id), False)
+            or getattr(expense, "cfdi_compartido_confirmado", False)
+        )
+        if cfdi is not None and shared_confirmed:
+            fiscal_total = _money(getattr(cfdi, "total", None))
+            applied_total = _money(
+                total_gasto
+                - _money(getattr(expense, "propina_no_deducible", None))
+            )
+            invalid_application = (
+                fiscal_total <= 0
+                or applied_total <= 0
+                or applied_total > fiscal_total
+            )
+            if invalid_application:
+                row_warnings.append(
+                    "La aplicación de la factura compartida no es válida; "
+                    "no se prorrateó."
+                )
+            else:
+                ratio = applied_total / fiscal_total
+                subtotal_cfdi = _money(subtotal_cfdi * ratio)
+                total_cfdi = applied_total
+                base_16 = _money(base_16 * ratio)
+                base_cero = _money(base_cero * ratio)
+                exentos = _money(exentos * ratio)
+                no_objeto = _money(no_objeto * ratio)
+                iva_trasladado = _money(iva_trasladado * ratio)
+                iva_ret = _money(iva_ret * ratio)
+
+        effective_date = None
+        if effective_payment_dates is not None:
+            effective_date = effective_payment_dates.get(str(expense.id))
+
         detail_rows.append(
             DiotDetailRow(
-                fecha_gasto=getattr(expense, "fecha", None),
+                fecha_gasto=effective_date or getattr(expense, "fecha", None),
                 referencia_gasto=_clean_text(getattr(expense, "numero_referencia", "")),
                 archivo=_clean_text(
                     getattr(expense, "archivo_nombre", "")
@@ -467,7 +516,11 @@ def generate_diot_txt(export: DiotExport) -> bytes:
     return ("\r\n".join(lines) + ("\r\n" if lines else "")).encode("utf-8")
 
 
-def create_diot_excel(export: DiotExport) -> bytes:
+def create_diot_excel(
+    export: DiotExport,
+    *,
+    audit_issues: Optional[Mapping[str, Sequence[Mapping[str, Any]]]] = None,
+) -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = "Detalle CFDI"
@@ -490,6 +543,24 @@ def create_diot_excel(export: DiotExport) -> bytes:
 
     claves_ws = wb.create_sheet("CLAVES TIPOS")
     _write_claves_tipos_sheet(claves_ws)
+
+    for sheet_name, issues in (audit_issues or {}).items():
+        issue_ws = wb.create_sheet(str(sheet_name)[:31])
+        headers = (
+            "referencia",
+            "fecha_pago_efectiva",
+            "codigo",
+            "detalle",
+            "uuid_cfdi",
+        )
+        _write_sheet(
+            issue_ws,
+            headers,
+            [
+                tuple(issue.get(header, "") for header in headers)
+                for issue in issues
+            ],
+        )
 
     output = io.BytesIO()
     wb.save(output)

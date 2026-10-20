@@ -1,0 +1,71 @@
+{
+  "status": "NOT_EXECUTABLE_SCOPE_AND_LEAST_PRIVILEGE_IDENTITY_MISSING",
+  "production_admission": "coded_receipt_gated_not_mounted",
+  "candidate_base_commit": "2cb5397769fa1f7532ec495a68a19cbc4a6778c7",
+  "target_host": "prod-ryzen-20260728",
+  "installation_binding": "not_created",
+  "database_identity_nonsecret": {
+    "database": "devnous_db",
+    "current_application_role_rejected_for_gateway": "devnous_user",
+    "required_dedicated_role": "not_created"
+  },
+  "postgres_version": "16.15 (Ubuntu 16.15-0ubuntu0.24.04.1)",
+  "driver": "asyncpg 0.30.0",
+  "deployed_samchat_commit": "579479eb66e620f0f1a76d868f873bf8b9306bb0",
+  "deployed_schema_fingerprint": "149229d1bf1328e5f0f40086680130c32359ac8935cb6bd12da7303ac623121a",
+  "delegated_actor_binding": null,
+  "permitted_tournaments": [],
+  "permitted_budget_versions": [],
+  "delegation_expires_at": null,
+  "gateway_endpoint_or_socket": "not_created",
+  "bridge_worker_gateway_uids_gids": {
+    "bridge": "agentius-executor uid=993 gid=983",
+    "worker_socket_peer": "agentius-samchat uid=988 gid=981",
+    "gateway": "not_created"
+  },
+  "exact_role_and_effective_privileges": {
+    "observed_role": "devnous_user",
+    "database_create": false,
+    "database_temp": true,
+    "public_schema_create": true,
+    "memberships": [],
+    "elevated_flags": [],
+    "nine_gateway_tables": "SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER all effective",
+    "admission_result": "ROLE_UNPROVEN before business query",
+    "required_role": "dedicated role with none of TEMP,CREATE,membership,elevated flags,table-wide SELECT,DML,TRUNCATE,REFERENCES,TRIGGER; exact admitted columns only; no PUBLIC grants or executable agentius_read_v1 functions"
+  },
+  "owner_reviewed_views_columns_policies_and_hashes": "not_created_or_approved",
+  "source_manifest_paths_commit_hashes": {
+    "agentius_executor": "66612837a951f2b522d65b55731629dda849277db532e3adbe3258af7513eb7a",
+    "samchat_models": "982891f1bc0ce59c41a7e7ca252c54107e9224038289b0c8a90929133313be19",
+    "samchat_workflow": "4610f07f53cfd7dc07e7c8e1d4016d7b55f8c8d6290557bfc4012025be9f4fbf",
+    "samchat_authorization": "1510ac5dba885421c9f9d43cc04694c97f36ad1fd487550b5ae2c90d35746d84",
+    "samchat_budget": "2bf482c540702e955eac445d7fbc00700ae98558871e71c632bd00a5690d1c2c",
+    "agent_registry": "959feb3a98d63b46afae8951ea88dd7290c58354a6c1410434ed6b380af92df7",
+    "agent_service": "17cbf8988abda68f504c98736f2cadb9b32ad982c4105726743a2c195fcb9e9f",
+    "finance_adapter": "cba5bf70318933a929a5514bc7589d4591c8a8a53d7d9b5221659a564296b0c5"
+  },
+  "technical_audit_location_writer_acl_retention": null,
+  "installation_credentials_permissions_deployment_effects": null,
+  "approved_release_hashes_and_previous_release": null,
+  "human_exact_approval_receipt": null,
+  "remaining_checks": [
+    "exact_actor_documents_tournaments_budget_versions_expiry_and_owner_version",
+    "productive_views_column_acl_or_rls_public_temp_functions_session_user",
+    "approved_durable_audit_path_uid_gid_retention",
+    "native_agentius_connector_e2e_revocation_and_inflight_cancel",
+    "full_repository_required_gates_and_mypy_black_isort_when_available",
+    "production_reference_332_readonly_canary"
+  ],
+  "effects_authorized_now": [
+    "local_candidate_code_docs_synthetic_tests_and_packaging"
+  ],
+  "effects_not_authorized_now": [
+    "publish_commit_push_merge",
+    "install_or_configure_credentials",
+    "new_persistence_or_acl_changes",
+    "productive_database_connection",
+    "deploy_or_mount_gateway",
+    "enable_transfer_create_draft_or_any_business_write"
+  ]
+}

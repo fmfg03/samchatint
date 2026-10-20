@@ -10,6 +10,7 @@ import io
 import logging
 import re
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from devnous.document_parsing import parse_document_bytes
@@ -25,10 +26,11 @@ _RFC_PATTERN = re.compile(
     r"\b([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3})\b",
     re.IGNORECASE,
 )
-_MONEDA_PATTERN = re.compile(
-    r"(?i)(?:moneda|currency)\s*[:\-]?\s*([A-Z]{3})\b"
+_MONEDA_PATTERN = re.compile(r"(?i)(?:moneda|currency)\s*[:\-]?\s*([A-Z]{3})\b")
+_AMOUNT_CAPTURE = (
+    r"(?<![\d.,])([\d]{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})"
+    r"(?![\d.,]|[ \t]*%|\s*(?:LTR|LTS?|LITROS?|KG|KGM|H87|E48|PZAS?)\b)"
 )
-_AMOUNT_CAPTURE = r"([\d]{1,3}(?:,\d{3})*(?:\.\d{2})|\d+\.\d{2})"
 
 _MONEY_PREFIX = r"(?:\$|MXN\s*)?"
 
@@ -41,14 +43,16 @@ _LABELED_AMOUNT_PATTERNS: Dict[str, List[str]] = {
         rf"(?i)base\s*[:\-]?\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
     ],
     "descuento": [
-        rf"(?i)descuento(?:s)?\s*[:\-]?\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
+        rf"(?im)(?:^[ \t]*|(?<=\d)[ \t]+)descuento(?:s)?"
+        rf"\s*[:\-]?\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}"
+        rf"[ \t]*(?:MXN)?(?=[ \t]*(?:\r?$|IVA\b|ISR\b|Total\b))",
     ],
     "traslados": [
         rf"(?i)total\s+impuestos\s+trasladados\s*[:\-]?"
         rf"\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
         rf"(?i)impuestos\s+trasladados\s*[:\-]?"
         rf"\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
-        rf"(?i)(?:i\.?\s*v\.?\s*a\.?|iva)"
+        rf"(?i)(?<![\w/])(?<!sin\s)(?:i\.?\s*v\.?\s*a\.?|iva)"
         rf"(?:\s+\d{{1,2}}(?:\.\d+)?%?)?\s*[:\-]?"
         rf"\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
         rf"(?i)trasladado\s*[:\-]?\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
@@ -67,8 +71,7 @@ _LABELED_AMOUNT_PATTERNS: Dict[str, List[str]] = {
         rf"(?i)(?<![\w/])(?<!sub\s)(?<!sub-)total"
         rf"(?:\s+a\s+pagar|\s+del\s+comprobante|\s+con\s+letra)?"
         rf"\s*[:\-]?\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
-        rf"(?i)importe\s+total\s*[:\-]?"
-        rf"\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
+        rf"(?i)importe\s+total\s*[:\-]?" rf"\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
         rf"(?i)monto\s+total\s*[:\-]?\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
     ],
 }
@@ -176,7 +179,7 @@ def _scan_raw_xml_chunks(pdf_bytes: bytes, collector) -> None:
             start = idx + len(marker)
 
 
-def _extract_pdf_text(pdf_bytes: bytes) -> str:
+def _extract_pdf_text(pdf_bytes: bytes, *, layout: bool = False) -> str:
     try:
         from pypdf import PdfReader
     except ImportError:
@@ -190,7 +193,11 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str:
     parts: List[str] = []
     for page in reader.pages:
         try:
-            text = page.extract_text() or ""
+            text = (
+                page.extract_text(extraction_mode="layout")
+                if layout
+                else page.extract_text()
+            ) or ""
         except Exception:
             text = ""
         if text:
@@ -208,15 +215,70 @@ def _clean_amount(raw: str) -> Optional[float]:
         return None
 
 
-def _find_labeled_amount(text: str, labels: List[str]) -> Optional[float]:
+def _labeled_amount_candidates(text: str, labels: List[str]) -> set[float]:
+    amounts = set()
     for pattern in labels:
-        match = re.search(pattern, text)
-        if not match or not match.lastindex:
-            continue
-        amount = _clean_amount(match.group(1))
-        if amount is not None:
-            return amount
-    return None
+        for match in re.finditer(pattern, text):
+            if not match.lastindex:
+                continue
+            # A wrapped amount must occupy its own line, never a concept row.
+            if "\n" in text[match.start() : match.start(1)]:
+                remainder = text[match.end(1) :].split("\n", 1)[0]
+                if not re.fullmatch(r"\s*(?:MXN)?\s*", remainder, re.IGNORECASE):
+                    continue
+            amount = _clean_amount(match.group(1))
+            if amount is not None:
+                amounts.add(amount)
+    return amounts
+
+
+def _field_amount_candidates(text: str, key: str) -> set[float]:
+    patterns = _LABELED_AMOUNT_PATTERNS[key]
+    if key in {"subtotal", "traslados", "retenciones"}:
+        # Summary labels are synonyms. A generic Base or individual tax is
+        # only a fallback when no summary exists, not a competing total.
+        summary = _labeled_amount_candidates(text, patterns[:2])
+        if summary:
+            return summary
+        fallback = _labeled_amount_candidates(text, patterns[2:])
+        if key == "traslados" and fallback:
+            combined = _explicit_iva_rate_total(text, patterns[2:])
+            if combined is not None:
+                return {combined}
+        return fallback
+    return _labeled_amount_candidates(text, patterns)
+
+
+def _explicit_iva_rate_total(text: str, patterns: List[str]) -> Optional[float]:
+    # Only complete, explicitly rated IVA rows can be combined. Every fallback
+    # amount must belong to one of those rows; never balance against the total.
+    rows = list(
+        re.finditer(
+            rf"(?im)^[ \t]*IVA[ \t]+(\d{{1,2}}(?:\.\d+)?)%[ \t]*"
+            rf"[:\-]?[ \t]*{_MONEY_PREFIX}[ \t]*{_AMOUNT_CAPTURE}"
+            rf"[ \t]*(?:MXN)?[ \t]*\r?$",
+            text,
+        )
+    )
+    candidates = {
+        match.span(1) for pattern in patterns for match in re.finditer(pattern, text)
+    }
+    if len(rows) < 2 or candidates != {row.span(2) for row in rows}:
+        return None
+    by_rate: Dict[Decimal, Decimal] = {}
+    for row in rows:
+        rate = Decimal(row.group(1))
+        amount = Decimal(row.group(2).replace(",", ""))
+        if rate in by_rate:
+            # Repeated rates can be detail rows or duplicate summaries.
+            return None
+        by_rate[rate] = amount
+    return float(sum(by_rate.values()))
+
+
+def _find_labeled_amount(text: str, labels: List[str]) -> Optional[float]:
+    amounts = _labeled_amount_candidates(text, labels)
+    return amounts.pop() if len(amounts) == 1 else None
 
 
 def _find_fecha(text: str) -> Optional[str]:
@@ -359,8 +421,7 @@ _EMISOR_NOMBRE_LABELED_PATTERNS = [
     rf"(?i)(?:nombre|raz[oó]n\s+social)"
     rf"(?:\s+(?:o\s+raz[oó]n\s+social\s+)?del?\s+)?"
     rf"[ \t]*emisor\s*[:\-]?\s*{_NOMBRE_CAPTURE}",
-    rf"(?i)(?:nombre|raz[oó]n\s+social)[ \t]+emisor\s*[:\-]?"
-    rf"\s*{_NOMBRE_CAPTURE}",
+    rf"(?i)(?:nombre|raz[oó]n\s+social)[ \t]+emisor\s*[:\-]?" rf"\s*{_NOMBRE_CAPTURE}",
     rf"(?im)^[^\n]*\bemisor[ \t]+(?:nombre|raz[oó]n\s+social)"
     rf"\s*[:\-]?\s*{_NOMBRE_CAPTURE}",
     rf"(?i)(?:nombre|raz[oó]n\s+social)\s*(?:del\s+)?emisor"
@@ -479,32 +540,15 @@ def _normalize_text_parsed_amounts(
     traslados: Optional[float],
     retenciones: Optional[float],
     total: Optional[float],
-) -> Dict[str, float]:
-    desc = descuento or 0.0
-    tras = traslados or 0.0
-    ret = retenciones or 0.0
-    sub = subtotal
-    tot = total
-
-    if tot is not None and sub is not None and tras == 0.0 and ret == 0.0:
-        net = round(tot - sub + desc, 2)
-        if net > 0:
-            tras = net
-        elif net < 0:
-            ret = round(abs(net), 2)
-
-    if tot is None and sub is not None:
-        tot = round(sub - desc + tras - ret, 2)
-
-    if sub is None and tot is not None:
-        sub = round(tot - tras + ret + desc, 2)
-
+) -> Dict[str, Optional[float]]:
+    # These are documentary amounts, not a balancing calculation. Missing
+    # evidence must not become zero or a tax inferred from a total difference.
     return {
-        "subtotal": max(sub or 0.0, 0.0),
-        "descuento": max(desc, 0.0),
-        "traslados": max(tras, 0.0),
-        "retenciones": max(ret, 0.0),
-        "total": max(tot or 0.0, 0.0),
+        "subtotal": subtotal,
+        "descuento": descuento,
+        "traslados": traslados,
+        "retenciones": retenciones,
+        "total": total,
     }
 
 
@@ -519,19 +563,63 @@ def _parse_from_text(text: str) -> Dict[str, Any]:
     fecha_raw = _find_fecha(text)
     concepto = _find_concepto(text)
 
+    # A percentage alone is not money; keep local withholding direction.
+    ish_pattern = (
+        rf"(?i)\b(?:i\.?[ \t]*s\.?[ \t]*h\.?|impuesto[ \t]+"
+        rf"(?:sobre[ \t]+(?:el[ \t]+)?|al[ \t]+)hospedaje)"
+        rf"(?:[ \t]+retenid[oa]s?)?"
+        rf"[ \t]*(?:\d{{1,2}}(?:\.\d+)?[ \t]*%)?[ \t]*[:\-]?"
+        rf"[ \t]*{_MONEY_PREFIX}[ \t]*{_AMOUNT_CAPTURE}"
+        rf"(?![\d.,]|[ \t]*%)"
+    )
+    locales: List[Dict[str, Any]] = []
+    for match in re.finditer(ish_pattern, text):
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        line_end = text.find("\n", match.end())
+        line = text[line_start : line_end if line_end >= 0 else len(text)]
+        retained = re.search(r"(?i)retenc(?:i[oó]n|iones)|retenid[oa]", line)
+        locales.append(
+            {
+                "tipo": "retencion" if retained else "traslado",
+                "impuesto": "ISH",
+                "importe": float(match.group(1).replace(",", "")),
+            }
+        )
+    ish = sum(item["importe"] for item in locales if item["tipo"] == "traslado")
+    ish_ret = sum(item["importe"] for item in locales if item["tipo"] == "retencion")
+    candidates = {
+        key: _field_amount_candidates(text, key) for key in _LABELED_AMOUNT_PATTERNS
+    }
+    amounts = {
+        key: next(iter(values)) if len(values) == 1 else None
+        for key, values in candidates.items()
+    }
+    subtotal = amounts["subtotal"]
+    descuento = amounts["descuento"]
+    traslados = amounts["traslados"]
+    retenciones = amounts["retenciones"]
+    total = amounts["total"]
+    aggregate = _find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["traslados"][:2])
+    # Remove local ISH only when the printed aggregate balances inclusively.
+    if ish and aggregate is not None and subtotal is not None and total is not None:
+        inclusive_total = subtotal - (descuento or 0) + aggregate
+        inclusive_total -= (retenciones or 0) + ish_ret
+        if aggregate >= ish and round(inclusive_total - total, 2) == 0:
+            traslados = aggregate - ish
+
     amounts = _normalize_text_parsed_amounts(
-        subtotal=_find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["subtotal"]),
-        descuento=_find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["descuento"]),
-        traslados=_find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["traslados"]),
-        retenciones=_find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["retenciones"]),
-        total=_find_labeled_amount(text, _LABELED_AMOUNT_PATTERNS["total"]),
+        subtotal=subtotal,
+        descuento=descuento,
+        traslados=traslados,
+        retenciones=retenciones,
+        total=total,
     )
 
     traslados_list: List[Dict[str, Any]] = []
     retenciones_list: List[Dict[str, Any]] = []
-    if amounts["traslados"] > 0:
+    if (amounts["traslados"] or 0) > 0:
         traslados_list.append({"impuesto": "002", "importe": amounts["traslados"]})
-    if amounts["retenciones"] > 0:
+    if (amounts["retenciones"] or 0) > 0:
         retenciones_list.append({"impuesto": "001", "importe": amounts["retenciones"]})
 
     fecha_val: Optional[datetime] = None
@@ -548,8 +636,26 @@ def _parse_from_text(text: str) -> Dict[str, Any]:
             }
         )
 
+    issuer = _find_emisor_rfc(text)
+    receiver = _find_receptor_rfc(text)
+    explicit_fields = [
+        key
+        for key, present in (
+            ("emisor_rfc", bool(issuer)),
+            ("receptor_rfc", bool(receiver)),
+            ("moneda", moneda_match is not None),
+            ("subtotal", subtotal is not None),
+            ("total", total is not None),
+        )
+        if present
+    ]
     return {
-        "emisor_rfc": _find_emisor_rfc(text),
+        "_pdf_explicit_fields": explicit_fields,
+        "_pdf_ambiguous_fields": [
+            key for key, values in candidates.items() if len(values) > 1
+        ],
+        "emisor_rfc": issuer,
+        "receptor_rfc": receiver,
         "emisor_nombre": _find_emisor_nombre(text),
         "subtotal": amounts["subtotal"],
         "descuento": amounts["descuento"],
@@ -565,6 +671,7 @@ def _parse_from_text(text: str) -> Dict[str, Any]:
         "impuestos_detalle": {
             "traslados": traslados_list,
             "retenciones": retenciones_list,
+            "locales": locales,
         },
     }
 
@@ -595,7 +702,21 @@ def parse_cfdi_pdf(pdf_bytes: bytes) -> Dict[str, Any]:
     mineru_result = parse_document_bytes(pdf_bytes, suffix=".pdf")
     if mineru_result.has_text:
         parsed = _parse_from_text(mineru_result.text)
-        if parsed and (parsed.get("cfdi_uuid") or "").strip():
+        if (
+            parsed
+            and (parsed.get("cfdi_uuid") or "").strip()
+            and all(parsed.get(key) is not None for key in ("subtotal", "total"))
+        ):
             return parsed
 
-    return _parse_from_text(_extract_pdf_text(pdf_bytes))
+    parsed = _parse_from_text(_extract_pdf_text(pdf_bytes))
+    if parsed and any(parsed.get(key) is None for key in ("subtotal", "total")):
+        # Content-stream order need not match visual row order. Layout mode
+        # associates labels and amounts by their printed positions; never sort
+        # amounts or choose an assignment just because the arithmetic balances.
+        layout_parsed = _parse_from_text(_extract_pdf_text(pdf_bytes, layout=True))
+        if layout_parsed and all(
+            layout_parsed.get(key) is not None for key in ("subtotal", "total")
+        ):
+            return layout_parsed
+    return parsed

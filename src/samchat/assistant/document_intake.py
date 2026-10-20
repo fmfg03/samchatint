@@ -301,7 +301,7 @@ def _extract_payment_entities(text: str) -> Dict[str, Any]:
             raw,
             [r"clave de rastreo[:=\s]+([A-Z0-9-]+)", r"referencia[:=\s]+([A-Z0-9-]+)"],
         ),
-        "beneficiary": _first_match(raw, [r"beneficiario[:=\s]+([^\n]+)"]),
+        "beneficiary": _first_match(raw, [r"beneficiario[ \t]*[:=][ \t]*([^\n]+)"]),
         "payer": _first_match(
             raw, [r"ordenante[:=\s]+([^\n]+)", r"pagador[:=\s]+([^\n]+)"]
         ),

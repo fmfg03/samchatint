@@ -258,6 +258,8 @@ async def build_ar_read_model(
     credit_days_default: int = 0,
     as_of_date: Optional[date] = None,
     ensure_schema: bool = True,
+    strict_tournament_scope: bool = False,
+    calendar_year: Optional[int] = None,
 ) -> dict[str, Any]:
     """Build a read-only AR S1 projection without asserting collection state."""
 
@@ -267,6 +269,8 @@ async def build_ar_read_model(
     row_limit = max(1, min(int(limit or 500), 5000))
     credit_days = max(0, min(int(credit_days_default or 0), 365))
     as_of = as_of_date or date.today()
+    if strict_tournament_scope and not clean_tournament_id:
+        raise ValueError("Strict AR reads require a tournament UUID")
 
     income_lines = await list_budget_lines(
         session,
@@ -278,6 +282,25 @@ async def build_ar_read_model(
         ensure_schema=ensure_schema,
     )
     line_ids = [_safe_str(line.get("id")) for line in income_lines if line.get("id")]
+    financial_ids = {
+        line.get("metadata", {}).get("distribution_financial_version_id")
+        for line in income_lines
+        if line.get("metadata", {}).get("distribution_financial_version_id")
+    }
+    if len(financial_ids) > 1:
+        raise ValueError(
+            "Fuentes financieras contradictorias en revisión de distribución"
+        )
+    financial_version_id = next(iter(financial_ids), clean_version_id)
+    if financial_ids or not income_lines:
+        from samchat.budgets.distribution import revision_context, financial_context
+
+        context = await revision_context(session, clean_version_id)
+        financial_version_id, _ = await financial_context(session, context)
+        if financial_ids and financial_ids != {financial_version_id}:
+            raise ValueError(
+                "La fuente financiera no coincide con el linaje acreditado"
+            )
     monthly_plan = await list_monthly_plan_for_lines(
         session,
         line_ids=line_ids,
@@ -285,25 +308,83 @@ async def build_ar_read_model(
     )
     links = await list_budget_cfdi_income_links(
         session,
-        budget_version_id=clean_version_id,
+        budget_version_id=financial_version_id,
         tournament_id=clean_tournament_id,
         approved_only=True,
     )
+    proposed_links = await list_budget_cfdi_income_links(
+        session,
+        budget_version_id=financial_version_id,
+        tournament_id=clean_tournament_id,
+        approved_only=False,
+    )
+    pending_links = [
+        dict(link)
+        for link in proposed_links
+        if link.get("status") == "pending_approval" and not link.get("unlinked_at")
+    ]
     candidates = await list_psp_cfdi_income_candidates(
         session,
-        budget_version_id=clean_version_id,
+        budget_version_id=financial_version_id,
         limit=min(row_limit, 500),
         ensure_schema=ensure_schema,
+        **(
+            {
+                "tournament_id": clean_tournament_id,
+                "assigned_only": True,
+                "calendar_year": calendar_year or as_of.year,
+            }
+            if strict_tournament_scope
+            else {}
+        ),
     )
+    if strict_tournament_scope:
+        if any(
+            _safe_str(line.get("tournament_id")) != clean_tournament_id
+            for line in income_lines
+        ):
+            raise ValueError("AR budget lines escaped tournament scope")
+        if any(
+            _safe_str(link.get("tournament_id")) != clean_tournament_id
+            for link in links + pending_links
+        ):
+            raise ValueError("AR income links escaped tournament scope")
+        if any(
+            _safe_str(row.get("assigned_tournament_id")) != clean_tournament_id
+            for row in candidates
+        ):
+            raise ValueError("AR CFDI assignments escaped tournament scope")
     collection_matches = await list_ar_collection_matches(
         session,
-        budget_version_id=clean_version_id,
+        budget_version_id=financial_version_id,
         include_reversed=False,
         ensure_schema=ensure_schema,
+        **(
+            {
+                "ar_item_ids": [
+                    *[
+                        f"linked:{_safe_str(link.get('id')) or _safe_str(link.get('cfdi_report_id'))}"
+                        for link in links
+                    ],
+                    *[f"candidate:{_safe_str(row.get('id'))}" for row in candidates],
+                ]
+            }
+            if strict_tournament_scope
+            else {}
+        ),
     )
     matches_by_item = {
         _safe_str(match.get("ar_item_id")): match for match in collection_matches
     }
+    # Active links are absent from the candidate picker. Keep pending ones
+    # visible separately, without treating them as recognized income or cash.
+    active_cfdi_ids = {
+        _safe_str(link.get("cfdi_report_id")) for link in links + pending_links
+    }
+    candidates = [
+        candidate for candidate in candidates
+        if _safe_str(candidate.get("id")) not in active_cfdi_ids
+    ]
 
     linked_by_line: dict[str, list[dict[str, Any]]] = {}
     for link in links:
@@ -326,25 +407,24 @@ async def build_ar_read_model(
             if monthly_rows
             else _safe_float(line.get("budget_amount"))
         )
-        line_links = linked_by_line.get(line_id, [])
+        financial_line_id = (line.get("metadata") or {}).get(
+            "distribution_financial_line_id"
+        ) or line_id
+        line_links = linked_by_line.get(financial_line_id, [])
         linked_total = sum(_safe_float(link.get("amount")) for link in line_links)
         expected_income.append(
             {
-                "ar_item_id": f"expected:{line_id}",
-                "budget_version_id": _safe_str(line.get("budget_version_id"))
-                or clean_version_id,
-                "budget_line_id": line_id,
+                "ar_item_id": f"expected:{financial_line_id}",
+                "budget_version_id": financial_version_id,
+                "budget_line_id": financial_line_id,
                 "budget_concept_id": _safe_str(line.get("budget_concept_id")) or None,
                 "tournament_id": _safe_str(line.get("tournament_id")) or None,
                 "tournament_code": _safe_str(line.get("tournament_code")) or None,
                 "tournament_name": _safe_str(line.get("tournament_name")) or None,
                 "phase": _safe_str(line.get("phase")) or None,
                 "concept_name": _safe_str(line.get("concept_name")) or None,
-                "account_code_final": _safe_str(line.get("account_code_final"))
-                or None,
-                "account_code_suggested": _safe_str(
-                    line.get("account_code_suggested")
-                )
+                "account_code_final": _safe_str(line.get("account_code_final")) or None,
+                "account_code_suggested": _safe_str(line.get("account_code_suggested"))
                 or None,
                 "expected_income_amount": _safe_float(expected_total),
                 "issued_amount": _safe_float(linked_total),
@@ -358,9 +438,7 @@ async def build_ar_read_model(
                 "outstanding_amount_status": "unknown",
                 "status": "planned" if not line_links else "issued_linked",
                 "operational_status": (
-                    "Presupuestado sin CFDI"
-                    if not line_links
-                    else "CFDI vinculado"
+                    "Presupuestado sin CFDI" if not line_links else "CFDI vinculado"
                 ),
             }
         )
@@ -374,7 +452,11 @@ async def build_ar_read_model(
                 )
             )
 
-    known_line_ids = {line_id for line_id in line_ids if line_id}
+    known_line_ids = {
+        (line.get("metadata") or {}).get("distribution_financial_line_id")
+        or str(line["id"])
+        for line in income_lines
+    }
     for link in links:
         link_id = _safe_str(link.get("id")) or _safe_str(link.get("cfdi_report_id"))
         item_id = f"linked:{link_id}"
@@ -401,17 +483,12 @@ async def build_ar_read_model(
                 "phase": _safe_str(link.get("phase")) or None,
                 "budget_concept_id": _safe_str(link.get("budget_concept_id")) or None,
                 "concept_name": _safe_str(link.get("concept_name")) or None,
-                "account_code_final": _safe_str(link.get("account_code_final"))
-                or None,
-                "account_code_suggested": _safe_str(
-                    link.get("account_code_suggested")
-                )
+                "account_code_final": _safe_str(link.get("account_code_final")) or None,
+                "account_code_suggested": _safe_str(link.get("account_code_suggested"))
                 or None,
                 "cfdi_report_id": _safe_str(link.get("cfdi_report_id")) or None,
                 "cfdi_uuid": _safe_str(link.get("cfdi_uuid")) or None,
-                "iva_amount": _safe_float(
-                    link.get("total_impuestos_trasladados")
-                ),
+                "iva_amount": _safe_float(link.get("total_impuestos_trasladados")),
                 "payer_rfc": payer_rfc,
                 "payer_name": payer_name,
                 "issued_amount": amount,
@@ -431,9 +508,7 @@ async def build_ar_read_model(
             matches_by_item.get(item_id) or direct_collection,
         )
         linked_item["balance_amount"] = (
-            _safe_float(
-                amount - _safe_float(linked_item.get("collected_amount"))
-            )
+            _safe_float(amount - _safe_float(linked_item.get("collected_amount")))
             if linked_item.get("outstanding_amount_status") == "known"
             else None
         )
@@ -488,9 +563,7 @@ async def build_ar_read_model(
                 "status": "issued_unlinked",
                 "cfdi_report_id": candidate_id or None,
                 "cfdi_uuid": _safe_str(candidate.get("cfdi_uuid")) or None,
-                "iva_amount": _safe_float(
-                    candidate.get("total_impuestos_trasladados")
-                ),
+                "iva_amount": _safe_float(candidate.get("total_impuestos_trasladados")),
                 "issued_amount": amount,
                 "issued_date": _iso(candidate.get("fecha")),
                 "due_date": _due_date(candidate.get("fecha"), credit_days),
@@ -507,9 +580,7 @@ async def build_ar_read_model(
             matches_by_item.get(item_id),
         )
         unlinked_item["balance_amount"] = (
-            _safe_float(
-                amount - _safe_float(unlinked_item.get("collected_amount"))
-            )
+            _safe_float(amount - _safe_float(unlinked_item.get("collected_amount")))
             if unlinked_item.get("outstanding_amount_status") == "known"
             else None
         )
@@ -582,15 +653,32 @@ async def build_ar_read_model(
     return {
         "ok": True,
         "read_only": True,
+        **(
+            {
+                "source_status": {
+                    "strict_tournament_scope": True,
+                    "income_lines_truncated": len(income_lines) >= row_limit,
+                    "candidates_truncated": len(candidates) >= min(row_limit, 500),
+                    "currency_gap": any(
+                        _safe_str(row.get("moneda")).upper() != "MXN"
+                        for row in [*links, *candidates]
+                    ),
+                    "amount_gap": any(row.get("amount") is None for row in links)
+                    or any(row.get("total") is None for row in candidates),
+                    "calendar_year": calendar_year or as_of.year,
+                }
+            }
+            if strict_tournament_scope
+            else {}
+        ),
         "budget_version_id": clean_version_id,
         "tournament_id": clean_tournament_id,
         "tournament_code": clean_tournament_code,
         "collection_source": "unknown",
         "credit_days_default": credit_days,
-        "outstanding_amount_status": (
-            "mixed" if collected_total else "unknown"
-        ),
+        "outstanding_amount_status": ("mixed" if collected_total else "unknown"),
         "summary": {
+            "pending_link_count": len(pending_links),
             "expected_income_count": len(expected_income),
             "expected_income_total": _safe_float(expected_total),
             "issued_linked_count": len(issued_linked),
@@ -606,6 +694,7 @@ async def build_ar_read_model(
         },
         "expected_income": expected_income,
         "issued_linked": issued_linked,
+        "pending_links": pending_links,
         "issued_unlinked": issued_unlinked,
         "collection_gaps": collection_gaps,
         "matching_gaps": matching_gaps,

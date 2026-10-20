@@ -1,0 +1,12 @@
+{
+  "acceptance-verdict.json": "322e28a8aeba433c1e6a0f4a8909623b30d0c2fafdc0bbdca6790b211a3f0f47",
+  "assessment-validation.md": "d6841dab352476a6957d73b8e84f24d920591bca1cbab2082892f0d15a4e34ee",
+  "browser-journey.json": "d5867b6abb980d8bbe1ba5ece919f9788e874dc85728c47c9d02b1e85bcdcc97",
+  "catalogue-readiness.json": "9478645ca2ba2ba7850e339001a3de7cfb384b2702e5c2f988c2dc7bef54d053",
+  "full-csv-accounting-receipt.json": "f497aad3879a5fe9209aa4633cd6bdf10e4b48a43c56c73b71ff4ed410f6f583",
+  "independent-journey-review.md": "0721bba9d1e31e8627ed20b3f69b232670eebda22dcee5c2fb3560381f918ddd",
+  "isolated-assessment.json": "95ef6c4185854690409c790e5f582029931f988e3db77f5c86c7af72a6f8df1a",
+  "isolated-assessment.md": "e34ab51c2cac31bd4d9e9831a603b5f699c6685af0c29af1a14a70fcc6ccdbe9",
+  "production-audit.json": "5dc26d8e61342c93d95feff7640de33802cd788fe95757706e552a8b6c638254",
+  "reproduce_multicharge_export.py": "73acac30cdd60f991e19b34792277216dcd3aa6630320d8b0ff233ffbb0328eb"
+}

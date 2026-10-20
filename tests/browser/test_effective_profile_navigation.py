@@ -6,6 +6,11 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Page, expect
 
+from navigation_inventory import (
+    BLOCKED_NAVIGATION_ENTRIES,
+    VISIBLE_NAVIGATION_ENTRIES,
+)
+
 
 PROFILE_CASES = [
     pytest.param(
@@ -63,7 +68,51 @@ def _focus_reaches_href(page: Page, href: str, *, max_tabs: int = 80) -> bool:
     return False
 
 
-@pytest.mark.parametrize("profile,expected_href,forbidden_hrefs", PROFILE_CASES)
+@pytest.mark.parametrize("entry", VISIBLE_NAVIGATION_ENTRIES)
+def test_navigation_inventory_renders_canonical_target(
+    page: Page, browser_server: str, entry
+) -> None:
+    response = page.goto(f"{browser_server}{entry.test_path}")
+    assert response is not None
+    assert response.status == 200
+
+    scope = page
+    if entry.section_label:
+        scope = page.locator(f'section[aria-label="{entry.section_label}"]')
+        expect(scope).to_have_count(1)
+
+    target = scope.locator(f'a[href="{entry.href}"]').filter(
+        has_text=entry.label
+    )
+    assert target.count() >= 1
+    expect(target.first).to_be_visible()
+
+
+@pytest.mark.parametrize("entry", BLOCKED_NAVIGATION_ENTRIES)
+@pytest.mark.parametrize(
+    "profile",
+    [
+        "employee",
+        "approver",
+        "budget_control",
+        "finance",
+        "accounting",
+        "direction",
+    ],
+)
+def test_navigation_inventory_hides_legacy_target_for_every_profile(
+    page: Page, browser_server: str, entry, profile: str
+) -> None:
+    response = page.goto(f"{browser_server}/_test/profile/{profile}")
+    assert response is not None
+    assert response.status == 200
+
+    expect(page.locator(f'a[href="{entry.href}"]')).to_have_count(0)
+
+
+@pytest.mark.parametrize(
+    "profile,expected_href,forbidden_hrefs", PROFILE_CASES
+)
 def test_effective_profile_exposes_task_entry(
     page: Page,
     browser_server: str,
@@ -75,7 +124,9 @@ def test_effective_profile_exposes_task_entry(
     assert response is not None
     assert response.status == 200
 
-    expect(page.get_by_role("heading", name=f"Perfil simulado: {profile}")).to_be_visible()
+    expect(
+        page.get_by_role("heading", name=f"Perfil simulado: {profile}")
+    ).to_be_visible()
     expect(page.get_by_test_id("task-prompt")).to_be_visible()
 
     entry = page.locator(f'a[href="{expected_href}"]')
@@ -86,7 +137,8 @@ def test_effective_profile_exposes_task_entry(
         expect(page.locator(f'a[href="{href}"]')).to_have_count(0)
 
     assert _focus_reaches_href(page, expected_href), (
-        f"{profile}: intended task entry {expected_href} is not keyboard reachable"
+        f"{profile}: intended task entry {expected_href} is not keyboard "
+        "reachable"
     )
     _capture_profile(page, profile)
 
@@ -177,8 +229,8 @@ def test_direction_panel_exposes_direction_task_entry(
     assert response is not None
     assert response.status == 200
 
-    entry = page.locator('a[href="/direccion/tableros"]')
+    entry = page.locator('a[href="/direccion/inicio"]')
     assert entry.count() >= 1
     expect(entry.first).to_be_visible()
-    assert _focus_reaches_href(page, "/direccion/tableros", max_tabs=120)
+    assert _focus_reaches_href(page, "/direccion/inicio", max_tabs=120)
     _capture_profile(page, "direction-panel")

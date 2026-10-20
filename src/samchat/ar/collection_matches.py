@@ -502,6 +502,7 @@ async def list_ar_collection_matches(
     budget_version_id: str,
     include_reversed: bool = False,
     ensure_schema: bool = True,
+    ar_item_ids: Optional[list[str]] = None,
 ) -> list[dict[str, Any]]:
     """List AR collection matches for a budget version."""
 
@@ -512,6 +513,10 @@ async def list_ar_collection_matches(
         "budget_version_id": budget_version_id,
         "status": ACCEPTED_STATUS,
     }
+    item_filter = ""
+    if ar_item_ids is not None:
+        item_filter = "AND ar_item_id = ANY(CAST(:ar_item_ids AS text[]))"
+        params["ar_item_ids"] = sorted(set(ar_item_ids))
     rows = (
         (
             await session.execute(
@@ -521,6 +526,7 @@ async def list_ar_collection_matches(
                     FROM ar_collection_matches
                     WHERE budget_version_id = CAST(:budget_version_id AS uuid)
                     {status_filter}
+                    {item_filter}
                     ORDER BY accepted_at DESC
                     """
                 ),

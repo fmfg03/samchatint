@@ -20,6 +20,9 @@ from sqlalchemy import (
     Integer,
     Numeric,
     CheckConstraint,
+    Index,
+    UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.ext.declarative import declarative_base
@@ -33,6 +36,422 @@ from devnous.gastos.expense_receipt_column import (
 )
 
 configure_expense_receipt_blob_column_from_db()
+
+
+class AmexRecognitionActivation(Base):
+    """Owner-installed cutoff; runtime code never creates this schema or row."""
+
+    __tablename__ = "amex_recognition_activation"
+    __table_args__ = (CheckConstraint("id = 1"),)
+
+    id = Column(Integer, primary_key=True)
+    activated_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class AmexRecognitionConsumption(Base):
+    """One explicitly identified corporate-card consumption and its receipt."""
+
+    __tablename__ = "amex_recognition_consumptions"
+    __table_args__ = (
+        CheckConstraint("amount > 0"),
+        CheckConstraint(
+            "(source_kind = 'statement' AND imported_expense_id IS NOT NULL "
+            "AND source_report_expense_id IS NULL "
+            "AND binding_mode IN ('legacy', 'report_bridge', 'direct')) OR "
+            "(source_kind = 'report' AND imported_expense_id IS NULL "
+            "AND source_report_expense_id IS NOT NULL AND binding_mode = 'report')",
+            name="ck_amex_consumption_source_anchor",
+        ),
+        CheckConstraint(
+            "binding_mode != 'report_bridge' OR accounting_poliza_id IS NULL",
+            name="ck_amex_bridge_never_posted",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    source_kind = Column(
+        String(20), nullable=False, default="statement", server_default="statement"
+    )
+    binding_mode = Column(
+        String(20), nullable=False, default="legacy", server_default="legacy"
+    )
+    imported_expense_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("expense_reports.id", ondelete="RESTRICT"),
+        nullable=True,
+        unique=True,
+    )
+    source_report_expense_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("expense_reports.id", ondelete="RESTRICT"),
+        nullable=True,
+        unique=True,
+    )
+    card_account_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_card_accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    amount = Column(Numeric(18, 2), nullable=False)
+    currency = Column(String(3), nullable=False)
+    economic_date = Column(Date, nullable=False)
+    liability_account_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("cuentas_contables.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    liability_code = Column(String(30), nullable=False)
+    classification_json = Column(JSONB, nullable=False, default=dict)
+    accounting_poliza_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("accounting_polizas.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    actor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class AmexRecognitionRepresentation(Base):
+    """An expense representation belongs to exactly one economic consumption."""
+
+    __tablename__ = "amex_recognition_representations"
+    __table_args__ = (CheckConstraint("role IN ('statement', 'report')"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    consumption_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_recognition_consumptions.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    expense_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("expense_reports.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    role = Column(String(20), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class AmexReportBankAssociation(Base):
+    """Immutable explicit bank header membership; never another posting."""
+
+    __tablename__ = "amex_report_bank_associations"
+    __table_args__ = (
+        CheckConstraint("statement_consumption_id != report_consumption_id"),
+        UniqueConstraint("report_consumption_id"),
+    )
+
+    statement_consumption_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_recognition_consumptions.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    report_consumption_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_recognition_consumptions.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    actor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class AmexReportSourceEvidence(Base):
+    """Immutable operational proof or actual financial confirmation receipt."""
+
+    __tablename__ = "amex_report_source_evidences"
+    __table_args__ = (
+        CheckConstraint("version > 0"),
+        CheckConstraint(
+            "(kind = 'operational_approval' AND approval_id IS NOT NULL "
+            "AND decisions_json IS NULL AND request_payload_hash IS NULL) OR "
+            "(kind = 'finance_confirmation' AND approval_id IS NULL "
+            "AND decisions_json IS NOT NULL AND request_payload_hash IS NOT NULL)",
+            name="ck_amex_source_evidence_origin",
+        ),
+        UniqueConstraint("informe_id", "kind", "version"),
+        UniqueConstraint("approval_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    informe_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("documentos.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    kind = Column(String(30), nullable=False)
+    approval_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("aprobaciones.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    operational_evidence_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_report_source_evidences.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    actor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    version = Column(Integer, nullable=False)
+    source_key = Column(String(64), nullable=False)
+    snapshot_json = Column(JSONB, nullable=False)
+    decisions_json = Column(JSONB(none_as_null=True), nullable=True)
+    request_payload_hash = Column(String(64), nullable=True)
+    reason = Column(Text, nullable=True)
+
+
+class AmexAccountingReview(Base):
+    """Versioned manual review of an INFORME item, shared by both AMEX paths."""
+
+    __tablename__ = "amex_accounting_reviews"
+    __table_args__ = (
+        CheckConstraint("treatment IN ('expense', 'partner_receivable')"),
+        CheckConstraint("version > 0"),
+        CheckConstraint(
+            "(treatment = 'expense' AND debtor_account_id IS NULL) OR "
+            "(treatment = 'partner_receivable' AND debtor_account_id IS NOT NULL)"
+        ),
+    )
+
+    expense_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("expense_reports.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    informe_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("documentos.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    source_evidence_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_report_source_evidences.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    treatment = Column(String(30), nullable=False)
+    debtor_account_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("cuentas_contables.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    actor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    reason = Column(Text, nullable=False, default="")
+    version = Column(Integer, nullable=False, default=1)
+    source_key = Column(String(64), nullable=False)
+    reviewed_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class AmexAccountingCut(Base):
+    """One atomic journal per complete report cut; adjustments preserve history."""
+
+    __tablename__ = "amex_accounting_cuts"
+    __table_args__ = (
+        CheckConstraint("kind IN ('initial', 'adjustment')"),
+        Index(
+            "ux_amex_accounting_cuts_initial_informe",
+            "informe_id",
+            unique=True,
+            postgresql_where=text("kind = 'initial'"),
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    informe_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("documentos.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    kind = Column(String(20), nullable=False)
+    state_key = Column(String(64), nullable=False, unique=True)
+    accounting_date = Column(Date, nullable=False)
+    accounting_poliza_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("accounting_polizas.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    actor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    reason = Column(Text, nullable=False, default="")
+    snapshot_json = Column(JSONB, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class AmexStatementImport(Base):
+    """Immutable receipt of a declared statement, never financial recognition."""
+
+    __tablename__ = "amex_statement_imports"
+    __table_args__ = (
+        UniqueConstraint(
+            "file_sha256",
+            "card_account_id",
+            "employee_id",
+            "period_start",
+            "period_end",
+            "parser_version",
+            name="uq_amex_statement_identity",
+        ),
+        UniqueConstraint("id", "workflow_mode", name="uq_amex_statement_mode"),
+        CheckConstraint("period_end >= period_start", name="ck_amex_statement_period"),
+        CheckConstraint(
+            "(workflow_mode='legacy' AND imported_count>0 AND skipped_count>=0 "
+            "AND credit_count=0 AND unknown_count=0 AND total_rows=imported_count+skipped_count) OR "
+            "(workflow_mode='direct' AND total_rows>0 AND imported_count>=0 AND skipped_count>=0 "
+            "AND credit_count>=0 AND unknown_count>=0 AND total_rows=imported_count+skipped_count+credit_count+unknown_count)",
+            name="ck_amex_statement_counts",
+        ),
+        CheckConstraint("length(file_sha256) = 64", name="ck_amex_statement_hash"),
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    card_account_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_card_accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    employee_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    period_start = Column(Date, nullable=False)
+    period_end = Column(Date, nullable=False)
+    file_sha256 = Column(String(64), nullable=False)
+    filename = Column(String(200), nullable=False)
+    parser_version = Column(String(50), nullable=False)
+    actor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    workflow_mode = Column(String(10), nullable=False, default="legacy", server_default="legacy")
+    credit_count = Column(Integer, nullable=False, default=0, server_default="0")
+    unknown_count = Column(Integer, nullable=False, default=0, server_default="0")
+    total_rows = Column(Integer, nullable=False)
+    imported_count = Column(Integer, nullable=False)
+    skipped_count = Column(Integer, nullable=False)
+    summary_json = Column(JSONB, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class AmexStatementImportItem(Base):
+    """Original row receipt with an explicit imported expense or omission."""
+
+    __tablename__ = "amex_statement_import_items"
+    __table_args__ = (
+        UniqueConstraint("import_id", "row_number", name="uq_amex_statement_row"),
+        UniqueConstraint("imported_expense_id", name="uq_amex_statement_expense"),
+        CheckConstraint("row_number >= 2", name="ck_amex_statement_row_number"),
+        CheckConstraint(
+            "(status='imported' AND imported_expense_id IS NOT NULL AND reason_code IS NULL) OR "
+            "(status='skipped' AND imported_expense_id IS NULL AND reason_code IS NOT NULL) OR "
+            "(workflow_mode='direct' AND status IN ('credit','unknown') AND imported_expense_id IS NULL)",
+            name="ck_amex_statement_item_status",
+        ),
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    import_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_statement_imports.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    workflow_mode = Column(String(10), nullable=False, default="legacy", server_default="legacy")
+    row_number = Column(Integer, nullable=False)
+    imported_expense_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("expense_reports.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    status = Column(String(20), nullable=False)
+    reason_code = Column(String(50), nullable=True)
+    normalized_json = Column(JSONB, nullable=False)
+
+
+class AmexStatementCutLink(Base):
+    """Insert-only declaration of navigation to a real frozen accounting cut."""
+
+    __tablename__ = "amex_statement_cut_links"
+    __table_args__ = (
+        UniqueConstraint("import_id", "cut_id", name="uq_amex_statement_cut"),
+        CheckConstraint(
+            "length(request_payload_hash) = 64", name="ck_amex_statement_link_hash"
+        ),
+    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    import_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_statement_imports.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    cut_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("amex_accounting_cuts.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    actor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    request_payload_hash = Column(String(64), nullable=False)
+    request_payload_json = Column(JSONB, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
 
 
 class ExpenseReport(Base):
@@ -1950,6 +2369,7 @@ class Documento(Base):
     pagado_en = Column(DateTime(timezone=True), nullable=True)
     # SOLICITUD-specific payment fields
     fecha_pago = Column(Date, nullable=True)  # Payment date for SOLICITUD
+    fecha_pago_efectiva = Column(Date, nullable=True, index=True)
     pago_urgente = Column(Boolean, default=False, nullable=False, index=True)
     concepto_pago = Column(
         Text, nullable=True
@@ -1980,6 +2400,30 @@ class Documento(Base):
         nullable=True,
         index=True,
     )
+
+    # A partial comprobación is a separately approved/exported INFORME, while
+    # the original cuenta stays open. It never owns a second advance/payment.
+    informe_origen_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("documentos.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    motivo_comprobacion_parcial = Column(Text, nullable=True)
+
+    # Supplier advances retain the paid source; each invoice is a child request.
+    is_supplier_advance = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    supplier_advance_due_date = Column(Date, nullable=True)
+    supplier_advance_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("documentos.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    supplier_advance_applied = Column(Numeric(18, 2), nullable=True)
+    supplier_invoice_total = Column(Numeric(18, 2), nullable=True)
 
     # CFDI capture at solicitud time (canonical UUID; linked to CFDIReport when available)
     cfdi_uuid_manual = Column(Text, nullable=True, index=True)
@@ -2086,6 +2530,11 @@ class Documento(Base):
             "aprobado_en": self.aprobado_en.isoformat() if self.aprobado_en else None,
             "pagado_en": self.pagado_en.isoformat() if self.pagado_en else None,
             "fecha_pago": self.fecha_pago.isoformat() if self.fecha_pago else None,
+            "fecha_pago_efectiva": (
+                self.fecha_pago_efectiva.isoformat()
+                if self.fecha_pago_efectiva
+                else None
+            ),
             "pago_urgente": bool(self.pago_urgente),
             "concepto_pago": self.concepto_pago,
             "numero_factura": self.numero_factura,
@@ -2464,6 +2913,7 @@ class Reembolso(Base):
         nullable=True,
         index=True,
     )
+    client_submission_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     tipo = Column(String(20), nullable=False, default="reembolso")
     monto = Column(Numeric, nullable=False)
     moneda = Column(String(10), nullable=False)
@@ -2652,6 +3102,9 @@ class CuentaDeGastos(Base):
     nombre = Column(
         Text, nullable=True
     )  # Optional display name (Nombre de Cuenta de Gastos)
+    comprobacion_parcial = Column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     estado = Column(Text, nullable=False, default="abierta")  # 'abierta' or 'cerrada'
     created_at = Column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
@@ -4075,3 +4528,12 @@ class TelegramNotificationOutbox(Base):
                 self.next_retry_at.isoformat() if self.next_retry_at else None
             ),
         }
+
+
+# Explicitly registered for metadata; runtime policy excludes owner-run tables.
+from .amex_direct_models import (  # noqa: E402,F401
+    AmexStatementSourceFile, AmexStatementDirectContext, AmexStatementDirectState,
+    AmexMerchantIdentityAlias, AmexCFDIStatusReceipt, AmexDirectItem,
+    AmexDirectEvent, AmexDirectAccountingCut, AmexDirectCutItem,
+    AmexDirectCoverageRevision, AmexDirectRecoveredRow,
+)

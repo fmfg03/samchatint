@@ -336,7 +336,7 @@ async def test_report_draft_uses_in_scope_schedule_portfolio_not_form_value(
     async def required_scope(*_args, **_kwargs):
         return ["canonical-portfolio"]
 
-    async def build(_session, *, portfolio_id, edition_year):
+    async def build(_session, *, portfolio_id, edition_year, accounting_access):
         captured["build_portfolio_id"] = portfolio_id
         return {"edition_year": edition_year, "snapshot": {}, "summary": {}}
 

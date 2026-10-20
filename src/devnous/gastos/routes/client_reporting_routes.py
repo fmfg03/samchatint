@@ -17,11 +17,15 @@ from samchat.client_reporting.service import (
     ReportTransitionError,
     build_report_draft,
     create_schedule,
+    filter_report_accounting,
     save_draft,
     transition_draft,
 )
 
-from .client_executive_routes import _assigned_direction_portfolios
+from .client_executive_routes import (
+    _assigned_direction_portfolios,
+    _direction_source_access,
+)
 from .dependencies import get_current_empleado, get_db_session
 
 
@@ -56,6 +60,8 @@ async def direction_report_management(
     current_empleado=Depends(get_current_empleado),
 ):
     portfolio_ids = await _require_direction_reporting_scope(session, current_empleado)
+    source_access = await _direction_source_access(session, current_empleado)
+    accounting_access = source_access["finance"] and source_access["budget"]
     rows = await session.execute(
         text(
             """SELECT d.id::text, d.state, d.generated_at, d.snapshot, d.summary, p.label
@@ -87,7 +93,12 @@ async def direction_report_management(
             escape(str(row.state)),
             escape(
                 json.dumps(
-                    {"summary": row.summary, "snapshot": row.snapshot},
+                    {
+                        "summary": row.summary,
+                        "snapshot": filter_report_accounting(
+                            row.snapshot, accounting_access=accounting_access
+                        ),
+                    },
                     ensure_ascii=False,
                     sort_keys=True,
                     indent=2,
@@ -212,8 +223,12 @@ async def direction_report_draft_create(
         )
     # The form value is untrusted. The in-scope schedule is the canonical owner.
     portfolio_id = str(schedule.portfolio_id)
+    source_access = await _direction_source_access(session, current_empleado)
     draft = await build_report_draft(
-        session, portfolio_id=portfolio_id, edition_year=date.today().year
+        session,
+        portfolio_id=portfolio_id,
+        edition_year=date.today().year,
+        accounting_access=source_access["finance"] and source_access["budget"],
     )
     await save_draft(
         session,

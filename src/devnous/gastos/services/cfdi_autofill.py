@@ -5,9 +5,10 @@ Build solicitud/informe form autofill payloads from parsed CFDI data.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Dict, Optional, Tuple
 
 
@@ -93,6 +94,12 @@ class QuickExpenseTaxComponents:
     impuestos_locales_trasladados: Decimal
     impuestos_locales_retenidos: Decimal
     total: Decimal
+    ish: Decimal = Decimal("0")
+
+    @property
+    def subtotal_captura(self) -> Decimal:
+        """Budget classification only; preserve the original fiscal subtotal."""
+        return self.subtotal + self.ish
 
     @property
     def impuestos_y_retenciones(self) -> Decimal:
@@ -101,6 +108,7 @@ class QuickExpenseTaxComponents:
             - self.retenciones
             + self.impuestos_locales_trasladados
             - self.impuestos_locales_retenidos
+            - self.ish
         ).quantize(
             Decimal("0.01"),
             rounding=ROUND_HALF_UP,
@@ -109,7 +117,7 @@ class QuickExpenseTaxComponents:
     @property
     def calculated_total(self) -> Decimal:
         return compute_quick_expense_total(
-            self.subtotal,
+            self.subtotal_captura,
             self.descuento,
             self.impuestos_y_retenciones,
         )
@@ -176,7 +184,6 @@ def _retenciones_from_parsed(parsed: Dict[str, Any]) -> Decimal:
     )
 
 
-
 def _impuestos_locales_from_parsed(parsed: Dict[str, Any]) -> Tuple[Decimal, Decimal]:
     impuestos_detalle = parsed.get("impuestos_detalle") or {}
     locales_list = list(impuestos_detalle.get("locales") or [])
@@ -197,6 +204,7 @@ def _impuestos_locales_from_parsed(parsed: Dict[str, Any]) -> Tuple[Decimal, Dec
         Decimal("0"),
     )
     return trasladados, retenidos
+
 
 def _iva_trasladado_from_parsed(parsed: Dict[str, Any]) -> Decimal:
     impuestos_detalle = parsed.get("impuestos_detalle") or {}
@@ -232,9 +240,22 @@ def quick_expense_tax_components_from_parsed(
     traslados = _traslados_from_parsed(parsed)
     retenciones = _retenciones_from_parsed(parsed)
     locales_trasladados, locales_retenidos = _impuestos_locales_from_parsed(parsed)
+    ish = sum(
+        (
+            _decimal_money(item.get("importe"))
+            for item in ((parsed.get("impuestos_detalle") or {}).get("locales") or [])
+            if str(item.get("tipo") or "").strip().lower() == "traslado"
+            and _is_ish_name(item.get("impuesto"))
+        ),
+        Decimal("0"),
+    )
     total = _decimal_money(parsed.get("total"))
 
-    if total == 0 and subtotal > 0:
+    if (
+        parsed.get("total") in (None, "")
+        and subtotal > 0
+        and "_pdf_explicit_fields" not in parsed
+    ):
         total = compute_quick_expense_total(
             subtotal,
             descuento,
@@ -250,7 +271,22 @@ def quick_expense_tax_components_from_parsed(
         impuestos_locales_trasladados=locales_trasladados,
         impuestos_locales_retenidos=locales_retenidos,
         total=total,
+        ish=ish,
     )
+
+
+def _is_ish_name(value: Any) -> bool:
+    """Recognize explicit lodging-tax labels, never infer from the expense."""
+    text = unicodedata.normalize("NFKD", str(value or "")).lower()
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    text = re.sub(r"[^a-z0-9]+", " ", text).strip()
+    return text in {
+        "ish",
+        "i s h",
+        "impuesto sobre hospedaje",
+        "impuesto sobre el hospedaje",
+        "impuesto al hospedaje",
+    }
 
 
 def compute_quick_expense_total(
@@ -275,11 +311,22 @@ def autofill_quick_expense_from_parsed_cfdi(
     concepto = (parsed.get("descripcion_concepto_principal") or "").strip()
     fecha = _format_cfdi_fecha(parsed.get("fecha"))
     numero_factura = format_numero_factura(parsed)
-    subtotal = f"{taxes.subtotal:.2f}" if taxes.subtotal else ""
+    subtotal = f"{taxes.subtotal_captura:.2f}" if taxes.subtotal_captura else ""
     descuento = f"{taxes.descuento:.2f}" if taxes.descuento else "0.00"
     impuestos_y_retenciones = f"{taxes.impuestos_y_retenciones:.2f}"
     total = f"{taxes.total:.2f}" if taxes.total else ""
-    if not total and subtotal:
+    is_text_pdf = "_pdf_explicit_fields" in parsed
+    if is_text_pdf:
+        subtotal = (
+            "" if parsed.get("subtotal") is None else f"{taxes.subtotal_captura:.2f}"
+        )
+        descuento = "" if parsed.get("descuento") is None else f"{taxes.descuento:.2f}"
+        total = "" if parsed.get("total") is None else f"{taxes.total:.2f}"
+        if parsed.get("total_impuestos_trasladados") is None and not any(
+            (parsed.get("impuestos_detalle") or {}).values()
+        ):
+            impuestos_y_retenciones = ""
+    if not is_text_pdf and not total and subtotal and parsed.get("total") in (None, ""):
         computed = taxes.calculated_total
         if computed > 0:
             total = f"{computed:.2f}"
@@ -302,8 +349,8 @@ def autofill_quick_expense_from_parsed_cfdi(
         fecha=fecha,
         numero_factura=numero_factura,
         subtotal=subtotal,
-        descuento=descuento or "0.00",
-        impuestos_y_retenciones=impuestos_y_retenciones or "0.00",
+        descuento=descuento,
+        impuestos_y_retenciones=impuestos_y_retenciones,
         total=total,
     )
 

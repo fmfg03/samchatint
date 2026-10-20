@@ -45,6 +45,9 @@ These routes are owned by `admin_budget_routes.py`:
 - `POST /admin/presupuestos/versiones/copy-forward`
 - `POST /admin/presupuestos/versiones/{version_id}/lineas/create`
 - `POST /admin/presupuestos/versiones/{version_id}/transition`
+- `POST /admin/presupuestos/versiones/{version_id}/distribucion` (isolated candidate:
+  same-edition expense scheduling revision; original authorized amounts and
+  financial evidence remain on the source; requires create and line_update)
 - `POST /admin/presupuestos/versiones/{version_id}/update`
 - `POST /admin/presupuestos/lineas/{line_id}/update`
 

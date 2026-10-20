@@ -13,6 +13,9 @@ from devnous.gastos.services.documento_telegram import (
     get_notification_session_maker,
     monitor_workflow_telegram_notifications,
 )
+from devnous.gastos.services.telegram_outbox_service import (
+    recover_stale_finance_pending_notifications,
+)
 
 
 def _load_env_file(path: str) -> None:
@@ -34,11 +37,16 @@ async def _run(args: argparse.Namespace) -> dict[str, int]:
     if session_maker is None:
         raise RuntimeError("No notification database session maker available")
     async with session_maker() as session:
-        return await monitor_workflow_telegram_notifications(
+        stats = await monitor_workflow_telegram_notifications(
             session,
             older_than_minutes=args.older_than_minutes,
             limit=args.limit,
         )
+        recovery = await recover_stale_finance_pending_notifications(
+            session, older_than_minutes=args.older_than_minutes, limit=args.limit
+        )
+        stats.update({f"finance_{key}": value for key, value in recovery.items()})
+        return stats
 
 
 def main() -> int:

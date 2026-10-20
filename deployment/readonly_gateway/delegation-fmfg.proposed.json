@@ -1,0 +1,11 @@
+{
+  "actor_uuid": "b8816679-ad77-4590-83d5-50ffce335854",
+  "email": "fmfg@pm.me",
+  "installation": "samchat-production",
+  "actor_binding": "agentius:fmfg:readonly:v1",
+  "generation": "20261009-v1",
+  "expires_at": "2026-11-08T23:59:59Z",
+  "owner_version": "live-informes-514b6542e-v1",
+  "transport_binding": "tunnel_6abc52a731608191a27c90d670fb5502",
+  "scope_policy": "live_informes_v1"
+}

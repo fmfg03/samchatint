@@ -24,6 +24,16 @@ def no_active_collection_matches():
         yield
 
 
+@pytest.fixture(autouse=True)
+def ordinary_version_context(monkeypatch):
+    from samchat.budgets import distribution
+
+    async def context(_session, version_id):
+        return {"id": version_id, "source": "ui_manual"}
+
+    monkeypatch.setattr(distribution, "revision_context", context)
+
+
 @pytest.mark.asyncio
 async def test_ar_read_model_groups_expected_income_lines():
     session = object()
@@ -281,6 +291,7 @@ async def test_ar_read_model_is_read_only_shape():
         "credit_days_default": 0,
         "outstanding_amount_status": "unknown",
         "summary": {
+            "pending_link_count": 0,
             "expected_income_count": 0,
             "expected_income_total": 0.0,
             "issued_linked_count": 0,
@@ -296,6 +307,7 @@ async def test_ar_read_model_is_read_only_shape():
         },
         "expected_income": [],
         "issued_linked": [],
+        "pending_links": [],
         "issued_unlinked": [],
         "collection_gaps": [],
         "matching_gaps": [],

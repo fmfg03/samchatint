@@ -77,7 +77,7 @@ def test_combined_filters_are_bound_and_preserve_zero_amount():
     assert params["amount_max"] == Decimal("100.25")
     assert "x' OR" not in sql
     assert params["supplier"] == "%x' OR 1=1 --%"
-    assert "pagado_en::date <= :date_to" in sql
+    assert "fecha_pago_efectiva::date <= :date_to" in sql
     assert "NOT (estado = 'pagado' OR pagado_en IS NOT NULL)" in sql
     assert (
         "solicitante_nombre ILIKE :employee OR beneficiario_nombre ILIKE :employee"

@@ -67,6 +67,8 @@ def test_direction_dashboard_authenticated_keyboard_navigation(
 
     page.evaluate("document.activeElement && document.activeElement.blur()")
     page.keyboard.press("Tab")
+    expect(page.locator(":focus")).to_have_attribute("href", "/direccion/inicio")
+    page.keyboard.press("Tab")
     expect(page.locator(":focus")).to_have_attribute("name", "edition_year")
     page.keyboard.press("Tab")
     expect(page.locator(":focus")).to_have_text("Actualizar")

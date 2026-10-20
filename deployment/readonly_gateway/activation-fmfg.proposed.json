@@ -1,0 +1,10 @@
+{
+  "activation_authorized": false,
+  "schema_fingerprint": "f979e31f95618ecac9528108a482c426be9c842cd8158e6cc9b9a0be84497cb5",
+  "source_commit": "514b6542e90c1eaae5c26351bc9ee18e9d0f86e8",
+  "source_root": "/srv/samchat/releases/gastos-prod-514b6542e-diot-monthly",
+  "sources": {
+    "src/devnous/gastos/services/project_authorization_service.py": "1510ac5dba885421c9f9d43cc04694c97f36ad1fd487550b5ae2c90d35746d84",
+    "src/devnous/gastos/services/tournament_project_visibility.py": "cf7c601f2b8ece6d2f1fa1ac4946ba029de89dfdef55340ca8c198f5403d3e5b"
+  }
+}

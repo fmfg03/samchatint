@@ -682,6 +682,45 @@ def register_prestamo_payment_proof(
     return prestamo
 
 
+def replace_prestamo_payment_proof(
+    prestamo: SolicitudPrestamo,
+    actor: Any,
+    *,
+    filename: str,
+    storage_key: str,
+    reason: str,
+    now: Optional[datetime] = None,
+) -> None:
+    """Change only the current proof, preserving the original file and audit trail."""
+    if not can_confirm_payment_run_payment(actor):
+        raise PrestamoWorkflowPermissionError(
+            "not_accounting_payment_confirmer", "Solo Contabilidad puede sustituir comprobantes."
+        )
+    if prestamo.estado != PRESTAMO_STATUS_PAGADA or not prestamo.comprobante_pago_storage_key:
+        raise PrestamoWorkflowValidationError(
+            "not_paid", "Solo se puede sustituir el comprobante de un préstamo pagado."
+        )
+    if not str(reason or "").strip() or not filename or not storage_key:
+        raise PrestamoWorkflowValidationError(
+            "replacement_required", "Selecciona archivo nuevo e indica el motivo."
+        )
+    metadata = dict(prestamo.metadata_json or {})
+    history = list(metadata.get("payment_proof_replacements") or [])
+    history.append({
+        "previous_filename": prestamo.comprobante_pago_filename,
+        "previous_storage_key": prestamo.comprobante_pago_storage_key,
+        "replacement_filename": filename,
+        "replacement_storage_key": storage_key,
+        "actor_id": str(actor.id),
+        "reason": reason.strip()[:500],
+        "replaced_at": (now or datetime.now(timezone.utc)).isoformat(),
+    })
+    metadata["payment_proof_replacements"] = history
+    prestamo.metadata_json = metadata
+    prestamo.comprobante_pago_filename = filename
+    prestamo.comprobante_pago_storage_key = storage_key
+
+
 def compute_abono_application(
     *,
     saldo_pendiente: Any,

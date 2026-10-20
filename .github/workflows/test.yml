@@ -83,12 +83,23 @@ jobs:
           cache-dependency-path: requirements.txt
 
       - name: Install dependencies
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt -r requirements-test.txt
+
+      - name: Run isolated private-plugin unit tests
+        run: |
+          python -m venv .venv-private-plugin
+          .venv-private-plugin/bin/python -m pip install -r requirements-private-plugin-test.txt coverage
+          mkdir -p reports/private-plugin
+          COVERAGE_FILE=reports/private-plugin/unit.coverage .venv-private-plugin/bin/python -m coverage run \
+            --source=src/samchat/private_plugin scripts/private_plugin/run_offline_tests.py
 
       - name: Run unit tests
         run: |
           set +e
           python -m pytest tests/unit \
+            --cov-config=.github/coverage-repository.ini \
+            --ignore=tests/unit/private_plugin \
+            --ignore=tests/unit/readonly_gateway \
             --cov=src \
             --cov=copa_telmex_dashboard \
             --cov-report= \
@@ -108,6 +119,39 @@ jobs:
           if [[ "$pytest_status" -ne 0 ]]; then
             echo "Pytest exited $pytest_status; all failures matched the explicit baseline."
           fi
+
+      - name: Run isolated readonly PostgreSQL acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          samchat_ro_pg_bin=/usr/lib/postgresql/16/bin
+          test -x "$samchat_ro_pg_bin/initdb"
+          test -x "$samchat_ro_pg_bin/pg_ctl"
+          mkdir -p reports/readonly_gateway
+          samchat_ro_cluster=$(mktemp -d /tmp/samchat-ro-native-ci-XXXXXXXX)
+          cleanup_readonly_cluster() {
+            if [[ -f "$samchat_ro_cluster/data/postmaster.pid" ]]; then
+              "$samchat_ro_pg_bin/pg_ctl" -D "$samchat_ro_cluster/data" -m fast -w stop
+            fi
+          }
+          trap cleanup_readonly_cluster EXIT
+          "$samchat_ro_pg_bin/initdb" -D "$samchat_ro_cluster/data" \
+            -U postgres --encoding=UTF8 --locale=C \
+            --auth-local=trust --auth-host=reject
+          "$samchat_ro_pg_bin/pg_ctl" -D "$samchat_ro_cluster/data" \
+            -l "$samchat_ro_cluster/server.log" \
+            -o "-k $samchat_ro_cluster -c listen_addresses=''" -w start
+          "$samchat_ro_pg_bin/createdb" -h "$samchat_ro_cluster" -U postgres devnous_db
+          export SAMCHAT_TEST_SOCKET="$samchat_ro_cluster"
+          export COVERAGE_FILE=reports/readonly_gateway/unit.coverage
+          python -m coverage run --source=src/samchat/readonly_gateway \
+            scripts/readonly_gateway/run_offline_tests.py --native-informes
+          python -m coverage report --fail-under=85
+
+      - name: Combine unit coverage including isolated slices
+        run: |
+          mv .coverage .coverage.repository.unit
+          python -m coverage combine .coverage.repository.unit reports/private-plugin/unit.coverage reports/readonly_gateway/unit.coverage
 
       - name: Upload unit-test report
         if: always()
@@ -152,6 +196,7 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
+          - 55471:5432
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -166,9 +211,21 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Run isolated private-plugin PostgreSQL integration tests
+        run: |
+          python -m venv .venv-private-plugin
+          .venv-private-plugin/bin/python -m pip install -r requirements-private-plugin-postgres.txt coverage
+          mkdir -p reports/private-plugin
+          COVERAGE_FILE=reports/private-plugin/integration.coverage .venv-private-plugin/bin/python -m coverage run \
+            --source=src/samchat/private_plugin scripts/private_plugin/run_postgres_tests.py
+
       - name: Run integration tests
+        env:
+          TEST_AMEX_DATABASE_URL: postgresql+asyncpg://test_user:test_password@127.0.0.1:55471/devnous_test
         run: |
           python -m pytest tests/integration \
+            --cov-config=.github/coverage-repository.ini \
+            --ignore=tests/integration/private_plugin \
             --cov=src \
             --cov=copa_telmex_dashboard \
             --cov-report= \
@@ -176,6 +233,11 @@ jobs:
             --timeout=120 \
             --durations=20 \
             --junitxml=reports/integration-3.12.xml
+
+      - name: Combine integration coverage including isolated plugin tests
+        run: |
+          mv .coverage .coverage.repository.integration
+          python -m coverage combine .coverage.repository.integration reports/private-plugin/integration.coverage
 
       - name: Upload integration-test report
         if: always()
