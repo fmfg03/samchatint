@@ -12,18 +12,19 @@ La consulta combina estado, mes/año, empleado (solicitante o beneficiario), sol
 
 Hay 50 solicitudes por página, sin el recorte anterior de 500 solicitudes del historial. Los totales abarcan todos los resultados filtrados y separan moneda y cantidades pagadas/pendientes. Los montos faltantes se mantienen ausentes y se cuentan expresamente; los totales con datos incompletos suman solo importes conocidos. Los importes conservan precisión decimal.
 
-Los cortes en proceso continúan pendientes hasta confirmar el pago. Borradores y rechazados sin pago confirmado no se presentan como obligaciones elegibles, aunque exista un corte histórico. El servicio reutiliza la fuente canónica de Payment Run y su clasificación. La consulta no ejecuta DDL ni escrituras. Payment Run conserva su comportamiento previo y sus permisos de operación. La consulta conserva `get_current_empleado`, el permiso de herramienta heredado y `require_payment_run_access`; no concede permisos nuevos a auxiliares sin acceso vigente.
+Los cortes en proceso continúan pendientes hasta confirmar el pago. Borradores y rechazados sin pago confirmado no se presentan como obligaciones elegibles, aunque exista un corte histórico. El servicio reutiliza la fuente canónica de Payment Run y su clasificación. La consulta no ejecuta DDL ni escrituras. Payment Run conserva su comportamiento previo y sus permisos de operación. La consulta conserva `get_current_empleado`, el rechazo explícito de herramienta y `require_payment_run_access`; la ruta exacta usa el gateway del owner Payment Run en lugar del rol predeterminado de `admin.finanzas`; no concede permisos nuevos a auxiliares sin acceso vigente.
 
 ## Archivos cambiados
 
 - `src/devnous/gastos/routes/admin_routes.py`: botón administrativo, navegación de lectores y conexión del historial.
 - `src/devnous/gastos/routes/user_routes.py`: botón en panel Gastos y subnavegación.
+- `src/devnous/gastos/routes/dependencies.py`: gateway exacto del historial, denegación explícita, cierre ante error y visibilidad aislada del resto de autorizaciones.
 - `src/devnous/gastos/services/payment_run_service.py`: extracción de la fuente SQL compartida; compatibilidad del flujo previo verificada.
 - `src/devnous/gastos/services/payment_history_service.py` (nuevo): validación, consulta de lectura, filtros, orden, paginación y totales.
 - `src/devnous/gastos/routes/payment_history_ui.py` (nuevo): formulario, resúmenes, tabla accesible y enlaces de orden/página.
 - `tests/unit/gastos/test_payment_run_routes.py`: adapta la prueba del historial al ordenamiento de servidor.
 - `tests/unit/gastos/test_payment_history.py` (nuevo): aceptación unitaria, permisos, errores, escape y cobertura.
-- `tests/unit/gastos/test_payment_history_postgres.py` (nuevo): siete pruebas reales con tablas temporales y datos sintéticos.
+- `tests/unit/gastos/test_payment_history_postgres.py` (nuevo): ocho pruebas reales con tablas temporales y datos sintéticos.
 - `tests/browser/test_payment_history.py` (nuevo): formulario, etiquetas, orden, paginación y tamaños desktop/móvil con respuestas sintéticas.
 - `docs/private-plugin/route-inventory.json` y `route-matrix.csv`: inventario estático reproducible actualizado tras integrar main.
 - Este reporte de cierre.
@@ -38,13 +39,13 @@ Ejecutados desde el worktree, con `PYTHONPATH=src` y `/root/samchat/.venv/bin/py
 -m pytest -o addopts='' tests/unit/gastos/test_payment_history.py tests/unit/gastos/test_payment_run_service.py tests/unit/gastos/test_payment_run_routes.py tests/unit/gastos/test_payment_run_exporter.py tests/unit/gastos/test_payment_confirmation_dates.py --cov=devnous.gastos.services.payment_history_service --cov=devnous.gastos.routes.payment_history_ui --cov-report=term-missing --cov-fail-under=85 -q
 ```
 
-Resultado final: **146 passed**, cobertura **100%** en los dos módulos nuevos (143 sentencias).
+Resultado final: **156 passed**, cobertura **100%** en los dos módulos nuevos (143 sentencias).
 
 ```text
 PAYMENT_HISTORY_SYNTHETIC_URL=<URL del cluster temporal> ... -m pytest -o addopts='' tests/unit/gastos/test_payment_history_postgres.py -q
 ```
 
-Resultado final: **7 passed** sobre PostgreSQL 16 temporal aislado, con 603 solicitudes sintéticas por caso. Se verificaron límites superiores a 500, sumas decimales exactas por moneda, fechas inclusivas, filtros combinados, faltantes, corte pendiente, exclusión de rechazados, orden por etiquetas y compatibilidad del servicio previo. El cluster se creó bajo `/tmp/samchat-history-*`, con socket local sin TCP, y se detuvo/eliminó al terminar. El runner usado está en `/tmp/run_synthetic_payment_history.sh`. Las pruebas rechazan URLs ajenas a ese patrón temporal y se omiten sin URL explícita. No se consultó la base de la aplicación.
+Resultado final: **8 passed** sobre PostgreSQL 16 temporal aislado, con 603 solicitudes sintéticas por caso. Se verificaron límites superiores a 500, sumas decimales exactas por moneda, fechas inclusivas, filtros combinados, faltantes, corte pendiente, exclusión de rechazados, orden por etiquetas y compatibilidad del servicio previo. El cluster se creó bajo `/tmp/samchat-history-*`, con socket local sin TCP, y se detuvo/eliminó al terminar. El runner usado está en `/tmp/run_synthetic_payment_history.sh`. Las pruebas rechazan URLs ajenas a ese patrón temporal y se omiten sin URL explícita. No se consultó la base de la aplicación.
 
 ```text
 SAMCHAT_BROWSER_ARTIFACT_DIR=/tmp/samchat-payment-history-browser ... -m pytest -o addopts='' tests/browser/test_payment_history.py -q
@@ -94,3 +95,13 @@ Diff completo para revisión: `/tmp/gastos-payment-browser-final.diff`. La aprob
 ## Integración con main y publicación
 
 Se integró el main vigente `0df07ace2` preservando sus 286 commits posteriores a la base inicial. Se resolvieron conflictos en imports, renderer del historial y fuente SQL, conservando fecha efectiva, permisos y flujos actuales. No se trasladaron cambios locales ajenos del checkout principal. Se añadió una prueba SQL donde pago efectivo es octubre y captura noviembre, y ambos filtros devuelven resultados diferentes conforme al dato real. Se regeneraron los dos inventarios oficiales y se ejecutó su prueba reproducible. Las autorizaciones y checks GitHub se registran en el PR.
+
+## Correcciones de la revisión automática del PR #492
+
+La primera ronda de CI del head `b24a62ee2` aprobó los checks, incluido `Required PR gate`, pero el merge normal fue rechazado correctamente por conversaciones de revisión sin resolver. No se usó bypass ni se cambiaron protecciones. Se verificaron y corrigieron los tres hallazgos:
+
+1. Acceso HTTP de auxiliares: la ruta exacta del historial delega en su owner con sesión activa, facultad de Payment Run y rechazo explícito de herramienta vigente. El botón usa una bandera de visibilidad calculada después de autorizar la ruta solicitada y en un bloque independiente; fallo de esa lectura deja la bandera falsa y no puede omitir una denegación de otra herramienta. Las pruebas HTTP recorren la dependencia real, con casos de auxiliar, usuario sin facultad, denegación explícita, sesión ausente, cuenta inactiva y fallo de política.
+2. Reloj de pruebas: la fixture de PostgreSQL congela la fecha del servicio al período sintético, por lo que su resultado no cambia al avanzar el calendario.
+3. Búsqueda literal: los filtros escapan `%`, `_` y `!` y usan `ESCAPE '!'`; pruebas SQL verifican además barras invertidas, evitando coincidencias ajenas y totales inflados.
+
+Validación posterior: 156 pruebas de pagos/acceso con 100% de módulos nuevos; 8 PostgreSQL; 33 Chromium de historial y perfiles (`tests/browser/test_payment_history.py tests/browser/test_effective_profile_navigation.py`); 56 de autorización/navegación relacionadas. Se regeneró inventario (605 rutas, 44 acciones, sin parse gaps). Revisión independiente posterior sin hallazgos pendientes. La nueva ronda GitHub debe pasar antes del merge.

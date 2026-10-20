@@ -1291,7 +1291,7 @@ def test_payment_run_navigation_is_available_to_payment_confirmer(
     )
 
     assert 'href="/admin/finanzas/payment-run"' in navigation
-    assert 'href="/admin/finanzas/payment-history"' not in navigation
+    assert 'href="/admin/finanzas/payment-history"' in navigation
 
 
 @pytest.mark.asyncio

@@ -2396,9 +2396,7 @@ def _gastos_workspace_nav_html(current_empleado: Empleado, active: str) -> str:
             ]
         )
 
-    if can_access_payment_run(current_empleado) and can_show(
-        "admin.finanzas", ("finanzas", "admin")
-    ):
+    if getattr(current_empleado, "payment_history_visible", can_access_payment_run(current_empleado)):
         items.append(("/admin/finanzas/payment-history", "Pagado y pendiente", "pagos"))
 
     if not items:
@@ -16259,8 +16257,8 @@ async def panel(
                     ("gastos.solicitudes", "/gastos-terceros", "Solicitudes de transferencia", "Revisa solicitudes a proveedores o terceros."),
                     ("gastos.solicitudes", "/beneficiarios/altas", "Alta de beneficiarios", "Solicita y da seguimiento a nuevas cuentas destino."),
                     ("gastos.solicitudes", "/documentos/todos", "Todos los documentos", "Vista global de documentos."),
-                    *([("admin.finanzas", "/admin/finanzas/payment-history", "Pagado y pendiente", "Consulta pagos y pendientes con filtros.")] if can_access_payment_run(current_empleado) else []),
                 ], visible_tool_keys), "tone-blue")}
+                {build_link_cards([("/admin/finanzas/payment-history", "Pagado y pendiente", "Consulta pagos y pendientes con filtros.")], "tone-blue") if getattr(current_empleado, "payment_history_visible", can_access_payment_run(current_empleado)) else ""}
             </div>
         </section>
     """

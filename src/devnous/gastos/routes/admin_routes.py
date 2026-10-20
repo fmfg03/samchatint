@@ -1142,17 +1142,6 @@ def render_admin_navigation(
             "Programación de pagos",
             "payment_run",
         )
-    if can_access_payment_run(current_empleado):
-        finanzas_items.extend(
-            [
-                (
-                    "admin.finanzas",
-                    "/admin/finanzas/payment-history",
-                    "Pagado y pendiente",
-                    "payment_history",
-                ),
-            ]
-        )
     catalogos_items = [
         ("admin.empleados", "/admin/empleados", "Empleados", "empleados"),
         ("admin.perfiles", "/admin/perfiles", "Perfiles", "perfiles"),
@@ -1192,6 +1181,8 @@ def render_admin_navigation(
     finanzas_items = [(href, label, key) for tool_key, href, label, key in finanzas_items if can_nav(tool_key)]
     if payment_run_item is not None:
         finanzas_items.append(payment_run_item)
+    if getattr(current_empleado, "payment_history_visible", can_access_payment_run(current_empleado)):
+        finanzas_items.append(("/admin/finanzas/payment-history", "Pagado y pendiente", "payment_history"))
     catalogos_items = [(href, label, key) for tool_key, href, label, key in catalogos_items if can_nav(tool_key)]
     avanzado_items = [(href, label, key) for tool_key, href, label, key in avanzado_items if can_nav(tool_key)]
     avanzado_keys = {key for _, _, key in avanzado_items}
@@ -3490,10 +3481,7 @@ async def admin_dashboard(
         f'<a href="{href}" class="button {"secondary" if index else ""}">{escape(title)}</a>'
         for index, (href, title, _description) in enumerate(hero_actions)
     )
-    if can_access_payment_run(current_empleado) and (
-        "admin.finanzas" in visible_tool_keys
-        or is_superadmin_role(current_empleado.rol)
-    ):
+    if getattr(current_empleado, "payment_history_visible", can_access_payment_run(current_empleado)):
         hero_actions_html += '<a href="/admin/finanzas/payment-history" class="button secondary">Pagado y pendiente</a>'
     hero_side_html = f"""
         <div class="eyebrow">Contexto BI</div>

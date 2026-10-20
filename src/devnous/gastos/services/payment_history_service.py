@@ -131,9 +131,15 @@ def history_query(values: Mapping[str, str]) -> tuple[str, dict[str, Any], int]:
     }.items():
         if values.get(field):
             filters.append(
-                "(" + " OR ".join(f"{col} ILIKE :{field}" for col in columns) + ")"
+                "("
+                + " OR ".join(f"{col} ILIKE :{field} ESCAPE '!'" for col in columns)
+                + ")"
             )
-            params[field] = "%" + values[field] + "%"
+            params[field] = (
+                "%"
+                + values[field].replace("!", "!!").replace("%", "!%").replace("_", "!_")
+                + "%"
+            )
     if minimum is not None:
         filters.append("monto >= :amount_min")
         params["amount_min"] = minimum

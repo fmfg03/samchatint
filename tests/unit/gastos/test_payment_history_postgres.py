@@ -12,12 +12,23 @@ from devnous.gastos.services.payment_history_service import list_payment_history
 
 
 @pytest_asyncio.fixture
-async def history_db():
+async def history_db(monkeypatch):
     url = os.environ.get("PAYMENT_HISTORY_SYNTHETIC_URL")
     if not url:
         pytest.skip("Requires isolated synthetic PostgreSQL cluster")
     if "host=/tmp/samchat-history-" not in url:
         pytest.fail("Only disposable local history-test clusters are allowed")
+    # Stable business date for schedule classification, independent of runtime day.
+    from datetime import date
+
+    from devnous.gastos.services import payment_history_service
+
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 10, 20)
+
+    monkeypatch.setattr(payment_history_service, "date", FixedDate)
     engine = create_async_engine(url)
     async with engine.connect() as conn:
         async with conn.begin():
@@ -228,3 +239,25 @@ async def test_effective_payment_date_is_distinct_from_capture(history_db):
         history_db, filters(q="Prueba 603", month="2026-10", date_kind="captura")
     )
     assert captured["total_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_search_patterns_are_literal_substrings(history_db):
+    await history_db.execute(
+        text("UPDATE proveedores_clientes SET nombre=:name"), {"name": "ACME 100%_!\\"}
+    )
+    await history_db.execute(
+        text(
+            "INSERT INTO proveedores_clientes VALUES (md5('other')::uuid, 'ACME 100AB')"
+        )
+    )
+    await history_db.execute(
+        text(
+            "UPDATE documentos SET proveedor_cliente_id=md5('other')::uuid WHERE referencia_operaciones=2"
+        )
+    )
+    for term in ["%", "_", "!", "\\", "100%_!\\"]:
+        result = await list_payment_history(history_db, filters(supplier=term))
+        assert result["total_count"] == 602
+    literal = await list_payment_history(history_db, filters(supplier="100AB"))
+    assert literal["total_count"] == 1

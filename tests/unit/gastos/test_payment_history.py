@@ -80,7 +80,7 @@ def test_combined_filters_are_bound_and_preserve_zero_amount():
     assert "fecha_pago_efectiva::date <= :date_to" in sql
     assert "NOT (estado = 'pagado' OR pagado_en IS NOT NULL)" in sql
     assert (
-        "solicitante_nombre ILIKE :employee OR beneficiario_nombre ILIKE :employee"
+        "solicitante_nombre ILIKE :employee ESCAPE '!' OR beneficiario_nombre ILIKE :employee ESCAPE '!'"
         in sql
     )
 
@@ -254,3 +254,106 @@ def test_gastos_navigation_only_shows_lookup_to_existing_authorized_readers():
     assert "Pagado y pendiente" not in user_routes._gastos_workspace_nav_html(
         employee, "pagos"
     )
+
+
+@pytest.mark.parametrize(
+    "raw, bound", [("%", "%!%%"), ("_", "%!_%"), ("!", "%!!%"), ("\\", "%\\%")]
+)
+def test_literal_search_metacharacters_are_escaped(raw, bound):
+    sql, params, _ = history_query(values(supplier=raw))
+    assert params["supplier"] == bound
+    assert "proveedor_nombre ILIKE :supplier ESCAPE '!'" in sql
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "actor,authenticated,active,decision,expected",
+    [
+        ("accounting", True, True, None, 200),
+        ("accounting", True, True, False, 403),
+        ("accounting", True, True, "error", 403),
+        ("employee", True, True, None, 403),
+        ("accounting", False, True, None, 401),
+        ("accounting", True, False, None, 401),
+    ],
+)
+async def test_real_history_http_authorization_chain(
+    monkeypatch, actor, authenticated, active, decision, expected
+):
+    from fastapi import Depends, FastAPI, Request
+    from httpx import ASGITransport, AsyncClient
+
+    from devnous.gastos.routes import dependencies
+    from devnous.gastos.services import access_control_service
+
+    employee = SimpleNamespace(
+        id=uuid4(),
+        rol="usuario" if actor == "accounting" else "empleado",
+        departamento="Contabilidad" if actor == "accounting" else "Operaciones",
+        activo=active,
+        nombre="Auxiliar sintético",
+    )
+    monkeypatch.setattr(
+        dependencies, "_load_empleado_proxy_by_id", AsyncMock(return_value=employee)
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "visible_tools_for",
+        AsyncMock(return_value={"gastos.solicitudes"}),
+    )
+    monkeypatch.setattr(dependencies, "can_access_path", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        access_control_service,
+        "explicit_tool_decision",
+        (
+            AsyncMock(side_effect=RuntimeError("policy unavailable"))
+            if decision == "error"
+            else AsyncMock(return_value=decision)
+        ),
+    )
+    query = AsyncMock(return_value=empty_payload())
+    monkeypatch.setattr(admin_routes, "list_payment_history", query)
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def synthetic_session(request: Request, call_next):
+        request.scope["session"] = (
+            {"empleado_id": str(employee.id)} if authenticated else {}
+        )
+        return await call_next(request)
+
+    async def test_session():
+        yield AsyncMock()
+
+    app.dependency_overrides[dependencies.get_db_session] = test_session
+    app.dependency_overrides[admin_routes.get_db_session] = test_session
+    app.include_router(admin_routes.router)
+
+    @app.get("/admin/finanzas/other-protected-tool")
+    async def other_tool(current=Depends(dependencies.get_current_empleado)):
+        return {"ok": True}
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/admin/finanzas/payment-history")
+        assert response.status_code == expected
+        if expected == 200:
+            assert employee.payment_history_visible
+            assert "Pagado y pendiente" in response.text
+            assert "Pagado y pendiente" in user_routes._gastos_workspace_nav_html(
+                employee, "pagos"
+            )
+            other = await client.get("/admin/finanzas/other-protected-tool")
+            assert other.status_code == 403
+        else:
+            query.assert_not_awaited()
+        if decision == "error":
+            # A broken history-visibility lookup must not bypass another tool.
+            other = await client.get("/admin/finanzas/other-protected-tool")
+            assert other.status_code == 403
+        if decision is False and active and authenticated:
+            assert not employee.payment_history_visible
+            assert "Pagado y pendiente" not in user_routes._gastos_workspace_nav_html(
+                employee, "pagos"
+            )
