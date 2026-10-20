@@ -51,11 +51,24 @@ def _cut_expense_cfdis(
         rows = item.get("journal_lines") or []
         if not rows:
             continue
+        decision = item.get("no_cfdi_decision")
+        no_cfdi_note = (
+            "Sin CFDI · "
+            + str(decision["reason"])
+            + " · Decisión "
+            + str(decision["id"])
+            if decision and item.get("coverage_kind") == "new_no_cfdi"
+            else ""
+        )
         movements = [
             {
                 "kind": (row.get("raw_row_json") or {}).get("movement", "corte"),
                 "cuenta": row["cuenta_codigo"],
-                "concepto": row["concepto"],
+                "concepto": (
+                    (row["concepto"] + " · " + no_cfdi_note)
+                    if no_cfdi_note
+                    else row["concepto"]
+                ),
                 "debe": float(Decimal(str(row["debe"]))),
                 "haber": float(Decimal(str(row["haber"]))),
             }
@@ -88,7 +101,8 @@ def _cut_expense_cfdis(
                 nombre_emisor=cfdi.get("nombre_emisor"),
                 receptor_uso_cfdi=cfdi.get("uso_cfdi"),
                 allows_missing_cfdi=True,
-                missing_cfdi_warning="El corte conserva la evidencia del cargo AMEX.",
+                missing_cfdi_warning=no_cfdi_note
+                or "El corte conserva la evidencia del cargo AMEX.",
                 poliza_group_key=(
                     f"amex-direct-cut:{cut.id}" if is_direct else f"amex-cut:{cut.id}"
                 ),

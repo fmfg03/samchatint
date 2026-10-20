@@ -82,6 +82,7 @@ def catalog():
         "20261014_amex_sat_budget_direct.sql",
         "20261015_amex_direct_period_recovery.sql",
         "20261020_amex_expense_account_settlements.sql",
+        "20261021_amex_direct_no_cfdi.sql",
     ]:
         source = (ROOT / "database/migrations" / file).read_text()
         bodies.update(
@@ -110,7 +111,20 @@ async def inspect(parts, settlement_views=None):
     columns, constraints, triggers, functions, indexes = parts
     session = AsyncMock()
     results = []
-    for rows in [columns, constraints, None, triggers, functions, indexes]:
+    helper_source = (
+        ROOT / "database/migrations/20261021_amex_direct_no_cfdi.sql"
+    ).read_text()
+    helpers = re.findall(
+        (
+            "CREATE FUNCTION (amex_direct_no_cfdi_\\w+"
+            ")\\(item_uuid uuid\\) RETURNS (?:text|void"
+            ") LANGUAGE (?:sql STABLE|plpgsql) AS \\$\\"
+            "$(.*?)\\$\\$"
+        ),
+        helper_source,
+        re.S,
+    )
+    for rows in [columns, constraints, None, triggers, functions, helpers, indexes]:
         result = MagicMock()
         result.all.return_value = rows
         result.scalar_one.return_value = "owner_schema"

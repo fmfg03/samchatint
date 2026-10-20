@@ -1495,3 +1495,228 @@ async def test_preview_exposes_outside_period_without_business_write(
     assert response.json()["outside_count"] == 1
     assert response.json()["outside_rows"][0]["reason"] == "row_outside_declared_period"
     w.session.commit.assert_not_awaited()
+
+
+@pytest.fixture
+def no_cfdi_workspace(complete_direct_workspace, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    w = complete_direct_workspace
+    for name in ("declare_no_cfdi_items", "revoke_no_cfdi_items"):
+        monkeypatch.setattr(w.routes.no_cfdi, name, AsyncMock(return_value=w.success))
+    return w
+
+
+def _no_cfdi_payload(w):
+    import json
+
+    return {
+        "expected_source_version": "4",
+        "item_ids": str(w.item.id),
+        "expected_versions": json.dumps({str(w.item.id): 2}),
+        "reason": "El comercio no emitirá factura",
+        "request_key": "synthetic-no-cfdi",
+        "confirmed": "true",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action,name",
+    [
+        ("sin-cfdi", "declare_no_cfdi_items"),
+        ("revocar-sin-cfdi", "revoke_no_cfdi_items"),
+    ],
+)
+@pytest.mark.parametrize("outcome", ["success", "pending", "scope", "conflict"])
+async def test_no_cfdi_bulk_dispatch_atomic_results(
+    no_cfdi_workspace, action, name, outcome
+):
+    import json
+    from urllib.parse import unquote
+    from uuid import uuid4
+
+    from devnous.gastos.services.amex_direct_common import DirectResult
+
+    w = no_cfdi_workspace
+    second_id = uuid4()
+    owner = getattr(w.routes.no_cfdi, name)
+    if outcome == "pending":
+        owner.return_value = DirectResult("pending", "stale_item_version")
+    elif outcome == "scope":
+        owner.side_effect = PermissionError("private-card-entity")
+    elif outcome == "conflict":
+        owner.side_effect = ValueError("no_cfdi_budget_release_required")
+    async with await _client(w) as client:
+        token = await _token(client, w)
+        response = await client.post(
+            f"{statements.BASE}/{w.statement.id}/directo/{action}",
+            data={
+                **_no_cfdi_payload(w),
+                "_csrf_token": token,
+                "item_ids": [str(w.item.id), str(second_id)],
+                "expected_versions": json.dumps({str(w.item.id): 2, str(second_id): 5}),
+            },
+        )
+    assert (
+        response.status_code
+        == {"success": 303, "pending": 303, "scope": 403, "conflict": 409}[outcome]
+    )
+    owner.assert_awaited_once()
+    kwargs = owner.await_args.kwargs
+    assert kwargs["item_ids"] == [w.item.id, second_id]
+    assert kwargs["expected_versions"] == {str(w.item.id): 2, str(second_id): 5}
+    assert kwargs["expected_source_version"] == 4
+    assert kwargs["actor_id"] == w.actor.id
+    assert kwargs["import_id"] == w.statement.id
+    assert kwargs["request_key"] == "synthetic-no-cfdi" and kwargs["confirmed"]
+    assert "private-card-entity" not in response.text
+    if outcome == "success":
+        w.session.commit.assert_awaited_once()
+    else:
+        w.session.commit.assert_not_awaited()
+        w.session.rollback.assert_awaited()
+    if outcome == "pending":
+        assert "Recarga" in unquote(response.headers["location"])
+    if outcome == "conflict":
+        assert "devolver" in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["sin-cfdi", "revocar-sin-cfdi"])
+@pytest.mark.parametrize(
+    "changes,expected",
+    [
+        ({"_csrf_token": "invalid"}, 403),
+        ({"confirmed": ""}, 422),
+        ({"reason": " "}, 422),
+        ({"reason": "x" * 1001}, 422),
+        ({"request_key": ""}, 422),
+        ({"request_key": "x" * 161}, 422),
+        ({"item_ids": []}, 422),
+        ({"expected_versions": "{}"}, 422),
+        ({"expected_source_version": "0"}, 422),
+    ],
+)
+async def test_no_cfdi_invalid_http_payload_never_calls_owner(
+    no_cfdi_workspace, action, changes, expected
+):
+    w = no_cfdi_workspace
+    async with await _client(w) as client:
+        token = await _token(client, w)
+        response = await client.post(
+            f"{statements.BASE}/{w.statement.id}/directo/{action}",
+            data={**_no_cfdi_payload(w), "_csrf_token": token, **changes},
+        )
+    assert response.status_code == expected
+    w.routes.no_cfdi.declare_no_cfdi_items.assert_not_awaited()
+    w.routes.no_cfdi.revoke_no_cfdi_items.assert_not_awaited()
+    w.session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["sin-cfdi", "revocar-sin-cfdi"])
+@pytest.mark.parametrize(
+    "role,active",
+    [("control_presupuestal", True), ("usuario", True), ("finanzas", False)],
+)
+async def test_no_cfdi_finance_authority_required(
+    no_cfdi_workspace, action, role, active
+):
+    w = no_cfdi_workspace
+    w.actor.rol, w.actor.activo = role, active
+    async with await _client(w) as client:
+        response = await client.post(
+            f"{statements.BASE}/{w.statement.id}/directo/{action}",
+            data=_no_cfdi_payload(w),
+        )
+    assert response.status_code == 403
+    w.routes.no_cfdi.declare_no_cfdi_items.assert_not_awaited()
+    w.routes.no_cfdi.revoke_no_cfdi_items.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("frozen", [False, True])
+async def test_no_cfdi_read_state_escaped_and_explicit_mutations(
+    no_cfdi_workspace, frozen
+):
+    from types import SimpleNamespace as NS
+
+    from lxml import html
+
+    w = no_cfdi_workspace
+    w.item.no_cfdi_decision = NS(
+        action="declare",
+        id="receipt",
+        reason="<img src=x onerror=bad()>",
+        actor_id="<script>bad()</script>",
+        created_at="2026-10-21",
+        revision=1,
+    )
+    if frozen:
+        w.view.cut = w.preview.cut = NS(id=w.item.id, accounting_date="2026-10-31")
+    async with await _client(w) as client:
+        response = await client.get(f"{statements.BASE}/{w.statement.id}/directo")
+    assert response.status_code == 200
+    tree = html.fromstring(response.text)
+    assert not tree.xpath("//img")
+    assert "Sin CFDI declarados: 1" in response.text
+    assert "Pendientes de factura: 0" in response.text
+    assert "Recibo de decisión: receipt" in response.text
+    assert not tree.xpath("//td//script")
+    for action in ("sin-cfdi", "revocar-sin-cfdi"):
+        forms = tree.xpath(f'//form[contains(@action,"/directo/{action}")]')
+        assert bool(forms) is not frozen
+        if forms:
+            form = forms[0]
+            assert form.get("method") == "POST"
+            for name in (
+                "_csrf_token",
+                "expected_versions",
+                "expected_source_version",
+                "request_key",
+            ):
+                assert form.xpath(f'.//input[@name="{name}"]/@value')
+            assert form.xpath('.//input[@name="reason"][@required][@maxlength="1000"]')
+            assert form.xpath('.//input[@name="confirmed"][@required]')
+    w.routes.no_cfdi.declare_no_cfdi_items.assert_not_awaited()
+    w.routes.no_cfdi.revoke_no_cfdi_items.assert_not_awaited()
+    w.session.commit.assert_not_awaited()
+
+
+def test_no_cfdi_revocation_audit_is_escaped_and_invoice_pending(no_cfdi_workspace):
+    w = no_cfdi_workspace
+    w.item.no_cfdi_decision = {
+        "action": "revoke",
+        "reason": "<script>bad()</script>",
+        "actor_id": "actor",
+        "id": "revoke-receipt",
+        "created_at": "2026-10-21",
+    }
+    w.item.match_status = "pending"
+    w.item.match_reason = "fiscal_match_required"
+    rendered = w.routes._row(w.item)
+    assert "Sin CFDI revocado" in rendered
+    assert "revoke-receipt" in rendered and "&lt;script&gt;" in rendered
+    assert "<script>bad()" not in rendered
+    assert "Falta confirmar la coincidencia fiscal" in rendered
+
+
+@pytest.mark.asyncio
+async def test_finance_no_cfdi_selection_survives_classification_denial(
+    no_cfdi_workspace,
+):
+    from lxml import html
+
+    w = no_cfdi_workspace
+    w.routes.context.list_direct_classification_options.side_effect = PermissionError(
+        "classification denied"
+    )
+    async with await _client(w) as client:
+        response = await client.get(f"{statements.BASE}/{w.statement.id}/directo")
+    tree = html.fromstring(response.text)
+    checkbox = tree.xpath('//input[@type="checkbox"][@name="item_ids"]')[0]
+    assert not checkbox.xpath("ancestor::fieldset[@disabled]")
+    form = tree.xpath('//form[contains(@action,"/directo/sin-cfdi")]')[0]
+    assert not form.xpath("ancestor::fieldset[@disabled]")
+    assert tree.xpath('//fieldset[@disabled]//form[contains(@action,"/clasificar")]')

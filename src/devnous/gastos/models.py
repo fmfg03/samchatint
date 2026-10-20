@@ -4535,7 +4535,7 @@ from .amex_direct_models import (  # noqa: E402,F401
     AmexStatementSourceFile, AmexStatementDirectContext, AmexStatementDirectState,
     AmexMerchantIdentityAlias, AmexCFDIStatusReceipt, AmexDirectItem,
     AmexDirectEvent, AmexDirectAccountingCut, AmexDirectCutItem,
-    AmexDirectCoverageRevision, AmexDirectRecoveredRow,
+    AmexDirectCoverageRevision, AmexDirectRecoveredRow, AmexDirectNoCFDIDecision,
 )
 
 from .amex_settlement_models import (  # noqa: E402,F401

@@ -336,6 +336,8 @@ def item_hash(item: Any, effective_source: Any = None) -> str:
             "credit_excluded",
         )
     }
+    if getattr(item, "no_cfdi_decision_id", None) is not None:
+        facts["no_cfdi_decision_id"] = item.no_cfdi_decision_id
     if effective_source is not None and effective_source.recovery_id:
         facts["effective_source"] = {
             "expense_id": effective_source.imported_expense_id,

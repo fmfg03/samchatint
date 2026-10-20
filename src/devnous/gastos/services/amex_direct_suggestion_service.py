@@ -234,6 +234,9 @@ async def _suggest(session: Any, **options: Any) -> dict[str, Any]:
         raise DirectConflict("invalid_cfdi_suggestions")
     items = await load_items(session, import_id)
     sources = await load_effective_sources(session, import_id)
+    from .amex_direct_no_cfdi_service import active_decision, load_decision_heads
+
+    heads = await load_decision_heads(session, items)
     wanted = options["item_ids"]
     if wanted is not None and (
         len(wanted) > 25 or not set(wanted) <= {i.id for i in items}
@@ -242,7 +245,9 @@ async def _suggest(session: Any, **options: Any) -> dict[str, Any]:
     eligible = [
         i
         for i in items
-        if sources[i.id].movement_kind == "debit" and (wanted is None or i.id in wanted)
+        if sources[i.id].movement_kind == "debit"
+        and not active_decision(i, heads)
+        and (wanted is None or i.id in wanted)
     ]
     fingerprint = digest(
         [

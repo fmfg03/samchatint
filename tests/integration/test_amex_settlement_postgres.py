@@ -1050,12 +1050,20 @@ async def test_owner_migration_empty_rollback_roundtrip_and_final_evidence_refus
         ROOT
         / "database/migrations/20261020_amex_expense_account_settlements_rollback.sql"
     )
+    await pg.conn.execute(
+        (
+            ROOT / "database/migrations/20261021_amex_direct_no_cfdi_rollback.sql"
+        ).read_text()
+    )
     await pg.conn.execute(rollback.read_text())
     assert (
         await pg.conn.fetchval("SELECT to_regclass('amex_expense_account_settlements')")
         is None
     )
     await pg.conn.execute(forward.read_text())
+    await pg.conn.execute(
+        (ROOT / "database/migrations/20261021_amex_direct_no_cfdi.sql").read_text()
+    )
     from devnous.gastos.services.amex_direct_schema_service import (
         inspect_amex_direct_schema,
     )

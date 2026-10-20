@@ -97,8 +97,16 @@ async def test_migration_replay_preserves_guard_definition(direct_pg):
     # replaying old guard bodies over a newer contract is not a valid upgrade.
     await direct_pg.conn.execute(
         (
+            ROOT / "database/migrations/20261021_amex_direct_no_cfdi_rollback.sql"
+        ).read_text()
+    )
+    await direct_pg.conn.execute(
+        (
             ROOT
-            / "database/migrations/20261020_amex_expense_account_settlements_rollback.sql"
+            / (
+                "database/migrations/20261020_amex_expens"
+                "e_account_settlements_rollback.sql"
+            )
         ).read_text()
     )
     await direct_pg.conn.execute(RECOVERY_ROLLBACK.read_text())
@@ -119,6 +127,9 @@ async def test_migration_replay_preserves_guard_definition(direct_pg):
         (
             ROOT / "database/migrations/20261020_amex_expense_account_settlements.sql"
         ).read_text()
+    )
+    await direct_pg.conn.execute(
+        (ROOT / "database/migrations/20261021_amex_direct_no_cfdi.sql").read_text()
     )
     from devnous.gastos.services.amex_direct_schema_service import (
         inspect_amex_direct_schema,
@@ -163,13 +174,13 @@ async def test_original_sha_checked_against_exact_bytes(direct_pg):
 async def test_incomplete_direct_membership_fails_at_commit(direct_pg):
     with pytest.raises(asyncpg.CheckViolationError, match="typed membership"):
         async with direct_pg.conn.transaction():
-            header, item, file = await intake(direct_pg)
             await direct_pg.conn.execute(
                 (
                     "ALTER TABLE amex_direct_items DISABLE TRIGGER ad_projection_"
                     "amex_direct_items"
                 )
             )
+            header, item, file = await intake(direct_pg)
             await direct_pg.conn.execute(
                 "DELETE FROM amex_direct_items WHERE id=$1", item
             )
@@ -249,8 +260,16 @@ async def test_empty_rollback_restores_old_check(direct_pg):
     # populated-evidence refusal and RESTRICT behavior.
     await direct_pg.conn.execute(
         (
+            ROOT / "database/migrations/20261021_amex_direct_no_cfdi_rollback.sql"
+        ).read_text()
+    )
+    await direct_pg.conn.execute(
+        (
             ROOT
-            / "database/migrations/20261020_amex_expense_account_settlements_rollback.sql"
+            / (
+                "database/migrations/20261020_amex_expens"
+                "e_account_settlements_rollback.sql"
+            )
         ).read_text()
     )
     await direct_pg.conn.execute(RECOVERY_ROLLBACK.read_text())

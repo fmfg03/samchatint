@@ -679,9 +679,15 @@ async def list_budget_direct_movements(
     )
     if not present:
         return []
+    from ..models import AmexStatementDirectContext, AmexStatementImport
     from .amex_direct_accounting_service import (
         covered_source_proof,
         validate_direct_match,
+    )
+    from .amex_direct_no_cfdi_service import (
+        active_decision,
+        load_decision_heads,
+        validate_decision,
     )
     from .expense_accounting_service import build_expense_accounting_preview
 
@@ -700,6 +706,36 @@ async def list_budget_direct_movements(
         .scalars()
         .all()
     )
+    heads = await load_decision_heads(session, rows)
+    decision_rows = [i for i in rows if getattr(i, "no_cfdi_decision_id", None)]
+    statements, contexts = {}, {}
+    if decision_rows:
+        statements = {
+            statement.id: statement
+            for statement in (
+                await session.execute(
+                    select(AmexStatementImport).where(
+                        AmexStatementImport.id.in_({i.import_id for i in decision_rows})
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        }
+        contexts = {
+            context.id: context
+            for context in (
+                await session.execute(
+                    select(AmexStatementDirectContext).where(
+                        AmexStatementDirectContext.id.in_(
+                            {i.context_id for i in decision_rows if i.context_id}
+                        )
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        }
     movements = []
     for item in rows:
         if tournament_id and str(item.tournament_id) != str(tournament_id):
@@ -737,14 +773,30 @@ async def list_budget_direct_movements(
             continue
         amount = None
         reason: str | None = "fiscal_evidence_pending"
-        if not await validate_direct_match(session, item):
-            preview = await build_expense_accounting_preview(session, expense)
-            base = (preview.get("taxes") or {}).get("base_gasto")
-            if base is not None:
-                amount = money(base) + money(
-                    (preview.get("taxes") or {}).get("gastos_no_deducibles_total", 0)
+        try:
+            decision = active_decision(item, heads)
+            if decision is not None:
+                statement = statements.get(item.import_id)
+                current_context = contexts.get(item.context_id)
+                if statement is None or current_context is None:
+                    raise DirectConflict("no_cfdi_source_missing")
+                validate_decision(
+                    statement, current_context, item, source, expense, decision
                 )
+                amount = abs(money(source.raw_signed_amount))
                 reason = None
+            elif not await validate_direct_match(session, item):
+                preview = await build_expense_accounting_preview(session, expense)
+                base = (preview.get("taxes") or {}).get("base_gasto")
+                if base is not None:
+                    amount = money(base) + money(
+                        (preview.get("taxes") or {}).get(
+                            "gastos_no_deducibles_total", 0
+                        )
+                    )
+                    reason = None
+        except DirectConflict as exc:
+            reason = str(exc)
         movements.append(
             {
                 "movement_key": f"expense:{expense.id}",
