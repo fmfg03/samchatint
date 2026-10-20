@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -18,11 +17,12 @@ from .amex_direct_matching_service import (
     cfdi_identity,
     current_status_receipt,
 )
+from .amex_direct_navigation import save_navigation_cursor
 
 CURSOR_KEY = "amex_direct_search_cursors"
 
 
-async def search_direct_cfdis(
+async def _search_direct_cfdis(
     session: Any,
     *,
     actor_id: UUID,
@@ -131,6 +131,16 @@ async def search_direct_cfdis(
         .all()
     )
     examined, has_more = records[:page_size], len(records) > page_size
+    from .amex_direct_fiscal_evidence_service import (
+        read_direct_cfdi_fiscal_evidence_batch,
+    )
+
+    fiscal_evidence = await read_direct_cfdi_fiscal_evidence_batch(
+        session,
+        examined,
+        receiver_rfc=context.receiver_rfc,
+        company_code=getattr(context, "company_code", None),
+    )
     candidates = []
     for cfdi in examined:
         try:
@@ -155,18 +165,21 @@ async def search_direct_cfdis(
                 ),
                 "observed_at": str(receipt.observed_at) if receipt else None,
                 "available": available,
+                **fiscal_evidence[str(cfdi.id)],
             }
         )
     next_cursor = None
     if has_more and examined:
         last = examined[-1]
-        next_cursor = secrets.token_urlsafe(24)
-        positions[next_cursor] = {
-            "fingerprint": fingerprint,
-            "id": str(last.id),
-            "date": last.fecha.isoformat() if last.fecha else None,
-        }
-        navigation[CURSOR_KEY] = dict(list(positions.items())[-8:])
+        next_cursor = save_navigation_cursor(
+            navigation,
+            CURSOR_KEY,
+            {
+                "fingerprint": fingerprint,
+                "id": str(last.id),
+                "date": last.fecha.isoformat() if last.fecha else None,
+            },
+        )
     return {
         "candidates": candidates,
         "has_more": has_more,
@@ -178,3 +191,34 @@ async def search_direct_cfdis(
         "row_number": source.source_json.get("row_number"),
         "statement": statement,
     }
+
+
+async def search_direct_cfdis(
+    session: Any,
+    *,
+    actor_id: UUID,
+    import_id: UUID,
+    item_id: UUID,
+    navigation: dict,
+    q: str = "",
+    date_from: date | None = None,
+    date_to: date | None = None,
+    amount: Decimal | None = None,
+    cursor: str | None = None,
+    page_size: int = 25,
+) -> dict[str, Any]:
+    """Preserve manual filters and fiscal evidence without GET autoflush."""
+    with session.no_autoflush:
+        return await _search_direct_cfdis(
+            session,
+            actor_id=actor_id,
+            import_id=import_id,
+            item_id=item_id,
+            navigation=navigation,
+            q=q,
+            date_from=date_from,
+            date_to=date_to,
+            amount=amount,
+            cursor=cursor,
+            page_size=page_size,
+        )

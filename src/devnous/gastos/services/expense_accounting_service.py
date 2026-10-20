@@ -394,6 +394,7 @@ def summarize_cfdi_tax_components(
     cfdi_report: Optional[CFDIReport],
     *,
     fallback_iva: Optional[float] = None,
+    allow_estimated_iva: bool = True,
 ) -> Dict[str, Any]:
     impuestos = getattr(cfdi_report, "impuestos_detalle", None) or {}
     traslados = list(impuestos.get("traslados") or [])
@@ -406,7 +407,7 @@ def summarize_cfdi_tax_components(
             if str(item.get("impuesto") or "").strip() == "002"
         )
     )
-    if not traslados:
+    if not traslados and allow_estimated_iva:
         iva_trasladado = _money(
             getattr(cfdi_report, "total_impuestos_trasladados", None) or fallback_iva
         )
@@ -447,7 +448,8 @@ def summarize_cfdi_tax_components(
     # Detailed transfers identify IVA. Never replace it with ISH/IEPS or a
     # discrepancy in the invoice total.
     if (
-        not traslados
+        allow_estimated_iva
+        and not traslados
         and subtotal > 0
         and total > 0
         and derived_trasladados > iva_trasladado
@@ -464,11 +466,14 @@ def summarize_cfdi_tax_components(
 def summarize_expense_cfdi_tax_components(
     expense: ExpenseReport,
     cfdi_report: Optional[CFDIReport],
+    *,
+    strict_direct: bool = False,
 ) -> Dict[str, Any]:
     """Allocate fiscal taxes to this expense without modifying the CFDI."""
     shared = bool(getattr(expense, "cfdi_compartido_confirmado", False))
     taxes = summarize_cfdi_tax_components(
         cfdi_report,
+        allow_estimated_iva=not strict_direct,
         fallback_iva=(
             None if shared and cfdi_report is not None else getattr(expense, "iva", None)
         ),
@@ -679,6 +684,7 @@ async def build_expense_accounting_preview(
     *,
     contra_cuenta_contable_id: Optional[str] = None,
     contra_cuenta_codigo: Optional[str] = None,
+    strict_direct: bool = False,
 ) -> Dict[str, Any]:
     cfdi_report = getattr(expense, "cfdi_report", None)
     if cfdi_report is None and getattr(expense, "cfdi_report_id", None):
@@ -691,7 +697,34 @@ async def build_expense_accounting_preview(
         )
         cfdi_report = result.scalar_one_or_none()
 
-    taxes = summarize_expense_cfdi_tax_components(expense, cfdi_report)
+    if strict_direct:
+        from .amex_direct_fiscal_evidence_service import strict_direct_cfdi
+
+        cfdi_report = strict_direct_cfdi(cfdi_report)
+        try:
+            explicit_tip = Decimal(
+                str(getattr(expense, "propina_no_deducible", 0) or 0)
+            )
+            applied = Decimal(str(getattr(expense, "gasto_cantidad", 0))) - explicit_tip
+            if (
+                not explicit_tip.is_finite()
+                or explicit_tip < 0
+                or not applied.is_finite()
+            ):
+                raise ValueError
+        except (ValueError, ArithmeticError) as exc:
+            raise ValueError("direct_cfdi_amount_difference_requires_review") from exc
+        fiscal_total = Decimal(str(cfdi_report.total))
+        shared = bool(getattr(expense, "cfdi_compartido_confirmado", False))
+        if (
+            applied <= 0
+            or (not shared and applied != fiscal_total)
+            or (shared and applied > fiscal_total)
+        ):
+            raise ValueError("direct_cfdi_amount_difference_requires_review")
+    taxes = summarize_expense_cfdi_tax_components(
+        expense, cfdi_report, strict_direct=strict_direct
+    )
 
     contra_account = getattr(expense, "contra_cuenta_contable", None)
     contra_source = "stored" if contra_account else None
@@ -714,7 +747,7 @@ async def build_expense_accounting_preview(
     explicit_tip_amount = _money(getattr(expense, "propina_no_deducible", 0))
     tip_amount = (
         explicit_tip_amount
-        if explicit_tip_amount > 0
+        if explicit_tip_amount > 0 or strict_direct
         else _calculate_amex_tip_amount(expense, cfdi_report)
     )
     iva_account = getattr(expense, "cuenta_iva", None)

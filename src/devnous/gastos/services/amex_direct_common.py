@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from ..models import (
     AmexDirectAccountingCut,
+    AmexDirectCompletionReceipt,
     AmexDirectEvent,
     AmexDirectItem,
     AmexStatementDirectContext,
@@ -61,6 +62,9 @@ class DirectResult:
     _lines: list[dict[str, Any]] = field(default_factory=list, repr=False)
     _liability: Any = field(default=None, repr=False)
     _sources: dict[Any, Any] = field(default_factory=dict, repr=False)
+    _settlements: dict[Any, Any] = field(default_factory=dict, repr=False)
+    _prior_proofs: dict[Any, Any] = field(default_factory=dict, repr=False)
+    _completion: Any = field(default=None, repr=False)
 
 
 def digest(value: Any) -> str:
@@ -264,6 +268,14 @@ async def load_statement(
                 )
             )
         ).first()
+        if not cut:
+            cut = (
+                await session.execute(
+                    select(AmexDirectCompletionReceipt.id).where(
+                        AmexDirectCompletionReceipt.import_id == import_id
+                    )
+                )
+            ).first()
         if not cut or action not in {"ver", "fuente", "exportar"}:
             raise DirectConflict("authorized_context_changed")
     if locked:
@@ -277,6 +289,14 @@ async def require_unfrozen(session: Any, import_id: UUID) -> None:
         await session.execute(
             select(AmexDirectAccountingCut.id).where(
                 AmexDirectAccountingCut.import_id == import_id
+            )
+        )
+    ).first():
+        raise DirectConflict("direct_cut_immutable")
+    if (
+        await session.execute(
+            select(AmexDirectCompletionReceipt.id).where(
+                AmexDirectCompletionReceipt.import_id == import_id
             )
         )
     ).first():

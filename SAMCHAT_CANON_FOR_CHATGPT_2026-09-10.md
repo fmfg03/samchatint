@@ -442,3 +442,10 @@ acceptance. Git publication was separately authorized through
 authorized. Finance crosswalk, the identified incident case and authenticated
 UAT remain pending. Economic replacement and historical retirement are outside
 this distribution-only scope.
+
+
+### AMEX: sugerencias y cancelación de cuenta de gastos
+
+Fecha:2026-10-20. Especificación y texto exacto aprobados explícitamente por el usuario mediante «aprobada». Razón: sugerencias de CFDI y contabilización sin duplicidades según la política operativa indicada por Plataforma Sports. Evidencia: `docs/roadmap/amex-suggestions-settlement-20261020-story.md` y `docs/roadmap/amex-suggestions-settlement-20261020-spec.md`, sección10. Estado: implementación autorizada; pruebas, validación, publicación, migración, despliegue y aceptación financiera conservan evidencia y checkpoints separados.
+
+AMEX directo presenta sugerencias de CFDI descargados de la entidad autorizada según evidencia de importe, comercio y fechas; distancia de fechas o cambio de mes no descartan por sí solos una candidata. La semejanza es propuesta y no confirma identidad, propina, uso compartido ni contabilización. PUE/PPD, fecha del cargo y emisión fiscal se conservan diferenciados. Conforme a la política operativa indicada por Plataforma Sports para todas sus tarjetas AMEX, la ausencia del complemento de pago se informa y no bloquea conciliación, registro del IVA acreditable desde el CFDI ni póliza; no altera requisitos restantes ni reescribe historia. Un gasto nuevo se clasifica/presupuesta; un pasivo AMEX ya reconocido sólo se asocia; un crédito real pendiente en cuenta de gastos se cancela contra AMEX mediante evidencia de origen y saldo, sin nuevo gasto, IVA o presupuesto. Ninguna de estas acciones registra el pago bancario de la tarjeta.

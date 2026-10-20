@@ -1,6 +1,6 @@
 """Bounded fiscal picker and single-selection external observation negatives."""
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace as NS
@@ -24,7 +24,11 @@ def setup_search(monkeypatch):
     context = NS(id=uuid4(), version=1, receiver_rfc="AAA010101AAA")
     state = NS(source_version=3)
     statement = NS(id=uuid4())
-    session = NS(execute=AsyncMock(), get=AsyncMock(return_value=NS(id=uuid4())))
+    session = NS(
+        execute=AsyncMock(),
+        get=AsyncMock(return_value=NS(id=uuid4())),
+        no_autoflush=nullcontext(),
+    )
     monkeypatch.setattr(
         search,
         "load_statement",
@@ -52,6 +56,19 @@ def setup_search(monkeypatch):
         "xml_hash": "xml",
     }
     monkeypatch.setattr(search, "cfdi_identity", MagicMock(return_value=identity))
+    from devnous.gastos.services import amex_direct_fiscal_evidence_service as fiscal
+
+    async def evidence_batch(session, cfdis, **kwargs):
+        return {
+            str(cfdi.id): {"payment_method": "PPD", "complement_status": "not_local"}
+            for cfdi in cfdis
+        }
+
+    monkeypatch.setattr(
+        fiscal,
+        "read_direct_cfdi_fiscal_evidence_batch",
+        AsyncMock(side_effect=evidence_batch),
+    )
     args = dict(
         actor_id=uuid4(), import_id=statement.id, item_id=item.id, navigation={}
     )
@@ -351,3 +368,18 @@ async def test_cursor_can_continue_through_null_date_page(setup_search):
     assert result["candidates"] == [] and not result["has_more"]
     query = str(w.session.execute.await_args.args[0])
     assert "fecha IS NULL" in query and "cfdi_reports.id >" in query
+
+
+@pytest.mark.asyncio
+async def test_manual_search_exposes_one_local_fiscal_batch_for_page(setup_search):
+    from devnous.gastos.services import amex_direct_fiscal_evidence_service as fiscal
+
+    w = setup_search
+    cfdis = [NS(id=uuid4(), fecha=None, emisor_nombre="Proveedor") for _ in range(3)]
+    set_records(w.session, cfdis)
+    result = await search.search_direct_cfdis(w.session, **w.args)
+    assert all(row["payment_method"] == "PPD" for row in result["candidates"])
+    assert all(row["complement_status"] == "not_local" for row in result["candidates"])
+    fiscal.read_direct_cfdi_fiscal_evidence_batch.assert_awaited_once_with(
+        w.session, cfdis, receiver_rfc=w.context.receiver_rfc, company_code=None
+    )

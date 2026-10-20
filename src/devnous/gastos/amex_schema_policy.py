@@ -49,6 +49,10 @@ AMEX_DIRECT_OWNER_MIGRATION_TABLES = frozenset(
         "amex_direct_cut_items",
         "amex_direct_coverage_revisions",
         "amex_direct_recovered_rows",
+        "amex_direct_completion_receipts",
+        "amex_direct_prior_coverages",
+        "amex_expense_account_settlements",
+        "amex_expense_account_settlement_allocations",
     }
 )
 

@@ -553,3 +553,10 @@ write, merge, deployment or business acceptance follows from these rules.
 Git publication is separately authorized by
 `Sentinel_a80479c5cb1081919315d4fa293a5777`. Finance crosswalk and authenticated
 UAT remain pending; economic replacement and retirement need separate design.
+
+
+### AMEX: sugerencias y cancelación de cuenta de gastos
+
+Fecha:2026-10-20. Especificación y texto exacto aprobados explícitamente por el usuario mediante «aprobada». Razón: sugerencias de CFDI y contabilización sin duplicidades según la política operativa indicada por Plataforma Sports. Evidencia: `docs/roadmap/amex-suggestions-settlement-20261020-story.md` y `docs/roadmap/amex-suggestions-settlement-20261020-spec.md`, sección10. Estado: implementación autorizada; pruebas, validación, publicación, migración, despliegue y aceptación financiera conservan evidencia y checkpoints separados.
+
+Sugerencias DIRECT son lecturas fiscalmente acotadas y explicables, sin descarga, reserva o asignación automática por semejanza. Confirmación revalida fuente/versiones, XML, autoridad, vigencia y uso mediante los owners canónicos. Corte versionado conserva método de pago, evidencia de complemento y política aplicada a las tarjetas autorizadas de Plataforma Sports. Cancelación de cuenta de gastos exige asignaciones append-only a créditos reales de líneas contables históricas con identidad y residual exactos; no usa saldo auxiliar agregado ni cuenta inferida por nombre. Póliza, cancelaciones, cobertura bancaria y corte comparten transacción y constraints de unicidad/noexceso; pasivo ya reconocido no se genera de nuevo. Guards y esquema sólo cambian mediante migración owner-run explícita y metadata-contract verificado. Los snapshots reconocidos se exportan inmutables y una asociación report_bridge nunca se vuelve asiento por sí sola.

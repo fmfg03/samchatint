@@ -92,6 +92,7 @@ async def direct_pg(monkeypatch):
             "20261013_amex_statement_workflow.sql",
             "20261014_amex_sat_budget_direct.sql",
             "20261015_amex_direct_period_recovery.sql",
+            "20261020_amex_expense_account_settlements.sql",
         ):
             path = ROOT / "database/migrations" / filename
             assert path.is_file(), f"Owner migration absent: {filename}"

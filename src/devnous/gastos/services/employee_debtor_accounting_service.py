@@ -62,6 +62,7 @@ DEBTOR_ORIGINS = {
     "deudores_anticipo",
     "deudores_comprobacion",
     "deudores_devolucion",
+    "amex_direct",
 }
 MONEY_QUANT = Decimal("0.01")
 
@@ -1246,7 +1247,15 @@ async def build_cuenta_debtor_auxiliary(
     empleado = await resolve_cuenta_debtor_empleado(session, cuenta)
     debtor = await resolve_cuenta_debtor_account(session, cuenta, empleado)
     line_conditions = [
-        AccountingPoliza.origen.in_(DEBTOR_ORIGINS),
+        or_(
+            AccountingPoliza.origen.in_(DEBTOR_ORIGINS - {"amex_direct"}),
+            and_(
+                AccountingPoliza.origen == "amex_direct",
+                AccountingPolizaLine.raw_row_json["coverage_kind"].astext == "settlement",
+                AccountingPolizaLine.raw_row_json["movement"].astext
+                == "debe_cuenta_gastos",
+            ),
+        ),
         AccountingPolizaLine.raw_row_json.contains({"cuenta_gastos_id": str(cuenta_id)}),
     ]
     lines = (
@@ -1300,7 +1309,15 @@ async def build_debtors_admin_snapshot(
     start = datetime(year, month, 1)
     end = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
     conditions = [
-        AccountingPoliza.origen.in_(DEBTOR_ORIGINS),
+        or_(
+            AccountingPoliza.origen.in_(DEBTOR_ORIGINS - {"amex_direct"}),
+            and_(
+                AccountingPoliza.origen == "amex_direct",
+                AccountingPolizaLine.raw_row_json["coverage_kind"].astext == "settlement",
+                AccountingPolizaLine.raw_row_json["movement"].astext
+                == "debe_cuenta_gastos",
+            ),
+        ),
         AccountingPoliza.fecha_poliza >= start,
         AccountingPoliza.fecha_poliza < end,
     ]

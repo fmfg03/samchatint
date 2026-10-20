@@ -220,6 +220,23 @@ def complete_direct_workspace(direct_workspace, monkeypatch):
         "status": {
             "consult_direct_statement_status": DirectResult("matched", source_version=4)
         },
+        "suggestions": {
+            "suggest_direct_statement_cfdis": {
+                "items": [],
+                "has_more": False,
+                "next_cursor": None,
+                "source_version": 4,
+            },
+        },
+        "settlements": {
+            "list_settlement_sources": {
+                "candidates": [],
+                "exceptions": [],
+                "item_version": 2,
+                "source_version": 4,
+            },
+            "select_settlement_source": w.success,
+        },
     }
     w.calls = []
     for module_name, methods in values.items():
