@@ -1,5 +1,6 @@
 """Metadata admission fails closed on weakened owner DDL without business reads."""
 
+import hashlib
 import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -7,7 +8,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.dialects import postgresql
 
-from devnous.gastos.amex_schema_policy import AMEX_DIRECT_OWNER_MIGRATION_TABLES
+from devnous.gastos.amex_schema_policy import (
+    AMEX_DIRECT_OWNER_MIGRATION_TABLES,
+    _catalog_check,
+)
 from devnous.gastos.models import Base
 from devnous.gastos.services.amex_direct_schema_contract import (
     EXPECTED_CHECKS,
@@ -15,7 +19,10 @@ from devnous.gastos.services.amex_direct_schema_contract import (
     EXPECTED_FUNCTION_HASHES,
     EXPECTED_INDEXES,
     EXPECTED_KEYS,
+    EXPECTED_SETTLEMENT_TEXT_VIEW_DEFINITIONS,
+    EXPECTED_SETTLEMENT_TEXT_VIEW_HASHES,
     EXPECTED_SETTLEMENT_VIEW_DEFINITIONS,
+    EXPECTED_SETTLEMENT_VIEW_HASHES,
     EXPECTED_TRIGGERS,
 )
 from devnous.gastos.services.amex_direct_schema_service import (
@@ -99,7 +106,7 @@ def catalog():
     return columns, constraints, triggers, functions, indexes
 
 
-async def inspect(parts):
+async def inspect(parts, settlement_views=None):
     columns, constraints, triggers, functions, indexes = parts
     session = AsyncMock()
     results = []
@@ -111,7 +118,11 @@ async def inspect(parts):
     view_result = MagicMock()
     view_result.scalar_one_or_none.return_value = EXPECTED_EFFECTIVE_VIEW_DEFINITION
     results.append(view_result)
-    for definition in EXPECTED_SETTLEMENT_VIEW_DEFINITIONS.values():
+    for definition in (
+        EXPECTED_SETTLEMENT_VIEW_DEFINITIONS
+        if settlement_views is None
+        else settlement_views
+    ).values():
         settlement_view = MagicMock()
         settlement_view.scalar_one_or_none.return_value = definition
         results.append(settlement_view)
@@ -253,3 +264,87 @@ async def test_legacy_owner_guards_remain_required_after_settlement(kind, name):
     assert any(row[0] == name for row in parts[index])
     parts[index] = [row for row in parts[index] if row[0] != name]
     assert (await inspect(tuple(parts)))["ready"] is False
+
+
+@pytest.mark.parametrize("form", ["varchar", "text"])
+def test_exact_complete_settlement_view_hash_variants(form):
+    definitions = (
+        EXPECTED_SETTLEMENT_VIEW_DEFINITIONS
+        if form == "varchar"
+        else EXPECTED_SETTLEMENT_TEXT_VIEW_DEFINITIONS
+    )
+    hashes = (
+        EXPECTED_SETTLEMENT_VIEW_HASHES
+        if form == "varchar"
+        else EXPECTED_SETTLEMENT_TEXT_VIEW_HASHES
+    )
+    assert definitions.keys() == EXPECTED_SETTLEMENT_VIEW_DEFINITIONS.keys()
+    for name, definition in definitions.items():
+        assert (
+            hashlib.sha256(_catalog_check(definition).encode()).hexdigest()
+            == hashes[name]
+        )
+        if form == "text":
+            expected = (
+                EXPECTED_SETTLEMENT_VIEW_DEFINITIONS[name]
+                .replace("d.tipo::text", "d.tipo")
+                .replace("d.estado::text", "d.estado")
+                .replace("e.estado_gasto::text", "e.estado_gasto")
+            )
+            assert _catalog_check(definition) == _catalog_check(expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("form", ["varchar", "text"])
+async def test_exact_text_and_varchar_settlement_views_admit_owner_schema(form):
+    definitions = (
+        EXPECTED_SETTLEMENT_VIEW_DEFINITIONS
+        if form == "varchar"
+        else EXPECTED_SETTLEMENT_TEXT_VIEW_DEFINITIONS
+    )
+    result = await inspect(catalog(), definitions)
+    assert result["ready"], result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("form", ["varchar", "text"])
+@pytest.mark.parametrize("name", sorted(EXPECTED_SETTLEMENT_VIEW_DEFINITIONS))
+@pytest.mark.parametrize("damage", ["approval", "amount", "identity"])
+async def test_each_view_variant_rejects_changed_financial_predicates(
+    form, name, damage
+):
+    definitions = dict(
+        EXPECTED_SETTLEMENT_VIEW_DEFINITIONS
+        if form == "varchar"
+        else EXPECTED_SETTLEMENT_TEXT_VIEW_DEFINITIONS
+    )
+    original = definitions[name]
+    if damage == "approval":
+        changed = original.replace("'aprobado'::text", "'pendiente'::text")
+    elif damage == "identity":
+        changed = original.replace(
+            "cf.id = e.cfdi_report_id", "cf.id <> e.cfdi_report_id"
+        )
+    elif name == "amex_direct_prior_sources":
+        changed = original.replace(
+            "l.haber::numeric = rc.amount", "l.haber::numeric >= rc.amount"
+        )
+    else:
+        changed = original.replace(
+            "l.haber > 0::double precision", "l.haber >= 0::double precision"
+        )
+    assert changed != original
+    definitions[name] = changed
+    result = await inspect(catalog(), definitions)
+    assert not result["ready"]
+    assert name + ": incompatible settlement view definition" in result["schema_errors"]
+
+
+@pytest.mark.asyncio
+async def test_text_variant_does_not_strip_other_identity_casts():
+    definitions = dict(EXPECTED_SETTLEMENT_TEXT_VIEW_DEFINITIONS)
+    name = "amex_expense_account_credit_sources"
+    original = definitions[name]
+    definitions[name] = original.replace("p.origen::text", "p.origen")
+    assert definitions[name] != original
+    assert not (await inspect(catalog(), definitions))["ready"]

@@ -1744,3 +1744,22 @@ EXPECTED_SETTLEMENT_VIEW_DEFINITIONS = {
     "a.activo IS TRUE AND cf.xml_raw IS NOT NULL "
     "AND upper(e.currency::text) = 'MXN'::text;",
 }
+
+# PostgreSQL omits these exact casts for the three legacy TEXT columns. The
+# complete predicates and every other cast remain byte-exact after whitespace.
+# These two finite forms do not relax CHECKs, owner guards or arbitrary SQL.
+EXPECTED_SETTLEMENT_TEXT_VIEW_DEFINITIONS = {
+    name: definition.replace("d.tipo::text", "d.tipo")
+    .replace("d.estado::text", "d.estado")
+    .replace("e.estado_gasto::text", "e.estado_gasto")
+    for name, definition in EXPECTED_SETTLEMENT_VIEW_DEFINITIONS.items()
+}
+
+EXPECTED_SETTLEMENT_TEXT_VIEW_HASHES = {
+    "amex_direct_prior_sources": (
+        "7efaf55b6a54d44fd67b7eb2b8496e6a" "72f2cad18022a8b9bcf4c82200bf3ad0"
+    ),
+    "amex_expense_account_credit_sources": (
+        "6eb86b964c72c0f2d83a27699e87367a" "f9adfe701078220bfdd1a8f555de85ba"
+    ),
+}
