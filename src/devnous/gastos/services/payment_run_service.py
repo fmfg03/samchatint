@@ -439,6 +439,53 @@ def _payment_instruction_status(
     return status
 
 
+_PAYMENT_RUN_SOURCE_SQL = """
+            WITH closure_items AS (
+                SELECT DISTINCT ON (i.documento_id)
+                    i.documento_id,
+                    i.closure_id,
+                    c.closed_at,
+                    c.run_date
+                FROM payment_run_closure_items i
+                JOIN payment_run_closures c ON c.id = i.closure_id
+                ORDER BY i.documento_id, c.closed_at DESC
+            )
+            SELECT
+                d.id,
+                d.creado_en,
+                d.empleado_id,
+                d.beneficiario_empleado_id,
+                d.proveedor_cliente_id,
+                d.numero_referencia,
+                d.referencia_operaciones,
+                d.estado,
+                d.fecha_pago,
+                d.fecha_pago_efectiva,
+                d.aprobado_en,
+                d.pagado_en,
+                d.pago_urgente,
+                d.concepto_pago,
+                d.currency,
+                CASE
+                    WHEN LOWER(TRIM(COALESCE(d.concepto_pago, '')))
+                         LIKE :reimbursement_prefix
+                    THEN d.monto_total
+                    ELSE COALESCE(d.monto_total, d.monto_solicitado)
+                END AS monto,
+                e.nombre AS solicitante_nombre,
+                b.nombre AS beneficiario_nombre,
+                pc.nombre AS proveedor_nombre,
+                ci.closure_id,
+                ci.closed_at,
+                ci.run_date
+            FROM documentos d
+            JOIN empleados e ON e.id = d.empleado_id
+            LEFT JOIN empleados b ON b.id = d.beneficiario_empleado_id
+            LEFT JOIN proveedores_clientes pc ON pc.id = d.proveedor_cliente_id
+            LEFT JOIN closure_items ci ON ci.documento_id = d.id
+"""
+
+
 async def list_payment_run_items(
     session: AsyncSession,
     *,
@@ -495,48 +542,15 @@ async def list_payment_run_items(
         )
         params["query"] = f"%{query.strip()}%"
 
+    # Keep the legacy zero fallback for existing callers; history retains NULL.
+    source_sql = _PAYMENT_RUN_SOURCE_SQL.replace(
+        "COALESCE(d.monto_total, d.monto_solicitado)",
+        "COALESCE(d.monto_total, d.monto_solicitado, 0)",
+    )
     result = await session.execute(
         text(
             f"""
-            WITH closure_items AS (
-                SELECT DISTINCT ON (i.documento_id)
-                    i.documento_id,
-                    i.closure_id,
-                    c.closed_at,
-                    c.run_date
-                FROM payment_run_closure_items i
-                JOIN payment_run_closures c ON c.id = i.closure_id
-                ORDER BY i.documento_id, c.closed_at DESC
-            )
-            SELECT
-                d.id,
-                d.numero_referencia,
-                d.referencia_operaciones,
-                d.estado,
-                d.fecha_pago,
-                d.fecha_pago_efectiva,
-                d.aprobado_en,
-                d.pagado_en,
-                d.pago_urgente,
-                d.concepto_pago,
-                d.currency,
-                CASE
-                    WHEN LOWER(TRIM(COALESCE(d.concepto_pago, '')))
-                         LIKE :reimbursement_prefix
-                    THEN d.monto_total
-                    ELSE COALESCE(d.monto_total, d.monto_solicitado, 0)
-                END AS monto,
-                e.nombre AS solicitante_nombre,
-                b.nombre AS beneficiario_nombre,
-                pc.nombre AS proveedor_nombre,
-                ci.closure_id,
-                ci.closed_at,
-                ci.run_date
-            FROM documentos d
-            JOIN empleados e ON e.id = d.empleado_id
-            LEFT JOIN empleados b ON b.id = d.beneficiario_empleado_id
-            LEFT JOIN proveedores_clientes pc ON pc.id = d.proveedor_cliente_id
-            LEFT JOIN closure_items ci ON ci.documento_id = d.id
+            {source_sql}
             WHERE {" AND ".join(filters)}
             ORDER BY
                 {report_date_column} NULLS LAST,

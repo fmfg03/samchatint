@@ -474,6 +474,7 @@ from ..services.amex_statement_import_service import (
     import_amex_csv_rows,
 )
 from ..services.payment_run_service import (
+    can_access_payment_run,
     PaymentRunPermissionError,
     require_payment_run_access,
     require_payment_run_payment_confirmation,
@@ -2394,6 +2395,9 @@ def _gastos_workspace_nav_html(current_empleado: Empleado, active: str) -> str:
                 ("/beneficiarios/altas", "Alta de beneficiarios", "beneficiarios"),
             ]
         )
+
+    if getattr(current_empleado, "payment_history_visible", can_access_payment_run(current_empleado)):
+        items.append(("/admin/finanzas/payment-history", "Pagado y pendiente", "pagos"))
 
     if not items:
         return ""
@@ -16254,6 +16258,7 @@ async def panel(
                     ("gastos.solicitudes", "/beneficiarios/altas", "Alta de beneficiarios", "Solicita y da seguimiento a nuevas cuentas destino."),
                     ("gastos.solicitudes", "/documentos/todos", "Todos los documentos", "Vista global de documentos."),
                 ], visible_tool_keys), "tone-blue")}
+                {build_link_cards([("/admin/finanzas/payment-history", "Pagado y pendiente", "Consulta pagos y pendientes con filtros.")], "tone-blue") if getattr(current_empleado, "payment_history_visible", can_access_payment_run(current_empleado)) else ""}
             </div>
         </section>
     """
