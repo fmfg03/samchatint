@@ -26,10 +26,10 @@ def identifier():
     return Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
 
 
-def reference(table, nullable=False, unique=False):
+def reference(table, nullable=False, unique=False, use_alter=False):
     return Column(
         UUID(as_uuid=True),
-        ForeignKey(table + ".id", ondelete="RESTRICT"),
+        ForeignKey(table + ".id", ondelete="RESTRICT", use_alter=use_alter),
         nullable=nullable,
         unique=unique,
     )
@@ -155,6 +155,9 @@ class AmexDirectItem(Base):
     context_version = Column(Integer, nullable=True)
     source_version = Column(Integer, nullable=False, default=1)
     source_hash = Column(String(64), nullable=False)
+    no_cfdi_decision_id = reference(
+        "amex_direct_no_cfdi_decisions", nullable=True, use_alter=True
+    )
     match_status = Column(String(30), nullable=False, default="pending")
     match_reason = Column(String(80), nullable=True)
     match_proof = Column(JSONB, nullable=True)
@@ -216,6 +219,9 @@ class AmexDirectCutItem(Base):
     imported_expense_id = reference("expense_reports", nullable=True)
     consumption_id = reference("amex_recognition_consumptions", nullable=True)
     accounting_poliza_id = reference("accounting_polizas", nullable=True)
+    no_cfdi_decision_id = reference(
+        "amex_direct_no_cfdi_decisions", nullable=True, use_alter=True
+    )
     coverage_kind = Column(String(30), nullable=False)
     source_hash = Column(String(64), nullable=False)
     snapshot_json = Column(JSONB, nullable=False)
@@ -268,4 +274,41 @@ class AmexDirectRecoveredRow(Base):
     profile = Column(String(30), nullable=False)
     effective_source_json = Column(JSONB, nullable=False)
     proof_hash = Column(String(64), nullable=False)
+    created_at = timestamp()
+
+
+class AmexDirectNoCFDIDecision(Base):
+    """Append-only declaration/revocation of a bank charge without CFDI."""
+
+    __tablename__ = "amex_direct_no_cfdi_decisions"
+    __table_args__ = (
+        UniqueConstraint("item_id", "revision"),
+        UniqueConstraint("item_id", "idempotency_key"),
+        UniqueConstraint("previous_decision_id"),
+        CheckConstraint("revision > 0"),
+        CheckConstraint("action IN ('declare','revoke')"),
+        CheckConstraint("treatment = 'full_amount_expense_no_tax'"),
+        CheckConstraint("length(trim(reason)) BETWEEN 1 AND 1000"),
+        CheckConstraint("length(payload_hash) = 64"),
+        CheckConstraint("length(economic_source_hash) = 64"),
+        CheckConstraint("length(idempotency_key) = 64"),
+        CheckConstraint("length(trim(request_id)) BETWEEN 1 AND 160"),
+    )
+    id = identifier()
+    item_id = reference("amex_direct_items")
+    import_id = reference("amex_statement_imports")
+    imported_expense_id = reference("expense_reports")
+    context_id = reference("amex_statement_direct_contexts")
+    context_version = Column(Integer, nullable=False)
+    revision = Column(Integer, nullable=False)
+    action = Column(String(10), nullable=False)
+    previous_decision_id = reference("amex_direct_no_cfdi_decisions", nullable=True)
+    treatment = Column(String(40), nullable=False)
+    reason = Column(Text, nullable=False)
+    actor_id = reference("empleados")
+    request_id = Column(String(160), nullable=False)
+    idempotency_key = Column(String(64), nullable=False)
+    payload_hash = Column(String(64), nullable=False)
+    economic_source_hash = Column(String(64), nullable=False)
+    versions_json = Column(JSONB, nullable=False)
     created_at = timestamp()

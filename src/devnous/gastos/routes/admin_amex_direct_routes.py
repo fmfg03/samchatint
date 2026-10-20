@@ -20,6 +20,7 @@ from ..services import amex_direct_cfdi_search_service as finder
 from ..services import amex_direct_context_service as context
 from ..services import amex_direct_intake_service as intake
 from ..services import amex_direct_matching_service as matching
+from ..services import amex_direct_no_cfdi_service as no_cfdi
 from ..services import amex_direct_recovery_service as recovery
 from ..services import amex_direct_status_service as status
 from ..services import amex_direct_suggestion_service as suggestions
@@ -83,6 +84,22 @@ def _reason(code: str | None) -> str:
         "fiscal_source_changed": "Cambió la fuente fiscal del cargo. Finanzas debe conciliar su evidencia actual.",
         "fresh_vigente_receipt_required": "Finanzas debe consultar vigencia actual del XML antes de confirmar el corte.",
         "merchant_identity_changed": "Cambió la identidad de comercio confirmada. Finanzas debe revisar y conciliar el cargo de nuevo.",
+        "no_cfdi_decision_head_conflict": "La evidencia de la decisión Sin CFDI no coincide con el cargo. Recarga el estado y revisa su historial.",
+        "no_cfdi_context_conflict": "El contexto fiscal cambió. Revisa la declaración Sin CFDI antes de continuar.",
+        "no_cfdi_new_debit_required": "Sin CFDI sólo admite cargos débito nuevos con fuente verificable. Revisa la selección completa.",
+        "no_cfdi_amount_currency_conflict": "El importe o moneda del cargo no admite este tratamiento. No se aplicó el lote.",
+        "no_cfdi_fiscal_identity_conflict": "Hay evidencia fiscal vinculada al cargo. Revisa su factura; no se elimina para marcar Sin CFDI.",
+        "no_cfdi_manual_tax_conflict": "Hay impuestos o propina declarados. Revisa la evidencia antes de cambiar el tratamiento.",
+        "no_cfdi_source_changed": "Cambió la fuente económica de la declaración Sin CFDI. Revisa su evidencia actual.",
+        "no_cfdi_request_key_required": "Falta una clave válida de petición. Recarga el estado antes de confirmar.",
+        "no_cfdi_selection_required": "Selecciona cargos explícitos para el lote Sin CFDI.",
+        "no_cfdi_idempotency_conflict": "La petición ya se usó con otros datos. Recarga el estado y revisa su historial antes de repetirla.",
+        "no_cfdi_transition_conflict": "La selección contiene un tratamiento Sin CFDI incompatible con esta acción. Revisa todas las filas; no se aplicó el lote.",
+        "no_cfdi_historical_source_conflict": "El cargo tiene cobertura histórica o reconocimiento previo. Se conserva su evidencia sin declarar un gasto nuevo.",
+        "no_cfdi_confirmation_required": "Confirma explícitamente el tratamiento Sin CFDI para los cargos seleccionados.",
+        "no_cfdi_reason_required": "Explica el motivo de la declaración o revocación Sin CFDI (máximo 1000 caracteres).",
+        "no_cfdi_revoke_required": "Primero revoca explícitamente Sin CFDI con motivo antes de cambiar el vínculo o contexto fiscal.",
+        "no_cfdi_budget_release_required": "Control Presupuestal debe devolver o liberar los cargos antes de cambiar su tratamiento Sin CFDI.",
         "fiscal_match_required": "Falta confirmar la coincidencia fiscal del cargo con una factura válida.",
         "fiscal_source_missing": "Falta una fuente fiscal activa y verificable del cargo. Contabilidad debe revisar la evidencia.",
         "recognized_source_receipt_incomplete": "El reconocimiento previo tiene evidencia incompleta. Finanzas debe revisar su recibo sin duplicar gasto.",
@@ -413,8 +430,9 @@ def _open(request: Request, import_id: UUID, action: str, version: int) -> str:
     form_class = (
         "direct-form direct-classification" if action == "clasificar" else "direct-form"
     )
+    form_id = ' id="direct-classification-form"' if action == "clasificar" else ""
     return (
-        f'<form class="{form_class}" method="POST" action="{BASE}/{import_id}/directo/{action}">'
+        f'<form{form_id} class="{form_class}" method="POST" action="{BASE}/{import_id}/directo/{action}">'
         + _csrf(request)
         + _hidden("expected_source_version", version)
     )
@@ -852,6 +870,45 @@ def _suggestion_summary(import_id, row: dict | None) -> str:
     return html + "</section>"
 
 
+def _no_cfdi_decision(item) -> dict:
+    decision = getattr(item, "no_cfdi_decision", None)
+    if decision is None:
+        return {}
+    return decision if isinstance(decision, dict) else vars(decision)
+
+
+def _no_cfdi_forms(request, import_id, version, versions) -> str:
+    body = '<section aria-label="Decisión Sin CFDI"><h2>Cargos seleccionados: Sin CFDI</h2>'
+    body += (
+        "<p>El importe completo será gasto contra el pasivo de la tarjeta, "
+        "sin IVA acreditable o pendiente, retenciones ni propina. No representa "
+        "una factura exenta o a tasa cero y no determina deducibilidad. "
+        "Continúan clasificación, partida y confirmación del corte completo.</p>"
+        "<p>El lote se aplica completo o se rechaza completo. Si los cargos "
+        "ya están enviados o asignados, Control Presupuestal debe devolverlos "
+        "o liberarlos primero. Un corte final conserva su evidencia.</p>"
+    )
+    for action, label, confirmation in (
+        (
+            "sin-cfdi",
+            "Marcar Sin CFDI",
+            "Confirmo declarar Sin CFDI los cargos seleccionados con este tratamiento",
+        ),
+        (
+            "revocar-sin-cfdi",
+            "Volver a buscar factura",
+            "Confirmo revocar Sin CFDI en los cargos seleccionados y conservar su historial",
+        ),
+    ):
+        body += _open(request, import_id, action, version)
+        body += _hidden("expected_versions", json.dumps(versions))
+        body += _hidden("request_key", uuid4())
+        body += '<div class="direct-copy-selection"></div>'
+        body += '<label>Motivo obligatorio (máximo 1000 caracteres)<input name="reason" required maxlength="1000"></label>'
+        body += _confirm(confirmation) + _submit(label) + "</form>"
+    return body + "</section>"
+
+
 def _row(item, suggestion_html: str = "") -> str:
     kind = {
         "debit": "Cargo",
@@ -860,12 +917,40 @@ def _row(item, suggestion_html: str = "") -> str:
         "skipped": "Fila omitida",
     }.get(item.movement_kind, "Tipo pendiente")
     fiscal = f"{_stage_label(item.match_status)}<br>{_text(getattr(item, 'cfdi_uuid', None) or item.cfdi_id)}"
-    if item.match_reason:
+    decision = _no_cfdi_decision(item)
+    if decision.get("action") == "declare":
+        fiscal = (
+            "<strong>Sin CFDI</strong><br>Motivo: "
+            + _text(decision.get("reason"))
+            + "<br>Declarado por: "
+            + _text(decision.get("actor_id"))
+            + "<br>Fecha: "
+            + _text(decision.get("created_at"))
+            + "<br>Revisión: "
+            + _text(decision.get("revision"))
+            + "<br>Recibo de decisión: "
+            + _text(decision.get("id"))
+            + "<br>Importe completo como gasto, sin movimientos fiscales."
+        )
+        suggestion_html = ""
+    if item.match_reason and decision.get("action") != "declare":
         fiscal += "<br>" + escape(_reason(item.match_reason))
-    fiscal += f"<br>Vigencia: {_text(getattr(item, 'sat_status', None))}"
-    fiscal += f"<br>Observada: {_text(getattr(item, 'status_observed_at', None))}"
+    if decision.get("action") != "declare":
+        fiscal += f"<br>Vigencia: {_text(getattr(item, 'sat_status', None))}"
+        fiscal += f"<br>Observada: {_text(getattr(item, 'status_observed_at', None))}"
+    if decision.get("action") == "revoke":
+        fiscal += (
+            "<br>Sin CFDI revocado. Motivo: "
+            + _text(decision.get("reason"))
+            + "<br>Por: "
+            + _text(decision.get("actor_id"))
+            + " · "
+            + _text(decision.get("created_at"))
+            + "<br>Recibo de decisión: "
+            + _text(decision.get("id"))
+        )
     fiscal += suggestion_html
-    select_item = f'<input type="checkbox" name="item_ids" value="{item.id}" aria-label="Seleccionar fila {item.row_number}">'
+    select_item = f'<input type="checkbox" name="item_ids" form="direct-classification-form" value="{item.id}" aria-label="Seleccionar fila {item.row_number}">'
     if item.movement_kind != "debit" or item.accounting_status == "recognized":
         select_item = ""
     return (
@@ -992,12 +1077,34 @@ async def direct_statement(
             )
     if frozen:
         body += "<p>Fuente congelada: las decisiones se conservan y no se modifican desde esta pantalla.</p><fieldset disabled>"
-    if not classification_allowed:
-        body += "<p>Tu acceso de lectura se conserva; no tienes autorización para clasificar cargos.</p><fieldset disabled>"
     versions = {str(item.id): item.source_version for item in view.items}
-    body += _open(request, import_id, "clasificar", _source_version(view)) + _hidden(
-        "expected_versions", json.dumps(versions)
+    active_no_cfdi = sum(
+        _no_cfdi_decision(item).get("action") == "declare" for item in view.items
     )
+    pending_invoice = sum(
+        item.movement_kind == "debit"
+        and _no_cfdi_decision(item).get("action") != "declare"
+        and item.match_status != "matched"
+        and item.accounting_status != "recognized"
+        for item in view.items
+    )
+    pending_accounting = sum(
+        item.movement_kind == "debit" and item.accounting_status != "recognized"
+        for item in view.items
+    )
+    pending_budget = sum(
+        item.movement_kind == "debit"
+        and item.accounting_status != "recognized"
+        and item.budget_status != "assigned"
+        for item in view.items
+    )
+    body += (
+        f"<p>Pendientes de factura: {pending_invoice} · Sin CFDI declarados: {active_no_cfdi}. "
+        f"Pendientes de presupuesto: {pending_budget} · Pendientes de contabilización: {pending_accounting}.</p>"
+    )
+    if classification_allowed:
+        body += _open(request, import_id, "clasificar", _source_version(view))
+        body += _hidden("expected_versions", json.dumps(versions))
     body += (
         '<div class="direct-table '
         'table-shell"><table><thead><tr><th><'
@@ -1052,6 +1159,10 @@ async def direct_statement(
             )
         )
     body += '<p id="direct-selection-count" role="status">0 cargos seleccionados</p>'
+    if not classification_allowed:
+        body += "<p>Tu acceso de lectura se conserva; no tienes autorización para clasificar cargos.</p><fieldset disabled>"
+        body += _open(request, import_id, "clasificar", _source_version(view))
+        body += _hidden("expected_versions", json.dumps(versions))
     project_opts = "".join(
         (
             '<option value="t:'
@@ -1127,6 +1238,10 @@ async def direct_statement(
     )
     body += _confirm("Confirmo enviar los cargos seleccionados a Control Presupuestal")
     body += _submit("Enviar seleccionados a Control Presupuestal") + "</form>"
+    if not classification_allowed:
+        body += "</fieldset>"
+    if finance and not frozen:
+        body += _no_cfdi_forms(request, import_id, _source_version(view), versions)
     body += """<script>(()=>{const project=document.getElementById('direct-project'),
     concept=document.getElementById('direct-concept'),
     choices=Array.from(concept.options).slice(1);
@@ -1139,23 +1254,21 @@ async def direct_statement(
     choices.filter(o=>o.dataset.project===project.value)
     .forEach(o=>concept.add(o.cloneNode(true)));
     concept.disabled=!project.value;});
-    const selectedBoxes=()=>document.querySelectorAll('input[name=item_ids]:checked');
+    const selectedBoxes=()=>document.querySelectorAll('input[type=checkbox][name=item_ids]:checked');
     document.getElementById('direct-select-all').addEventListener('change',event=>{
-    document.querySelectorAll('input[name=item_ids]').forEach(box=>{
+    document.querySelectorAll('input[type=checkbox][name=item_ids]').forEach(box=>{
     box.checked=event.target.checked;
     box.dispatchEvent(new Event('change'));});});
-    document.querySelectorAll('input[name=item_ids]').forEach(box=>
+    document.querySelectorAll('input[type=checkbox][name=item_ids]').forEach(box=>
     box.addEventListener('change',()=>{
     document.getElementById('direct-selection-count').textContent=
     selectedBoxes().length+' cargos seleccionados';
-    const target=document.getElementById('direct-send-selection');
+    document.querySelectorAll('#direct-send-selection,.direct-copy-selection').forEach(target=>{
     target.replaceChildren();
-    document.querySelectorAll('input[name=item_ids]:checked').forEach(selected=>{
+    document.querySelectorAll('input[type=checkbox][name=item_ids]:checked').forEach(selected=>{
     const input=document.createElement('input');
     input.type='hidden';input.name='item_ids';
-    input.value=selected.value;target.append(input);});}));})();</script>"""
-    if not classification_allowed:
-        body += "</fieldset>"
+    input.value=selected.value;target.append(input);});});}));})();</script>"""
     if not finance:
         body += "<p>Finanzas atiende contexto fiscal, conciliación, vigencia y confirmación contable.</p><fieldset disabled>"
     if finance and not context_allowed:
@@ -2036,6 +2149,35 @@ async def direct_action(
                         confirmed=_confirmed(form),
                     )
                 )
+        elif action in {"sin-cfdi", "revocar-sin-cfdi"}:
+            ids, versions = _selection(form)
+            reason = _value(form, "reason", required=True)
+            request_key = _value(form, "request_key", required=True)
+            if not _confirmed(form):
+                raise HTTPException(422, _reason("no_cfdi_confirmation_required"))
+            if len(reason) > 1000:
+                raise HTTPException(422, _reason("no_cfdi_reason_required"))
+            if len(request_key) > 160:
+                raise HTTPException(
+                    422, "La clave de petición no es válida. Recarga la pantalla."
+                )
+            owner = (
+                no_cfdi.declare_no_cfdi_items
+                if action == "sin-cfdi"
+                else no_cfdi.revoke_no_cfdi_items
+            )
+            result = await _call(
+                owner(
+                    session,
+                    **common,
+                    item_ids=ids,
+                    expected_versions=versions,
+                    expected_source_version=version,
+                    reason=reason,
+                    request_key=request_key,
+                    confirmed=True,
+                )
+            )
         elif action == "vincular":
             result = await _call(
                 matching.link_direct_cfdi_manual(
@@ -2129,6 +2271,8 @@ async def direct_action(
             context_request_key,
         )
     messages = {
+        "sin-cfdi": "Lote declarado Sin CFDI. Continúan clasificación, partida y confirmación del corte completo.",
+        "revocar-sin-cfdi": "Declaración Sin CFDI revocada para el lote; historial conservado. Puedes volver a buscar factura.",
         "clasificar": "Clasificación guardada; no acredita asignación ni póliza.",
         "enviar-presupuesto": "Cargos enviados a Control Presupuestal; todavía requieren partida.",
         "cuenta-gastos": (

@@ -98,6 +98,11 @@ async def _plan(
         source.content, profile, statement.summary_json.get("currency")
     )
     items = await load_items(session, import_id, locked=locked)
+    from .amex_direct_no_cfdi_service import active_decision, load_decision_heads
+
+    heads = await load_decision_heads(session, items)
+    if any(active_decision(item, heads) for item in items):
+        raise DirectConflict("no_cfdi_revoke_required")
     receipts = list(
         (
             await session.execute(

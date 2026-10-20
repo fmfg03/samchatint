@@ -38,6 +38,7 @@ async def inspect_amex_direct_schema(
         EXPECTED_FUNCTION_HASHES,
         EXPECTED_INDEXES,
         EXPECTED_KEYS,
+        EXPECTED_NO_CFDI_HELPER_HASHES,
         EXPECTED_SETTLEMENT_TEXT_VIEW_HASHES,
         EXPECTED_SETTLEMENT_VIEW_HASHES,
         EXPECTED_TRIGGERS,
@@ -190,6 +191,23 @@ async def inspect_amex_direct_schema(
         body = installed_functions.get(name)
         if body is None or hashlib.sha256(body.encode()).hexdigest() != digest:
             errors.append(f"{name}: incompatible owner guard body")
+    helpers = (
+        await session.execute(
+            text(
+                "SELECT p.proname,p.prosrc FROM pg_proc p "
+                "JOIN pg_namespace n ON n.oid=p.pronamespace "
+                "WHERE n.nspname=current_schema() AND p.proname=ANY(:names) "
+                "AND p.proargtypes='2950'::oidvector "
+                "AND p.prorettype IN ('text'::regtype,'void'::regtype)"
+            ),
+            {"names": sorted(EXPECTED_NO_CFDI_HELPER_HASHES)},
+        )
+    ).all()
+    installed_helpers = {name: body for name, body in helpers}
+    for name, digest in EXPECTED_NO_CFDI_HELPER_HASHES.items():
+        body = installed_helpers.get(name)
+        if body is None or hashlib.sha256(body.encode()).hexdigest() != digest:
+            errors.append(f"{name}: incompatible owner helper body")
     indexes = (
         await session.execute(
             text(

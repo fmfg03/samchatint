@@ -1763,3 +1763,226 @@ EXPECTED_SETTLEMENT_TEXT_VIEW_HASHES = {
         "6eb86b964c72c0f2d83a27699e87367a" "f9adfe701078220bfdd1a8f555de85ba"
     ),
 }
+
+
+# Exact metadata captured from disposable PostgreSQL 16 after 20261021 owner DDL.
+EXPECTED_CHECKS.update(
+    {
+        (
+            "amex_direct_no_cfdi_decisions",
+            "amex_direct_no_cfdi_decisions_revision_check",
+        ): "CHECK ((revision > 0))",
+        (
+            "amex_direct_no_cfdi_decisions",
+            "amex_direct_no_cfdi_decisions_action_check",
+        ): (
+            "CHECK (((action)::text = ANY ((ARRAY['de"
+            "clare'::character varying, 'revoke'::cha"
+            "racter varying])::text[])))"
+        ),
+        (
+            "amex_direct_no_cfdi_decisions",
+            "amex_direct_no_cfdi_decisions_treatment_check",
+        ): "CHECK (((treatment)::text = 'full_amount_expense_no_tax'::text))",
+        (
+            "amex_direct_no_cfdi_decisions",
+            "amex_direct_no_cfdi_decisions_reason_check",
+        ): (
+            "CHECK (((length(TRIM(BOTH FROM reason)) "
+            ">= 1) AND (length(TRIM(BOTH FROM reason)"
+            ") <= 1000)))"
+        ),
+        (
+            "amex_direct_no_cfdi_decisions",
+            "amex_direct_no_cfdi_decisions_payload_hash_check",
+        ): "CHECK ((length((payload_hash)::text) = 64))",
+        (
+            "amex_direct_no_cfdi_decisions",
+            "amex_direct_no_cfdi_decisions_economic_source_hash_check",
+        ): "CHECK ((length((economic_source_hash)::text) = 64))",
+        (
+            "amex_direct_no_cfdi_decisions",
+            "amex_direct_no_cfdi_decisions_idempotency_key_check",
+        ): "CHECK ((length((idempotency_key)::text) = 64))",
+        (
+            "amex_direct_no_cfdi_decisions",
+            "amex_direct_no_cfdi_decisions_request_id_check",
+        ): (
+            "CHECK (((length(TRIM(BOTH FROM request_i"
+            "d)) >= 1) AND (length(TRIM(BOTH FROM req"
+            "uest_id)) <= 160)))"
+        ),
+    }
+)
+EXPECTED_KEYS.extend(
+    [
+        ("amex_direct_no_cfdi_decisions", "p", ("id",)),
+        ("amex_direct_no_cfdi_decisions", "u", ("item_id", "revision")),
+        ("amex_direct_no_cfdi_decisions", "u", ("item_id", "idempotency_key")),
+        ("amex_direct_no_cfdi_decisions", "u", ("previous_decision_id",)),
+        (
+            "amex_direct_no_cfdi_decisions",
+            "f",
+            ("item_id",),
+            "amex_direct_items",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_no_cfdi_decisions",
+            "f",
+            ("import_id",),
+            "amex_statement_imports",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_no_cfdi_decisions",
+            "f",
+            ("imported_expense_id",),
+            "expense_reports",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_no_cfdi_decisions",
+            "f",
+            ("context_id",),
+            "amex_statement_direct_contexts",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_no_cfdi_decisions",
+            "f",
+            ("previous_decision_id",),
+            "amex_direct_no_cfdi_decisions",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_no_cfdi_decisions",
+            "f",
+            ("actor_id",),
+            "empleados",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_items",
+            "f",
+            ("no_cfdi_decision_id",),
+            "amex_direct_no_cfdi_decisions",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_cut_items",
+            "f",
+            ("no_cfdi_decision_id",),
+            "amex_direct_no_cfdi_decisions",
+            ("id",),
+            "r",
+        ),
+    ]
+)
+EXPECTED_TRIGGERS.update(
+    {
+        "ad_no_cfdi_insert": (
+            "amex_direct_no_cfdi_decisions",
+            "amex_direct_no_cfdi_insert_guard",
+            7,
+            False,
+            False,
+        ),
+        "ad_no_cfdi_immutable": (
+            "amex_direct_no_cfdi_decisions",
+            "amex_direct_immutable",
+            27,
+            False,
+            False,
+        ),
+        "ad_no_cfdi_decision_seal": (
+            "amex_direct_no_cfdi_decisions",
+            "amex_direct_no_cfdi_seal",
+            5,
+            True,
+            True,
+        ),
+        "ad_no_cfdi_event_seal": (
+            "amex_direct_events",
+            "amex_direct_no_cfdi_seal",
+            5,
+            True,
+            True,
+        ),
+        "ad_no_cfdi_item_seal": (
+            "amex_direct_items",
+            "amex_direct_no_cfdi_seal",
+            21,
+            True,
+            True,
+        ),
+        "ad_no_cfdi_expense": (
+            "expense_reports",
+            "amex_direct_no_cfdi_expense_guard",
+            27,
+            False,
+            False,
+        ),
+        "ad_no_cfdi_context": (
+            "amex_statement_direct_contexts",
+            "amex_direct_no_cfdi_context_guard",
+            7,
+            False,
+            False,
+        ),
+        "ad_no_cfdi_state": (
+            "amex_statement_direct_state",
+            "amex_direct_no_cfdi_context_guard",
+            19,
+            False,
+            False,
+        ),
+        "ad_no_cfdi_recovery": (
+            "amex_direct_coverage_revisions",
+            "amex_direct_no_cfdi_context_guard",
+            7,
+            False,
+            False,
+        ),
+    }
+)
+EXPECTED_FUNCTION_HASHES.update(
+    {
+        "amex_direct_check_cut": (
+            "001c2b079aebb9edeadbaae142fbecaa2f966824" "c53e1e4b2fbafee7d8fe26cc"
+        ),
+        "amex_direct_cut_item_guard": (
+            "d4bd5cb15afa3a5e9745aeae238bb96f900de1c1" "9f931d18c733968f3b9c9f13"
+        ),
+        "amex_direct_no_cfdi_context_guard": (
+            "a35d9b16d2c25192465f6310cc1e013636aa0f06" "419614c1fed3bfb0b8157276"
+        ),
+        "amex_direct_no_cfdi_expense_guard": (
+            "8372cbf9fe6aa04f27728f653d2ea5a92989f70f" "5aa9dd7378056ca52699fa79"
+        ),
+        "amex_direct_no_cfdi_insert_guard": (
+            "3b6f68afc65f0ed7c191b266b25c08966df87f27" "3baa75470b5228566f7d3158"
+        ),
+        "amex_direct_no_cfdi_seal": (
+            "9dc1c73243da3ccc1b560f02d920454293361e05" "f6a7697f89efeed7ef92ba01"
+        ),
+        "amex_direct_projection_guard": (
+            "53a9628c4e88d5772bdd20b08af8175a02f6e63a" "beaf92ad417a279f49003b22"
+        ),
+    }
+)
+EXPECTED_NO_CFDI_HELPER_HASHES = {
+    "amex_direct_no_cfdi_assert": (
+        "fe2babdac8ff79451ddd8087675b1e05b7787036" "e1dac883e19bcd3ceeaa2d70"
+    ),
+    "amex_direct_no_cfdi_source_hash": (
+        "ff404f25fbe1c3c8813962cd2b9145276715f5af" "2dbbffc3ba1f14f8e3fec737"
+    ),
+}

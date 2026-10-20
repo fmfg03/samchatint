@@ -38,6 +38,7 @@ from .amex_direct_effective_source_service import (
     effective_sources_select,
     load_effective_sources,
 )
+from .amex_direct_no_cfdi_service import active_decision, load_decision_heads
 from .cfdi_expense_link_service import link_expense_to_cfdi_if_manual_uuid_set
 from .cfdi_ingestion_service import (
     find_blocking_cfdi_usage,
@@ -170,6 +171,8 @@ async def _merchant(
 async def eligible_candidates(
     session: Any, item: Any, context: Any, statement: Any, expense: Any
 ) -> list[tuple[Any, Any, Any]]:
+    if active_decision(item, await load_decision_heads(session, [item])):
+        return []
     source = await effective_source_for_item(session, item)
     if (
         source.movement_kind != "debit"
@@ -262,7 +265,10 @@ async def _reverse_unique(session: Any, item: Any, cfdi: Any) -> bool:
         .scalars()
         .all()
     )
+    heads = await load_decision_heads(session, others)
     for other in others:
+        if active_decision(other, heads):
+            continue
         other_source = await effective_source_for_item(session, other)
         state = await session.get(AmexStatementDirectState, other.import_id)
         if not state or not state.context_id or other.context_id != state.context_id:
@@ -412,6 +418,8 @@ async def _link(
 ) -> None:
     from .documento_service import validate_shared_cfdi_payment_amount
 
+    if active_decision(item, await load_decision_heads(session, [item])):
+        raise DirectConflict("no_cfdi_revoke_required")
     if expense.cfdi_report_id not in (None, cfdi.id):
         raise DirectConflict("foreign_cfdi_application_conflict")
     if (
@@ -504,6 +512,7 @@ async def reconcile_direct_statement(
         )
     items = await load_items(session, import_id, locked=True)
     sources = await load_effective_sources(session, import_id)
+    heads = await load_decision_heads(session, items)
     expenses: dict[Any, Any] = {
         e.id: e
         for e in await load_expenses(
@@ -518,6 +527,7 @@ async def reconcile_direct_statement(
     for item in items:
         if (
             sources[item.id].movement_kind != "debit"
+            or active_decision(item, heads)
             or item.accounting_status == "recognized"
         ):
             continue
@@ -662,6 +672,8 @@ async def link_direct_cfdi_manual(
     )
     if item is None or item.import_id != import_id:
         raise DirectConflict("item_context_mismatch")
+    if active_decision(item, await load_decision_heads(session, [item])):
+        raise DirectConflict("no_cfdi_revoke_required")
     source = await effective_source_for_item(session, item)
     if source.movement_kind != "debit":
         raise DirectConflict("item_context_mismatch")

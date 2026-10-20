@@ -43,6 +43,7 @@ from .amex_direct_common import (
 from .amex_direct_effective_source_service import (
     load_effective_sources,
 )
+from .amex_direct_no_cfdi_service import active_decision, load_decision_heads
 
 
 async def set_direct_context(
@@ -105,6 +106,9 @@ async def set_direct_context(
         return DirectResult("pending", "context_correction_reason_required")
     items = await load_items(session, import_id, locked=True)
     sources = await load_effective_sources(session, import_id)
+    heads = await load_decision_heads(session, items)
+    if any(active_decision(item, heads) for item in items):
+        return DirectResult("pending", "no_cfdi_revoke_required")
     if old:
         from .amex_direct_accounting_service import covered_source_proof
 
@@ -257,6 +261,9 @@ async def list_direct_statement(
                     row.accounting_poliza_id
                 )
             coverage_by_item[row.direct_item_id] = row.coverage_kind
+        heads = await load_decision_heads(session, items)
+        from .amex_direct_no_cfdi_service import decision_snapshot
+
         views = []
         for item in items:
             expense = (
@@ -294,7 +301,11 @@ async def list_direct_statement(
                 column.name: getattr(item, column.name)
                 for column in item.__table__.columns
             }
+            pointer = getattr(item, "no_cfdi_decision_id", None)
+            decision = heads.get(pointer) if pointer is not None else None
+            active_decision(item, heads)  # Fail closed on an invalid pointer.
             facts.update(
+                no_cfdi_decision=decision_snapshot(decision) if decision else None,
                 movement_kind=sources[item.id].movement_kind,
                 imported_expense_id=sources[item.id].imported_expense_id,
                 source_json=sources[item.id].source_json,
@@ -636,7 +647,9 @@ async def list_direct_statements(
                 kind: sum(sources[i.id].movement_kind == kind for i in items)
                 for kind in ("debit", "credit", "unknown", "skipped")
             }
+            heads = await load_decision_heads(session, items)
             counts.update(
+                no_cfdi=sum(bool(active_decision(i, heads)) for i in items),
                 matched=sum(i.match_status == "matched" for i in items),
                 classified=sum(
                     bool(context and i.context_id == context.id and i.budget_concept_id)

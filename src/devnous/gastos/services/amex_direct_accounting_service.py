@@ -33,6 +33,7 @@ from .amex_accounting_cut_service import _freeze_cfdi, _freeze_lines
 from .amex_accounting_posting_service import (
     ALLOWED_AMEX_LIABILITY_CODES,
     _credit_line,
+    _debit_line,
     posting_is_balanced,
 )
 from .amex_direct_common import (
@@ -53,6 +54,12 @@ from .amex_direct_matching_service import (
     cfdi_identity,
     current_status_receipt,
     fiscal_source_hash,
+)
+from .amex_direct_no_cfdi_service import (
+    active_decision,
+    decision_snapshot,
+    load_decision_heads,
+    validate_decision,
 )
 from .amex_expense_account_settlement_service import (
     prepare_settlement,
@@ -207,6 +214,7 @@ async def _prepare(
     ).scalar_one_or_none()
     items = await load_items(session, import_id, locked=locked)
     sources = await load_effective_sources(session, import_id)
+    heads = await load_decision_heads(session, items)
     card = await session.get(
         AmexCardAccount,
         statement.card_account_id,
@@ -295,6 +303,7 @@ async def _prepare(
     facts = []
     new = []
     settlements = {}
+    no_cfdi = {}
     prior_proofs = {}
     if not context:
         reasons.append("contexto_fiscal_pendiente")
@@ -321,8 +330,10 @@ async def _prepare(
         first_reason = len(reasons)
         expense = by_id.get(sources[item.id].imported_expense_id)
         receipt = await session.get(AmexStatementImportItem, item.import_item_id)
+        decision = active_decision(item, heads)
         fact = {
             "item_id": item.id,
+            "no_cfdi_decision": decision_snapshot(decision) if decision else None,
             "source_hash": item.source_hash,
             "source_version": item.source_version,
             "row": receipt.normalized_json if receipt else None,
@@ -370,6 +381,8 @@ async def _prepare(
                 reasons.append(str(exc))
             proof = prior["consumption"] if prior else None
             proofs[item.id] = proof
+            if (prior or settlement) and decision:
+                reasons.append("no_cfdi_historical_source_conflict")
             if prior:
                 prior_proofs[item.id] = prior
             if settlement:
@@ -394,9 +407,25 @@ async def _prepare(
                 if proof.card_account_id != statement.card_account_id:
                     reasons.append("recognized_source_card_mismatch")
             elif not settlement:
-                reason = await validate_direct_match(session, item)
-                if reason:
-                    reasons.append(reason)
+                if decision:
+                    try:
+                        validate_decision(
+                            statement,
+                            context,
+                            item,
+                            sources[item.id],
+                            expense,
+                            decision,
+                        )
+                        if await covered_source_proof(session, expense):
+                            raise DirectConflict("recognized_source_immutable")
+                        no_cfdi[item.id] = decision
+                    except DirectConflict as exc:
+                        reasons.append(str(exc))
+                else:
+                    reason = await validate_direct_match(session, item)
+                    if reason:
+                        reasons.append(reason)
                 if item.budget_status != "assigned" or not item.budget_assignment_id:
                     reasons.append("budget_assignment_required")
                 concept = (
@@ -478,7 +507,8 @@ async def _prepare(
                         else None
                     ),
                 )
-                new.append(expense)
+                if not decision:
+                    new.append(expense)
         for code in dict.fromkeys(reasons[first_reason:]):
             budget_issue = code.startswith("budget_")
             issues.append(
@@ -497,6 +527,39 @@ async def _prepare(
                 }
             )
         facts.append(fact)
+    if no_cfdi:
+        reason = await activation_reason(
+            session, [by_id[sources[i].imported_expense_id] for i in no_cfdi]
+        )
+        if reason:
+            reasons.append(reason)
+        for item in items:
+            if item.id not in no_cfdi:
+                continue
+            expense = by_id[sources[item.id].imported_expense_id]
+            account = (
+                await session.get(
+                    CuentaContable,
+                    expense.cuenta_contable_id,
+                    populate_existing=True,
+                    with_for_update=locked,
+                )
+                if expense.cuenta_contable_id
+                else None
+            )
+            if not account or not account.activo or not account.codigo or not liability:
+                reasons.append("budget_account_mapping_required")
+                continue
+            journal.extend(
+                no_cfdi_lines(
+                    item,
+                    expense,
+                    no_cfdi[item.id],
+                    account,
+                    liability,
+                    sources[item.id],
+                )
+            )
     if new:
         reason = await activation_reason(session, new)
         if reason:
@@ -516,9 +579,10 @@ async def _prepare(
                     if sources[i.id].imported_expense_id
                 }
                 for line in journal:
-                    if (line.get("raw_row_json") or {}).get(
-                        "coverage_kind"
-                    ) == "settlement":
+                    if (line.get("raw_row_json") or {}).get("coverage_kind") in {
+                        "settlement",
+                        "new_no_cfdi",
+                    }:
                         continue
                     metadata = line.get("raw_row_json") or {}
                     item = item_by_expense[metadata["expense_id"]]
@@ -557,7 +621,7 @@ async def _prepare(
                     )
                 if not posting_is_balanced(journal):
                     reasons.append("unbalanced_direct_journal")
-    elif not reasons and not settlements and not prior_proofs:
+    elif not reasons and not settlements and not prior_proofs and not no_cfdi:
         reasons.append("statement_has_no_debit_activity")
     if journal and not posting_is_balanced(journal):
         reasons.append("unbalanced_direct_journal")
@@ -647,11 +711,18 @@ async def _prepare(
             else statement.period_end
         ),
         "fiscal_evidence": fiscal_evidence,
-        "new_count": len(new),
+        "no_cfdi_count": len(no_cfdi),
+        "new_count": len(new) + len(no_cfdi),
         "settlement_count": len(settlements),
-        "completion_only": bool(prior_proofs) and not new and not settlements,
+        "completion_only": bool(prior_proofs)
+        and not new
+        and not settlements
+        and not no_cfdi,
         "prior_count": sum(bool(v) for v in proofs.values()),
         "lines": _freeze_lines(journal),
+    }
+    result.progress["no_cfdi_decisions"] = {
+        str(k): decision_snapshot(v) for k, v in no_cfdi.items()
     }
     result._settlements = settlements
     result._prior_proofs = prior_proofs
@@ -773,11 +844,20 @@ async def confirm_direct_accounting(
                 else (
                     "prior"
                     if prior
-                    else "settlement" if item.id in result._settlements else "new"
+                    else (
+                        "settlement"
+                        if item.id in result._settlements
+                        else (
+                            "new_no_cfdi"
+                            if str(item.id)
+                            in result.progress.get("no_cfdi_decisions", {})
+                            else "new"
+                        )
+                    )
                 )
             )
             consumption = prior
-            if coverage == "new":
+            if coverage in {"new", "new_no_cfdi"}:
                 assert expense is not None
                 consumption = AmexRecognitionConsumption(
                     id=uuid4(),
@@ -794,6 +874,11 @@ async def confirm_direct_accounting(
                         "budget_concept_id": str(item.budget_concept_id),
                         "budget_assignment_id": str(item.budget_assignment_id),
                         "context_id": str(result.context.id),
+                        **(
+                            {"no_cfdi_decision_id": str(item.no_cfdi_decision_id)}
+                            if coverage == "new_no_cfdi"
+                            else {}
+                        ),
                     },
                     accounting_poliza_id=poliza.id,
                     actor_id=actor_id,
@@ -860,6 +945,16 @@ async def confirm_direct_accounting(
                             bump=False,
                         )
             fact = {
+                "no_cfdi_decision_id": (
+                    str(item.no_cfdi_decision_id) if coverage == "new_no_cfdi" else None
+                ),
+                "taxes": None,
+                "no_cfdi_decision": result.progress.get("no_cfdi_decisions", {}).get(
+                    str(item.id)
+                ),
+                "context_version": result.context.version,
+                "source_version": item.source_version,
+                "source_hash": item.source_hash,
                 "settlement_proof": json.loads(
                     json.dumps(result._settlements.get(item.id), default=str)
                 ),
@@ -971,6 +1066,9 @@ async def confirm_direct_accounting(
                         else poliza.id if coverage == "settlement" else None
                     ),
                     coverage_kind=coverage,
+                    no_cfdi_decision_id=(
+                        item.no_cfdi_decision_id if coverage == "new_no_cfdi" else None
+                    ),
                     source_hash=item.source_hash,
                     snapshot_json=fact,
                 )
@@ -1230,3 +1328,40 @@ async def export_direct_cut(
             raise DirectConflict("unsupported_export_format")
         generate, mime = generators[format]
         return cast(Any, generate)(rows), f"AMEX_directo_{cut.id}.{format}", mime
+
+
+def no_cfdi_lines(
+    item: Any, expense: Any, decision: Any, account: Any, liability: Any, source: Any
+) -> list[dict[str, Any]]:
+    """Post full bank amount; no tax base, withholding, tip or fiscal identity."""
+    metadata = {
+        "expense_id": str(expense.id),
+        "direct_item_id": str(item.id),
+        "source_kind": "amex_direct",
+        "coverage_kind": "new_no_cfdi",
+        "budget_concept_id": str(item.budget_concept_id),
+        "budget_assignment_id": str(item.budget_assignment_id),
+        "no_cfdi_decision_id": str(decision.id),
+        "treatment": decision.treatment,
+        "project": expense.proyecto,
+        "edicion": item.edition_year,
+    }
+    amount = abs(money(source.raw_signed_amount))
+    return [
+        _debit_line(
+            code=account.codigo,
+            account_id=account.id,
+            amount=amount,
+            concept=expense.concepto,
+            meta=metadata,
+            movement="debe_gasto_sin_cfdi",
+        ),
+        _credit_line(
+            code=liability.codigo,
+            account_id=liability.id,
+            amount=amount,
+            concept=expense.concepto,
+            meta=metadata,
+            movement="haber_amex",
+        ),
+    ]
