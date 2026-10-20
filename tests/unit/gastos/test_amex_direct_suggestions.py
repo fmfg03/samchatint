@@ -239,3 +239,69 @@ async def test_unexplained_amount_difference_is_visible_and_never_tip(world):
         and not candidate["reasons"]["exact_amount"]
     )
     assert "tip" not in candidate
+
+
+@pytest.mark.parametrize(
+    "left,right,expected",
+    [
+        ("RESTAURANTE SUNTORY SA MEXICO", "RESTAURANTES SUNTORY", Decimal(1)),
+        ("RESTAURANTE SUNTORY S.A. DE C.V.", "SUNTORY SA DE CV", Decimal(1)),
+        ("LA MANSIÓN MÉXICO", "RESTAURANTES MANSION S DE RL", Decimal(1)),
+        ("SUNTORY", "PANADERIA ARTESANAL", Decimal(0)),
+        ("SUNTORY MEXICO", "AEROVIAS DE MEXICO", Decimal(0)),
+        ("RESTAURANTE S.A. MEXICO", "RESTAURANTES DE MEXICO", Decimal(0)),
+        ("", "", Decimal(0)),
+        (None, "SUNTORY", Decimal(0)),
+        ("SUNTORY", None, Decimal(0)),
+    ],
+)
+def test_issuer_similarity_keeps_distinctive_names_and_removes_generic_noise(
+    left, right, expected
+):
+    assert owner.issuer_similarity(left, right) == expected
+
+
+def test_named_issuer_similarity_precedes_concept_and_rfc_fallback():
+    bank = "RESTAURANTE SUNTORY SA MEXICO"
+    target = (
+        owner.issuer_similarity(bank, "RESTAURANTES SUNTORY"),
+        owner.issuer_similarity(bank, "RSU010101ABC Consumo de alimentos"),
+    )
+    bakery = (
+        owner.issuer_similarity(bank, "PANADERIA ARTESANAL"),
+        owner.issuer_similarity(bank, "PAN010101ABC Restaurante en Mexico"),
+    )
+    airline = (
+        owner.issuer_similarity(bank, "AEROVIAS DE MEXICO"),
+        owner.issuer_similarity(bank, "AER010101ABC Transporte Mexico"),
+    )
+    assert target > bakery and target > airline
+    assert target[0] == Decimal(1)
+
+
+def test_missing_or_generic_only_names_retain_fallback_evidence():
+    bank = "SUNTORY SA MEXICO"
+    assert owner.issuer_similarity(bank, "SA DE CV RESTAURANTE MEXICO") == 0
+    assert owner.issuer_similarity(bank, None) == 0
+    assert owner.issuer_similarity(bank, "RSU010101ABC SUN TORY") == 0
+    assert owner.issuer_similarity(bank, "RSU010101ABC CONSUMO SUNTORY") > 0
+    # Raw helper compatibility remains distinct from the v2 issuer normalizer.
+    assert (
+        owner.merchant_similarity("LA MANSIÓN", "mansion restaurante") == Decimal(1) / 3
+    )
+
+
+@pytest.mark.asyncio
+async def test_v1_cursor_cannot_continue_under_v2_ranking(world, monkeypatch):
+    w = world
+    assert owner.RANKING_VERSION == "suggestions_v2"
+    w.args["item_ids"] = [w.item.id]
+    monkeypatch.setattr(owner, "RANKING_VERSION", "suggestions_v1")
+    w.records([w.hit] * 4)
+    old = await owner.suggest_direct_statement_cfdis(w.session, **w.args)
+    cursor = old["items"][0]["cursor"]
+    monkeypatch.setattr(owner, "RANKING_VERSION", "suggestions_v2")
+    w.session.execute.reset_mock()
+    with pytest.raises(DirectConflict, match="invalid_cfdi_suggestions_cursor"):
+        await owner.suggest_direct_statement_cfdis(w.session, **w.args, cursor=cursor)
+    w.session.execute.assert_not_awaited()

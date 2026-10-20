@@ -33,10 +33,50 @@ from .amex_direct_matching_service import (
 from .amex_direct_navigation import save_navigation_cursor
 from .cfdi_parser import parse_cfdi_xml
 
-RANKING_VERSION = "suggestions_v1"
+RANKING_VERSION = "suggestions_v2"
 CURSOR_KEY = "amex_direct_suggestion_cursors"
 _ACCENT_FROM = "áéíóúüñ"
 _ACCENT_TO = "aeiouun"
+
+# Lexical noise only: removing these tokens never proves merchant identity.
+# SQL and Python use exactly this finite set, with no distance/score threshold.
+ISSUER_STOPWORDS = frozenset(
+    {
+        "a",
+        "c",
+        "v",
+        "s",
+        "r",
+        "l",
+        "sa",
+        "sas",
+        "sc",
+        "sapi",
+        "cv",
+        "rl",
+        "srl",
+        "de",
+        "del",
+        "el",
+        "la",
+        "los",
+        "las",
+        "y",
+        "sociedad",
+        "anonima",
+        "capital",
+        "variable",
+        "responsabilidad",
+        "limitada",
+        "mexico",
+        "mex",
+        "cdmx",
+        "restaurante",
+        "restaurantes",
+        "restaurant",
+        "restaurants",
+    }
+)
 
 
 def merchant_tokens(value: str) -> set[str]:
@@ -53,9 +93,21 @@ def merchant_similarity(left: str, right: str) -> Decimal:
     return Decimal(len(a & b)) / Decimal(len(a | b)) if a | b else Decimal(0)
 
 
+def issuer_tokens(value: str) -> set[str]:
+    """Keep distinctive commerce tokens separate from legal/location noise."""
+    return merchant_tokens(value) - ISSUER_STOPWORDS
+
+
+def issuer_similarity(left: str, right: str) -> Decimal:
+    """Jaccard of normalized issuer-name evidence; never fiscal authority."""
+    a, b = issuer_tokens(left), issuer_tokens(right)
+    return Decimal(len(a & b)) / Decimal(len(a | b)) if a | b else Decimal(0)
+
+
 # Parameters only; descriptors, identities and IDs are never interpolated.
 # Invalid/nonfinite Float projections cannot be cast to numeric before filtering.
-_RANK_SQL = text("""
+_RANK_SQL = text(
+    """
 WITH requested AS (
  SELECT * FROM jsonb_to_recordset(CAST(:items AS jsonb)) AS i(
    item_id uuid, amount numeric, bank_date date, descriptor text,
@@ -65,9 +117,14 @@ WITH requested AS (
    CASE WHEN c.total::text NOT IN ('NaN','Infinity','-Infinity')
      THEN round(c.total::text::numeric,2) END AS amount,
    ARRAY(SELECT DISTINCT t FROM unnest(regexp_split_to_array(
-     regexp_replace(translate(lower(concat_ws(' ',c.emisor_nombre,c.emisor_rfc,
+     regexp_replace(translate(lower(coalesce(c.emisor_nombre,'')),
+       'áéíóúüñ','aeiouun'),'[^a-z0-9]+',' ','g'),' +')) AS t
+     WHERE t<>'' AND t<>ALL(CAST(:merchant_stopwords AS text[]))) AS issuer_tokens,
+   ARRAY(SELECT DISTINCT t FROM unnest(regexp_split_to_array(
+     regexp_replace(translate(lower(concat_ws(' ',c.emisor_rfc,
        c.descripcion_concepto_principal)), 'áéíóúüñ','aeiouun'),
-       '[^a-z0-9]+',' ','g'), ' +')) AS t WHERE t <> '') AS tokens
+       '[^a-z0-9]+',' ','g'), ' +')) AS t
+     WHERE t<>'' AND t<>ALL(CAST(:merchant_stopwords AS text[]))) AS fallback_tokens
  FROM cfdi_reports c
  WHERE c.origen='sat' AND upper(trim(c.receptor_rfc))=:receiver
    AND upper(c.moneda)='MXN' AND upper(c.tipo_de_comprobante)='I'
@@ -79,7 +136,8 @@ CROSS JOIN LATERAL (
      OR (i.issuer_rfc IS NOT NULL
        AND upper(trim(c.emisor_rfc))=i.issuer_rfc)),false) AS identity_match,
    c.amount=i.amount AS exact_amount,
-   overlap.n::numeric / greatest(union_tokens.n,1) AS similarity,
+   issuer_overlap.n::numeric / greatest(issuer_union.n,1) AS similarity,
+   fallback_overlap.n::numeric / greatest(fallback_union.n,1) AS fallback_similarity,
    c.amount-i.amount AS amount_delta,
    abs(c.amount-i.amount)/i.amount AS relative_delta,
    c.fecha::date-i.bank_date AS days_delta,
@@ -87,25 +145,36 @@ CROSS JOIN LATERAL (
  FROM catalog c
  CROSS JOIN LATERAL (
    SELECT ARRAY(SELECT DISTINCT t FROM unnest(regexp_split_to_array(
-     regexp_replace(translate(lower(i.descriptor),'áéíóúüñ','aeiouun'),
-       '[^a-z0-9]+',' ','g'),' +')) AS t WHERE t <> '') AS tokens
+     regexp_replace(translate(lower(coalesce(i.descriptor,'')),
+       'áéíóúüñ','aeiouun'),'[^a-z0-9]+',' ','g'),' +')) AS t
+     WHERE t<>'' AND t<>ALL(CAST(:merchant_stopwords AS text[]))) AS tokens
  ) bank
  CROSS JOIN LATERAL (
    SELECT count(*) AS n FROM
-     (SELECT unnest(c.tokens) INTERSECT SELECT unnest(bank.tokens)) s
- ) overlap
+     (SELECT unnest(c.issuer_tokens) INTERSECT SELECT unnest(bank.tokens)) s
+ ) issuer_overlap
  CROSS JOIN LATERAL (
    SELECT count(*) AS n FROM
-     (SELECT unnest(c.tokens) UNION SELECT unnest(bank.tokens)) s
- ) union_tokens
+     (SELECT unnest(c.issuer_tokens) UNION SELECT unnest(bank.tokens)) s
+ ) issuer_union
+ CROSS JOIN LATERAL (
+   SELECT count(*) AS n FROM
+     (SELECT unnest(c.fallback_tokens) INTERSECT SELECT unnest(bank.tokens)) s
+ ) fallback_overlap
+ CROSS JOIN LATERAL (
+   SELECT count(*) AS n FROM
+     (SELECT unnest(c.fallback_tokens) UNION SELECT unnest(bank.tokens)) s
+ ) fallback_union
  WHERE c.amount>0 AND i.amount>0
  ORDER BY identity_match DESC, exact_amount DESC, similarity DESC,
-   relative_delta ASC, abs(c.fecha::date-i.bank_date) ASC NULLS LAST,
+   fallback_similarity DESC, relative_delta ASC,
+   abs(c.fecha::date-i.bank_date) ASC NULLS LAST,
    upper(c.cfdi_uuid) ASC NULLS LAST, c.id ASC
  LIMIT :take OFFSET i.candidate_offset
 ) ranked
 ORDER BY i.item_id
-""")
+"""
+).bindparams(merchant_stopwords=sorted(ISSUER_STOPWORDS))
 
 
 def _date(value: Any) -> date | None:
@@ -355,6 +424,7 @@ async def _suggest(session: Any, **options: Any) -> dict[str, Any]:
                         identity_match=bool(hit["identity_match"]),
                         exact_amount=delta == 0,
                         merchant_similarity=str(hit["similarity"]),
+                        fallback_similarity=str(hit.get("fallback_similarity", 0)),
                         amount_delta=str(delta),
                         days_delta=days,
                     ),

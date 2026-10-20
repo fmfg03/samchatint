@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from devnous.gastos.services.amex_direct_suggestion_service import (
     _RANK_SQL,
-    merchant_similarity,
+    issuer_similarity,
 )
 
 
@@ -41,11 +41,15 @@ async def catalog_pg():
         async with engine.begin() as conn:
             await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
             await conn.execute(text(f'SET LOCAL search_path="{schema}"'))
-            await conn.execute(text("""CREATE TABLE cfdi_reports(
+            await conn.execute(
+                text(
+                    """CREATE TABLE cfdi_reports(
               id uuid PRIMARY KEY, cfdi_uuid text, emisor_rfc text, fecha timestamp,
               total double precision, emisor_nombre text,
               descripcion_concepto_principal text, origen text, receptor_rfc text,
-              moneda text, tipo_de_comprobante text)"""))
+              moneda text, tipo_de_comprobante text)"""
+                )
+            )
             yield conn
     finally:
         async with engine.begin() as conn:
@@ -66,9 +70,11 @@ async def insert(
 ):
     identity = uuid4()
     await conn.execute(
-        text("""INSERT INTO cfdi_reports VALUES
+        text(
+            """INSERT INTO cfdi_reports VALUES
       (:id,:uuid,:issuer,CAST(:stamp AS timestamp),:amount,:name,:description,
-       'sat',:receiver,'MXN','I')"""),
+       'sat',:receiver,'MXN','I')"""
+        ),
         dict(
             id=identity,
             uuid=fiscal_uuid or str(identity),
@@ -155,9 +161,7 @@ async def test_sql_python_similarity_parity_missing_dates_and_nonfinite_money(
         await insert(conn, amount=invalid)
     rows = await rank(conn, descriptor="MANSION MÉXICO", bank_date=None)
     assert len(rows) == 1 and rows[0]["days_delta"] is None
-    expected = merchant_similarity(
-        "MANSION MÉXICO", "LA MANSIÓN México AAA010101AAA Restaurante"
-    )
+    expected = issuer_similarity("MANSION MÉXICO", "LA MANSIÓN México")
     assert abs(rows[0]["similarity"] - expected) < Decimal("0.000000000000000001")
 
 
@@ -173,3 +177,134 @@ async def test_pagination_stable_and_same_invoice_proposed_for_two_items_without
     assert not {r["cfdi_id"] for r in first} & {r["cfdi_id"] for r in second}
     assert [r["cfdi_id"] for r in first] == [r["cfdi_id"] for r in await rank(conn)]
     assert await conn.scalar(text("SELECT count(*) FROM cfdi_reports")) == 9
+
+
+@pytest.mark.asyncio
+async def test_suntory_named_issuer_beats_bakery_concept_and_airline_location(
+    catalog_pg,
+):
+    conn = catalog_pg
+    target = await insert(
+        conn,
+        name="RESTAURANTES SUNTORY",
+        amount=3814,
+        stamp="2026-10-06",
+        description="Consumo de alimentos y bebidas",
+    )
+    await insert(
+        conn,
+        name="PASTELERIA Y CONFITERIA DE MEXICO",
+        amount=637,
+        stamp="2026-09-17",
+        issuer="PAST010101AAA",
+        description="Consumo restaurante",
+    )
+    await insert(
+        conn,
+        name="AEROVIAS DE MEXICO",
+        amount=4396,
+        stamp="2026-06-24",
+        issuer="AERO010101AAA",
+        description="Transporte aereo",
+    )
+    rows = await rank(
+        conn,
+        amount="4386.10",
+        descriptor="RESTAURANTE SUNTORY SA  MEXICO",
+    )
+    assert rows[0]["cfdi_id"] == target
+    assert rows[0]["amount_delta"] == Decimal("-572.10")
+    assert rows[0]["days_delta"] == 7
+    assert len(rows) == 3  # Nonmatching alternatives remain discoverable.
+    assert await conn.scalar(text("SELECT count(*) FROM cfdi_reports")) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "descriptor,name,description",
+    [
+        ("RESTAURANTE SUNTORY SA MEXICO", "RESTAURANTES SUNTORY", "Alimentos"),
+        ("LA MANSIÓN CDMX", "MANSION SA DE CV", "Restaurante"),
+        ("MÉXICO SA DE CV RESTAURANTE", "RESTAURANTES DE MEXICO", "SUNTORY"),
+        ("SUNTORY", None, "SUNTORY"),
+        ("SUNTORY", "", "SUNTORY"),
+        ("", "SUNTORY", "Alimentos"),
+    ],
+)
+async def test_sql_python_named_issuer_similarity_parity(
+    catalog_pg, descriptor, name, description
+):
+    conn = catalog_pg
+    await insert(conn, name=name, description=description)
+    rows = await rank(conn, descriptor=descriptor)
+    assert len(rows) == 1
+    expected = issuer_similarity(descriptor, name)
+    assert abs(rows[0]["similarity"] - expected) < Decimal("0.000000000000000001")
+
+
+@pytest.mark.asyncio
+async def test_issuer_name_score_is_not_diluted_by_large_concepts(catalog_pg):
+    conn = catalog_pg
+    target = await insert(
+        conn,
+        name="RESTAURANTES SUNTORY",
+        amount=3814,
+        description=" ".join(f"detalle{n}" for n in range(500)),
+    )
+    await insert(
+        conn,
+        name="PASTELERIA Y CONFITERIA DE MEXICO",
+        amount=3814,
+        description="SUNTORY",
+        issuer="OTRO010101AAA",
+    )
+    rows = await rank(conn, descriptor="RESTAURANTE SUNTORY SA MEXICO")
+    assert rows[0]["cfdi_id"] == target
+    assert rows[0]["similarity"] == 1
+    assert rows[1]["similarity"] == 0
+
+
+@pytest.mark.asyncio
+async def test_explicit_identity_and_exact_amount_keep_priority_over_name(catalog_pg):
+    conn = catalog_pg
+    target = await insert(conn, name="RESTAURANTES SUNTORY", amount=3814)
+    exact = await insert(conn, name="Other", amount=4386.10, issuer="OTHER010101A")
+    explicit_uuid = str(uuid4())
+    explicit = await insert(
+        conn,
+        name="Another",
+        amount=50,
+        fiscal_uuid=explicit_uuid,
+        issuer="EXPL010101AAA",
+    )
+    rows = await rank(
+        conn,
+        amount="4386.10",
+        descriptor="RESTAURANTE SUNTORY SA MEXICO",
+        declared_uuid=explicit_uuid.upper(),
+    )
+    assert [r["cfdi_id"] for r in rows] == [explicit, exact, target]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", [None, "RESTAURANTES DE MEXICO SA DE CV"])
+async def test_missing_or_generic_names_use_fallback_without_hiding_rows(
+    catalog_pg, name
+):
+    conn = catalog_pg
+    target = await insert(
+        conn, name=name, description="SUNTORY alimentos", issuer="FALL010101AAA"
+    )
+    await insert(
+        conn, name=name, description="Transporte aereo", issuer="AERO010101AAA"
+    )
+    rows = await rank(conn, descriptor="SUNTORY RESTAURANTE MEXICO")
+    assert rows[0]["cfdi_id"] == target
+    assert all(row["similarity"] == 0 for row in rows)
+    expected = issuer_similarity(
+        "SUNTORY RESTAURANTE MEXICO", "FALL010101AAA SUNTORY alimentos"
+    )
+    assert abs(rows[0]["fallback_similarity"] - expected) < Decimal(
+        "0.000000000000000001"
+    )
+    assert len(rows) == 2
