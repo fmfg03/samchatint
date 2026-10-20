@@ -28,6 +28,7 @@ ROUTE_OWNED_AUTHORIZATION_PREFIXES = ("/direccion/",)
 # visibility through the role-default access-control middleware.
 ROUTE_OWNED_AUTHORIZATION_PATHS = frozenset(
     {
+        "/admin/finanzas/payment-history",
         "/admin/finanzas/no-deducibles",
         "/admin/finanzas/no-deducibles/export.xlsx",
     }
@@ -262,9 +263,10 @@ async def get_current_empleado(
     empleado.impersonator_empleado_id = request.session.get("impersonator_empleado_id")
     empleado.impersonator_nombre = request.session.get("impersonator_nombre")
     empleado.impersonator_rol = request.session.get("impersonator_rol")
+    request_path = str(getattr(request.url, "path", "") or "")
+    empleado.payment_history_visible = False
     try:
         empleado.visible_tool_keys = await visible_tools_for(session, empleado)
-        request_path = str(getattr(request.url, "path", "") or "")
         request_method = str(getattr(request, "method", "GET") or "GET")
         if _uses_route_owned_authorization(request_path):
             empleado.can_access_path = (
@@ -293,12 +295,23 @@ async def get_current_empleado(
     except Exception as exc:
         logger.debug("Access-control visibility lookup failed: %s", exc)
         empleado.visible_tool_keys = set()
-        empleado.can_access_path = True
+        empleado.can_access_path = request_path.rstrip("/") != "/admin/finanzas/payment-history"
     if not getattr(empleado, "can_access_path", True):
         raise HTTPException(
             status_code=403,
             detail="No tienes acceso a esta herramienta.",
         )
+
+    # Navigation visibility must never short-circuit another route's guard.
+    try:
+        empleado.payment_history_visible = can_access_payment_run(empleado) and (
+            request_path.rstrip("/") == "/admin/finanzas/payment-history"
+            or await can_defer_path_authorization_to_route_guard(
+                session, empleado, "/admin/finanzas/payment-history", "GET"
+            )
+        )
+    except Exception:
+        empleado.payment_history_visible = False
 
     return empleado
 
