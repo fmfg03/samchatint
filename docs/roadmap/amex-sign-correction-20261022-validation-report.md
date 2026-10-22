@@ -59,3 +59,13 @@ After publication of candidate commit `c1034c81c`, CI found that the generated i
 Independent read-only review of the corrective diff confirms that only `docs/private-plugin/route-inventory.json` changes `source_file_count` from 476 to 477. A parsed comparison proves every other JSON field is identical; the route matrix is unchanged. There is no route, permission, authority, source behavior, accounting decision or production change. `git diff --check` passes.
 
 Root reran `PYTHONPATH=src:.:tests/acceptance:tests/unit/gastos:/tmp/samchat-amex-source-testdeps /root/samchat/.venv/bin/python -m pytest -q --no-cov tests/unit/private_plugin/test_inventory.py --disable-warnings --tb=short`: **9 passed in 22.65 seconds**. The identified inventory defect is closed locally. Remote required CI gates must pass on the corrective commit before merge; this addendum does not claim they have already rerun. No critical, important or minor findings remain in this corrective diff.
+
+## Explicitly authorized preservation of existing HWC production fix
+
+The user explicitly authorized preserving the already deployed HWC correction from commit `612bd50bffadd21deb33586fbe3ac8fa30c0e903` when integrating AMEX. Root prepared a conflict-free merge without committing it; this review evaluates preservation of that existing behavior, not a new accounting exception.
+
+Independent read-only comparison proves the three HWC implementation files (`admin_routes.py`, `expense_accounting_cleanup_service.py`, `expense_coi_export_service.py`) and `test_hwc_non_deductible_account.py` are byte-for-byte identical to that commit. No AMEX functional source changed in this preservation step. The existing exact account exception `5300-016-003` is retained through its existing cleanup/COI owners, with no additional account, authority, migration or production mutation.
+
+Generated inventory comparison preserves 606 routes and all 44 action records, the access-profile catalog and registrations. All route behavior fields remain identical; the differences are source hash, line references and the identifiers/proposed names derived from those references. The mount-chain evidence change is a source line offset only. `git diff --check` passes.
+
+Root's combined AMEX, HWC and inventory run completed **1,096 passed in 34.98 seconds**, 40 warnings, receipt `/tmp/amex-sign-hwc-preservation-tests-20261022.txt`. The existing HWC-specific cases are included in this combined result; the earlier live-code focused run passed fourteen cases. Preservation is validated with no unresolved critical, important or minor findings. Required remote CI must still pass on the final integrated commit before merge. Production remains unchanged by this review.
