@@ -2,6 +2,7 @@
 
 import io
 import json
+from copy import deepcopy
 from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -339,6 +340,7 @@ async def test_cut_download_actual_format_and_read_only(format):
 
     session = AsyncMock()
     cut = frozen_cut()
+    snapshot_before = deepcopy(cut.snapshot_json)
     session.get.return_value = cut
     response = await routes.amex_accounting_cut_export(
         cut.id, format, session, SimpleNamespace()
@@ -354,9 +356,15 @@ async def test_cut_download_actual_format_and_read_only(format):
         workbook = load_workbook(io.BytesIO(response.body))
         sheet = workbook["Poliza COI"]
         assert [sheet[cell].value for cell in ("C2", "D2", "E2")] == [None] * 3
-        assert sheet["C3"].value.startswith(
-            "Operaciones: OP-FROZEN / Beneficiario: Beneficiaria congelada / "
-            "Contexto: Torneo congelado / "
+        assert sheet["C3"].value == (
+            "Beneficiario: Beneficiaria congelada / Corte AMEX initial · I-1 / "
+            "Torneo congelado / OP-FROZEN"
         )
+        assert [
+            row[3].value
+            for row in sheet.iter_rows()
+            if row[2].value == "0" and row[4].value == "1"
+        ] == [line["concepto"] for line in snapshot_before["lines"]]
+    assert cut.snapshot_json == snapshot_before
     session.commit.assert_not_awaited()
     session.rollback.assert_not_awaited()
