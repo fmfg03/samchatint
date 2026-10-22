@@ -75,12 +75,9 @@ def test_reported_lengths_preserve_supplied_text_without_reconstructing_it(
     assert len(supplied) == length
     assert sheet["D4"].value == supplied
     assert sheet["D5"].value == "Concepto manual distinto"
-    assert sheet["C3"].value == (
-        "Beneficiario: Proveedor ficticio / "
-        + supplied.replace("Proveedor ficticio / ", "", 1)
-    )
+    assert sheet["C3"].value == "Beneficiario: Proveedor ficticio / " + supplied
     assert sheet["C3"].value.endswith(ending)
-    assert sheet["C3"].value.count("Proveedor ficticio") == 1
+    assert supplied in sheet["C3"].value
 
 
 def test_header_deduplicates_fields_while_reason_precedes_additional_operation():
@@ -167,7 +164,7 @@ def test_no_metadata_keeps_manual_policy_description_exactly():
     assert _header(expense) == expense.poliza_description
 
 
-def test_only_exact_components_are_deduplicated_not_substrings_or_distinct_names():
+def test_explicit_policy_description_is_not_deduplicated_as_metadata():
     expense = _expense(
         poliza_description=(
             "  REF / Ana  Pérez / Ana Pérez Norte / MÉDICO / "
@@ -177,9 +174,59 @@ def test_only_exact_components_are_deduplicated_not_substrings_or_distinct_names
         poliza_context_description="Proyecto de prueba",
     )
     assert _header(expense) == (
-        "Beneficiario: Ana Pérez / REF / Ana Pérez Norte / MÉDICO / "
+        "Beneficiario: Ana Pérez / REF / Ana Pérez / Ana Pérez Norte / MÉDICO / "
         "Proyecto de prueba ampliado / Proyecto de prueba / OP-PRUEBA"
     )
+
+
+@pytest.mark.parametrize(
+    "reference,counterpart,reason,project,expected_body",
+    [
+        ("O-1", "Proveedor X", "Proveedor X", "", "O-1 / Proveedor X"),
+        ("", "", "Proveedor X", "", "Proveedor X"),
+        (
+            "Proveedor X",
+            "Proveedor X",
+            "Proveedor X",
+            "Proveedor X",
+            "Proveedor X / Proveedor X / Proveedor X",
+        ),
+        (
+            "O-1",
+            "Proveedor X Norte",
+            "Motivo",
+            "Proyecto",
+            "O-1 / Proveedor X Norte / Motivo / Proyecto",
+        ),
+        (
+            "REF / Proveedor X / SUFIJO",
+            "Proveedor X",
+            "Motivo",
+            "",
+            "REF / Proveedor X / SUFIJO / Proveedor X / Motivo",
+        ),
+    ],
+)
+def test_only_generated_counterpart_is_removed_when_values_match(
+    reference, counterpart, reason, project, expected_body
+):
+    expense = _expense(
+        export_reference=reference,
+        nombre_emisor=counterpart,
+        concepto=reason,
+        proyecto=project,
+        poliza_party_name="Proveedor X",
+        poliza_operation_reference="",
+        poliza_context_description="",
+    )
+    before = exporter._expense_description(expense)
+    payload = exporter.generate_coi_poliza_xlsx([expense])
+    sheet = load_workbook(io.BytesIO(payload))["Poliza COI"]
+    assert sheet["C3"].value == "Beneficiario: Proveedor X / " + expected_body
+    assert sheet["D4"].value == before
+    parsed = parse_coi_workbook("synthetic.xlsx", payload)
+    assert parsed[0].beneficiario_nombre == "Proveedor X"
+    assert parsed[0].concepto_resumen == expected_body
 
 
 def test_same_operation_and_context_are_emitted_once():

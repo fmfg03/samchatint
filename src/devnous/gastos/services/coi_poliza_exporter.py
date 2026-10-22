@@ -328,8 +328,8 @@ def _coi_policy_xlsx_description(group: CoiPolicyGroup) -> str:
     """Keep compact policy context with one import-compatible metadata label.
 
     Movement concepts are independent and must never use this policy summary.
-    Only exact, whitespace-normalized components duplicate document metadata;
-    substrings and distinct supplier/beneficiary names remain untouched.
+    Deduplicate only the generated counterpart component. Equal reasons,
+    references, projects and explicit policy descriptions keep their meaning.
     """
     metadata_by_document: Dict[str, tuple[str, str, str]] = {}
     has_metadata_free_policy = False
@@ -374,7 +374,21 @@ def _coi_policy_xlsx_description(group: CoiPolicyGroup) -> str:
         for part in group.description.split(" / ")
         if part.strip()
     ]
-    parts = [part for part in parts if part != value]
+    first_expense = group.expenses[0]
+    generated_description = not (first_expense.poliza_description or "").strip()
+    counterpart = " ".join((first_expense.nombre_emisor or "").split())
+    reference = " ".join((first_expense.export_reference or "").split())
+    counterpart_index = int(bool(reference))
+    if (
+        label == "Beneficiario"
+        and generated_description
+        and " / " not in reference
+        and counterpart == value
+        and group.description == _expense_description(first_expense)
+        and counterpart_index < len(parts)
+        and parts[counterpart_index] == counterpart
+    ):
+        del parts[counterpart_index]
     for extra in (context_description, operation_reference):
         if extra and extra != value and extra not in parts:
             parts.append(extra)
