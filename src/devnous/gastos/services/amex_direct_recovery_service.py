@@ -70,6 +70,13 @@ async def _plan(
         session, actor_id, import_id, "corregir_periodo", finance=True, locked=locked
     )
     await require_unfrozen(session, import_id)
+    if (
+        await session.execute(
+            text("SELECT 1 FROM amex_direct_sign_revisions WHERE import_id=:id"),
+            {"id": import_id},
+        )
+    ).first():
+        raise DirectConflict("sign_correction_period_recovery_unsupported")
     _validate_period(period_start, period_end, statement)
     if not reason.strip() or len(reason) > 2000:
         raise DirectConflict("recovery_reason_required")

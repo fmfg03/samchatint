@@ -30,7 +30,7 @@ async def require_amex_direct_schema(
 async def inspect_amex_direct_schema(
     session: AsyncConnection | AsyncSession,
 ) -> dict[str, Any]:
-    """Verify exact owner checks, keys and trigger bodies without business reads."""
+    """Admit exact source/recovery/sign evidence owners using catalogs only."""
     from ..models import Base
     from .amex_direct_schema_contract import (
         EXPECTED_CHECKS,

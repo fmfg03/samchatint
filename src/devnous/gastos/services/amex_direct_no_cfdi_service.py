@@ -47,6 +47,10 @@ def economic_source_hash(statement: Any, item: Any, source: Any) -> str:
         source.period_start,
         source.period_end,
     ]
+    if getattr(source, "sign_revision_id", None):
+        values.extend(
+            [source.sign_revision_id, source.sign_row_id, source.sign_proof_hash]
+        )
     return hashlib.sha256(
         "|".join("" if v is None else str(v) for v in values).encode()
     ).hexdigest()

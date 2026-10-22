@@ -567,3 +567,12 @@ Sugerencias DIRECT son lecturas fiscalmente acotadas y explicables, sin descarga
 Fecha:2026-10-21. Texto exacto y especificación aprobados por el usuario mediante «aprobada». Razón: resolver cargos nuevos que no tendrán CFDI sin fabricar evidencia fiscal. Evidencia: `docs/roadmap/amex-no-cfdi-20261021-story.md` y `docs/roadmap/amex-no-cfdi-20261021-spec.md`, §10. Estado: construcción y pruebas autorizadas; validación final, publicación, migración, despliegue y aceptación financiera requieren sus propios recibos.
 
 Sin CFDI se representa mediante decisiones append-only, cabeza actual versionada y vínculo real del miembro de corte a su declaración. La cobertura new_no_cfdi comparte los owners de fuente bancaria, presupuesto, consumo, póliza y exportación; exige fuente/contexto vigentes, autoridad y motivo, presupuesto/mapping y movimientos exactos de gasto/pasivo sin identidad ni líneas fiscales inventadas. Guards y transacción impiden tratamientos simultáneos, cobertura parcial, doble reconocimiento y mutación de evidencia final; la rama new conserva íntegramente su contrato CFDI. Esquema e integridad se provisionan mediante migración owner-run y metadata-contract exacto, nunca DDL de startup ni reparación histórica implícita.
+
+
+## Corrección auditada de signos AMEX directo
+
+Date: 2026-10-22
+
+Reason: explicit human approval of the sign-correction specification and this exact amendment. Evidence: `docs/roadmap/amex-sign-correction-20261022-story.md` and `docs/roadmap/amex-sign-correction-20261022-spec.md`.
+
+Approved design, 2026-10-22: AMEX DIRECT sign-profile corrections preserve the original statement file, import receipts and physical source fields. A dedicated append-only revision may supply the effective movement type and expense anchor only for an unrecognized, unclassified statement with no incompatible fiscal, payment, budget or accounting dependencies. The operation requires the owning financial authority, exact-source preview, confirmation, idempotency, audit and atomic application. Expense anchors created under the superseded interpretation must be cancelled with traceability; corrected debits receive their own anchors through the expense owner. All matching, budget and accounting consumers must use the same effective revision. No automatic correction, trigger bypass, historical backfill or new fiscal classification is authorized. This amendment records approved design only; implementation, deployment and Finance acceptance require their own evidence.

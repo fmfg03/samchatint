@@ -15,6 +15,7 @@ from sqlalchemy import select, text
 from ..models import (
     AmexCardAccount,
     AmexDirectItem,
+    AmexDirectSignRevision,
     AmexStatementDirectState,
     AmexStatementImport,
     AmexStatementImportItem,
@@ -322,6 +323,28 @@ async def import_direct_statement(
             ),
             None,
         )
+        if same is None:
+            for candidate in existing:
+                if (
+                    candidate.workflow_mode != "direct"
+                    or candidate.card_account_id != card_account_id
+                    or candidate.employee_id != employee_id
+                    or candidate.period_start != period_start
+                    or candidate.period_end != period_end
+                    or candidate.summary_json.get("currency") != currency
+                ):
+                    continue
+                corrected = (
+                    await session.execute(
+                        select(AmexDirectSignRevision.id).where(
+                            AmexDirectSignRevision.import_id == candidate.id,
+                            AmexDirectSignRevision.profile == profile,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if corrected is not None:
+                    same = candidate
+                    break
         if same is None:
             return DirectResult("pending", "file_context_conflict")
         return DirectResult(

@@ -197,6 +197,9 @@ def _reason(code: str | None) -> str:
         "item_context_mismatch": "El movimiento no pertenece al estado o tipo esperado. Recarga la selección actual.",
         "credit_exclusion_confirmation_required": "Finanzas debe confirmar el crédito como no nuevo gasto con motivo explícito.",
         "known_credit_required": "Sólo un crédito original conocido puede excluirse como no nuevo gasto.",
+        "sign_corrected_pending_cfdi": "Signo corregido. Revisa el CFDI del cargo o declara Sin CFDI si corresponde.",
+        "sign_corrected_credit": "Abono confirmado mediante corrección auditada de signos.",
+        "sign_correction_period_recovery_unsupported": "Este estado tiene una corrección de signos. Soporte debe revisar cualquier cambio de período por separado.",
         "recognized_source_immutable": "La fuente ya fue reconocida. Su evidencia se conserva; una corrección requiere un ajuste autorizado separado.",
         "direct_cut_immutable": "El corte está congelado. Su fuente y decisiones no se modifican desde esta pantalla.",
         "original_source_missing": "Esta carga no conserva los bytes originales; no se reconstruye el archivo.",
@@ -1026,6 +1029,16 @@ async def direct_statement(
         "Todos los cargos, créditos y filas pendientes permanecen visibles.</p>"
     )
     coverage = view.progress or {}
+    if coverage.get("sign_revision_ids"):
+        profiles = ", ".join(
+            _profile_label(value) for value in coverage.get("effective_profiles", [])
+        )
+        body += (
+            "<p>Signos corregidos mediante revisión auditada. "
+            f"Perfil efectivo: {escape(profiles)}. "
+            "El archivo y el perfil originales se conservan. "
+            f"Revisión: {_text(coverage['sign_revision_ids'])}</p>"
+        )
     effective_start = coverage.get("effective_period_start") or statement.period_start
     effective_end = coverage.get("effective_period_end") or statement.period_end
     if coverage.get("recovery_revision_ids"):

@@ -1,0 +1,86 @@
+# Corrección de signos AMEX: informe de construcción
+
+Fecha: 2026-10-22. Base: `14c17c5388ca9b668dcf4c0b6339f9db48f23e11` (`origin/main` al crear el worktree). Historia, especificación y texto exacto de la enmienda al canon aprobados en conversación. Rama de trabajo: `fix/amex-sign-correction-20261022`.
+
+## Resultado implementado
+
+Operación de backend preview/confirm y comando de mantenimiento restringido al estado autorizado. Conserva archivo y fuente física; una revisión append-only interpreta las 16 filas con el perfil corregido. Los dos gastos originales se cancelan con actor/motivo y aprobación auditable; catorce cargos obtienen anclas nuevas mediante el propietario de gastos. Fuente efectiva común para pantalla, conciliación, presupuesto, hash, corte y exportación. No genera decisiones fiscales ni póliza durante la reparación.
+
+Se preserva la misma carga/URL, el CSV y los signos bancarios originales. Google +939.00 pasa a cargo; Amazon -46.53 pasa a abono. Totales esperados: 14 cargos por 8,747.10 y 2 abonos por 17,357.40 MXN. Replays con perfil original o corregido resuelven la misma importación. Si existen decisiones o efectos incompatibles, se rechaza la corrección.
+
+La migración owner-run instala dos tablas, la proyección efectiva y guardas de integridad; no hace backfill. El rollback se limita a tablas vacías, con exclusión de escrituras concurrentes antes de comprobarlas. Con revisión aplicada se requiere una recuperación hacia adelante compatible, conservando evidencia.
+
+## Archivos y responsabilidades
+
+- `database/migrations/20261022_amex_direct_sign_correction.sql` y `_rollback.sql`: esquema, vistas y guardas.
+- `src/devnous/gastos/amex_direct_models.py`, `models.py`, `amex_schema_policy.py`: registro mediante el patrón existente y exclusión del DDL de startup.
+- `services/amex_direct_sign_correction_service.py` y `scripts/correct_amex_direct_sign_profile.py`: propietario de reparación y mantenimiento.
+- `services/amex_direct_effective_source_service.py`, `amex_direct_common.py`, `amex_direct_context_service.py`, `amex_direct_accounting_service.py`, `amex_direct_matching_service.py`, `amex_direct_intake_service.py`, `amex_direct_no_cfdi_service.py`, `amex_direct_recovery_service.py`: consumidores coherentes, pruebas/hashes y rechazo de combinación con recuperación de período.
+- `services/amex_direct_schema_contract.py`, `amex_direct_schema_service.py`: admisión exacta de contrato propietario.
+- `routes/admin_amex_direct_routes.py`: perfil efectivo, aviso auditado y mensajes; ninguna ruta o acción nueva.
+- Tres archivos unitarios nuevos de servicio/CLI/consumidores; dos archivos PostgreSQL nuevos de esquema/aceptación. Se actualiza el bootstrap compartido, la prueba de rollback Sin CFDI por capas y la admisión de contrato unitario.
+- `docs/private-plugin/route-inventory.json`, `route-matrix.csv`: regeneración requerida por cambios de hash/líneas del handler, sin cambiar rutas ni autoridad.
+- Historia, especificación, este reporte, aceptación y validación en `docs/roadmap/amex-sign-correction-20261022-*`.
+- Canon de ingeniería: sólo el texto expresamente aprobado; registro con hash actualizado. Canons de Producto/Sweep sin cambios porque no se introdujo tratamiento contable ni se revisó el inventario histórico.
+
+## Pruebas y comandos
+
+Entorno pytest existente: `/root/samchat/.venv/bin/python`. Herramientas de estilo/tipos existentes: `/srv/samchat/venvs/release-598e7a286/bin/python`. Sin instalación de dependencias. `PYTHONPATH=src:.:tests/acceptance:tests/unit/gastos:/tmp/samchat-amex-source-testdeps`.
+
+Comandos focales ejecutados:
+
+```sh
+python -m pytest -q --no-cov tests/unit/gastos/test_amex*.py tests/unit/test_amex*.py tests/unit/private_plugin/test_inventory.py
+python -m pytest -q tests/integration/test_amex_direct_sign_correction_postgres.py
+python -m pytest -q tests/integration/test_amex_direct_sign_schema_postgres.py
+python -m pytest -q tests/integration/test_amex_direct_no_cfdi_schema_postgres.py
+python scripts/private_plugin/inventory.py
+python -m black --check <archivos modificados del alcance>
+python -m isort --check-only <archivos modificados del alcance>
+python -m flake8 --select=E9,F63,F7,F82 <archivos modificados del alcance>
+python -m mypy --follow-imports=silent --ignore-missing-imports <propietarios modificados>
+git diff --check
+```
+
+Los comandos PostgreSQL exigen `TEST_AMEX_DATABASE_URL` de la base desechable local `127.0.0.1:55471`, usuario `test_user`, base `devnous_test`; el fixture rechaza cualquier otro destino y usa esquemas aleatorios. Las pruebas de cobertura usan ficheros separados bajo `/tmp` para no interferirse.
+
+Resultados de construcción observados antes del cierre independiente:
+
+- 187 casos focales de consumidores/rutas/Sin CFDI: PASS.
+- 107 casos de búsqueda/sugerencias/presupuesto/consumidores: PASS; se solapan con la regresión completa, no se suman como casos únicos.
+- Regresión completa inicial: 1,072 unitarios PASS; la ejecución posterior añadió comprobaciones de inventario y cobertura final.
+- Servicio/CLI: 56 unitarios PASS, cobertura conjunta 97.93%; servicio 98.09%, CLI 97.62%.
+- Esquema PostgreSQL: 8 casos nuevos PASS antes de añadir el cierre de carrera del rollback. Regresión completa Sin CFDI: 25 PASS. Se verificó reversión vacía y reinstalación por capas.
+- Aceptación independiente: 14 casos únicos PASS en ejecuciones 11+3; ver reporte de aceptación para evidencia, tiempos y límites. Incluye póliza real balanceada en la base desechable por 8,747.10, 14 consumos, 16 miembros y exportaciones CSV/XLSX/ZIP.
+- Mypy de ocho consumidores y dos archivos de servicio/CLI: PASS. Compilación, diff y comprobaciones focales de estilo/errores: PASS.
+
+Resultados finales sobre código congelado (las cifras anteriores conservan su evidencia intermedia y solapamiento):
+
+| Comprobación | Resultado |
+| --- | --- |
+| Unitarios AMEX completos e inventario reproducible | 1,082 PASS, 104.92 s; `/tmp/amex-sign-unit-frozen-coverage-20261022.txt` |
+| Servicio/CLI (incluidos en unitarios completos) | 56 PASS, cobertura conjunta 97.93% |
+| Esquema nuevo, incluida carrera de rollback | 9 PASS, 15.09 s |
+| Regresión PostgreSQL Sin CFDI | 25 PASS, 43.06 s |
+| Aceptación independiente PostgreSQL/HTTP/póliza/export | 14 casos únicos PASS: 11 en 56.55 s y 3 adicionales en 32.88 s |
+| Cobertura combinada de instrucciones modificadas | 313/325, 96.31%; `/tmp/amex-sign-changed-coverage-20261022.json` |
+| Gate de superficie operacional de inscripción | PASS, 52 archivos revisados, cero violaciones |
+| Gate de regresiones aceptadas | PASS, 13 marcadores, cero fallos |
+| Compilación de archivos Python modificados | 24 PASS |
+| Canon/hashes e higiene de diff | PASS |
+
+La cobertura combina JSON de la ejecución unitaria final congelada, servicio/CLI y aceptación 11+3; considera las instrucciones ejecutables añadidas de todos los archivos Python cambiados, incluidos archivos nuevos no staged. El cálculo anterior de desarrollo quedó sustituido para no mezclar posiciones de líneas previas a la congelación. Las líneas no cubiertas se conservan en el JSON. SQL se verifica mediante PostgreSQL real, no mediante porcentajes Python.
+
+## Fallos detectados y atribución
+
+Se corrigieron durante construcción los fallos introducidos: lectura incorrecta de FK compuestas en detección de dependencias, comparación SQL del importe nullable del abono y uso de una clave inexistente en el snapshot de corte. El inventario reproducible falló tras modificar el handler; se regeneraron sus dos artefactos con el generador existente y sus nueve pruebas pasaron. La revisión cruzada encontró una carrera en el rollback vacío; se añadió bloqueo exclusivo antes de la comprobación y se verifica en PostgreSQL.
+
+El test histórico de reversión Sin CFDI debía revertir primero la nueva capa y reinstalarla al final: se actualizó el harness, sin debilitar las guardas. Otras aserciones de aceptación se corrigieron para comparar sumas numeric y esperar la excepción de autoridad real. El entorno pytest local no tiene herramientas de estilo; se usó el entorno de herramientas ya instalado. El entorno release usado inicialmente para pytest resolvía otro paquete `tests`; se usó el entorno fuente existente. Ninguno de estos problemas se ocultó ni requirió instalar paquetes.
+
+Persisten deudas anteriores de formato del archivo de contrato/modelos; no se reescribieron zonas ajenas. Las verificaciones focales no representan lint o mypy global limpios. Warnings heredados de SQLAlchemy/fechas y un código dinámico de fixture sin archivo para cobertura se clasifican como infraestructura/harness preexistente; no prueban UAT productiva.
+
+## Desviaciones y riesgos pendientes
+
+Sin cambio de reglas respecto a historia/spec. El registro de modelos se hace en el archivo dividido `amex_direct_models.py` y se reexporta por `models.py`; la política de exclusión DDL y los artefactos de rutas son ajustes obligatorios del patrón existente, no una arquitectura nueva.
+
+Sin commit, push, PR, merge, migración, despliegue ni corrección de datos productivos en esta fase. Antes de aplicar: revisión humana del diff final; actor financiero efectivo validado; backup/restaurabilidad y preimagen exacta; promoción coordinada del contrato SQL/release; reparación confirmada y verificación posterior. Si hubo actividad en el estado desde el diagnóstico, la preimagen caduca y la aplicación se rechaza. UAT real y aceptación de Contabilidad permanecen separadas.

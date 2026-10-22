@@ -1986,3 +1986,351 @@ EXPECTED_NO_CFDI_HELPER_HASHES = {
         "ff404f25fbe1c3c8813962cd2b9145276715f5af" "2dbbffc3ba1f14f8e3fec737"
     ),
 }
+
+# Approved sign-correction owner DDL, extracted from disposable PostgreSQL16.
+EXPECTED_CHECKS.update(
+    {
+        ("amex_direct_sign_revisions", "amex_direct_sign_revisions_check"): "CHECK "
+        "((((original_profile)::text "
+        "= ANY "
+        "((ARRAY['debit_positive'::character "
+        "varying, "
+        "'debit_negative'::character "
+        "varying])::text[])) "
+        "AND "
+        "((profile)::text "
+        "= ANY "
+        "((ARRAY['debit_positive'::character "
+        "varying, "
+        "'debit_negative'::character "
+        "varying])::text[])) "
+        "AND "
+        "((profile)::text "
+        "<> "
+        "(original_profile)::text)))",
+        (
+            "amex_direct_sign_revisions",
+            "amex_direct_sign_revisions_context_version_check",
+        ): "CHECK "
+        "((context_version "
+        "> "
+        "0))",
+        (
+            "amex_direct_sign_revisions",
+            "amex_direct_sign_revisions_expected_count_check",
+        ): "CHECK "
+        "((expected_count "
+        "> "
+        "0))",
+        (
+            "amex_direct_sign_revisions",
+            "amex_direct_sign_revisions_expected_source_version_check",
+        ): "CHECK "
+        "((expected_source_version "
+        "> "
+        "0))",
+        (
+            "amex_direct_sign_revisions",
+            "amex_direct_sign_revisions_file_sha256_check",
+        ): "CHECK "
+        "((length((file_sha256)::text) "
+        "= "
+        "64))",
+        (
+            "amex_direct_sign_revisions",
+            "amex_direct_sign_revisions_idempotency_key_check",
+        ): "CHECK "
+        "((length(TRIM(BOTH "
+        "FROM "
+        "idempotency_key)) "
+        "> "
+        "0))",
+        (
+            "amex_direct_sign_revisions",
+            "amex_direct_sign_revisions_membership_digest_check",
+        ): "CHECK "
+        "((length((membership_digest)::text) "
+        "= "
+        "64))",
+        (
+            "amex_direct_sign_revisions",
+            "amex_direct_sign_revisions_preview_hash_check",
+        ): "CHECK "
+        "((length((preview_hash)::text) "
+        "= "
+        "64))",
+        (
+            "amex_direct_sign_revisions",
+            "amex_direct_sign_revisions_reason_check",
+        ): "CHECK "
+        "(((length(TRIM(BOTH "
+        "FROM "
+        "reason)) "
+        ">= "
+        "1) "
+        "AND "
+        "(length(TRIM(BOTH "
+        "FROM "
+        "reason)) "
+        "<= "
+        "1000)))",
+        (
+            "amex_direct_sign_revisions",
+            "amex_direct_sign_revisions_request_hash_check",
+        ): "CHECK "
+        "((length((request_hash)::text) "
+        "= "
+        "64))",
+        ("amex_direct_sign_rows", "amex_direct_sign_rows_check"): "CHECK "
+        "((((movement_kind)::text "
+        "= 'debit'::text) = "
+        "(imported_expense_id "
+        "IS NOT NULL)))",
+        ("amex_direct_sign_rows", "amex_direct_sign_rows_check1"): "CHECK "
+        "((((movement_kind)::text "
+        "= 'debit'::text) "
+        "= "
+        "((raw_signed_amount "
+        "> (0)::numeric) = "
+        "((profile)::text "
+        "= "
+        "'debit_positive'::text))))",
+        ("amex_direct_sign_rows", "amex_direct_sign_rows_movement_kind_check"): "CHECK "
+        "(((movement_kind)::text "
+        "= "
+        "ANY "
+        "((ARRAY['debit'::character "
+        "varying, "
+        "'credit'::character "
+        "varying])::text[])))",
+        ("amex_direct_sign_rows", "amex_direct_sign_rows_profile_check"): "CHECK "
+        "(((profile)::text "
+        "= ANY "
+        "((ARRAY['debit_positive'::character "
+        "varying, "
+        "'debit_negative'::character "
+        "varying])::text[])))",
+        ("amex_direct_sign_rows", "amex_direct_sign_rows_proof_hash_check"): "CHECK "
+        "((length((proof_hash)::text) "
+        "= 64))",
+        (
+            "amex_direct_sign_rows",
+            "amex_direct_sign_rows_raw_signed_amount_check",
+        ): "CHECK "
+        "((raw_signed_amount "
+        "<> "
+        "(0)::numeric))",
+        ("amex_direct_sign_rows", "amex_direct_sign_rows_row_number_check"): "CHECK "
+        "((row_number "
+        "> 0))",
+    }
+)
+EXPECTED_KEYS.extend(
+    [
+        ("amex_direct_sign_revisions", "p", ("id",)),
+        ("amex_direct_sign_revisions", "u", ("import_id",)),
+        ("amex_direct_sign_revisions", "u", ("import_id", "idempotency_key")),
+        (
+            "amex_direct_sign_revisions",
+            "f",
+            ("import_id",),
+            "amex_statement_imports",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_sign_revisions",
+            "f",
+            ("source_file_id",),
+            "amex_statement_source_files",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_sign_revisions",
+            "f",
+            ("context_id",),
+            "amex_statement_direct_contexts",
+            ("id",),
+            "r",
+        ),
+        ("amex_direct_sign_revisions", "f", ("actor_id",), "empleados", ("id",), "r"),
+        ("amex_direct_sign_rows", "p", ("id",)),
+        ("amex_direct_sign_rows", "u", ("direct_item_id",)),
+        ("amex_direct_sign_rows", "u", ("import_item_id",)),
+        ("amex_direct_sign_rows", "u", ("imported_expense_id",)),
+        ("amex_direct_sign_rows", "u", ("revision_id", "row_number")),
+        (
+            "amex_direct_sign_rows",
+            "f",
+            ("revision_id",),
+            "amex_direct_sign_revisions",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_sign_rows",
+            "f",
+            ("direct_item_id",),
+            "amex_direct_items",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_sign_rows",
+            "f",
+            ("import_item_id",),
+            "amex_statement_import_items",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_sign_rows",
+            "f",
+            ("imported_expense_id",),
+            "expense_reports",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_sign_rows",
+            "f",
+            ("original_expense_id",),
+            "expense_reports",
+            ("id",),
+            "r",
+        ),
+    ]
+)
+EXPECTED_TRIGGERS.update(
+    {
+        "ad_frozen_budget_movement_assignments": (
+            "budget_movement_assignments",
+            "amex_direct_frozen_reference_guard",
+            27,
+            False,
+            False,
+        ),
+        "ad_immutable_amex_direct_sign_revisions": (
+            "amex_direct_sign_revisions",
+            "amex_direct_immutable",
+            27,
+            False,
+            False,
+        ),
+        "ad_immutable_amex_direct_sign_rows": (
+            "amex_direct_sign_rows",
+            "amex_direct_immutable",
+            27,
+            False,
+            False,
+        ),
+        "ad_sign_expense": (
+            "expense_reports",
+            "amex_direct_sign_expense_guard",
+            27,
+            False,
+            False,
+        ),
+        "ad_sign_no_recovery": (
+            "amex_direct_coverage_revisions",
+            "amex_direct_sign_recovery_guard",
+            7,
+            False,
+            False,
+        ),
+        "ad_sign_revision": (
+            "amex_direct_sign_revisions",
+            "amex_direct_sign_guard",
+            7,
+            False,
+            False,
+        ),
+        "ad_sign_row": (
+            "amex_direct_sign_rows",
+            "amex_direct_sign_guard",
+            7,
+            False,
+            False,
+        ),
+        "ad_sign_seal_revision": (
+            "amex_direct_sign_revisions",
+            "amex_direct_sign_seal",
+            5,
+            True,
+            True,
+        ),
+        "ad_sign_seal_row": (
+            "amex_direct_sign_rows",
+            "amex_direct_sign_seal",
+            5,
+            True,
+            True,
+        ),
+    }
+)
+EXPECTED_FUNCTION_HASHES.update(
+    {
+        "amex_direct_check_cut": (
+            "9fc92663f3eb3364caaee4a4588c34d431dbb75dd69456d2009f4bfb2d952f8d"
+        ),
+        "amex_direct_sign_expense_guard": (
+            "de245b2ed4908fe629e0eeb7b3f10ec372164d8830e9d59c9072dd1427df7296"
+        ),
+        "amex_direct_sign_guard": (
+            "35c386ce28e546dea5248a652073997f9f40d7e4596f05e23e443a4a56c8bad8"
+        ),
+        "amex_direct_sign_recovery_guard": (
+            "adb375c30ec71d039ae930977dd12693c7b976832905ecdd1644d21459bb0c8e"
+        ),
+        "amex_direct_sign_seal": (
+            "4f0bfd5606adc8018b1efd29cbe8aa5e9cf66f716d86651fa398a25f32ccb3d1"
+        ),
+    }
+)
+EXPECTED_NO_CFDI_HELPER_HASHES.update(
+    {
+        "amex_direct_no_cfdi_source_hash": (
+            "8baf58bbf6bb8cd9bffacba363af95eda95dce69c7e8db41dcc01fbdd86dd8c6"
+        )
+    }
+)
+EXPECTED_EFFECTIVE_VIEW_HASH = (
+    "b22ec0a39407c76f52d6041f1dbf90746f3c6393ae14355eb162c7710c0ea72a"
+)
+EXPECTED_EFFECTIVE_VIEW_DEFINITION = (
+    " SELECT d.id,\n    d.import_id,\n    d.import_item_id,\n        CAS"
+    "E\n            WHEN sr.id IS NOT NULL THEN sr.imported_expense_id"
+    "\n            ELSE COALESCE(rr.imported_expense_id, d.imported_ex"
+    "pense_id)\n        END AS imported_expense_id,\n        CASE\n     "
+    "       WHEN sr.id IS NOT NULL THEN sr.movement_kind\n            "
+    "ELSE COALESCE(rr.movement_kind, d.movement_kind)\n        END AS "
+    "movement_kind,\n        CASE\n            WHEN sr.id IS NOT NULL T"
+    "HEN sr.raw_signed_amount\n            ELSE COALESCE(rr.raw_signed"
+    "_amount, d.raw_signed_amount)\n        END AS raw_signed_amount,\n"
+    "    COALESCE(rr.raw_amount, d.raw_amount) AS raw_amount,\n    COA"
+    "LESCE(rr.amount_column, d.amount_column) AS amount_column,\n     "
+    "   CASE\n            WHEN sr.id IS NOT NULL THEN sr.profile\n     "
+    "       ELSE COALESCE(rr.profile, d.profile)\n        END AS profi"
+    "le,\n    d.profile_version,\n        CASE\n            WHEN sr.id I"
+    "S NOT NULL THEN sr.effective_source_json\n            ELSE COALES"
+    "CE(rr.effective_source_json, d.source_json)\n        END AS sourc"
+    "e_json,\n    d.context_id,\n    d.context_version,\n    d.source_ve"
+    "rsion,\n    d.source_hash,\n    d.match_status,\n    d.match_reason"
+    ",\n    d.match_proof,\n    d.cfdi_id,\n    d.status_receipt_id,\n   "
+    " d.merchant_alias_id,\n    d.declared_uuid,\n    d.issuer_rfc,\n   "
+    " d.tournament_id,\n    d.project_code,\n    d.edition_year,\n    d."
+    "budget_concept_id,\n    d.budget_line_id,\n    d.budget_version_id"
+    ",\n    d.budget_assignment_id,\n    d.budget_status,\n    d.account"
+    "ing_status,\n    d.credit_excluded,\n    d.updated_at,\n    rr.id A"
+    "S recovery_id,\n    rr.revision_id AS recovery_revision_id,\n    r"
+    "r.proof_hash AS recovery_proof_hash,\n    COALESCE(cr.period_star"
+    "t, h.period_start) AS period_start,\n    COALESCE(cr.period_end, "
+    "h.period_end) AS period_end,\n    sr.revision_id AS sign_revision"
+    "_id,\n    sr.id AS sign_row_id,\n    sr.proof_hash AS sign_proof_h"
+    "ash\n   FROM amex_direct_items d\n     JOIN amex_statement_imports"
+    " h ON h.id = d.import_id\n     LEFT JOIN amex_direct_recovered_ro"
+    "ws rr ON rr.direct_item_id = d.id\n     LEFT JOIN amex_direct_cov"
+    "erage_revisions cr ON cr.import_id = d.import_id\n     LEFT JOIN "
+    "amex_direct_sign_rows sr ON sr.direct_item_id = d.id;"
+)

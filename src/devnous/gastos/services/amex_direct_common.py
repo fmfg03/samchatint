@@ -347,6 +347,18 @@ def item_hash(item: Any, effective_source: Any = None) -> str:
             "revision_id": effective_source.recovery_revision_id,
             "proof_hash": effective_source.recovery_proof_hash,
         }
+    if effective_source is not None and getattr(
+        effective_source, "sign_revision_id", None
+    ):
+        facts["sign_correction"] = {
+            "expense_id": effective_source.imported_expense_id,
+            "movement_kind": effective_source.movement_kind,
+            "profile": effective_source.profile,
+            "source": effective_source.source_json,
+            "revision_id": effective_source.sign_revision_id,
+            "row_id": effective_source.sign_row_id,
+            "proof_hash": effective_source.sign_proof_hash,
+        }
     return digest(facts)
 
 

@@ -309,6 +309,10 @@ async def list_direct_statement(
                 movement_kind=sources[item.id].movement_kind,
                 imported_expense_id=sources[item.id].imported_expense_id,
                 source_json=sources[item.id].source_json,
+                raw_amount=sources[item.id].raw_amount,
+                raw_signed_amount=sources[item.id].raw_signed_amount,
+                profile=sources[item.id].profile,
+                sign_revision_id=getattr(sources[item.id], "sign_revision_id", None),
                 recovery_revision_id=sources[item.id].recovery_revision_id,
                 row_number=sources[item.id].source_json["row_number"],
                 fecha=(
@@ -386,6 +390,16 @@ async def list_direct_statement(
                         for v in sources.values()
                         if v.recovery_revision_id
                     }
+                ),
+                "sign_revision_ids": sorted(
+                    {
+                        str(v.sign_revision_id)
+                        for v in sources.values()
+                        if getattr(v, "sign_revision_id", None)
+                    }
+                ),
+                "effective_profiles": sorted(
+                    {v.profile for v in sources.values() if v.profile}
                 ),
             },
         )
