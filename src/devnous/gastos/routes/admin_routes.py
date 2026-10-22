@@ -7062,6 +7062,10 @@ async def admin_finance_platform(
     except Exception:
         account_rows = []
 
+    account_codes_by_id = {
+        str(account.id): account.codigo for account in account_rows
+    }
+
     def _account_options(selected_id: Any = None) -> str:
         selected = str(selected_id or "")
         options = ['<option value="">-- seleccionar --</option>']
@@ -7127,7 +7131,12 @@ async def admin_finance_platform(
                 if item.get("cfdi_report_id")
                 else (
                     'No deducible sin CFDI'
-                    if _allows_coi_without_cfdi_name(item.get("cuenta_contable_nombre"))
+                    if _allows_coi_without_cfdi_name(
+                        item.get("cuenta_contable_nombre"),
+                        account_codes_by_id.get(
+                            str(item.get("cuenta_contable_id") or "")
+                        ),
+                    )
                     else (
                         'UUID capturado; falta ligar CFDI'
                         if item.get("cfdi_uuid_manual")
@@ -9031,6 +9040,7 @@ def _finance_period_bounds(
     return period_year, period_month, start, end
 
 
+_NON_FISCAL_ACCOUNT_CODES = {"5300-016-003"}
 _NON_FISCAL_ACCOUNT_NAMES = {
     "sin requisitos fiscales",
     "no deducible",
@@ -9050,11 +9060,17 @@ def _normalize_account_name(value: Any) -> str:
 
 def _allows_coi_without_cfdi(account: Any) -> bool:
     name = _normalize_account_name(getattr(account, "nombre", None))
-    return name in _NON_FISCAL_ACCOUNT_NAMES
+    return (
+        str(getattr(account, "codigo", "") or "").strip() in _NON_FISCAL_ACCOUNT_CODES
+        or name in _NON_FISCAL_ACCOUNT_NAMES
+    )
 
 
-def _allows_coi_without_cfdi_name(name: Any) -> bool:
-    return _normalize_account_name(name) in _NON_FISCAL_ACCOUNT_NAMES
+def _allows_coi_without_cfdi_name(name: Any, code: Any = None) -> bool:
+    return (
+        str(code or "").strip() in _NON_FISCAL_ACCOUNT_CODES
+        or _normalize_account_name(name) in _NON_FISCAL_ACCOUNT_NAMES
+    )
 
 
 async def _build_finance_coi_batch_expenses(
