@@ -163,11 +163,15 @@ async def test_rollback_waits_for_confirm_and_preserves_committed_evidence(direc
     view = await acceptance.imported(pg)
     request, planned = await acceptance.preview(pg, view)
     schema = await pg.conn.fetchval("SELECT current_schema()")
+    # Reuse the fixture-validated endpoint and credentials for this second
+    # independent connection; CI requires password authentication.
+    database_url = pg.factory.kw["bind"].url
     rollback_conn = await asyncpg.connect(
-        user="test_user",
-        host="127.0.0.1",
-        port=55471,
-        database="devnous_test",
+        user=database_url.username,
+        password=database_url.password,
+        host=database_url.host,
+        port=database_url.port,
+        database=database_url.database,
         server_settings={"search_path": schema, "statement_timeout": "8000"},
     )
     rollback_task = None

@@ -97,6 +97,12 @@ async def test_migration_replay_preserves_guard_definition(direct_pg):
     # replaying old guard bodies over a newer contract is not a valid upgrade.
     await direct_pg.conn.execute(
         (
+            ROOT
+            / "database/migrations/20261022_amex_direct_sign_correction_rollback.sql"
+        ).read_text()
+    )
+    await direct_pg.conn.execute(
+        (
             ROOT / "database/migrations/20261021_amex_direct_no_cfdi_rollback.sql"
         ).read_text()
     )
@@ -130,6 +136,11 @@ async def test_migration_replay_preserves_guard_definition(direct_pg):
     )
     await direct_pg.conn.execute(
         (ROOT / "database/migrations/20261021_amex_direct_no_cfdi.sql").read_text()
+    )
+    await direct_pg.conn.execute(
+        (
+            ROOT / "database/migrations/20261022_amex_direct_sign_correction.sql"
+        ).read_text()
     )
     from devnous.gastos.services.amex_direct_schema_service import (
         inspect_amex_direct_schema,
@@ -258,6 +269,12 @@ async def test_empty_rollback_restores_old_check(direct_pg):
     # Dependency order matters: remove the empty effective-source extension
     # before dropping the original direct owner. Both rollbacks retain their
     # populated-evidence refusal and RESTRICT behavior.
+    await direct_pg.conn.execute(
+        (
+            ROOT
+            / "database/migrations/20261022_amex_direct_sign_correction_rollback.sql"
+        ).read_text()
+    )
     await direct_pg.conn.execute(
         (
             ROOT / "database/migrations/20261021_amex_direct_no_cfdi_rollback.sql"
