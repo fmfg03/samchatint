@@ -325,7 +325,12 @@ def group_coi_policies(expenses: List[ExpenseCFDI]) -> List[CoiPolicyGroup]:
 
 
 def _coi_policy_xlsx_description(group: CoiPolicyGroup) -> str:
-    """Prefix one COI policy description with its document metadata."""
+    """Keep compact policy context with one import-compatible metadata label.
+
+    Movement concepts are independent and must never use this policy summary.
+    Deduplicate only the generated counterpart component. Equal reasons,
+    references, projects and explicit policy descriptions keep their meaning.
+    """
     metadata_by_document: Dict[str, tuple[str, str, str]] = {}
     has_metadata_free_policy = False
     for index, expense in enumerate(group.expenses, start=1):
@@ -344,22 +349,50 @@ def _coi_policy_xlsx_description(group: CoiPolicyGroup) -> str:
     if not metadata_by_document:
         return group.description
     if has_metadata_free_policy or len(metadata_by_document) > 1:
-        metadata_parts = ["Múltiples documentos"]
-    else:
-        operation_reference, party_name, context_description = next(
-            iter(metadata_by_document.values())
+        return " / ".join(
+            " ".join(value.split())
+            for value in ["Múltiples documentos", group.description]
+            if value and value.strip()
         )
-        metadata_parts = [
-            f"Operaciones: {operation_reference}" if operation_reference else "",
-            f"Beneficiario: {party_name}" if party_name else "",
-            f"Contexto: {context_description}" if context_description else "",
-        ]
-    parts = [
-        " ".join(value.split())
-        for value in [*metadata_parts, group.description]
-        if value and value.strip()
+
+    operation_reference, party_name, context_description = next(
+        iter(metadata_by_document.values())
+    )
+    metadata = [
+        ("Beneficiario", party_name),
+        ("Operaciones", operation_reference),
+        ("Contexto", context_description),
     ]
-    return " / ".join(parts)
+    # The importer recognizes a leading metadata label. Without one, its legacy
+    # positional parser could mistake the expense reason for a beneficiary.
+    primary = next(((label, value) for label, value in metadata if value), None)
+    if primary is None:
+        return group.description
+    label, value = primary
+    parts = [
+        " ".join(part.split())
+        for part in group.description.split(" / ")
+        if part.strip()
+    ]
+    first_expense = group.expenses[0]
+    generated_description = not (first_expense.poliza_description or "").strip()
+    counterpart = " ".join((first_expense.nombre_emisor or "").split())
+    reference = " ".join((first_expense.export_reference or "").split())
+    counterpart_index = int(bool(reference))
+    if (
+        label == "Beneficiario"
+        and generated_description
+        and " / " not in reference
+        and counterpart == value
+        and group.description == _expense_description(first_expense)
+        and counterpart_index < len(parts)
+        and parts[counterpart_index] == counterpart
+    ):
+        del parts[counterpart_index]
+    for extra in (context_description, operation_reference):
+        if extra and extra != value and extra not in parts:
+            parts.append(extra)
+    return " / ".join([f"{label}: {value}", *parts])
 
 
 def _safe_cell_text(value: Any) -> Any:

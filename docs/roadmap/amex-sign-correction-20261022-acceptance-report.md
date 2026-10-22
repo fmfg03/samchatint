@@ -62,3 +62,24 @@ The read-only production preflight identified eighteen existing audit events: si
 Red evidence before the service fix: the real-owner scenario failed preview with `sign_incompatible_dependency` (one failed, thirteen deselected, 4.92 seconds). After the narrow event filter correction, the complete independent suite is **14 passed in 64.31 seconds**, 727 inherited deprecation warnings. The same scenario completes through Google/Amazon HTTP selection, audited cancellation/new anchors, explicit test-only fiscal/credit decisions, CP assignment, one balanced policy and all export formats. It does not merely test preview eligibility.
 
 The final command is the fourteen-case coverage command above with `COVERAGE_FILE=/tmp/amex-sign-acceptance-pending-history.coverage` and `--cov-report=json:/tmp/amex-sign-acceptance-pending-history-coverage.json`; these receipts supersede the earlier acceptance-only coverage receipts for the latest service line positions. Black, isort, Flake8 F checks on the acceptance file and `git diff --check` pass. No production operation was performed by this test.
+
+## Integration with upstream PR #498 compact COI headers
+
+The candidate incorporates upstream main commit `2c8ef2767` (PR #498), modifying the shared COI exporter and its three upstream unit test files. No AMEX direct or preserved HWC implementation source was changed by this integration. Independent verification against the combined candidate and real disposable PostgreSQL with SCRAM authentication completed **137 passed in 35.53 seconds**, 727 inherited deprecation warnings, no failures or skips.
+
+Coverage method: rerun all fourteen sign-correction PostgreSQL acceptance cases, including the real eighteen-event pending history, audited correction, Google/Amazon HTTP selection, matching/decision races, full CP/accounting cut and CSV/XLSX/ZIP export. Run the upstream compact-header regression, exporter-description, AMEX accounting-cut route, AMEX cut-export and RFC export test modules alongside them. This checks the shared exporter interaction as well as the full corrected AMEX accounting path; it does not claim new production UAT.
+
+```sh
+TEST_AMEX_DATABASE_URL=<validated disposable SCRAM URL> \
+PYTHONPATH=src:.:tests/acceptance:tests/unit/gastos:/tmp/samchat-amex-source-testdeps \
+/root/samchat/.venv/bin/python -m pytest \
+  tests/integration/test_amex_direct_sign_correction_postgres.py \
+  tests/unit/gastos/test_coi_compact_header_regression.py \
+  tests/unit/gastos/test_coi_poliza_exporter_description.py \
+  tests/unit/gastos/test_amex_accounting_cut_routes.py \
+  tests/unit/gastos/test_amex_cut_exports.py \
+  tests/unit/gastos/test_coi_poliza_exporter_rfc.py \
+  -q --no-cov --tb=short
+```
+
+Only this report addendum was written during the integration check. The exclusive test cluster on port 55471 was stopped after verification; readiness reported no response and the postmaster PID file was absent. Production and port 55434 were untouched. Final remote CI must pass against the integrated head before merge.
