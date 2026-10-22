@@ -51,3 +51,11 @@ All three canon SHA-256 values were reverified against the convergence register.
 No deviation from the approved architecture or business scope was found. No production dependency was installed, no runtime startup DDL was added, and no production business data was modified by this verification.
 
 Disposable PostgreSQL cleanup: exclusive cluster on port 55471 was stopped with `pg_ctl -m fast`; `pg_isready` returned no response and its postmaster PID file is absent. Port 55434 and production were untouched.
+
+## PR #497 CI inventory correction review
+
+After publication of candidate commit `c1034c81c`, CI found that the generated inventory recorded 476 scanned Python files while the tracked tree contained 477. The original local regeneration ran before the new sign service became tracked. This is a change-caused generated-metadata defect; the earlier local green result did not prove the post-commit inventory count.
+
+Independent read-only review of the corrective diff confirms that only `docs/private-plugin/route-inventory.json` changes `source_file_count` from 476 to 477. A parsed comparison proves every other JSON field is identical; the route matrix is unchanged. There is no route, permission, authority, source behavior, accounting decision or production change. `git diff --check` passes.
+
+Root reran `PYTHONPATH=src:.:tests/acceptance:tests/unit/gastos:/tmp/samchat-amex-source-testdeps /root/samchat/.venv/bin/python -m pytest -q --no-cov tests/unit/private_plugin/test_inventory.py --disable-warnings --tb=short`: **9 passed in 22.65 seconds**. The identified inventory defect is closed locally. Remote required CI gates must pass on the corrective commit before merge; this addendum does not claim they have already rerun. No critical, important or minor findings remain in this corrective diff.
