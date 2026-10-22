@@ -138,6 +138,35 @@ async def test_real_16_rows_atomic_cancellation_replay_http_policy_and_export(
 ):
     pg = direct_pg
     view = await imported(pg)
+    # Reproduce the real target's two non-binding reconciliation attempts.
+    # No matching aliases, invoices or fiscal decisions are fabricated here.
+    from devnous.gastos.services.amex_direct_matching_service import (
+        reconcile_direct_statement,
+    )
+
+    async with pg.factory.begin() as session:
+        reconciled = await reconcile_direct_statement(
+            session,
+            actor_id=pg.actor.id,
+            import_id=view.statement.id,
+            expected_source_version=view.source_version,
+        )
+        assert reconciled.status not in {"error"}, reconciled.reason
+    view = await owner._direct_current(pg, view.statement.id)
+    original_history = await pg.conn.fetch(
+        "SELECT id, action, payload_json::text FROM amex_direct_events ORDER BY id"
+    )
+    assert Counter(r["action"] for r in original_history) == {
+        "context_revision": 16,
+        "match_pending": 2,
+    }
+    assert view.source_version == 4
+    assert all(
+        i.cfdi_id is None
+        and i.budget_status == "unclassified"
+        and i.accounting_status == "pending"
+        for i in view.items
+    )
     original = await physical(pg)
     original_expenses = {
         i.imported_expense_id for i in view.items if i.imported_expense_id
@@ -151,6 +180,11 @@ async def test_real_16_rows_atomic_cancellation_replay_http_policy_and_export(
     replay = await confirm(pg, request, planned)
     assert replay.status == "exists", replay.reason
     assert await physical(pg) == original
+    preserved_history = await pg.conn.fetch(
+        "SELECT id, action, payload_json::text FROM amex_direct_events "
+        "WHERE action IN ('context_revision','match_pending') ORDER BY id"
+    )
+    assert preserved_history == original_history
     view = await owner._direct_current(pg, view.statement.id)
     assert Counter(i.movement_kind for i in view.items) == {"debit": 14, "credit": 2}
     debits = [i for i in view.items if i.movement_kind == "debit"]

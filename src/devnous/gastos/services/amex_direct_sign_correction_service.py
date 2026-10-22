@@ -119,8 +119,9 @@ async def _require_independent(session: Any, import_id: UUID, items: list[Any]) 
 
     Catalog names are quoted identifiers supplied by PostgreSQL, never user SQL.
     Every dependent owner fails closed except original immutable intake/context
-    rows and context-only audit events. This covers dependencies even when the
-    corresponding screen flag was not updated.
+    rows and nonbinding context/pending-match audit events. Dependencies are
+    checked even when the corresponding screen flag was not updated.
+
     """
     allowed = {
         ("amex_statement_import_items", "import_id"),
@@ -197,7 +198,7 @@ async def _require_independent(session: Any, import_id: UUID, items: list[Any]) 
                 """
               SELECT 1 FROM amex_direct_events ev
               WHERE ev.item_id=ANY(CAST(:items AS uuid[]))
-                AND ev.action!='context_revision'
+                AND ev.action NOT IN ('context_revision','match_pending')
               UNION ALL SELECT 1 FROM accounting_poliza_lines l
               WHERE l.raw_row_json->>'expense_id'=ANY(CAST(:expenses AS text[]))
                  OR l.raw_row_json->>'direct_item_id'=ANY(CAST(:item_strings AS text[]))

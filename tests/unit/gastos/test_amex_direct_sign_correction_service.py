@@ -439,7 +439,10 @@ async def test_catalog_allows_only_original_owners_and_checks_polymorphic_owners
     assert session.execute.await_count == 2
     sql = str(session.execute.call_args.args[0])
     assert "budget_movement_assignments" in sql and "accounting_poliza_lines" in sql
-    assert "aprobaciones" in sql and "ev.action!='context_revision'" in sql
+    assert (
+        "aprobaciones" in sql
+        and "ev.action NOT IN ('context_revision','match_pending')" in sql
+    )
     catalog = str(session.execute.call_args_list[0].args[0])
     assert "ta.attname='id'" in catalog and "unnest(fk.conkey, fk.confkey)" in catalog
 
@@ -451,3 +454,49 @@ async def test_polymorphic_dependency_blocks_without_fk():
         await svc._require_independent(
             session, uuid4(), [NS(id=uuid4(), imported_expense_id=uuid4())]
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action,allowed",
+    [
+        ("context_revision", True),
+        ("match_pending", True),
+        ("match_confirmed", False),
+        ("expense_account_source_selected", False),
+        ("match_release", False),
+        ("budget_release", False),
+        ("no_cfdi_revoke", False),
+        ("arbitrary_action", False),
+    ],
+)
+async def test_only_nonbinding_history_allows_sign_preview(action, allowed):
+    """Execute the actual event predicate, rather than mirroring its whitelist.
+
+    SQLite supplies standard SQL NOT IN semantics without external services.
+    The FK catalog is empty in this isolated owner-boundary case; all the
+    separate source-state/financial dependency tests remain in force.
+    """
+    import sqlite3
+
+    async def execute(query, params=None):
+        sql = str(query)
+        if "pg_constraint" in sql:
+            return Result()
+        predicate = sql.split("AND ev.action", 1)[1].split("UNION ALL", 1)[0]
+        with sqlite3.connect(":memory:") as connection:
+            hit = connection.execute(
+                "SELECT 1 WHERE :action " + predicate,
+                {"action": action},
+            ).fetchone()
+        return Result([hit] if hit else [])
+
+    session = NS(execute=AsyncMock(side_effect=execute))
+    call = svc._require_independent(
+        session, uuid4(), [NS(id=uuid4(), imported_expense_id=uuid4())]
+    )
+    if allowed:
+        await call
+    else:
+        with pytest.raises(DirectConflict, match="sign_incompatible_dependency"):
+            await call
