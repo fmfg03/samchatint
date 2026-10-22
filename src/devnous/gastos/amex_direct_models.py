@@ -312,3 +312,53 @@ class AmexDirectNoCFDIDecision(Base):
     economic_source_hash = Column(String(64), nullable=False)
     versions_json = Column(JSONB, nullable=False)
     created_at = timestamp()
+
+
+class AmexDirectSignRevision(Base):
+    """Append-only reinterpretation; original statement evidence stays intact."""
+
+    __tablename__ = "amex_direct_sign_revisions"
+    __table_args__ = (UniqueConstraint("import_id", "idempotency_key"),)
+    id = identifier()
+    import_id = reference("amex_statement_imports", unique=True)
+    source_file_id = reference("amex_statement_source_files")
+    file_sha256 = Column(String(64), nullable=False)
+    parser_version = Column(String(30), nullable=False)
+    original_profile = Column(String(30), nullable=False)
+    profile = Column(String(30), nullable=False)
+    context_id = reference("amex_statement_direct_contexts")
+    context_version = Column(Integer, nullable=False)
+    expected_source_version = Column(Integer, nullable=False)
+    expected_count = Column(Integer, nullable=False)
+    expected_item_ids = Column(JSONB, nullable=False)
+    original_counts = Column(JSONB, nullable=False)
+    effective_counts = Column(JSONB, nullable=False)
+    original_totals = Column(JSONB, nullable=False)
+    effective_totals = Column(JSONB, nullable=False)
+    actor_id = reference("empleados")
+    reason = Column(Text, nullable=False)
+    idempotency_key = Column(String(200), nullable=False)
+    request_hash = Column(String(64), nullable=False)
+    preview_hash = Column(String(64), nullable=False)
+    membership_digest = Column(String(64), nullable=False)
+    created_at = timestamp()
+
+
+class AmexDirectSignRow(Base):
+    """Exact physical membership, corrected interpretation and expense anchor."""
+
+    __tablename__ = "amex_direct_sign_rows"
+    __table_args__ = (UniqueConstraint("revision_id", "row_number"),)
+    id = identifier()
+    revision_id = reference("amex_direct_sign_revisions")
+    direct_item_id = reference("amex_direct_items", unique=True)
+    import_item_id = reference("amex_statement_import_items", unique=True)
+    row_number = Column(Integer, nullable=False)
+    movement_kind = Column(String(20), nullable=False)
+    profile = Column(String(30), nullable=False)
+    effective_source_json = Column(JSONB, nullable=False)
+    raw_signed_amount = Column(Numeric(18, 2), nullable=False)
+    imported_expense_id = reference("expense_reports", nullable=True, unique=True)
+    original_expense_id = reference("expense_reports", nullable=True)
+    proof_hash = Column(String(64), nullable=False)
+    created_at = timestamp()

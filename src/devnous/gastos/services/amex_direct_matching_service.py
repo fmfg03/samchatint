@@ -129,6 +129,15 @@ def fiscal_source_hash(
                 if source is not None and source.recovery_id
                 else {}
             ),
+            **(
+                {
+                    "sign_revision_id": str(source.sign_revision_id),
+                    "sign_row_id": str(source.sign_row_id),
+                    "sign_proof_hash": source.sign_proof_hash,
+                }
+                if source is not None and getattr(source, "sign_revision_id", None)
+                else {}
+            ),
             "context_id": str(context.id),
             "context_version": context.version,
             "expense_id": str(expense.id),
@@ -809,7 +818,10 @@ async def exclude_direct_credit(
     item = await session.get(
         AmexDirectItem, item_id, populate_existing=True, with_for_update=True
     )
-    if item is None or item.import_id != import_id or item.movement_kind != "credit":
+    if item is None or item.import_id != import_id:
+        raise DirectConflict("known_credit_required")
+    source = await effective_source_for_item(session, item)
+    if source.movement_kind != "credit":
         raise DirectConflict("known_credit_required")
     if item.credit_excluded:
         return DirectResult(

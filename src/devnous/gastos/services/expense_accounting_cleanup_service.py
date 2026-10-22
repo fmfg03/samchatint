@@ -25,6 +25,7 @@ from ..models import CFDIReport, CuentaContable, ExpenseReport
 
 DEFAULT_CLEANUP_CONTRA_CUENTA_CODIGO = "2120-000-000"
 DEFAULT_CLEANUP_CONTRA_CUENTA_NOMBRE = "ACREEDORES DIVERSOS"
+_NON_FISCAL_ACCOUNT_CODES = {"5300-016-003"}
 _NON_FISCAL_ACCOUNT_NAMES = {
     "sin requisitos fiscales",
     "no deducible",
@@ -328,7 +329,11 @@ def _allows_cleanup_without_cfdi(expense: ExpenseReport) -> bool:
     account = getattr(expense, "cuenta_contable", None)
     if account is None:
         return False
-    return _normalize_account_name(getattr(account, "nombre", None)) in _NON_FISCAL_ACCOUNT_NAMES
+    return (
+        str(getattr(account, "codigo", "") or "").strip() in _NON_FISCAL_ACCOUNT_CODES
+        or _normalize_account_name(getattr(account, "nombre", None))
+        in _NON_FISCAL_ACCOUNT_NAMES
+    )
 
 
 def resolve_default_cleanup_contra_cuenta(

@@ -28,6 +28,9 @@ class EffectiveSource:
     recovery_proof_hash: str | None
     period_start: date
     period_end: date
+    sign_revision_id: UUID | None = None
+    sign_row_id: UUID | None = None
+    sign_proof_hash: str | None = None
 
 
 # Read-only SQL relation, deliberately absent from runtime-managed Base.metadata.
@@ -45,6 +48,8 @@ _SOURCE_VIEW = Table(
             "recovery_revision_id",
             "cfdi_id",
             "context_id",
+            "sign_revision_id",
+            "sign_row_id",
         )
     ],
     Column("movement_kind", String),
@@ -56,6 +61,7 @@ _SOURCE_VIEW = Table(
     Column("recovery_proof_hash", String),
     Column("period_start", Date),
     Column("period_end", Date),
+    Column("sign_proof_hash", String),
 )
 
 

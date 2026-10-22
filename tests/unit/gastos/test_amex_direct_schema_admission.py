@@ -83,6 +83,7 @@ def catalog():
         "20261015_amex_direct_period_recovery.sql",
         "20261020_amex_expense_account_settlements.sql",
         "20261021_amex_direct_no_cfdi.sql",
+        "20261022_amex_direct_sign_correction.sql",
     ]:
         source = (ROOT / "database/migrations" / file).read_text()
         bodies.update(
@@ -113,10 +114,12 @@ async def inspect(parts, settlement_views=None):
     results = []
     helper_source = (
         ROOT / "database/migrations/20261021_amex_direct_no_cfdi.sql"
+    ).read_text() + (
+        ROOT / "database/migrations/20261022_amex_direct_sign_correction.sql"
     ).read_text()
     helpers = re.findall(
         (
-            "CREATE FUNCTION (amex_direct_no_cfdi_\\w+"
+            "CREATE (?:OR REPLACE )?FUNCTION (amex_direct_no_cfdi_\\w+"
             ")\\(item_uuid uuid\\) RETURNS (?:text|void"
             ") LANGUAGE (?:sql STABLE|plpgsql) AS \\$\\"
             "$(.*?)\\$\\$"

@@ -1050,6 +1050,14 @@ async def test_owner_migration_empty_rollback_roundtrip_and_final_evidence_refus
         ROOT
         / "database/migrations/20261020_amex_expense_account_settlements_rollback.sql"
     )
+    # The fixture installs the current owner chain. Unwind newer empty layers
+    # before replaying this historical migration, then restore them in order.
+    await pg.conn.execute(
+        (
+            ROOT
+            / "database/migrations/20261022_amex_direct_sign_correction_rollback.sql"
+        ).read_text()
+    )
     await pg.conn.execute(
         (
             ROOT / "database/migrations/20261021_amex_direct_no_cfdi_rollback.sql"
@@ -1063,6 +1071,11 @@ async def test_owner_migration_empty_rollback_roundtrip_and_final_evidence_refus
     await pg.conn.execute(forward.read_text())
     await pg.conn.execute(
         (ROOT / "database/migrations/20261021_amex_direct_no_cfdi.sql").read_text()
+    )
+    await pg.conn.execute(
+        (
+            ROOT / "database/migrations/20261022_amex_direct_sign_correction.sql"
+        ).read_text()
     )
     from devnous.gastos.services.amex_direct_schema_service import (
         inspect_amex_direct_schema,

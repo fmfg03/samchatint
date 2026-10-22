@@ -345,6 +345,10 @@ async def _prepare(
                 sources[item.id].period_end,
             ),
         }
+        if getattr(sources[item.id], "sign_revision_id", None):
+            fact["sign_revision_id"] = sources[item.id].sign_revision_id
+            fact["sign_row_id"] = sources[item.id].sign_row_id
+            fact["sign_proof_hash"] = sources[item.id].sign_proof_hash
         if item.context_id != (
             context.id if context else None
         ) or item.context_version != (context.version if context else None):
@@ -1005,6 +1009,12 @@ async def confirm_direct_accounting(
                     else None
                 ),
             }
+            if getattr(sources[item.id], "sign_revision_id", None):
+                fact.update(
+                    sign_revision_id=str(sources[item.id].sign_revision_id),
+                    sign_row_id=str(sources[item.id].sign_row_id),
+                    sign_proof_hash=sources[item.id].sign_proof_hash,
+                )
             partidas.append(fact)
             memberships.append((item, consumption, coverage, fact))
         await session.flush()

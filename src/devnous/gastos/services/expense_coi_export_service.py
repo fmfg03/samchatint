@@ -27,6 +27,7 @@ from .employee_debtor_accounting_service import (
 from .expense_accounting_cleanup_service import build_cleanup_preview
 from .expense_accounting_service import build_expense_accounting_preview
 
+_NON_FISCAL_ACCOUNT_CODES = {"5300-016-003"}
 _NON_FISCAL_ACCOUNT_NAMES = {
     "sin requisitos fiscales",
     "no deducible",
@@ -118,7 +119,10 @@ def _normalize_account_name(value: object) -> str:
 
 def allows_coi_without_cfdi(account: object) -> bool:
     name = _normalize_account_name(getattr(account, "nombre", None))
-    return name in _NON_FISCAL_ACCOUNT_NAMES
+    return (
+        str(getattr(account, "codigo", "") or "").strip() in _NON_FISCAL_ACCOUNT_CODES
+        or name in _NON_FISCAL_ACCOUNT_NAMES
+    )
 
 
 async def _resolve_informe_detail_counterpart(
@@ -436,8 +440,8 @@ async def build_expense_cfdi_for_export(
         cuenta_contable_nombre=str(getattr(cuenta_contable, "nombre", "") or ""),
         allows_missing_cfdi=allows_missing_cfdi,
         missing_cfdi_warning=(
-            "No deducible sin CFDI. Verifica que la cuenta contable sea "
-            "'Sin requisitos fiscales' o 'No deducible'."
+            "No deducible sin CFDI. Verifica que la cuenta contable esté "
+            "autorizada para gastos sin requisitos fiscales."
             if allows_missing_cfdi
             else None
         ),

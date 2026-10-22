@@ -24,7 +24,7 @@ canon edits silently.
 | --- | --- |
 | `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `0596b7e502f1d262392e112d86a97bea4b1496a62e98ab60efbf41b9a7a1569d` |
 | `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `2c55cc807c464d5462bca3e9d092fcefe6f5f2f66f4498231d72a7b57d795985` |
-| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `c44096c636ba9de5f6de5693f2f2e426dfae9bada559666a5289dba047319028` |
+| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `cd1595f7160d6b3a67c90b9bf5de47deaca382fe6065b922d95d8e3e296aac68` |
 
 | Canon amendment date | Affected sources | Reason and evidence | Evidence state |
 | --- | --- | --- | --- |
@@ -97,3 +97,7 @@ Canon unchanged for the sweep: it is the historical installation inventory;
 this work makes no new production-observation claim.
 
 2026-10-20: enmiendas exactas de producto/ingeniería revisadas y aprobadas por el usuario en conversación junto con la especificación AMEX de sugerencias/cancelación de cuenta de gastos. Hashes actualizados; sweep unchanged por ser inventario histórico sin nueva observación productiva. Implementación y pruebas aisladas autorizadas; sin publicación/migración/deploy/UAT implícitos. Evidencia: `amex-suggestions-settlement-20261020-spec.md` §10.
+
+### 2026-10-22 AMEX direct sign-correction design
+
+Engineering canon amendment explicitly approved with the technical specification in conversation. Evidence: `docs/roadmap/amex-sign-correction-20261022-spec.md`. Product and Sweep canons unchanged: no new treatment or historical inventory revision. This records approved design; implementation validation, publication, owner-run migration, data correction and Finance UAT require their own evidence.
