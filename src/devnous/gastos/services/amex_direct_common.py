@@ -417,7 +417,10 @@ async def record_event(
         state.source_version += 1
     from .amex_direct_effective_source_service import effective_source_for_item
 
-    source = await effective_source_for_item(session, item)
+    # Keep the decision/status/version and its hash in one guarded update.
+    # SQLAlchemy 2.1 also autoflushes before Core SELECTs.
+    with session.no_autoflush:
+        source = await effective_source_for_item(session, item)
     item.source_hash = item_hash(item, source)
     item.updated_at = datetime.now(timezone.utc)
     state.updated_at = item.updated_at

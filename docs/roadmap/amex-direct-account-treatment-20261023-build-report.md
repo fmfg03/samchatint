@@ -36,7 +36,7 @@ All commands ran from the isolated worktree using existing virtual environments.
 | Exact failing suggestions module on unchanged base | Same 2 failed / 14 passed | `/tmp/amex-treatment-suggestions-baseline-20261023.log` |
 | Same 16 assertions/ranking source on isolated C.utf8 database | 16 passed | `/tmp/amex-treatment-suggestions-locale-attribution-20261023.json` |
 | Generated inventory, final post-format test | 9 passed; 609 routes, 44 canonical actions, zero parse gaps | `/tmp/amex-treatment-inventory-postformat-20261023.log` |
-| Aggregate changed executable coverage (includes new CLI) | 916/1,045 = **87.66%**, passes 85%; per-file gaps disclosed | `/tmp/amex-treatment-combined-changed-coverage-20261023.json` |
+| Aggregate changed executable coverage (includes new CLI) | 917/1,047 = **87.58%** after the compatibility correction, passes 85%; per-file gaps disclosed | `/tmp/amex-treatment-combined-changed-coverage-20261023.json` |
 | Final exact-source focused coverage refresh | 277 passed | `/tmp/amex-treatment-combined-changed-coverage-20261023.md` |
 | Five new/changed backend owners, scoped mypy | Passed | Builder and coordinator evidence |
 | Workflow/runtime packaging/registration/accepted regressions/compile/diff hygiene | Passed | Existing repository check scripts and `compileall` |
@@ -56,3 +56,15 @@ An attempted combined synchronous Playwright and async HTTP invocation failed du
 Independent source/SQL/scope validation is favorable with no unresolved source finding. Its two important findings (Finance preview authority and CP selection of receivables) were corrected within approved scope and verified. Implementation specification sections 12–15 document the necessary anchored policy compatibility, physical project representation, withdrawal cleanup and consistent Finance authority; business scope did not change.
 
 No production rows have been reclassified, no real policy generated as QA and no financial links changed by these tests. Local synthetic/real-PG verification is not authenticated Finance UAT or an external COI import. Production migration/configuration/deployment and GitHub required checks need their own receipts. Configuration requires actual explicit benefit catalog selection and a real designated audit operator; no audit identity or catalog choice will be invented. Rollback refuses to remove committed policy/decision evidence; after use, preserve compatible code and forward-fix.
+
+## CI compatibility correction before publication
+
+The first PR #500 CI run passed **6,139 unit tests** (8 existing skips) and **103 browser tests**, but integration correctly blocked the merge: **628 passed, 2 failed, 6 existing skips**. These two failures were caused by this feature, not attributed to an accepted baseline. Both concerned explicit cleanup after grant withdrawal.
+
+The CI environment resolved SQLAlchemy 2.1.6, whereas the local environment used 2.0.52. SQLAlchemy 2.1 autoflushes before Core SELECTs as documented in its [official migration notes](https://docs.sqlalchemy.org/en/21/changelog/migration_21.html). `record_event` queried the effective source after changing the pointer/status/version; that intermediate autoflush split cleanup from its source hash. The strict SQL guard correctly rejected the resulting standalone hash update.
+
+The correction uses the existing `session.no_autoflush` mechanism only around that source SELECT. Hash computation and the explicit flush remain together. Source recovery/sign revisions are explicitly flushed by their owners before this point. No SQL guard, migration, catalog, permission, dependency or business rule changed. Canon unchanged for this correction: it restores the already approved atomic transition and source-proof contract.
+
+Actual PostgreSQL 15.19 with SQLAlchemy 2.1.6 reproduced both original failures (**2 failed, 13 deselected**) before the correction. Afterward **42 tests passed in 90.63s**: all 15 financial acceptance cases, 17 schema/security cases and 10 accounting cases. Arbitrary stale source/budget writes and unauthorized actions remain denied. Related unit regression after correction: **1,325 passed in 16.45s**. Scoped Black/isort/Flake8 F and diff hygiene passed; regenerated route inventory is unchanged. Logs: `/tmp/amex-treatment-ci-216-pg15-{before,after}-20261023.log` and `/tmp/amex-treatment-ci-fix-units-20261023.log`. Required GitHub checks must rerun on the corrected commit before merge; production has not been changed by the failed CI attempt.
+
+Independent backward-compatibility rerun after that correction: **15/15 passed in 92.50s** on PostgreSQL 15 with SQLAlchemy 2.0.52. Evidence: `/tmp/amex-treatment-independent-sa20-pg15-20261023.log`. This is additional local acceptance, not a claim that the failed first GitHub run passed.

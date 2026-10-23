@@ -1,14 +1,14 @@
 # Independent acceptance — AMEX account treatments
 
-Date: 2026-10-23. **PASS: 15 tests, zero failures and zero skips, 92.75 seconds.** The final run contains 468 inherited warnings. This is technical acceptance against isolated PostgreSQL; productive deployment, authenticated Finance UAT and business acceptance are separate.
+Date: 2026-10-23. **PASS: 15 tests, zero failures and zero skips, 92.50 seconds.** The final run contains 468 inherited warnings. This is technical acceptance against isolated PostgreSQL; productive deployment, authenticated Finance UAT and business acceptance are separate.
 
 The verifier read the approved story/spec, including the owner-installed policy design and physical-project compatibility addenda. The three canons were read in order and their hashes matched the current register. This verifier authored only `tests/integration/test_amex_direct_account_treatment_acceptance_postgres.py` and this report; no implementation, migration, production configuration or business record was changed by this verification.
 
 ## Environment and method
 
-Actual PostgreSQL on the separately owned disposable SCRAM cluster `127.0.0.1:55471`, database `devnous_test`, user `test_user`, a fresh `direct_acceptance_*` schema for each case. The fixture installs the complete actual owner-migration chain through account treatments. It constructs synthetic bank, CFDI, account, actor and budget identities. The external SAT transport is substituted; one authority regression additionally returns an explicit delegated action grant from permission resolution. Treatment, CP, fiscal, recognition, journal, cut and export owners remain real. The explicit fixture-owner policy installer uses the same transactional DDL boundary as the approved architecture; it does not enable runtime DML or rely on an arbitrary GUC.
+Final compatibility rerun: actual PostgreSQL 15.19 on the separately owned disposable SCRAM cluster `127.0.0.1:55471`, database `devnous_test`, user `test_user`, a fresh `direct_acceptance_*` schema for each case. The fixture installs the complete actual owner-migration chain through account treatments. It constructs synthetic bank, CFDI, account, actor and budget identities. The external SAT transport is substituted; one authority regression additionally returns an explicit delegated action grant from permission resolution. Treatment, CP, fiscal, recognition, journal, cut and export owners remain real. The explicit fixture-owner policy installer uses the same transactional DDL boundary as the approved architecture; it does not enable runtime DML or rely on an arbitrary GUC.
 
-Twenty-two source/schema/fixture/spec/test files were fingerprinted. All twenty-one financial source, SQL, fixture and acceptance files stayed identical throughout the final fifteen-case execution. Only the separately verified HTTP route file changed during that run; this report does not claim frozen-route coverage from this PostgreSQL suite. Binding receipt: `/tmp/amex-treatment-independent-15-source-verified-20261023.json`. No production credentials, live SAT requests, real-user browser session or runtime startup DDL were used.
+The final compatibility rerun fingerprints twenty-one enumerated source/schema/fixture/spec/test files; all twenty-one remained identical throughout its fifteen-case execution. Binding receipt: `/tmp/amex-treatment-independent-sa20-pg15-source-20261023.json`. The earlier fifteen-case receipt had twenty-one total entries and one concurrent route change (twenty stable); its summary count was corrected without changing any recorded hashes. No production credentials, live SAT requests, real-user browser session or runtime startup DDL were used.
 
 ## Acceptance criterion mapping
 
@@ -41,16 +41,16 @@ Final complete command:
 
 ```bash
 TEST_AMEX_DATABASE_URL=<isolated SCRAM fixture URL> \
-COVERAGE_FILE=/tmp/amex-treatment-independent-acceptance-15-20261023.coverage \
+COVERAGE_FILE=/tmp/amex-treatment-independent-sa20-pg15-20261023.coverage \
 PYTHONPATH=src:.:tests/acceptance:tests/unit/gastos:/tmp/samchat-amex-source-testdeps \
 /root/samchat/.venv/bin/python -m pytest -q \
   tests/integration/test_amex_direct_account_treatment_acceptance_postgres.py \
   --cov-config=.github/coverage-repository.ini --cov=src \
-  --cov-report=json:/tmp/amex-treatment-independent-acceptance-15-coverage-20261023.json \
+  --cov-report=json:/tmp/amex-treatment-independent-sa20-pg15-coverage-20261023.json \
   --cov-report= --cov-fail-under=0 --disable-warnings --tb=short
 ```
 
-Result: **15 passed in 92.75 s; 468 inherited warnings; no failures/skips.** Log: `/tmp/amex-treatment-independent-15-verified-20261023.log`. The raw coverage database/JSON are available for combination with unit and other PostgreSQL coverage; this acceptance-only slice is not presented as a standalone changed-code percentage gate.
+Result: **15 passed in 92.50 s; 468 inherited warnings; no failures/skips.** Final compatibility log: `/tmp/amex-treatment-independent-sa20-pg15-20261023.log`. Earlier green log retained: `/tmp/amex-treatment-independent-15-verified-20261023.log`. The raw coverage database/JSON are available for combination with unit and other PostgreSQL coverage; this acceptance-only slice is not presented as a standalone changed-code percentage gate.
 
 Scoped Black, isort and Flake8 F checks passed on the new acceptance module. The source-binding receipt and final log preserve the tested object. Broader regression, changed-code coverage, required CI, read-only implementation validation and promotion remain the parent's responsibilities.
 
@@ -79,3 +79,12 @@ The first 88.60 s full green log/source binding remain archived as `/tmp/amex-tr
 Final authority addendum verification: fifteen cases passed against frozen financial services/SQL, including new financial options, preview, confirmation and replay denial for a delegated non-Finance actor. The initial role-regression harness attempted legacy classification on an explicitly financially reviewed item after demoting its decision actor; existing SQL correctly rejected that stale financial authority. The corrected harness uses a separate genuinely legacy item with no treatment decision and preserves strict decision guards. The targeted case passed in 4.06 s before the complete 92.75 s green execution. HTTP route changes during that execution remain subject to the separately owned UI suite, not attributed to this financial acceptance.
 
 The parent identified the only concurrent route edit as CP selection eligibility: partner/unclassified/already-assigned rows are excluded from the CP subset, while fiscal/treatment selection retains all selected rows. This change does not modify financial services or SQL; its desktop/mobile HTTP/browser verification is separately owned by the parent.
+
+
+## CI compatibility regression, 2026-10-23
+
+PR #500 CI retained two genuine failures (628 cases passed): account-grant withdrawal and benefit-grant withdrawal failed during explicit Sin CFDI revocation. CI used SQLAlchemy 2.1.6; the earlier local environment used 2.0.52. In 2.1 the Core source-view query in `record_event` autoflushed the pending pointer/version transition before its source hash was calculated, followed by a hash-only UPDATE that correctly failed the stale-policy guard. This is an application compatibility defect, not a PostgreSQL/timezone assumption or a weakened acceptance requirement.
+
+The parent changed only the source lookup inside `record_event` to use `session.no_autoflush`; the explicit flush now carries the complete transition and hash together. No SQL guard, migration or contract was relaxed. The schema verifier reproduced both original failures on SQLAlchemy 2.1.6/PostgreSQL 15.19, then passed its full 42-case matrix (15 acceptance + 17 SQL guards + 10 accounting cases) after the fix in 90.63 s; that evidence is separately owned. This verifier independently reran all fifteen acceptance cases on SQLAlchemy 2.0.52/PostgreSQL 15.19: **15 passed, zero failures/skips, 92.50 s**, all twenty-one enumerated fingerprints unchanged.
+
+Current-source coverage rejects all stale line mappings for `amex_direct_common.py` and uses this final execution for its changed statements. Relative to the explicit original base `d591cc4a13987d33d2336bcf872401f3a6c7acb6`, the combined aggregate is **917 / 1,047 changed executable lines = 87.58%, PASS >=85%**. New root-level owner CLI is included; individual files below 85% remain disclosed. Receipt: `/tmp/amex-treatment-combined-changed-coverage-20261023.json`, readable per-file uncovered lines: `/tmp/amex-treatment-combined-changed-coverage-20261023.md`. This verifier changed no implementation or production data. CI itself must still pass again before promotion.
