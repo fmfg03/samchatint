@@ -1,5 +1,7 @@
 """Provisional routing semantics and preservation of financial guard owners."""
 
+import json
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -198,7 +200,8 @@ async def test_context_refresh_records_real_actor_without_approval(monkeypatch):
         session, doc, audit_actor_id=actor, audit_context={"plan_sha256": "b" * 64}
     )
     event = session.add.call_args.args[0]
-    assert event.accion == "actualizar_ruta_autorizacion"
+    assert event.accion == "editar"
+    assert json.loads(event.comentario)["action"] == "actualizar_ruta_autorizacion"
     assert event.aprobador_id == actor and event.entidad_id == doc.id
     assert "operations_reference" in event.comentario
     assert "plan_sha256" in event.comentario and "b" * 64 in event.comentario

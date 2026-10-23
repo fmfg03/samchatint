@@ -21,6 +21,41 @@ tool = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(tool)
 
 
+# Exact enum observed in the deployed owner-managed action CHECK.
+AUDIT_ENUM = [
+    "enviar",
+    "enviar_control_presupuestal",
+    "rechazar_control_presupuestal",
+    "asignar_partida_presupuestal",
+    "asignar_partida_presupuestal_linea",
+    "asignar_partidas_presupuestales",
+    "reversar_a_control_presupuestal",
+    "aprobar",
+    "rechazar",
+    "cancelar",
+    "editar",
+    "pagar",
+    "aprobar_area",
+    "rechazar_area",
+    "aprobar_final",
+    "rechazar_final",
+    "retirar",
+    "adjuntar_comprobante_no_deducible",
+    "reemplazar_comprobante_no_deducible",
+    "eliminar_comprobante_no_deducible",
+    "confirmar_cfdi_compartido",
+    "regularizar_aprobacion_reembolso",
+    "liberar_cfdi_duplicado",
+    "adjuntar_soporte",
+    "adjuntar_factura",
+]
+AUDIT_CHECK_DEFINITION = (
+    "CHECK ((accion = ANY (ARRAY["
+    + ", ".join(f"'{action}'::text" for action in AUDIT_ENUM)
+    + "])))"
+)
+
+
 @pytest.fixture
 def before():
     projects = [
@@ -31,6 +66,9 @@ def before():
         p["id"] for p in projects if p["name"] == "Gestión RRSS y Transmisiones"
     )
     return {
+        "audit_constraints": [
+            {"name": "aprobaciones_accion_check", "definition": AUDIT_CHECK_DEFINITION}
+        ],
         "employees": [
             {
                 "id": value,
@@ -194,6 +232,7 @@ def after_state(before, plan):
             "accion": tool.AUDIT_ACTION,
             "comentario": json.dumps(
                 {
+                    "action": tool.AUDIT_EVENT_TYPE,
                     "audit_context": {
                         "plan_sha256": plan["sha256"],
                         "document_context": plan["document_context"],
@@ -452,3 +491,45 @@ def test_generated_payment_expense_blocks_repair(before):
     before["document"][0]["gasto_generado_id"] = str(uuid4())
     with pytest.raises(ValueError, match="Generated payment expense"):
         tool.configuration_plan(before)
+
+
+@pytest.mark.parametrize(
+    "definition",
+    [
+        "CHECK ((accion <> 'editar'::text))",
+        "CHECK (((accion)::varchar = ANY (ARRAY['editar'::text])))",
+        "CHECK ((accion = ANY (ARRAY['enviar'::text])))",
+        "CHECK ((accion = ANY (ARRAY['editar'::text])) AND false)",
+    ],
+)
+def test_preflight_rejects_unsupported_or_nonpositive_audit_checks(definition):
+    with pytest.raises(ValueError, match="CHECK"):
+        tool.validate_audit_action_constraint(
+            [{"name": "aprobaciones_accion_check", "definition": definition}]
+        )
+
+
+def test_preflight_requires_existing_owner_check():
+    with pytest.raises(ValueError, match="CHECK"):
+        tool.validate_audit_action_constraint([])
+
+
+@pytest.mark.parametrize("action", [None, "editar", "aprobar"])
+async def test_untyped_or_wrongly_typed_edit_is_not_route_audit(before, plan, action):
+    after = after_state(before, plan)
+    payload = json.loads(after["approvals"][-1]["comentario"])
+    payload["action"] = action
+    after["approvals"][-1]["comentario"] = json.dumps(payload)
+    with pytest.raises(ValueError, match="Audit is not bound"):
+        tool.verify_after(before, after, plan)
+
+
+def test_preflight_rejects_additional_action_constraint(before):
+    constraints = before["audit_constraints"] + [
+        {
+            "name": "other_action_check",
+            "definition": "CHECK ((accion <> 'editar'::text))",
+        }
+    ]
+    with pytest.raises(ValueError, match="Additional audit action CHECK"):
+        tool.validate_audit_action_constraint(constraints)

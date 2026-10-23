@@ -42,8 +42,8 @@ isolated_postgres_url = native.isolated_postgres_url
 tool = unit.tool
 
 
-@pytest_asyncio.fixture
-async def pg_tool(isolated_postgres_url, before, monkeypatch, tmp_path):
+@pytest_asyncio.fixture(params=["text", "varchar(50)"])
+async def pg_tool(isolated_postgres_url, before, monkeypatch, tmp_path, request):
     schema = "policy_tool_" + uuid4().hex
     admin = create_async_engine(isolated_postgres_url, hide_parameters=True)
     async with admin.begin() as connection:
@@ -68,11 +68,23 @@ async def pg_tool(isolated_postgres_url, before, monkeypatch, tmp_path):
         "CREATE TABLE documento_authorization_routes(documento_id uuid PRIMARY KEY,eligible_position_keys jsonb,eligible_empleado_ids jsonb,requires_operations_reference boolean,source varchar(100),resolved_at timestamptz DEFAULT now())",
         "CREATE TABLE anticipos(id uuid PRIMARY KEY,documento_id uuid,estado text)",
         "CREATE TABLE reembolsos(id uuid PRIMARY KEY,documento_id uuid,cuenta_gastos_id uuid,estado text,tipo text)",
-        "CREATE TABLE aprobaciones(id uuid PRIMARY KEY,tipo_entidad text DEFAULT 'documento',entidad_id uuid,aprobador_id uuid REFERENCES empleados,accion text,comentario text,fecha timestamptz DEFAULT now())",
+        f"CREATE TABLE aprobaciones(id uuid PRIMARY KEY,tipo_entidad varchar(50) DEFAULT 'documento',entidad_id uuid,aprobador_id uuid REFERENCES empleados,accion {request.param},comentario text,fecha timestamptz DEFAULT now())",
     ]
     async with engine.begin() as connection:
         for sql in definitions:
             await connection.execute(text(sql))
+        await connection.execute(
+            text(
+                "ALTER TABLE aprobaciones ADD CONSTRAINT aprobaciones_accion_check "
+                + unit.AUDIT_CHECK_DEFINITION
+            )
+        )
+        await connection.execute(
+            text(
+                "ALTER TABLE aprobaciones ADD CONSTRAINT aprobaciones_tipo_entidad_check "
+                "CHECK (tipo_entidad = ANY (ARRAY['documento'::text, 'gasto'::text, 'beneficiary_onboarding'::text, 'budget_cfdi_income_link'::text]))"
+            )
+        )
         table_names = {
             "employees": "empleados",
             "projects": "tournaments",
@@ -138,7 +150,9 @@ async def pg_tool(isolated_postgres_url, before, monkeypatch, tmp_path):
         output_dir=tmp_path / "evidence",
     )
     try:
-        yield SimpleNamespace(engine=engine, args=args, statements=statements)
+        yield SimpleNamespace(
+            engine=engine, args=args, statements=statements, action_type=request.param
+        )
     finally:
         await engine.dispose()
         async with admin.begin() as connection:
@@ -166,6 +180,12 @@ async def preview(pg):
 async def test_real_cli_atomic_apply_committed_readback_and_single_audit(pg_tool):
     pg = pg_tool
     state = await preview(pg)
+    action_check = next(
+        row["definition"]
+        for row in state["audit_constraints"]
+        if row["name"] == "aprobaciones_accion_check"
+    )
+    assert ("(accion)::text" in action_check) is (pg.action_type == "varchar(50)")
     receipt = await tool.run(pg.args)
     assert receipt["status"] == "COMMITTED_VERIFIED"
     assert (
@@ -188,8 +208,10 @@ async def test_real_cli_atomic_apply_committed_readback_and_single_audit(pg_tool
     assert selected["source"].startswith("p20261023:project:")
     added = [r for r in committed["approvals"] if r["accion"] == tool.AUDIT_ACTION]
     assert len(added) == 1
+    assert added[0]["accion"] == "editar"
     assert added[0]["aprobador_id"] == tool.ACTOR_ID
     payload = json.loads(added[0]["comentario"])
+    assert payload["action"] == "actualizar_ruta_autorizacion"
     assert payload["audit_context"]["plan_sha256"] == receipt["plan_sha256"]
     assert json.loads((pg.args.output_dir / "receipt.json").read_text()) == receipt
     assert json.loads((pg.args.output_dir / "after.json").read_text()) == committed
@@ -316,3 +338,31 @@ async def test_apply_locks_selected_project_identity_until_commit(
     assert any(
         "FROM tournaments" in sql and "FOR SHARE" in sql for sql in pg.statements
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["missing", "unsupported"])
+async def test_schema_preflight_blocks_before_preview_or_apply_mutations(pg_tool, mode):
+    pg = pg_tool
+    await preview(pg)
+    async with pg.engine.begin() as connection:
+        await connection.execute(
+            text("ALTER TABLE aprobaciones DROP CONSTRAINT aprobaciones_accion_check")
+        )
+        if mode == "unsupported":
+            await connection.execute(
+                text(
+                    "ALTER TABLE aprobaciones ADD CONSTRAINT aprobaciones_accion_check CHECK (accion = ANY (ARRAY['enviar'::text]))"
+                )
+            )
+    state = await read_state(pg)
+    pg.statements.clear()
+    for apply in (False, True):
+        pg.args.apply = apply
+        with pytest.raises(ValueError, match="CHECK"):
+            await tool.run(pg.args)
+        assert await read_state(pg) == state
+    assert not any(
+        sql.lstrip().lower().startswith(("insert", "update")) for sql in pg.statements
+    )
+    assert not (pg.args.output_dir / "receipt.json").exists()
