@@ -57,7 +57,8 @@ def _cut_expense_cfdis(
             + str(decision["reason"])
             + " · Decisión "
             + str(decision["id"])
-            if decision and item.get("coverage_kind") == "new_no_cfdi"
+            if decision
+            and item.get("coverage_kind") in {"new_no_cfdi", "partner_receivable"}
             else ""
         )
         movements = [

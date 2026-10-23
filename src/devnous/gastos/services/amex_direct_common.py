@@ -118,6 +118,35 @@ def configured_scopes() -> list[dict[str, Any]]:
         return []
 
 
+ACCOUNT_TREATMENT_GRANT_KEYS = frozenset(
+    {
+        "benefit_budget_line_ids",
+        "benefit_budget_pairs",
+        "partner_debtor_account_ids",
+    }
+)
+
+
+def base_context_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Only additive treatment grants are independent from the fiscal context."""
+    result = {k: v for k, v in config.items() if k not in ACCOUNT_TREATMENT_GRANT_KEYS}
+    if isinstance(config.get("actor_scopes"), list):
+        result["actor_scopes"] = [
+            (
+                {k: v for k, v in row.items() if k not in ACCOUNT_TREATMENT_GRANT_KEYS}
+                if isinstance(row, dict)
+                else row
+            )
+            for row in config["actor_scopes"]
+        ]
+    return result
+
+
+def context_config_matches(recorded_hash: str, config: dict[str, Any]) -> bool:
+    """Structural candidate only; load_statement also requires a trusted policy."""
+    return recorded_hash in {digest(config), digest(base_context_config(config))}
+
+
 def configuration_for(
     card_id: UUID, company_code: str | None = None, receiver_rfc: str | None = None
 ) -> dict[str, Any] | None:
@@ -260,7 +289,16 @@ async def load_statement(
     await authorize(
         session, actor_id, action, config=config, finance=finance, budget=budget
     )
-    if context and not correcting and context.config_hash != digest(config):
+    mismatch = context is not None and context.config_hash != digest(config)
+    if mismatch and not correcting:
+        from .amex_direct_account_treatment_service import policy_for_config
+
+        try:
+            await policy_for_config(session, config, context)
+            mismatch = False
+        except DirectConflict:
+            pass
+    if context and not correcting and mismatch:
         cut = (
             await session.execute(
                 select(AmexDirectAccountingCut.id).where(
@@ -336,6 +374,8 @@ def item_hash(item: Any, effective_source: Any = None) -> str:
             "credit_excluded",
         )
     }
+    if getattr(item, "account_treatment_decision_id", None) is not None:
+        facts["account_treatment_decision_id"] = item.account_treatment_decision_id
     if getattr(item, "no_cfdi_decision_id", None) is not None:
         facts["no_cfdi_decision_id"] = item.no_cfdi_decision_id
     if effective_source is not None and effective_source.recovery_id:
@@ -468,6 +508,37 @@ async def load_budget_items(
         config.get("project_codes", [])
     )
     years = set(scope.get("edition_years", [])) & set(config.get("edition_years", []))
+    project_predicate = and_(
+        AmexDirectItem.edition_year.in_(years),
+        or_(
+            AmexDirectItem.tournament_id.in_([UUID(v) for v in tournaments]),
+            and_(
+                AmexDirectItem.tournament_id.is_(None),
+                AmexDirectItem.project_code.in_(projects),
+            ),
+        ),
+    )
+    from .amex_direct_account_treatment_service import benefit_grants
+
+    try:
+        benefit_grants(config, actor_id)
+        benefit_available = str(actor_id) in config.get("budget_actor_ids", [])
+    except DirectAccessError:
+        benefit_available = False
+    benefit_cleanup_available = str(actor_id) in config.get("budget_actor_ids", [])
+    predicate = project_predicate
+    if benefit_available or benefit_cleanup_available:
+        from ..models import AmexDirectAccountTreatmentDecision
+
+        predicate = or_(
+            project_predicate,
+            AmexDirectItem.account_treatment_decision_id.in_(
+                select(AmexDirectAccountTreatmentDecision.id).where(
+                    AmexDirectAccountTreatmentDecision.action == "set",
+                    AmexDirectAccountTreatmentDecision.treatment == "benefit_expense",
+                )
+            ),
+        )
     query = (
         select(AmexDirectItem)
         .join(
@@ -477,15 +548,37 @@ async def load_budget_items(
         .where(
             AmexDirectItem.import_id == import_id,
             AmexDirectItem.context_id == AmexStatementDirectState.context_id,
-            AmexDirectItem.edition_year.in_(years),
-            or_(
-                AmexDirectItem.tournament_id.in_([UUID(v) for v in tournaments]),
-                and_(
-                    AmexDirectItem.tournament_id.is_(None),
-                    AmexDirectItem.project_code.in_(projects),
-                ),
-            ),
+            predicate,
         )
         .order_by(AmexDirectItem.import_item_id)
     )
-    return list((await session.execute(query)).scalars().all())
+    rows = list((await session.execute(query)).scalars().all())
+    if not (benefit_available or benefit_cleanup_available):
+        return rows
+    # Filter only metadata before the caller loads fiscal content.
+    from .amex_direct_budget_service import _item_budget_scope, _line
+
+    allowed = []
+    for item in rows:
+        if getattr(item, "account_treatment_decision_id", None):
+            try:
+                await _item_budget_scope(
+                    session,
+                    config,
+                    actor_id,
+                    item,
+                    line=(
+                        await _line(session, item.budget_line_id)
+                        if item.budget_line_id
+                        else None
+                    ),
+                    budget_actor=True,
+                    cleanup=(
+                        benefit_cleanup_available
+                        and item.budget_status in {"sent", "assigned"}
+                    ),
+                )
+            except (DirectAccessError, DirectConflict):
+                continue
+        allowed.append(item)
+    return allowed

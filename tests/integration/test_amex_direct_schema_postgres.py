@@ -95,6 +95,13 @@ async def test_migration_replay_preserves_guard_definition(direct_pg):
     # The shared fixture installs the complete current chain. Unwind only the
     # empty later migration before testing the older migration's own replay;
     # replaying old guard bodies over a newer contract is not a valid upgrade.
+    # Unwind the newer empty account-policy layer before this historical owner.
+    await direct_pg.conn.execute(
+        (
+            ROOT
+            / "database/migrations/20261023_amex_direct_account_treatments_rollback.sql"
+        ).read_text()
+    )
     await direct_pg.conn.execute(
         (
             ROOT
@@ -140,6 +147,11 @@ async def test_migration_replay_preserves_guard_definition(direct_pg):
     await direct_pg.conn.execute(
         (
             ROOT / "database/migrations/20261022_amex_direct_sign_correction.sql"
+        ).read_text()
+    )
+    await direct_pg.conn.execute(
+        (
+            ROOT / "database/migrations/20261023_amex_direct_account_treatments.sql"
         ).read_text()
     )
     from devnous.gastos.services.amex_direct_schema_service import (
@@ -269,6 +281,13 @@ async def test_empty_rollback_restores_old_check(direct_pg):
     # Dependency order matters: remove the empty effective-source extension
     # before dropping the original direct owner. Both rollbacks retain their
     # populated-evidence refusal and RESTRICT behavior.
+    # Unwind the newer empty account-policy layer before this historical owner.
+    await direct_pg.conn.execute(
+        (
+            ROOT
+            / "database/migrations/20261023_amex_direct_account_treatments_rollback.sql"
+        ).read_text()
+    )
     await direct_pg.conn.execute(
         (
             ROOT

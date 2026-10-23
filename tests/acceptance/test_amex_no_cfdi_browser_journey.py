@@ -157,6 +157,7 @@ async def test_bulk_no_cfdi_revoke_redeclare_classify_budget_cut_and_export(dire
                 ).count()
                 == 2
             )
+            await page.locator("#direct-project-classification > summary").click()
             await classification.locator("#direct-project").select_option(
                 f"t:{pg.tournament.id}"
             )

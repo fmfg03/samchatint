@@ -1044,6 +1044,13 @@ async def test_prior_invalid_membership_and_competing_cut_rejected(
 async def test_owner_migration_empty_rollback_roundtrip_and_final_evidence_refusal(
     direct_pg,
 ):
+    # Unwind the newer empty account-policy layer before this historical owner.
+    await direct_pg.conn.execute(
+        (
+            ROOT
+            / "database/migrations/20261023_amex_direct_account_treatments_rollback.sql"
+        ).read_text()
+    )
     pg = direct_pg
     forward = ROOT / "database/migrations/20261020_amex_expense_account_settlements.sql"
     rollback = (
@@ -1075,6 +1082,11 @@ async def test_owner_migration_empty_rollback_roundtrip_and_final_evidence_refus
     await pg.conn.execute(
         (
             ROOT / "database/migrations/20261022_amex_direct_sign_correction.sql"
+        ).read_text()
+    )
+    await direct_pg.conn.execute(
+        (
+            ROOT / "database/migrations/20261023_amex_direct_account_treatments.sql"
         ).read_text()
     )
     from devnous.gastos.services.amex_direct_schema_service import (

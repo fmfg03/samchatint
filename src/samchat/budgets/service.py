@@ -7495,6 +7495,8 @@ async def assign_budget_movement_to_line(
             budget_concept_id=_safe_str(budget_concept_id),
             version_status=target["version_status"],
             actor_empleado_id=actor_empleado_id,
+            budget_line_id=_safe_str(budget_line_id),
+            budget_version_id=_safe_str(budget_version_id),
         )
         if not permitted_version or budget_movement_key(movement) != clean_key:
             raise ValueError("Fuente AMEX o versión presupuestal no autorizada.")
@@ -7541,7 +7543,8 @@ async def assign_budget_movement_to_line(
             "El movimiento no corresponde a esta partida; recarga el detalle."
         )
     await session.execute(
-        text("""
+        text(
+            """
             INSERT INTO budget_movement_assignments (
                 id, budget_version_id, budget_concept_id, budget_line_id,
                 movement_key, assigned_by_empleado_id, created_at, updated_at
@@ -7554,7 +7557,8 @@ async def assign_budget_movement_to_line(
                 budget_line_id = EXCLUDED.budget_line_id,
                 assigned_by_empleado_id = EXCLUDED.assigned_by_empleado_id,
                 updated_at = NOW()
-            """),
+            """
+        ),
         {
             "id": str(uuid.uuid4()),
             "budget_version_id": _safe_str(budget_version_id),
@@ -8123,6 +8127,8 @@ async def _append_direct_budget_movements(
     }
     for original in rows:
         row = dict(original)
+        if row.get("account_treatment_kind") == "partner_receivable":
+            continue
         expense_id = _safe_str(row.get("expense_id"))
         if not expense_id or expense_id in seen_expenses:
             continue
@@ -8198,6 +8204,13 @@ async def _scope_direct_ledger_to_budget_version(
         assignments = {row["assignment_id"]: row for row in result.mappings().all()}
     scoped = []
     for row in ledger_rows:
+        if row.get("origen") == "amex_direct" and (
+            ((row.get("source_metadata") or {}).get("account_treatment") or {}).get(
+                "treatment"
+            )
+            == "partner_receivable"
+        ):
+            continue
         if row.get("origen") != "amex_direct":
             scoped.append(row)
             continue
