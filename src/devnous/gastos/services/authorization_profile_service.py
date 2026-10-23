@@ -563,6 +563,24 @@ async def build_authorization_route_hard_block(
     if not authorization_strategy_enforcement_enabled():
         return None
 
+    # The approved provisional project/person authority supersedes the legacy
+    # advisory identity matrix, never economic, expense or workflow guards.
+    from .project_authorization_service import (
+        actor_is_route_approver,
+        provisional_policy_is_active,
+    )
+
+    if (
+        str(getattr(documento, "tipo", "")) in {"SOLICITUD", "INFORME"}
+        and await provisional_policy_is_active(session)
+        and await actor_is_route_approver(
+            session,
+            actor_id=getattr(actor, "id", None),
+            documento_id=getattr(documento, "id", None),
+        )
+    ):
+        return None
+
     evidence = await build_document_authorization_evidence(session, documento)
     required_roles = [
         str(role) for role in (evidence.get("required_role_keys") or []) if role
@@ -622,12 +640,17 @@ async def build_authorization_route_soft_warning(
     approvers = []
     for row in result.fetchall():
         mapping = row._mapping
-        if _authorization_profile_text_key(mapping.get("accion")) not in approval_actions:
+        if (
+            _authorization_profile_text_key(mapping.get("accion"))
+            not in approval_actions
+        ):
             continue
         approvers.append(
             {
                 "accion": mapping.get("accion"),
-                "fecha": mapping.get("fecha").isoformat() if mapping.get("fecha") else None,
+                "fecha": (
+                    mapping.get("fecha").isoformat() if mapping.get("fecha") else None
+                ),
                 "nombre": mapping.get("nombre"),
                 "rol": mapping.get("rol"),
                 "departamento": mapping.get("departamento"),

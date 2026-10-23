@@ -1067,6 +1067,9 @@ def test_bulk_pending_approval_endpoint_uses_canonical_workflow_gate():
 
 @pytest.mark.asyncio
 async def test_pending_approval_page_renders_rejection_forms(monkeypatch) -> None:
+    monkeypatch.setattr(
+        user_routes, "provisional_policy_is_active", AsyncMock(return_value=False)
+    )
     documento = SimpleNamespace(
         id="f4f97ca4-8e9b-4d4b-b8a2-80e6f4540d1f",
         referencia_operaciones=None,

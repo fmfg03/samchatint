@@ -39,6 +39,9 @@ async def test_web_observer_rows_have_no_decision_or_bulk_selection(
     monkeypatch, role, allowed, mixed
 ):
     """Observer rows remain selectable only when canonical authority permits it."""
+    monkeypatch.setattr(
+        user_routes, "provisional_policy_is_active", AsyncMock(return_value=False)
+    )
     operations = SimpleNamespace(
         id=uuid4(), referencia_operaciones="299", monto_total=10,
         monto_solicitado=10, enviado_en=None, creado_en=None,

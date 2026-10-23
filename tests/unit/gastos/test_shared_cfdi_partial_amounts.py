@@ -324,7 +324,8 @@ async def test_manual_shared_cfdi_validates_remaining_balance_before_creation(mo
     async def fake_reference(*_args):
         return "S-TEST"
 
-    async def fake_operations_reference(*_args):
+    async def fake_operations_reference(*_args, torneo_id):
+        assert torneo_id == payload.torneo_id
         return "1"
 
     async def fake_find_report(*_args):
@@ -443,7 +444,8 @@ async def test_manual_duplicate_cfdi_requires_explicit_confirmation(monkeypatch)
     async def fake_reference(*_args):
         return "S-TEST"
 
-    async def fake_operations_reference(*_args):
+    async def fake_operations_reference(*_args, torneo_id):
+        assert torneo_id == payload.torneo_id
         return "1"
 
     async def fake_find_report(*_args):

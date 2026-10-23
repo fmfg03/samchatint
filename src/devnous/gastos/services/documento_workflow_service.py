@@ -50,6 +50,7 @@ from .project_authorization_service import (
     invalidate_document_route,
     prepare_document_authorization_route,
     has_operations_reference,
+    provisional_policy_is_active,
 )
 
 logger = logging.getLogger(__name__)
@@ -221,9 +222,8 @@ async def _sync_reimbursement_budget_or_raise(
     session: AsyncSession, documento: Documento
 ) -> None:
     """Prevent reimbursement approval routing before informe budget assignment."""
-    if (
-        not is_employee_reimbursement_solicitud(documento)
-        or getattr(documento, "budget_concept_id", None)
+    if not is_employee_reimbursement_solicitud(documento) or getattr(
+        documento, "budget_concept_id", None
     ):
         return
 
@@ -305,7 +305,9 @@ async def approve_reimbursement_solicitud_for_approved_informe(
     aprobador_id = await _linked_informe_approval_actor_id(session, documento)
     if aprobador_id is None:
         return None
-    await prepare_document_authorization_route(session, documento)
+    await prepare_document_authorization_route(
+        session, documento, audit_actor_id=aprobador_id
+    )
     if has_operations_reference(documento) and not await actor_is_route_approver(
         session, actor_id=aprobador_id, documento_id=documento.id
     ):
@@ -379,9 +381,7 @@ async def promote_solicitudes_ready_for_payment(
             Documento.tipo == "SOLICITUD",
             Documento.estado.in_(["borrador", "control_presupuestal", "enviado"]),
             Documento.cuenta_gastos_id.isnot(None),
-            Documento.concepto_pago.like(
-                f"{EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX}%"
-            ),
+            Documento.concepto_pago.like(f"{EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX}%"),
         )
     )
     solicitudes = result.scalars().all()
@@ -445,8 +445,21 @@ async def _count_active_document_expenses(
     return int(result.scalar_one() or 0)
 
 
-FINANCIAL_TERMINAL_DOCUMENT_STATES = {"pagado", "cerrado", "reembolsado", "aplicado", "liquidado"}
-NON_TERMINAL_SETTLEMENT_STATES = {"cancelado", "cancelada", "rechazado", "rechazada", "anulado", "anulada"}
+FINANCIAL_TERMINAL_DOCUMENT_STATES = {
+    "pagado",
+    "cerrado",
+    "reembolsado",
+    "aplicado",
+    "liquidado",
+}
+NON_TERMINAL_SETTLEMENT_STATES = {
+    "cancelado",
+    "cancelada",
+    "rechazado",
+    "rechazada",
+    "anulado",
+    "anulada",
+}
 
 
 def _normalized_state(value: object) -> str:
@@ -485,7 +498,9 @@ async def documento_financial_terminal_reason(
 
     reembolso_filters = [Reembolso.documento_id == documento.id]
     if getattr(documento, "cuenta_gastos_id", None):
-        reembolso_filters.append(Reembolso.cuenta_gastos_id == documento.cuenta_gastos_id)
+        reembolso_filters.append(
+            Reembolso.cuenta_gastos_id == documento.cuenta_gastos_id
+        )
     settlement_filters = []
     if documento.tipo == "INFORME" and estado in PREAPPROVAL_INFORME_STATES:
         # Returning an advance does not approve its expenses. The INFORME must
@@ -751,7 +766,9 @@ async def transition_documento_workflow(
             )
         if not has_operations_reference(documento):
             await invalidate_document_route(session, documento.id)
-        await prepare_document_authorization_route(session, documento)
+        await prepare_document_authorization_route(
+            session, documento, audit_actor_id=actor.id
+        )
         if documento_requires_budget_control(documento):
             documento.estado = BUDGET_CONTROL_STATE
             documento.enviado_en = None
@@ -803,7 +820,9 @@ async def transition_documento_workflow(
             await session.execute(
                 text(
                     "SELECT 1 FROM documento_authorization_routes "
-                    "WHERE documento_id = :documento_id"
+                    "WHERE documento_id = :documento_id UNION ALL "
+                    "SELECT 1 FROM authorization_positions WHERE position_key = "
+                    "'aprobaciones_escalan_gn' AND active=TRUE LIMIT 1"
                 ),
                 {"documento_id": str(documento.id)},
             )
@@ -814,6 +833,7 @@ async def transition_documento_workflow(
             ) and (
                 has_operations_reference(documento)
                 or actor.rol not in {"superadmin", "super_admin"}
+                or await provisional_policy_is_active(session)
             ):
                 raise DocumentoWorkflowValidationError(
                     "not_route_approver",
@@ -865,7 +885,10 @@ async def transition_documento_workflow(
         if authorization_route_block is not None:
             raise DocumentoWorkflowValidationError(
                 "authorization_strategy_required",
-                str(authorization_route_block.get("message") or "Ruta de autorización inválida."),
+                str(
+                    authorization_route_block.get("message")
+                    or "Ruta de autorización inválida."
+                ),
             )
         if getattr(documento, "informe_origen_id", None):
             final_lot_total = (
@@ -935,23 +958,23 @@ async def transition_documento_workflow(
             await _document_has_recorded_approval(session, documento_uuid)
         )
         route_exists = (
-            (
-                await session.execute(
-                    text(
-                        "SELECT 1 FROM documento_authorization_routes "
-                        "WHERE documento_id = :documento_id"
-                    ),
-                    {"documento_id": str(documento.id)},
-                )
-            ).scalar_one_or_none()
-            is not None
-        )
+            await session.execute(
+                text(
+                    "SELECT 1 FROM documento_authorization_routes "
+                    "WHERE documento_id = :documento_id UNION ALL "
+                    "SELECT 1 FROM authorization_positions WHERE position_key = "
+                    "'aprobaciones_escalan_gn' AND active=TRUE LIMIT 1"
+                ),
+                {"documento_id": str(documento.id)},
+            )
+        ).scalar_one_or_none() is not None
         if route_exists or has_operations_reference(documento):
             if not await actor_is_route_approver(
                 session, actor_id=actor.id, documento_id=documento.id
             ) and (
                 has_operations_reference(documento)
                 or actor.rol not in {"superadmin", "super_admin"}
+                or await provisional_policy_is_active(session)
             ):
                 raise DocumentoWorkflowValidationError(
                     "not_route_approver",
@@ -1118,7 +1141,9 @@ async def transition_documento_workflow(
 
     try:
         if normalized_action == "send" and documento.estado == BUDGET_CONTROL_STATE:
-            from .documento_telegram import schedule_budget_control_telegram_notifications
+            from .documento_telegram import (
+                schedule_budget_control_telegram_notifications,
+            )
 
             schedule_budget_control_telegram_notifications(
                 documento_id=str(documento_uuid),
