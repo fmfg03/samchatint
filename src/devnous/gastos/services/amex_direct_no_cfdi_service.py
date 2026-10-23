@@ -23,6 +23,7 @@ from .amex_direct_common import (
 from .amex_direct_effective_source_service import load_effective_sources
 
 TREATMENT = "full_amount_expense_no_tax"
+PARTNER_TREATMENT = "full_amount_partner_receivable_no_tax"
 
 
 def economic_source_hash(statement: Any, item: Any, source: Any) -> str:
@@ -182,13 +183,20 @@ def _validate_source(
 
 
 def validate_decision(
-    statement: Any, context: Any, item: Any, source: Any, expense: Any, decision: Any
+    statement: Any,
+    context: Any,
+    item: Any,
+    source: Any,
+    expense: Any,
+    decision: Any,
+    *,
+    expected_treatment: str | None = None,
 ) -> dict[str, Any]:
     _validate_source(statement, context, item, source, expense)
     if (
         not decision
         or decision.action != "declare"
-        or decision.treatment != TREATMENT
+        or decision.treatment != (expected_treatment or TREATMENT)
         or decision.id != item.no_cfdi_decision_id
         or decision.item_id != item.id
         or decision.import_id != statement.id
@@ -277,6 +285,12 @@ async def _decide(
     heads = await load_decision_heads(session, selected)
     sources = await load_effective_sources(session, import_id)
     decisions = []
+    from .amex_direct_account_treatment_service import (
+        load_account_treatment_heads,
+        treatment_kind,
+    )
+
+    treatment_heads = await load_account_treatment_heads(session, selected)
     from .amex_direct_accounting_service import covered_source_proof
     from .amex_expense_account_settlement_service import selected_origin
 
@@ -327,8 +341,22 @@ async def _decide(
         ).first()
         if represented:
             raise DirectConflict("recognized_source_immutable")
+        kind = treatment_kind(item, treatment_heads)
+        if kind == "unclassified":
+            raise DirectConflict("account_treatment_required")
+        chosen_treatment = (
+            PARTNER_TREATMENT if kind == "partner_receivable" else TREATMENT
+        )
         if action == "revoke":
-            validate_decision(statement, context, item, source, expense, active)
+            validate_decision(
+                statement,
+                context,
+                item,
+                source,
+                expense,
+                active,
+                expected_treatment=chosen_treatment,
+            )
         decisions.append(
             (
                 item,
@@ -342,7 +370,7 @@ async def _decide(
                     revision=prior.revision + 1 if prior else 1,
                     action=action,
                     previous_decision_id=prior.id if prior else None,
-                    treatment=TREATMENT,
+                    treatment=chosen_treatment,
                     reason=reason,
                     actor_id=actor_id,
                     request_id=request_key,

@@ -46,6 +46,8 @@ AMEX_DIRECT_OWNER_MIGRATION_TABLES = frozenset(
         "amex_direct_items",
         "amex_direct_events",
         "amex_direct_no_cfdi_decisions",
+        "amex_direct_account_treatment_decisions",
+        "amex_direct_account_treatment_policies",
         "amex_direct_sign_revisions",
         "amex_direct_sign_rows",
         "amex_direct_accounting_cuts",

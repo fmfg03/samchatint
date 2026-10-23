@@ -109,6 +109,14 @@ async def set_direct_context(
     heads = await load_decision_heads(session, items)
     if any(active_decision(item, heads) for item in items):
         return DirectResult("pending", "no_cfdi_revoke_required")
+    from .amex_direct_account_treatment_service import (
+        active_account_treatment,
+        load_account_treatment_heads,
+    )
+
+    account_heads = await load_account_treatment_heads(session, items)
+    if any(active_account_treatment(item, account_heads) for item in items):
+        return DirectResult("pending", "account_treatment_revoke_required")
     if old:
         from .amex_direct_accounting_service import covered_source_proof
 
@@ -262,6 +270,14 @@ async def list_direct_statement(
                 )
             coverage_by_item[row.direct_item_id] = row.coverage_kind
         heads = await load_decision_heads(session, items)
+        from .amex_direct_account_treatment_service import (
+            LABELS,
+            active_account_treatment,
+            load_account_treatment_heads,
+            treatment_kind,
+        )
+
+        account_heads = await load_account_treatment_heads(session, items)
         from .amex_direct_no_cfdi_service import decision_snapshot
 
         views = []
@@ -304,7 +320,24 @@ async def list_direct_statement(
             pointer = getattr(item, "no_cfdi_decision_id", None)
             decision = heads.get(pointer) if pointer is not None else None
             active_decision(item, heads)  # Fail closed on an invalid pointer.
+            account_decision = active_account_treatment(item, account_heads)
+            kind = treatment_kind(item, account_heads)
+            debtor_snapshot = (
+                (account_decision.account_snapshot_json.get("debtor") or {})
+                if account_decision
+                else {}
+            )
             facts.update(
+                treatment_kind=kind,
+                treatment_label=LABELS[kind],
+                debtor_account_id=(
+                    account_decision.debtor_account_id if account_decision else None
+                ),
+                debtor_account_label=(
+                    f"{debtor_snapshot.get('code', '')} · {debtor_snapshot.get('name', '')}"
+                    if debtor_snapshot
+                    else None
+                ),
                 no_cfdi_decision=decision_snapshot(decision) if decision else None,
                 movement_kind=sources[item.id].movement_kind,
                 imported_expense_id=sources[item.id].imported_expense_id,

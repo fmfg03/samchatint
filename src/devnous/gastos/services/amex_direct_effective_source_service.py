@@ -31,6 +31,7 @@ class EffectiveSource:
     sign_revision_id: UUID | None = None
     sign_row_id: UUID | None = None
     sign_proof_hash: str | None = None
+    account_treatment_decision_id: UUID | None = None
 
 
 # Read-only SQL relation, deliberately absent from runtime-managed Base.metadata.
@@ -50,6 +51,7 @@ _SOURCE_VIEW = Table(
             "context_id",
             "sign_revision_id",
             "sign_row_id",
+            "account_treatment_decision_id",
         )
     ],
     Column("movement_kind", String),

@@ -211,6 +211,13 @@ async def test_current_head_cannot_be_cleared_or_reassigned(direct_pg):
 
 @pytest.mark.asyncio
 async def test_empty_owner_rollback_roundtrip_and_history_refusal(direct_pg):
+    # Unwind the newer empty account-policy layer before this historical owner.
+    await direct_pg.conn.execute(
+        (
+            ROOT
+            / "database/migrations/20261023_amex_direct_account_treatments_rollback.sql"
+        ).read_text()
+    )
     pg = direct_pg
     # Roll back newer owner layers before this historical migration.
     sign_migrations = ROOT / "database/migrations"
@@ -227,6 +234,11 @@ async def test_empty_owner_rollback_roundtrip_and_history_refusal(direct_pg):
     await pg.conn.execute(FORWARD.read_text())
     await pg.conn.execute(
         (sign_migrations / "20261022_amex_direct_sign_correction.sql").read_text()
+    )
+    await direct_pg.conn.execute(
+        (
+            ROOT / "database/migrations/20261023_amex_direct_account_treatments.sql"
+        ).read_text()
     )
     from devnous.gastos.services.amex_direct_schema_service import (
         inspect_amex_direct_schema,
