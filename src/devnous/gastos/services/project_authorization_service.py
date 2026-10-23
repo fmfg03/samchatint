@@ -380,9 +380,10 @@ async def resolve_and_snapshot_document_route(
                 tipo_entidad="documento",
                 entidad_id=UUID(document_id),
                 aprobador_id=UUID(str(audit_actor_id)),
-                accion="actualizar_ruta_autorizacion",
+                accion="editar",
                 comentario=json.dumps(
                     {
+                        "action": "actualizar_ruta_autorizacion",
                         "policy": PROVISIONAL_SOURCE_PREFIX,
                         "audit_context": audit_context or {},
                         "before": dict(previous),

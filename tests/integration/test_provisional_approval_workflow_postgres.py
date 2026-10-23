@@ -68,6 +68,17 @@ async def pg_workflow(isolated_postgres_url, monkeypatch):
                     element.parent.foreign_keys.discard(element)
     async with engine.begin() as connection:
         await connection.run_sync(copied.create_all)
+        # Exact serving constraints: technical audit must use an existing carrier.
+        await connection.execute(
+            text(
+                "ALTER TABLE aprobaciones ADD CONSTRAINT aprobaciones_accion_check CHECK ((accion)::text = ANY (ARRAY['enviar'::text, 'enviar_control_presupuestal'::text, 'rechazar_control_presupuestal'::text, 'asignar_partida_presupuestal'::text, 'asignar_partida_presupuestal_linea'::text, 'asignar_partidas_presupuestales'::text, 'reversar_a_control_presupuestal'::text, 'aprobar'::text, 'rechazar'::text, 'cancelar'::text, 'editar'::text, 'pagar'::text, 'aprobar_area'::text, 'rechazar_area'::text, 'aprobar_final'::text, 'rechazar_final'::text, 'retirar'::text, 'adjuntar_comprobante_no_deducible'::text, 'reemplazar_comprobante_no_deducible'::text, 'eliminar_comprobante_no_deducible'::text, 'confirmar_cfdi_compartido'::text, 'regularizar_aprobacion_reembolso'::text, 'liberar_cfdi_duplicado'::text, 'adjuntar_soporte'::text, 'adjuntar_factura'::text]))"
+            )
+        )
+        await connection.execute(
+            text(
+                "ALTER TABLE aprobaciones ADD CONSTRAINT aprobaciones_tipo_entidad_check CHECK ((tipo_entidad)::text = ANY (ARRAY['documento'::text, 'gasto'::text, 'beneficiary_onboarding'::text, 'budget_cfdi_income_link'::text]))"
+            )
+        )
         for sql in (
             "CREATE TABLE authorization_positions("
             "position_key text PRIMARY KEY,active boolean)",
@@ -501,15 +512,14 @@ async def test_changed_route_is_audited_by_real_decider_and_denied_actor_leaves_
         ).all()
         assert sorted(event.accion for event in events) == sorted(
             [
-                "actualizar_ruta_autorizacion",
+                "editar",
                 "aprobar" if action == "approve" else "rechazar",
             ]
         )
-        audit = next(
-            event for event in events if event.accion == "actualizar_ruta_autorizacion"
-        )
+        audit = next(event for event in events if event.accion == "editar")
         assert audit.aprobador_id == pg.gn
         payload = json.loads(audit.comentario)
+        assert payload["action"] == "actualizar_ruta_autorizacion"
         assert payload["before"]["source"] == original_source
         assert payload["after"]["eligible_position_keys"] == (
             [policy.PROVISIONAL_GN]
@@ -630,8 +640,81 @@ async def test_send_draft_changed_from_excluded_project_uses_creator_folio_polic
             await session.scalars(
                 select(models.Aprobacion).where(
                     models.Aprobacion.entidad_id == doc_id,
-                    models.Aprobacion.accion == "actualizar_ruta_autorizacion",
+                    models.Aprobacion.accion == "editar",
                 )
             )
         ).all()
         assert len(audits) == 1 and audits[0].aprobador_id == pg.requester
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field,value",
+    [("accion", "actualizar_ruta_autorizacion"), ("tipo_entidad", "invented_entity")],
+)
+async def test_serving_audit_checks_reject_unapproved_enum_values(
+    pg_workflow, field, value
+):
+    from sqlalchemy.exc import IntegrityError
+
+    pg = pg_workflow
+    row = dict(
+        tipo_entidad="documento",
+        entidad_id=uuid4(),
+        aprobador_id=pg.gn,
+        accion="editar",
+    )
+    row[field] = value
+    with pytest.raises(IntegrityError) as error:
+        async with pg.factory.begin() as session:
+            session.add(models.Aprobacion(**row))
+            await session.flush()
+    assert (
+        "aprobaciones_accion_check"
+        if field == "accion"
+        else "aprobaciones_tipo_entidad_check"
+    ) in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_typed_edit_route_audit_does_not_approve_or_notify(
+    pg_workflow, monkeypatch
+):
+    pg = pg_workflow
+    document_id = await seed_document(pg)
+    notify = AsyncMock()
+    monkeypatch.setattr(
+        documento_telegram, "schedule_document_workflow_telegram_notifications", notify
+    )
+    async with pg.factory.begin() as session:
+        doc = await session.get(models.Documento, document_id)
+        await policy.resolve_and_snapshot_document_route(
+            session, doc, audit_actor_id=pg.requester
+        )
+        await session.execute(
+            text(
+                "UPDATE project_authorization_rules SET eligible_position_keys=CAST(:keys AS jsonb)"
+            ),
+            {"keys": json.dumps([policy.PROVISIONAL_GN])},
+        )
+        await policy.resolve_and_snapshot_document_route(
+            session, doc, audit_actor_id=pg.gn, audit_context={"plan_sha256": "a" * 64}
+        )
+    async with pg.factory() as session:
+        doc = await session.get(models.Documento, document_id)
+        rows = (
+            await session.scalars(
+                select(models.Aprobacion).where(
+                    models.Aprobacion.entidad_id == document_id
+                )
+            )
+        ).all()
+        assert len(rows) == 1 and rows[0].accion == "editar"
+        assert rows[0].aprobador_id == pg.gn
+        payload = json.loads(rows[0].comentario)
+        assert payload["action"] == "actualizar_ruta_autorizacion"
+        assert payload["audit_context"]["plan_sha256"] == "a" * 64
+        assert doc.estado == "enviado" and doc.aprobado_en is None
+        assert doc.referencia_operaciones == "363"
+        assert not await workflow.documento_has_approval(session, doc)
+    notify.assert_not_called()

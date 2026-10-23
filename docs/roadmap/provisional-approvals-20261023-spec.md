@@ -101,6 +101,8 @@ Preparar una operación canónica acotada para S-26000450 y, sólo si se aprueba
 
 No ejecutar `repair_tournament_budget_reconciliation.py`: su alcance actual exige INFORME operativo y presupuesto editable y no cubre esta solicitud. Reutilizar sus patrones de preview/hash/receipts, no sus selectores ni sus mutaciones presupuestales.
 
+Compatibilidad de auditoría comprobada contra el esquema servidor: usar la acción no financiera existente `editar` con el discriminador JSON `action=actualizar_ruta_autorizacion`, conservando actor, contexto y rutas anterior/nueva. El preview valida los CHECK de `aprobaciones` obtenidos de PostgreSQL y vincula sus definiciones al hash del plan; una restricción ausente, desconocida o incompatible bloquea antes de escribir. Se prueban las representaciones TEXT y VARCHAR sin modificar el esquema productivo.
+
 ## 7. Archivos previstos y ejecución por fases
 
 - Política/configuración/folios: `services/project_authorization_service.py`, `services/documento_service.py`, configuración versionada de las tablas existentes y herramienta acotada de preview/aplicación de pendientes.

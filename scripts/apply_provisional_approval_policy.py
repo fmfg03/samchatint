@@ -43,7 +43,8 @@ GV_POSITION = "supervision_aprobaciones_federico_gv"
 FINANCE_POSITION = "aprobadores_finanzas_provisional"
 EXCEPTION_POSITION = "aprobaciones_escalan_gn"
 OPERATIONS_POSITION = "director_operaciones"
-AUDIT_ACTION = "actualizar_ruta_autorizacion"
+AUDIT_ACTION = "editar"
+AUDIT_EVENT_TYPE = "actualizar_ruta_autorizacion"
 
 POSITIONS = {
     GN_POSITION: {"label": "Aprobador provisional Federico GN", "members": [GN]},
@@ -149,6 +150,31 @@ def financial_terminal_api():
     return documento_financial_terminal_reason
 
 
+def validate_audit_action_constraint(constraints: list[dict]) -> None:
+    """Accept only the known positive enum CHECK, without executing schema text."""
+    selected = [c for c in constraints if c["name"] == "aprobaciones_accion_check"]
+    if len(selected) != 1:
+        raise ValueError("The audit action CHECK must exist exactly once")
+    definition = selected[0]["definition"]
+    if any(
+        row["name"] != "aprobaciones_accion_check"
+        and re.search(r"\baccion\b", row["definition"])
+        for row in constraints
+    ):
+        raise ValueError("Additional audit action CHECK requires explicit review")
+    # Parse the deployed positive enum shape. Unknown operators/expressions fail
+    # closed; mentioning an action in a negative/composite CHECK is insufficient.
+    match = re.fullmatch(
+        r"CHECK \(\((?:accion|\(accion\)::text) = ANY \(ARRAY\[(?P<items>'[a-z_]+'::text(?:, '[a-z_]+'::text)*)\]\)\)\)",
+        definition,
+    )
+    if not match:
+        raise ValueError("Unrecognized audit action CHECK; explicit review required")
+    actions = re.findall(r"'([a-z_]+)'::text", match["items"])
+    if AUDIT_ACTION not in actions:
+        raise ValueError("The audit action CHECK does not permit the technical carrier")
+
+
 async def snapshot(session: Any) -> dict:
     data = {}
     for key, query in {
@@ -159,6 +185,7 @@ async def snapshot(session: Any) -> dict:
         "employees": "SELECT id,nombre,rol,activo FROM empleados WHERE id=ANY(CAST(:employee_ids AS uuid[])) ORDER BY id",
         "projects": "SELECT id,name,active FROM tournaments WHERE name=ANY(:project_names) ORDER BY id",
         "document": "SELECT * FROM documentos WHERE id=CAST(:document_id AS uuid)",
+        "audit_constraints": "SELECT conname AS name,pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid='aprobaciones'::regclass AND contype='c' ORDER BY conname",
         "approvals": "SELECT * FROM aprobaciones WHERE entidad_id=CAST(:document_id AS uuid) ORDER BY id",
     }.items():
         data[key] = await rows(
@@ -267,6 +294,7 @@ def configuration_plan(before: dict) -> dict:
 
 
 async def build_plan(session: Any, before: dict, identity: dict | None = None) -> dict:
+    validate_audit_action_constraint(before["audit_constraints"])
     changes = configuration_plan(before)
     policy = canonical_api()
     document = SimpleNamespace(**before["document"][0])
@@ -298,6 +326,7 @@ async def build_plan(session: Any, before: dict, identity: dict | None = None) -
         "actor_id": ACTOR_ID,
         "source": identity or source_identity(),
         "before_sha256": plan_sha(before),
+        "audit_schema_sha256": plan_sha(before["audit_constraints"]),
         "configuration": changes,
         "document_context": context,
         "selected_document": DOCUMENT_ID,
@@ -321,6 +350,7 @@ async def apply_plan(
     if plan_sha(before) != plan["before_sha256"]:
         raise ValueError("Selected state changed after preview")
     validate_identity_and_state(before)
+    validate_audit_action_constraint(before["audit_constraints"])
     for key, position in POSITIONS.items():
         await session.execute(
             text(
@@ -380,6 +410,7 @@ def verify_after(before: dict, after: dict, plan: dict) -> dict:
         before["document"] != after["document"]
         or before["employees"] != after["employees"]
         or before["projects"] != after["projects"]
+        or before["audit_constraints"] != after["audit_constraints"]
     ):
         raise ValueError("Document, employee or project data unexpectedly changed")
     for key in ("positions", "assignments"):
@@ -453,7 +484,8 @@ def verify_after(before: dict, after: dict, plan: dict) -> dict:
         raise ValueError("Exactly one attributable technical audit is required")
     payload = json.loads(added[0]["comentario"])
     if (
-        payload.get("audit_context", {}).get("plan_sha256") != plan["sha256"]
+        payload.get("action") != AUDIT_EVENT_TYPE
+        or payload.get("audit_context", {}).get("plan_sha256") != plan["sha256"]
         or payload.get("audit_context", {}).get("document_context")
         != plan["document_context"]
     ):
