@@ -51,6 +51,7 @@ from .project_authorization_service import (
     prepare_document_authorization_route,
     has_operations_reference,
     provisional_policy_is_active,
+    resolve_and_snapshot_document_route,
 )
 
 logger = logging.getLogger(__name__)
@@ -904,6 +905,17 @@ async def transition_documento_workflow(
             documento.monto_total = Decimal(str(final_lot_total or 0)).quantize(
                 Decimal("0.01")
             )
+        if await provisional_policy_is_active(session):
+            await resolve_and_snapshot_document_route(
+                session, documento, audit_actor_id=actor.id
+            )
+            if not await actor_is_route_approver(
+                session, actor_id=actor.id, documento_id=documento.id
+            ):
+                raise DocumentoWorkflowValidationError(
+                    "not_route_approver",
+                    "No ocupas un puesto autorizado para esta solicitud.",
+                )
         documento.estado = "aprobado"
         documento.aprobado_en = now
         assign_fecha_pago_on_solicitud_approval(documento)
@@ -996,6 +1008,17 @@ async def transition_documento_workflow(
                 raise DocumentoWorkflowPermissionError(
                     "insufficient_role",
                     "Access denied. Insufficient permissions.",
+                )
+        if await provisional_policy_is_active(session):
+            await resolve_and_snapshot_document_route(
+                session, documento, audit_actor_id=actor.id
+            )
+            if not await actor_is_route_approver(
+                session, actor_id=actor.id, documento_id=documento.id
+            ):
+                raise DocumentoWorkflowValidationError(
+                    "not_route_approver",
+                    "No ocupas un puesto autorizado para esta solicitud.",
                 )
         documento.estado = "rechazado"
         aprobacion_accion = "rechazar"

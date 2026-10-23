@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -153,6 +154,9 @@ def fake_policy():
 @pytest.fixture
 async def plan(before, monkeypatch):
     monkeypatch.setattr(tool, "canonical_api", fake_policy)
+    monkeypatch.setattr(
+        tool, "financial_terminal_api", lambda: AsyncMock(return_value=None)
+    )
     return await tool.build_plan(
         None, before, {"commit": "reviewed", "code_sha256": "code"}
     )
@@ -433,3 +437,18 @@ async def test_nested_owner_commit_is_forbidden():
     async with tool.AtomicPolicySession() as session:
         with pytest.raises(ValueError, match="Nested commits"):
             await session.commit()
+
+
+@pytest.mark.parametrize(
+    "action", ["pagar", "PAGAR", "regularizar_aprobacion_reembolso"]
+)
+def test_durable_payment_history_blocks_repair(before, action):
+    before["approvals"].append({"accion": action})
+    with pytest.raises(ValueError, match="financial approval or payment"):
+        tool.configuration_plan(before)
+
+
+def test_generated_payment_expense_blocks_repair(before):
+    before["document"][0]["gasto_generado_id"] = str(uuid4())
+    with pytest.raises(ValueError, match="Generated payment expense"):
+        tool.configuration_plan(before)

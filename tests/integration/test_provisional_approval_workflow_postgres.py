@@ -434,3 +434,204 @@ async def test_gv_does_not_bypass_pending_amex_posting_result(pg_workflow, monke
             await session.scalar(select(func.count()).select_from(models.Aprobacion))
             == 0
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["approve", "reject"])
+@pytest.mark.parametrize("change", ["rule", "membership"])
+async def test_changed_route_is_audited_by_real_decider_and_denied_actor_leaves_no_writes(
+    pg_workflow, action, change
+):
+    pg = pg_workflow
+    document_id = await seed_document(pg)
+    async with pg.factory.begin() as session:
+        doc = await session.get(models.Documento, document_id)
+        await policy.resolve_and_snapshot_document_route(
+            session, doc, audit_actor_id=pg.requester
+        )
+        original_source = (
+            await session.execute(
+                text(
+                    "SELECT source FROM documento_authorization_routes WHERE documento_id=:id"
+                ),
+                {"id": document_id},
+            )
+        ).scalar_one()
+        if change == "rule":
+            await session.execute(
+                text(
+                    "UPDATE project_authorization_rules SET eligible_position_keys=CAST(:keys AS jsonb)"
+                ),
+                {"keys": json.dumps([policy.PROVISIONAL_GN])},
+            )
+        else:
+            await session.execute(
+                text(
+                    "UPDATE authorization_position_assignments SET active=FALSE WHERE position_key=:key"
+                ),
+                {"key": policy.DIRECTOR_OPERACIONES},
+            )
+    with pytest.raises(workflow.DocumentoWorkflowValidationError) as error:
+        await decide(pg, document_id, pg.operations, action)
+    assert error.value.code == "not_route_approver"
+    async with pg.factory() as session:
+        assert (
+            await session.execute(
+                text(
+                    "SELECT source FROM documento_authorization_routes WHERE documento_id=:id"
+                ),
+                {"id": document_id},
+            )
+        ).scalar_one() == original_source
+        assert not (
+            await session.scalars(
+                select(models.Aprobacion).where(
+                    models.Aprobacion.entidad_id == document_id
+                )
+            )
+        ).all()
+    await decide(pg, document_id, pg.gn, action)
+    async with pg.factory() as session:
+        events = (
+            await session.scalars(
+                select(models.Aprobacion).where(
+                    models.Aprobacion.entidad_id == document_id
+                )
+            )
+        ).all()
+        assert sorted(event.accion for event in events) == sorted(
+            [
+                "actualizar_ruta_autorizacion",
+                "aprobar" if action == "approve" else "rechazar",
+            ]
+        )
+        audit = next(
+            event for event in events if event.accion == "actualizar_ruta_autorizacion"
+        )
+        assert audit.aprobador_id == pg.gn
+        payload = json.loads(audit.comentario)
+        assert payload["before"]["source"] == original_source
+        assert payload["after"]["eligible_position_keys"] == (
+            [policy.PROVISIONAL_GN]
+            if change == "rule"
+            else [policy.DIRECTOR_OPERACIONES, policy.PROVISIONAL_GN]
+        )
+        assert payload["after"]["eligible_empleado_ids"] == [str(pg.gn)]
+        current_source = (
+            await session.execute(
+                text(
+                    "SELECT source FROM documento_authorization_routes WHERE documento_id=:id"
+                ),
+                {"id": document_id},
+            )
+        ).scalar_one()
+        assert (
+            current_source != original_source
+            and payload["after"]["source"] == current_source
+        )
+        assert (
+            await session.get(models.Documento, document_id)
+        ).referencia_operaciones == "363"
+
+
+@pytest.mark.asyncio
+async def test_telegram_superadmin_prioritizes_assigned_before_thirty_no_folio_observers(
+    pg_workflow,
+):
+    from datetime import datetime, timezone
+
+    pg = pg_workflow
+    assigned_id = await seed_document(pg)
+    other_project = uuid4()
+    async with pg.factory.begin() as session:
+        actor = await session.get(models.Empleado, pg.operations)
+        actor.rol = "superadmin"
+        session.add(models.Tournament(id=other_project, name="Synthetic GN-only"))
+        await session.execute(
+            text(
+                "INSERT INTO project_authorization_rules VALUES(:id,CAST(:keys AS jsonb),FALSE,TRUE)"
+            ),
+            {"id": other_project, "keys": json.dumps([policy.PROVISIONAL_GN])},
+        )
+        assigned = await session.get(models.Documento, assigned_id)
+        assigned.enviado_en = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        for index in range(31):
+            session.add(
+                models.Documento(
+                    id=uuid4(),
+                    empleado_id=pg.requester,
+                    torneo_id=other_project,
+                    tipo="SOLICITUD",
+                    estado="enviado",
+                    numero_referencia=f"OBSERVER-{index}",
+                    referencia_operaciones=None,
+                    enviado_en=datetime(2026, 10, 1, tzinfo=timezone.utc),
+                )
+            )
+    async with pg.factory() as session:
+        actor = await session.get(models.Empleado, pg.operations)
+        rows = await documento_telegram.query_pending_documentos_for_approver(
+            session, actor
+        )
+        assert len(rows) == 30
+        assert rows[0].id == assigned_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "excluded_name", ["Gestión de Patrocinios", "Gestión RRSS y Transmisiones"]
+)
+async def test_send_draft_changed_from_excluded_project_uses_creator_folio_policy(
+    pg_workflow, monkeypatch, excluded_name
+):
+    from devnous.gastos.services import documento_service
+
+    pg = pg_workflow
+    doc_id = await seed_document(pg, state="borrador")
+    excluded = uuid4()
+    allocator = AsyncMock(return_value="364")
+    monkeypatch.setattr(
+        documento_service, "allocate_next_referencia_operaciones", allocator
+    )
+    async with pg.factory.begin() as session:
+        requester = await session.get(models.Empleado, pg.requester)
+        requester.departamento = "Operaciones"
+        session.add(models.Tournament(id=excluded, name=excluded_name))
+        await session.execute(
+            text(
+                "INSERT INTO project_authorization_rules VALUES(:id,CAST(:keys AS jsonb),FALSE,TRUE)"
+            ),
+            {"id": excluded, "keys": json.dumps([policy.PROVISIONAL_GN])},
+        )
+        await session.execute(
+            text(
+                "UPDATE project_authorization_rules SET requires_operations_reference=FALSE"
+            )
+        )
+        doc = await session.get(models.Documento, doc_id)
+        doc.torneo_id = excluded
+        doc.referencia_operaciones = None
+        await policy.prepare_document_authorization_route(
+            session, doc, audit_actor_id=pg.requester
+        )
+        assert doc.referencia_operaciones is None
+        allocator.assert_not_awaited()
+        doc.torneo_id = pg.project
+    async with pg.factory() as session:
+        await workflow.transition_documento_workflow(
+            session, documento_id=doc_id, actor_id=pg.requester, action="send"
+        )
+    allocator.assert_awaited_once()
+    async with pg.factory() as session:
+        doc = await session.get(models.Documento, doc_id)
+        assert doc.estado == workflow.BUDGET_CONTROL_STATE
+        assert doc.referencia_operaciones == "364"
+        audits = (
+            await session.scalars(
+                select(models.Aprobacion).where(
+                    models.Aprobacion.entidad_id == doc_id,
+                    models.Aprobacion.accion == "actualizar_ruta_autorizacion",
+                )
+            )
+        ).all()
+        assert len(audits) == 1 and audits[0].aprobador_id == pg.requester

@@ -604,6 +604,25 @@ async def prepare_document_authorization_route(
         documento,
         **({"audit_actor_id": audit_actor_id} if audit_actor_id is not None else {}),
     )
+    # Editable drafts can move from an excluded project to a normal one. Reapply
+    # the same creator emitter used at creation, independently of approver rules.
+    # Pending historical documents never gain a folio through this draft repair.
+    if (
+        route
+        and route.source.startswith(PROVISIONAL_SOURCE_PREFIX + ":")
+        and str(getattr(documento, "estado", "")).lower() == "borrador"
+        and not has_operations_reference(documento)
+    ):
+        from .documento_service import allocate_referencia_operaciones_for_empleado
+
+        context = await resolve_document_route_context(session, documento)
+        creator = await session.get(Empleado, UUID(context["requester_id"]))
+        if creator is not None:
+            reference = await allocate_referencia_operaciones_for_empleado(
+                session, creator, torneo_id=context["tournament_id"]
+            )
+            if reference is not None:
+                setattr(documento, "referencia_operaciones", reference)
     if (
         route
         and route.requires_operations_reference

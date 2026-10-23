@@ -140,6 +140,15 @@ def canonical_api():
     return policy
 
 
+def financial_terminal_api():
+    """Use the same durable financial evidence gate as document workflows."""
+    from devnous.gastos.services.documento_workflow_service import (
+        documento_financial_terminal_reason,
+    )
+
+    return documento_financial_terminal_reason
+
+
 async def snapshot(session: Any) -> dict:
     data = {}
     for key, query in {
@@ -182,8 +191,16 @@ def validate_identity_and_state(before: dict) -> None:
         raise ValueError("Historical Operations folio 363 must be preserved")
     if doc.get("aprobado_en") or doc.get("pagado_en"):
         raise ValueError("A previously approved or paid document is not repairable")
-    if any(row["accion"] == "aprobar" for row in before["approvals"]):
-        raise ValueError("Existing financial approval blocks this selected repair")
+    if doc.get("gasto_generado_id"):
+        raise ValueError("Generated payment expense blocks this selected repair")
+    if any(
+        str(row["accion"]).strip().lower()
+        in {"aprobar", "pagar", "regularizar_aprobacion_reembolso"}
+        for row in before["approvals"]
+    ):
+        raise ValueError(
+            "Existing financial approval or payment blocks this selected repair"
+        )
     operations_members = {
         row["empleado_id"]
         for row in before["assignments"]
@@ -253,6 +270,11 @@ async def build_plan(session: Any, before: dict, identity: dict | None = None) -
     changes = configuration_plan(before)
     policy = canonical_api()
     document = SimpleNamespace(**before["document"][0])
+    terminal_reason = await financial_terminal_api()(session, document)
+    if terminal_reason:
+        raise ValueError(
+            f"Selected document has durable financial effects: {terminal_reason}"
+        )
     context = normalized(await policy.resolve_document_route_context(session, document))
     rrss = next(
         row["tournament_id"]
@@ -544,6 +566,12 @@ async def run(args: argparse.Namespace) -> dict:
                             "SELECT id FROM empleados WHERE id=ANY(CAST(:ids AS uuid[])) FOR SHARE"
                         ),
                         {"ids": [GN, GV, ODILON, OLOF, LUIS_ANGEL, ACTOR_ID]},
+                    )
+                    await session.execute(
+                        text(
+                            "SELECT id FROM tournaments WHERE name=ANY(:names) ORDER BY id FOR SHARE"
+                        ),
+                        {"names": list(PROJECT_MATRIX)},
                     )
                 before = await snapshot(session)
                 plan = await build_plan(session, before, source)

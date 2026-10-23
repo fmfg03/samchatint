@@ -959,7 +959,10 @@ async def query_pending_documentos_for_approver(
         selectinload(Documento.torneo),
         selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
     )
-    from .project_authorization_service import document_route_approver_sql
+    from .project_authorization_service import (
+        document_route_approver_sql,
+        provisional_policy_active_sql,
+    )
 
     role = (getattr(empleado, "rol", "") or "").strip().lower()
     if role in SUPERADMIN_ROLES:
@@ -969,8 +972,11 @@ async def query_pending_documentos_for_approver(
             .where(Documento.estado == "enviado")
             .order_by(
                 or_(
-                    func.nullif(func.trim(Documento.referencia_operaciones), "").is_(
-                        None
+                    and_(
+                        text("NOT (" + provisional_policy_active_sql() + ")"),
+                        func.nullif(
+                            func.trim(Documento.referencia_operaciones), ""
+                        ).is_(None),
                     ),
                     text(document_route_approver_sql()),
                 ).desc(),

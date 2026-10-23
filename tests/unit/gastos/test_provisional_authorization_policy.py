@@ -389,3 +389,52 @@ async def test_assistant_receipt_project_exclusion_precedes_operations_allocator
     allocator.assert_not_awaited()
     report = session.add.call_args_list[1].args[0]
     assert report.referencia_operaciones is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "state,reference", [("borrador", None), ("enviado", None), ("borrador", "363")]
+)
+@pytest.mark.parametrize(
+    "project_name",
+    ["Normal project", "Gestión de Patrocinios", "Gestión RRSS y Transmisiones"],
+)
+async def test_draft_project_change_reuses_creator_emitter_independent_rule_flag(
+    monkeypatch, state, reference, project_name
+):
+    requester, project = uuid4(), uuid4()
+    document = SimpleNamespace(
+        id=uuid4(),
+        empleado_id=requester,
+        estado=state,
+        referencia_operaciones=reference,
+    )
+    route = policy.ProjectAuthorizationRoute(
+        (policy.PROVISIONAL_GN,), False, "p20261023:project:" + "a" * 64
+    )
+    monkeypatch.setattr(
+        policy, "resolve_and_snapshot_document_route", AsyncMock(return_value=route)
+    )
+    monkeypatch.setattr(
+        policy,
+        "resolve_document_route_context",
+        AsyncMock(
+            return_value={"requester_id": str(requester), "tournament_id": str(project)}
+        ),
+    )
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = project_name
+    session = SimpleNamespace(
+        execute=AsyncMock(return_value=result),
+        get=AsyncMock(return_value=SimpleNamespace(departamento="Operaciones")),
+    )
+    allocator = AsyncMock(return_value="364")
+    monkeypatch.setattr(documents, "allocate_next_referencia_operaciones", allocator)
+    await policy.prepare_document_authorization_route(session, document)
+    expected_allocation = (
+        state == "borrador" and reference is None and project_name == "Normal project"
+    )
+    assert allocator.await_count == int(expected_allocation)
+    assert document.referencia_operaciones == (
+        "364" if expected_allocation else reference
+    )

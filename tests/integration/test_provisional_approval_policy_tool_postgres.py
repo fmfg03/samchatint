@@ -7,6 +7,7 @@ No production DSN or business database is read; fixture DDL precedes tool use.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import importlib.util
 import json
 from pathlib import Path
@@ -16,6 +17,7 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from sqlalchemy import event, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 
@@ -62,8 +64,10 @@ async def pg_tool(isolated_postgres_url, before, monkeypatch, tmp_path):
         "CREATE TABLE authorization_positions(position_key varchar(100) PRIMARY KEY,label varchar(200) NOT NULL,active boolean NOT NULL)",
         "CREATE TABLE authorization_position_assignments(position_key varchar(100) REFERENCES authorization_positions,empleado_id uuid REFERENCES empleados,active boolean,PRIMARY KEY(position_key,empleado_id))",
         "CREATE TABLE project_authorization_rules(tournament_id uuid PRIMARY KEY REFERENCES tournaments,eligible_position_keys jsonb,requires_operations_reference boolean,active boolean)",
-        "CREATE TABLE documentos(id uuid PRIMARY KEY,numero_referencia text,tipo text DEFAULT 'SOLICITUD',estado text,referencia_operaciones text,torneo_id uuid REFERENCES tournaments,empleado_id uuid,beneficiario_empleado_id uuid,monto_total numeric(14,2),aprobado_en timestamptz,pagado_en timestamptz)",
+        "CREATE TABLE documentos(id uuid PRIMARY KEY,numero_referencia text,tipo text DEFAULT 'SOLICITUD',estado text,referencia_operaciones text,torneo_id uuid REFERENCES tournaments,empleado_id uuid,beneficiario_empleado_id uuid,monto_total numeric(14,2),aprobado_en timestamptz,pagado_en timestamptz,gasto_generado_id uuid,cuenta_gastos_id uuid)",
         "CREATE TABLE documento_authorization_routes(documento_id uuid PRIMARY KEY,eligible_position_keys jsonb,eligible_empleado_ids jsonb,requires_operations_reference boolean,source varchar(100),resolved_at timestamptz DEFAULT now())",
+        "CREATE TABLE anticipos(id uuid PRIMARY KEY,documento_id uuid,estado text)",
+        "CREATE TABLE reembolsos(id uuid PRIMARY KEY,documento_id uuid,cuenta_gastos_id uuid,estado text,tipo text)",
         "CREATE TABLE aprobaciones(id uuid PRIMARY KEY,tipo_entidad text DEFAULT 'documento',entidad_id uuid,aprobador_id uuid REFERENCES empleados,accion text,comentario text,fecha timestamptz DEFAULT now())",
     ]
     async with engine.begin() as connection:
@@ -247,3 +251,68 @@ async def test_error_after_actual_writes_rolls_back_configuration_route_and_audi
     assert await read_state(pg) == state
     assert any(sql.lstrip().lower().startswith("insert") for sql in pg.statements)
     assert not (pg.args.output_dir / "receipt.json").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "evidence", ["generated_expense", "anticipo", "reembolso", "payment"]
+)
+async def test_durable_financial_effects_block_preview_and_fresh_apply(
+    pg_tool, evidence
+):
+    pg = pg_tool
+    await preview(pg)
+    async with pg.engine.begin() as connection:
+        params = {"document": tool.DOCUMENT_ID, "id": str(uuid4())}
+        if evidence == "generated_expense":
+            sql = "UPDATE documentos SET gasto_generado_id=CAST(:id AS uuid) WHERE id=CAST(:document AS uuid)"
+        elif evidence == "payment":
+            sql = "INSERT INTO aprobaciones(id,entidad_id,accion) VALUES(CAST(:id AS uuid),CAST(:document AS uuid),'pagar')"
+        elif evidence == "anticipo":
+            sql = "INSERT INTO anticipos VALUES(CAST(:id AS uuid),CAST(:document AS uuid),'aplicado')"
+        else:
+            sql = "INSERT INTO reembolsos VALUES(CAST(:id AS uuid),CAST(:document AS uuid),NULL,'pagado','reembolso')"
+        await connection.execute(text(sql), params)
+    state = await read_state(pg)
+    for apply in (False, True):
+        pg.args.apply = apply
+        with pytest.raises(ValueError, match="financial|payment"):
+            await tool.run(pg.args)
+        assert await read_state(pg) == state
+    assert not (pg.args.output_dir / "receipt.json").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["name='Concurrent rename'", "active=FALSE"])
+async def test_apply_locks_selected_project_identity_until_commit(
+    pg_tool, monkeypatch, mutation
+):
+    pg = pg_tool
+    await preview(pg)
+    locked, release = asyncio.Event(), asyncio.Event()
+    real_build = tool.build_plan
+
+    async def pause_after_locks(session, before, identity):
+        locked.set()
+        await release.wait()
+        return await real_build(session, before, identity)
+
+    monkeypatch.setattr(tool, "build_plan", pause_after_locks)
+    apply = asyncio.create_task(tool.run(pg.args))
+    try:
+        await asyncio.wait_for(locked.wait(), 5)
+        async with pg.engine.connect() as writer:
+            async with writer.begin():
+                await writer.execute(text("SET LOCAL lock_timeout='200ms'"))
+                with pytest.raises(DBAPIError, match="lock timeout"):
+                    await writer.execute(
+                        text(f"UPDATE tournaments SET {mutation} WHERE name=:name"),
+                        {"name": "La Merced"},
+                    )
+    finally:
+        release.set()
+    receipt = await asyncio.wait_for(apply, 5)
+    assert receipt["status"] == "COMMITTED_VERIFIED"
+    assert any(
+        "FROM tournaments" in sql and "FOR SHARE" in sql for sql in pg.statements
+    )
