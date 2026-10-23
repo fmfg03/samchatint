@@ -33,6 +33,16 @@ from .admin_amex_accounting_routes import (
     _page,
     _require_finance_actor,
 )
+from .amex_workspace_ui import (
+    dialog_source,
+    row_bucket,
+    workspace_assets,
+    workspace_filters,
+    workspace_steps,
+    workspace_summary,
+    workspace_toolbar,
+    workspace_view,
+)
 from .dependencies import get_current_empleado, get_db_session, require_admin_finanzas
 
 router = APIRouter()
@@ -112,13 +122,6 @@ def _treatment_form(
         + '"></label>'
         + _submit("Revisar tratamiento de los cargos seleccionados")
         + "</form><p>La revisión muestra los cargos antes de confirmar; no genera la póliza.</p></section>"
-        + """<script>(()=>{const choice=document.getElementById('direct-treatment'),
-        account=document.getElementById('direct-debtor'),label=document.getElementById('direct-debtor-label');
-        choice.addEventListener('change',()=>{const partner=choice.value==='partner_receivable';
-        label.hidden=!partner;account.disabled=!partner;account.required=partner;
-        if(!partner)account.value='';
-        const project=document.getElementById('direct-project-classification');
-        if(project)project.open=choice.value==='project_expense';});})();</script>"""
     )
 
 
@@ -493,13 +496,25 @@ def _source_version(result) -> int:
     return version
 
 
-def _redirect(import_id: UUID, message: str) -> RedirectResponse:
-    return RedirectResponse(
-        f"{BASE}/{import_id}/directo?{urlencode({'msg': message})}", 303
-    )
+def _redirect(
+    import_id: UUID, message: str, *, error: bool = False
+) -> RedirectResponse:
+    parameters = {"msg": message}
+    if error:
+        parameters["error_msg"] = message
+    return RedirectResponse(f"{BASE}/{import_id}/directo?{urlencode(parameters)}", 303)
 
 
-def _html(title: str, body: str, actor: Empleado) -> Response:
+def _html(
+    title: str,
+    body: str,
+    actor: Empleado,
+    *,
+    kind: str = "detail",
+    statement_url: str = "",
+    source_version: int | None = None,
+    pending_budget: int = 0,
+) -> Response:
     styles = """<style>.direct-table{overflow-x:auto;max-width:100%}
     .amex-content .direct-table td{white-space:normal;overflow-wrap:anywhere;
     max-width:24rem;min-width:7rem}.direct-form{max-width:760px}
@@ -508,8 +523,18 @@ def _html(title: str, body: str, actor: Empleado) -> Response:
     .direct-form label{display:block;margin:12px 0}.direct-form input:not([type=checkbox]),
     .direct-form select{width:100%;box-sizing:border-box}.direct-actions{display:flex;
     gap:12px;flex-wrap:wrap}.direct-table table{min-width:1200px}</style>"""
+    content = workspace_view(
+        title,
+        body,
+        kind=kind,
+        statement_url=statement_url,
+        source_version=source_version,
+        pending_budget=pending_budget,
+    )
+    page = _page(title, styles + content, actor, workflow="direct")
+    page = page.replace("</head>", workspace_assets() + "</head>", 1)
     return Response(
-        _page(title, styles + body, actor, workflow="direct"),
+        page,
         media_type="text/html",
         headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
     )
@@ -609,7 +634,12 @@ async def direct_upload_form(
     <button class="button secondary" type="button" id="amex-direct-preview">Previsualizar archivo y signo</button>
     <div id="amex-direct-preview-result" role="status"></div>
     <button class="button primary" id="amex-direct-import" type="submit" disabled>Cargar estado directo</button></form><p><a href="{BASE}/nuevo">Recorrido de informes existente</a></p>"""
-    return _html("Cargar estado AMEX directo", body + _preview_script(), actor)
+    return _html(
+        "Cargar estado AMEX directo",
+        workspace_steps(intake=True) + body,
+        actor,
+        kind="intake",
+    )
 
 
 @router.get(BASE + "/directo")
@@ -678,52 +708,6 @@ async def direct_new_upload(
 ):
     """Canonical explicit upload; service reloads authority and source scope."""
     return await direct_upload(request, session, actor)
-
-
-def _preview_script() -> str:
-    """Preview selected bytes in-place; source mutations still revalidate server-side."""
-    return """<script>(()=>{
-    const form=document.getElementById('amex-direct-intake');
-    const button=document.getElementById('amex-direct-preview');
-    const submit=document.getElementById('amex-direct-import');
-    const output=document.getElementById('amex-direct-preview-result');
-    let generation=0;
-    form.addEventListener('change',event=>{
-      if(['file','profile','currency','card_account_id','employee_id','period_start','period_end','company_code','receiver_rfc'].includes(event.target.name)){
-        generation++;submit.disabled=true;output.replaceChildren();}});
-    button.addEventListener('click',async()=>{
-      const current=++generation;submit.disabled=true;output.textContent='Validando archivo y perfil…';
-      button.disabled=true;
-      try{
-        const response=await fetch('/admin/contabilidad/amex/estados/directo/previsualizar',{
-          method:'POST',body:new FormData(form),credentials:'same-origin'});
-        const data=await response.json();
-        if(current!==generation)return;
-        if(!response.ok)throw new Error(data.detail||'No se pudo previsualizar el CSV.');
-        output.replaceChildren();
-        const summary=document.createElement('p');
-        summary.textContent=`${data.rows.length} filas originales. Perfil declarado: ${data.profile}. Revisa signo y tipo antes de confirmar.`;
-        output.append(summary);
-        if(data.outside_count){summary.textContent+=
-          ` ${data.outside_count} filas fuera del período: `+
-          `${data.min_date} a ${data.max_date}. `+
-          'Corrige el período antes de cargar.';}
-        const shell=document.createElement('div');shell.className='direct-table table-shell';
-        const table=document.createElement('table');
-        const header=document.createElement('tr');
-        ['Fila','Celda original','Importe firmado','Tipo','Importe del cargo','Motivo'].forEach(label=>{
-          const cell=document.createElement('th');cell.textContent=label;header.append(cell);});
-        table.append(header);
-        data.rows.forEach(row=>{
-          const tr=document.createElement('tr');
-          [row.row_number,row.raw_amount,row.raw_signed_amount,({debit:'Cargo',credit:'Crédito',unknown:'Signo desconocido',skipped:'Fila omitida'}[row.movement_kind]||'Tipo pendiente'),row.amount,row.reason_text||''].forEach(value=>{
-            const td=document.createElement('td');td.textContent=value===null||value===undefined?'Pendiente':String(value);tr.append(td);});
-          table.append(tr);
-        });shell.append(table);output.append(shell);
-        submit.disabled=Boolean(data.outside_count);
-      }catch(error){if(current===generation)output.textContent=error.message;}
-      finally{button.disabled=false;}
-    });})();</script>"""
 
 
 @router.post(BASE + "/directo/previsualizar")
@@ -1012,7 +996,9 @@ def _no_cfdi_forms(request, import_id, version, versions) -> str:
     return body + "</section>"
 
 
-def _row(item, suggestion_html: str = "") -> str:
+def _row(
+    item, suggestion_html: str = "", *, bucket: str = "review", disabled: bool = False
+) -> str:
     kind = {
         "debit": "Cargo",
         "credit": "Crédito",
@@ -1063,6 +1049,8 @@ def _row(item, suggestion_html: str = "") -> str:
         and item.budget_status == "classified"
     )
     select_item = f'<input type="checkbox" name="item_ids" form="direct-classification-form" value="{item.id}" aria-label="Seleccionar fila {item.row_number}" data-budget-eligible="{str(budget_eligible).lower()}">'
+    if disabled:
+        select_item = select_item.replace(">", " disabled>", 1)
     if item.movement_kind != "debit" or item.accounting_status == "recognized":
         select_item = ""
     treatment = _treatment_kind(item)
@@ -1098,7 +1086,9 @@ def _row(item, suggestion_html: str = "") -> str:
         )
         account_label = "Gasto"
     return (
-        f'<tr data-item-id="{item.id}"><td>{select_item}{item.row_number}</td>'
+        f'<tr data-item-id="{item.id}" data-amex-bucket="{escape(bucket, quote=True)}" '
+        f'data-amex-search="{escape(f"{item.fecha} {item.descriptor} {item.amount} {item.currency}", quote=True)}">'
+        f"<td>{select_item}{item.row_number}</td>"
         f"<td>{_text(item.fecha)}<br>{_text(item.descriptor)}</td>"
         f"<td>Celda: {_text(item.raw_amount)}<br>Firmado: {_text(item.raw_signed_amount)}<br>{kind}<br>{escape(_profile_label(item.profile))}</td>"
         f"<td>{_text(item.amount)} {_text(item.currency)}</td><td>{fiscal}</td>"
@@ -1127,6 +1117,14 @@ async def direct_statement(
     )
     if view.statement is None:
         raise HTTPException(404, "Estado no disponible.")
+    if request.query_params.get("workspace_poll") == "1":
+        return JSONResponse(
+            {"source_version": _source_version(view)},
+            headers={
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
     classification_allowed = True
     try:
         options = await _call(
@@ -1182,14 +1180,19 @@ async def direct_statement(
         )
     )
     statement, ctx = view.statement, view.context
-    body = (
-        f'<p><a href="{BASE}/directo">Estados directos</a> · <a href="{QUEUE}">Control Presupuestal AMEX directo</a></p>'
+    body = workspace_steps(
+        finalized=bool(
+            view.cut
+            or preview.cut
+            or (preview.progress or {}).get("completion_receipt")
+        )
+    ) + (
         f"<p>{_text(statement.filename)} · {_text(statement.period_start)} a {_text(statement.period_end)}</p>"
         f'<p>Entidad: {_text(getattr(ctx, "company_code", None))} · Moneda: {_text(getattr(ctx, "currency", None))} · '
         f'Perfil: {escape(_profile_label(getattr(ctx, "profile", None)))}</p>'
-        f'<p role="status">{escape(request.query_params.get("msg", ""))}</p>'
-        "<p>Conciliación fiscal, clasificación, partida, póliza y pago son hechos separados. "
-        "Todos los cargos, créditos y filas pendientes permanecen visibles.</p>"
+        f'<p id="amex-workspace-status" role="status">{escape(request.query_params.get("msg", ""))}</p>'
+        "<p>Resuelve los cargos de este estado y revisa su póliza completa. "
+        "El archivo y todos sus movimientos se conservan.</p>"
     )
     coverage = view.progress or {}
     if coverage.get("sign_revision_ids"):
@@ -1252,7 +1255,7 @@ async def direct_statement(
                 "permiso actual; la lectura del estado se conserva."
             )
     if frozen:
-        body += "<p>Fuente congelada: las decisiones se conservan y no se modifican desde esta pantalla.</p><fieldset disabled>"
+        body += "<p>Fuente congelada: las decisiones se conservan y no se modifican desde esta pantalla.</p>"
     versions = {str(item.id): item.source_version for item in view.items}
     active_no_cfdi = sum(
         _no_cfdi_decision(item).get("action") == "declare" for item in view.items
@@ -1279,15 +1282,28 @@ async def direct_statement(
         f"<p>Pendientes de factura: {pending_invoice} · Sin CFDI declarados: {active_no_cfdi}. "
         f"Pendientes de presupuesto: {pending_budget} · Pendientes de contabilización: {pending_accounting}.</p>"
     )
+    summary, buckets = workspace_summary(view.items, preview)
+    body += (
+        summary
+        + workspace_filters()
+        + '<p id="direct-selection-count" role="status">0 cargos seleccionados</p>'
+        + workspace_toolbar(
+            classification=classification_allowed,
+            treatment=treatment_allowed,
+            finance=finance,
+            frozen=frozen,
+        )
+    )
     if treatment_allowed and not frozen:
-        body += _treatment_form(
-            request, import_id, _source_version(view), versions, treatment_options
+        body += dialog_source(
+            "treatment",
+            _treatment_form(
+                request, import_id, _source_version(view), versions, treatment_options
+            ),
         )
     elif treatment_message and not frozen:
         body += '<p role="status">' + escape(treatment_message) + "</p>"
-    if classification_allowed:
-        body += _open(request, import_id, "clasificar", _source_version(view))
-        body += _hidden("expected_versions", json.dumps(versions))
+    body += '<section class="direct-classification" data-amex-charges><h2>2. Resolver cargos</h2>'
     body += (
         '<div class="direct-table '
         'table-shell"><table><thead><tr><th><'
@@ -1306,7 +1322,10 @@ async def direct_statement(
     body += (
         "".join(
             _row(
-                item, _suggestion_summary(import_id, suggested.get(str(item.id)))
+                item,
+                _suggestion_summary(import_id, suggested.get(str(item.id))),
+                bucket=row_bucket(item, preview),
+                disabled=frozen,
             ).replace(
                 "</td></tr>",
                 (
@@ -1334,7 +1353,7 @@ async def direct_statement(
             )
             for item in view.items
         )
-        + "</tbody></table></div>"
+        + "</tbody></table></div></section>"
     )
     if suggestion_message:
         body += '<p role="status">' + escape(suggestion_message) + "</p>"
@@ -1348,11 +1367,11 @@ async def direct_statement(
                 " movimientos originales permanecen visibles.</p>"
             )
         )
-    body += '<p id="direct-selection-count" role="status">0 cargos seleccionados</p>'
+    project_start = len(body)
     if not classification_allowed:
-        body += "<p>Tu acceso de lectura se conserva; no tienes autorización para clasificar cargos.</p><fieldset disabled>"
-        body += _open(request, import_id, "clasificar", _source_version(view))
-        body += _hidden("expected_versions", json.dumps(versions))
+        body += "<p>Tu acceso de lectura se conserva; no tienes autorización para clasificar cargos.</p>"
+    body += _open(request, import_id, "clasificar", _source_version(view))
+    body += _hidden("expected_versions", json.dumps(versions))
     body += '<details id="direct-project-classification"><summary>Clasificación sólo para gastos de proyecto / torneo</summary>'
     project_opts = "".join(
         (
@@ -1419,6 +1438,10 @@ async def direct_statement(
     body += (
         _submit("Guardar clasificación de cargos seleccionados") + "</details></form>"
     )
+    body = body[:project_start] + dialog_source(
+        "project", body[project_start:], disabled=not classification_allowed or frozen
+    )
+    budget_start = len(body)
     body += _open(request, import_id, "enviar-presupuesto", _source_version(view))
     body += _hidden("expected_versions", json.dumps(versions))
     body += (
@@ -1432,44 +1455,15 @@ async def direct_statement(
     body += _confirm("Confirmo enviar los cargos seleccionados a Control Presupuestal")
     body += '<p id="direct-budget-selection-count" role="status">0 cargos listos para enviar a Control Presupuestal.</p>'
     body += '<button id="direct-send-budget" class="button primary" type="submit" disabled>Enviar seleccionados a Control Presupuestal</button></form>'
-    if not classification_allowed:
-        body += "</fieldset>"
+    body = body[:budget_start] + dialog_source(
+        "budget", body[budget_start:], disabled=not classification_allowed or frozen
+    )
     if finance and not frozen:
-        body += _no_cfdi_forms(request, import_id, _source_version(view), versions)
-    body += """<script>(()=>{const project=document.getElementById('direct-project'),
-    concept=document.getElementById('direct-concept'),
-    choices=Array.from(concept.options).slice(1);
-    choices.forEach(o=>o.remove());project.addEventListener('change',()=>{
-    document.getElementById('direct-tournament').value=
-    project.value.startsWith('t:')?project.value.slice(2):'';
-    document.getElementById('direct-project-code').value=
-    project.value.startsWith('p:')?project.value.slice(2):'';
-    concept.replaceChildren(new Option('Selecciona categoría del proyecto',''));
-    choices.filter(o=>o.dataset.project===project.value)
-    .forEach(o=>concept.add(o.cloneNode(true)));
-    concept.disabled=!project.value;});
-    const selectedBoxes=()=>document.querySelectorAll('input[type=checkbox][name=item_ids]:checked');
-    document.getElementById('direct-select-all').addEventListener('change',event=>{
-    document.querySelectorAll('input[type=checkbox][name=item_ids]').forEach(box=>{
-    box.checked=event.target.checked;
-    box.dispatchEvent(new Event('change'));});});
-    document.querySelectorAll('input[type=checkbox][name=item_ids]').forEach(box=>
-    box.addEventListener('change',()=>{
-    document.getElementById('direct-selection-count').textContent=
-    selectedBoxes().length+' cargos seleccionados';
-    const selected=Array.from(selectedBoxes());
-    const budgetSelected=selected.filter(box=>box.dataset.budgetEligible==='true');
-    document.getElementById('direct-send-budget').disabled=budgetSelected.length===0;
-    const omitted=selected.length-budgetSelected.length;
-    document.getElementById('direct-budget-selection-count').textContent=
-    budgetSelected.length+' cargos listos para enviar a Control Presupuestal.'+
-    (omitted?' '+omitted+' seleccionados no se enviarán: su tratamiento o etapa no permite este envío.':'');
-    document.querySelectorAll('#direct-send-selection,.direct-copy-selection').forEach(target=>{
-    target.replaceChildren();
-    (target.id==='direct-send-selection'?budgetSelected:selected).forEach(selected=>{
-    const input=document.createElement('input');
-    input.type='hidden';input.name='item_ids';
-    input.value=selected.value;target.append(input);});});}));})();</script>"""
+        body += dialog_source(
+            "no-cfdi",
+            _no_cfdi_forms(request, import_id, _source_version(view), versions),
+        )
+    review_start = len(body)
     if not finance:
         body += "<p>Finanzas atiende contexto fiscal, conciliación, vigencia y confirmación contable.</p><fieldset disabled>"
     if finance and not context_allowed:
@@ -1501,9 +1495,10 @@ async def direct_statement(
     body += _exception_forms(request, import_id, view)
     if not finance:
         body += "</fieldset>"
-    if frozen:
-        body += "</fieldset>"
-    body += "<section><h2>Bloqueos y siguiente acción</h2><ul>"
+    body = body[:review_start] + dialog_source(
+        "review", body[review_start:], disabled=frozen
+    )
+    body += '<details id="amex-workspace-blockers"><summary>Bloqueos y siguiente acción</summary><ul>'
     for issue in (preview.progress or {}).get("issues", []):
         body += (
             "<li>Fila "
@@ -1531,7 +1526,8 @@ async def direct_statement(
             exception.get("reason") if isinstance(exception, dict) else str(exception)
         )
         body += f"<li>{escape(_reason(code))}</li>"
-    body += "</ul></section>"
+    body += "</ul></details>"
+    journal_start = len(body)
     body += _journal_preview(preview)
     body += "<section><h2>Confirmar póliza completa</h2>"
     if completion:
@@ -1573,10 +1569,34 @@ async def direct_statement(
     else:
         body += "<p>" + escape(_reason(preview.reason)) + "</p>"
     body += "</section>"
+    journal_body = body[journal_start:]
+    body = (
+        body[:journal_start]
+        + '<section id="amex-stage-policy"><h2>3. Obtener póliza</h2>'
+    )
+    if frozen:
+        body += journal_body
+    else:
+        button_class = (
+            "primary" if preview.status == "ready" and finance else "secondary"
+        )
+        body += f'<button type="button" class="button {button_class}" data-amex-open="journal" data-amex-title="Revisar póliza">Revisar póliza</button>'
+        if preview.status != "ready":
+            body += "<p>La confirmación se habilita cuando el estado completo esté listo. Revisa arriba los bloqueos y su siguiente acción.</p>"
+        body += dialog_source("journal", journal_body)
+    body += "</section>"
     if finance:
         body += f'<p><a href="{BASE}/{import_id}/directo/original">Descargar archivo original privado</a></p>'
     body += '<p><a class="button secondary" href="/admin/gastos/amex/conciliacion">Programar pago de AMEX</a> · Programar no registra pago. Este recorrido no agrega un bloqueo de pago por CFDI.</p>'
-    return _html("Estado AMEX directo", body, actor)
+    return _html(
+        "Estado AMEX directo",
+        body,
+        actor,
+        kind="statement",
+        statement_url=f"{BASE}/{import_id}/directo",
+        source_version=_source_version(view),
+        pending_budget=buckets.get("budget", 0),
+    )
 
 
 def _context_inputs(contexts: list[dict]) -> str:
@@ -1979,7 +1999,10 @@ async def direct_selected_cfdi_status(
     )
     return RedirectResponse(
         f"{BASE}/{import_id}/directo/cfdi?"
-        + urlencode({"item_id": str(item_id), "msg": message}),
+        + urlencode(
+            {"item_id": str(item_id), "msg": message}
+            | ({"error_msg": message} if result.status == "pending" else {})
+        ),
         303,
     )
 
@@ -2062,7 +2085,7 @@ async def direct_period_action(
             )
             if result.status not in {"recovered", "exists"}:
                 await session.rollback()
-                return _redirect(import_id, _reason(result.reason))
+                return _redirect(import_id, _reason(result.reason), error=True)
             await session.commit()
             return _redirect(
                 import_id,
@@ -2585,6 +2608,7 @@ async def direct_action(
                     if result.status == "pending"
                     else "Consulta observada. Revisa los resultados y la continuación pendiente."
                 ),
+                error=result.status == "pending",
             )
         if action == "contexto":
             result = await _call(
@@ -2747,7 +2771,7 @@ async def direct_action(
             raise HTTPException(404, "Acción no disponible.")
         if result.status == "pending":
             await session.rollback()
-            return _redirect(import_id, _reason(result.reason))
+            return _redirect(import_id, _reason(result.reason), error=True)
         await session.commit()
     except (ValueError, ArithmeticError):
         await session.rollback()
@@ -2924,7 +2948,7 @@ async def direct_budget_queue(
     if not rows:
         body += "<p>No hay cargos pendientes dentro de tu ámbito autorizado.</p>"
     body += f'<p role="status">{escape(request.query_params.get("msg", ""))}</p>'
-    return _html("Control Presupuestal AMEX directo", body, actor)
+    return _html("Control Presupuestal AMEX directo", body, actor, kind="budget")
 
 
 @router.post(QUEUE + "/{item_id}/{action}")

@@ -11,6 +11,7 @@ import csv
 import importlib.util
 import io
 import json
+import os
 import socket
 import zipfile
 from collections import Counter
@@ -23,8 +24,9 @@ import pytest
 import uvicorn
 from fastapi import Depends, FastAPI, Request
 from openpyxl import load_workbook
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, expect
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.staticfiles import StaticFiles
 
 from devnous.gastos.models import Empleado
 from devnous.gastos.routes import admin_amex_direct_routes as routes
@@ -43,6 +45,11 @@ direct_pg = owner.direct_pg
 async def real_owner_browser_server(pg):
     """Serve the actual router on localhost with two isolated business actors."""
     app = FastAPI()
+    app.mount(
+        "/static",
+        StaticFiles(directory=Path(__file__).resolve().parents[2] / "static"),
+        name="static",
+    )
     app.add_middleware(SessionMiddleware, secret_key="isolated-browser-acceptance")
 
     async def session_dependency():
@@ -211,7 +218,10 @@ async def test_accountant_discovers_cfdi_then_cp_and_downloads_complete_policy(
     )
     assert await owner._count(pg, owner.models.AccountingPoliza) == 0
     async with real_owner_browser_server(pg) as base, async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True)
+        browser = await playwright.chromium.launch(
+            headless=True,
+            executable_path=os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"),
+        )
         finance_context = await browser.new_context(
             extra_http_headers={"x-qa-actor": "finance"}
         )
@@ -219,10 +229,24 @@ async def test_accountant_discovers_cfdi_then_cp_and_downloads_complete_policy(
             extra_http_headers={"x-qa-actor": "budget"}
         )
         page = await finance_context.new_page()
+        navigations = []
+        page.on(
+            "request",
+            lambda request: (
+                navigations.append(request.url)
+                if request.is_navigation_request()
+                and request.frame == page.main_frame
+                and "/exportar." not in request.url
+                else None
+            ),
+        )
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         try:
             await page.goto(base + routes.BASE + "/directo/nuevo")
+            document_identity = await page.evaluate(
+                "document.__amexAcceptanceIdentity = crypto.randomUUID()"
+            )
             await page.locator('[name="card_account_id"]').select_option(
                 str(pg.card.id)
             )
@@ -246,7 +270,7 @@ async def test_accountant_discovers_cfdi_then_cp_and_downloads_complete_policy(
             await page.get_by_role(
                 "button", name="Cargar estado directo", exact=True
             ).click()
-            await page.wait_for_url("**/directo?msg=**")
+            await expect(page.locator('[data-amex-view="statement"]')).to_be_visible()
             statement_id = UUID(page.url.split("/estados/", 1)[1].split("/", 1)[0])
             statement_url = base + routes.BASE + f"/{statement_id}/directo"
             assert await pg.conn.fetchval("SELECT count(*) FROM expense_reports") == 2
@@ -257,6 +281,11 @@ async def test_accountant_discovers_cfdi_then_cp_and_downloads_complete_policy(
                 pg, page, budget_context, statement_url, statement_id, uuids, observed
             )
             assert not errors
+            assert len(navigations) == 1, navigations
+            assert (
+                await page.evaluate("document.__amexAcceptanceIdentity")
+                == document_identity
+            )
         finally:
             await browser.close()
 
@@ -270,18 +299,31 @@ async def complete_picker_budget_and_export(
         "ON r.id=d.import_item_id ORDER BY r.row_number"
     )
     for item, fiscal_uuid in zip(original_items, uuids, strict=True):
-        await page.goto(statement_url)
         row = page.locator(f'tr[data-item-id="{item["id"]}"]')
         await row.get_by_role("link", name="Buscar CFDI", exact=True).click()
         await page.locator('input[name="q"]').fill(fiscal_uuid)
-        await page.get_by_role("button", name="Buscar facturas", exact=True).click()
+        async with page.expect_response(
+            lambda response: response.request.method == "GET"
+            and "/directo/cfdi?" in response.url
+            and "search=1" in response.url
+        ) as searching:
+            await page.get_by_role("button", name="Buscar facturas", exact=True).click()
+        await searching.value
         candidate = page.locator(f'section[data-cfdi-uuid="{fiscal_uuid}"]')
         observe_form = candidate.locator('form[action$="/cfdi/vigencia"]')
         await observe_form.locator('input[name="confirmed"]').check()
-        await observe_form.get_by_role(
-            "button", name="Consultar vigencia de esta factura", exact=True
-        ).click()
-        await page.wait_for_load_state("networkidle")
+        async with page.expect_response(
+            lambda response: response.request.method == "POST"
+            and response.url.endswith("/cfdi/vigencia")
+        ) as observing:
+            await observe_form.get_by_role(
+                "button", name="Consultar vigencia de esta factura", exact=True
+            ).click()
+        assert (await observing.value).status == 303
+        await expect(page.locator("dialog[open]")).to_contain_text("Vigencia observada")
+        await expect(
+            page.locator('dialog[open] button[aria-label="Cerrar ventana AMEX"]')
+        ).to_be_enabled()
         candidate = page.locator(f'section[data-cfdi-uuid="{fiscal_uuid}"]')
         link_form = candidate.locator('form[action$="/vincular"]')
         await link_form.locator('input[name="reason"]').fill(
@@ -291,7 +333,8 @@ async def complete_picker_budget_and_export(
         await link_form.get_by_role(
             "button", name="Vincular factura seleccionada", exact=True
         ).click()
-        await page.wait_for_url("**/directo?msg=**")
+        await expect(page.locator("dialog[open]")).to_have_count(0)
+        assert page.url.split("?", 1)[0] == statement_url
     assert len(observed.requests) == 2
     assert (
         await pg.conn.fetchval("SELECT count(*) FROM amex_merchant_identity_aliases")
@@ -304,9 +347,12 @@ async def complete_picker_budget_and_export(
         == 2
     )
 
+    await page.locator("#direct-select-all").check()
+    await page.locator('[data-amex-open="project"]').click()
     classification = page.locator('form[action$="/clasificar"]')
-    for checkbox in await classification.locator('input[name="item_ids"]').all():
-        await checkbox.check()
+    assert set(
+        await classification.evaluate("form => new FormData(form).getAll('item_ids')")
+    ) == {str(item["id"]) for item in original_items}
     assert await classification.locator(
         'select[name="budget_concept_id"]'
     ).is_disabled()
@@ -321,7 +367,8 @@ async def complete_picker_budget_and_export(
     await classification.get_by_role(
         "button", name="Guardar clasificación de cargos seleccionados", exact=True
     ).click()
-    await page.wait_for_url("**/directo?msg=**")
+    await expect(page.locator("dialog[open]")).to_have_count(0)
+    assert page.url.split("?", 1)[0] == statement_url
     assert (
         await pg.conn.fetchval(
             "SELECT count(*) FROM amex_direct_items WHERE budget_status='classified'"
@@ -332,18 +379,27 @@ async def complete_picker_budget_and_export(
         await pg.conn.fetchval("SELECT count(*) FROM budget_movement_assignments") == 0
     )
 
-    for checkbox in await page.locator(
-        'form[action$="/clasificar"] input[name="item_ids"]'
-    ).all():
-        await checkbox.check()
+    await page.locator("#direct-select-all").check()
+    await page.locator('[data-amex-open="budget"]').click()
     send_form = page.locator('form[action$="/enviar-presupuesto"]')
     assert await send_form.locator('input[name="item_ids"]').count() == 2
     await send_form.locator('input[name="confirmed"]').check()
     await send_form.get_by_role(
         "button", name="Enviar seleccionados a Control Presupuestal", exact=True
     ).click()
-    await page.wait_for_url("**/directo?msg=**")
+    await expect(page.locator("dialog[open]")).to_have_count(0)
+    assert page.url.split("?", 1)[0] == statement_url
 
+    finance_posts = []
+    page.on(
+        "request",
+        lambda request: (
+            finance_posts.append(request.url) if request.method == "POST" else None
+        ),
+    )
+    before_cp_version = await page.locator("#amex-workspace-view").get_attribute(
+        "data-source-version"
+    )
     budget_page = await budget_context.new_page()
     base = statement_url.split(routes.BASE, 1)[0]
     await budget_page.goto(base + routes.QUEUE)
@@ -362,7 +418,14 @@ async def complete_picker_budget_and_export(
         await pg.conn.fetchval("SELECT count(*) FROM budget_movement_assignments") == 2
     )
 
-    await page.goto(statement_url)
+    await page.wait_for_function(
+        "old => document.querySelector('#amex-workspace-view').dataset.sourceVersion !== old",
+        arg=before_cp_version,
+        timeout=30000,
+    )
+    assert not finance_posts, finance_posts
+    assert page.url.split("?", 1)[0] == statement_url
+    await page.locator('[data-amex-open="journal"]').click()
     from devnous.gastos.services import amex_direct_accounting_service as accounting
 
     async with pg.factory() as session:
@@ -402,7 +465,8 @@ async def complete_picker_budget_and_export(
     await confirm_form.get_by_role(
         "button", name="Generar póliza directa completa", exact=True
     ).click()
-    await page.wait_for_url("**/directo?msg=**")
+    await expect(page.locator("dialog[open]")).to_have_count(0)
+    assert page.url.split("?", 1)[0] == statement_url
     assert await pg.conn.fetchval("SELECT count(*) FROM accounting_polizas") == 1
     assert (
         await pg.conn.fetchval("SELECT sum(debe) FROM accounting_poliza_lines") == 348
