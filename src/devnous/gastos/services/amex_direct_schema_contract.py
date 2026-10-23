@@ -2334,3 +2334,426 @@ EXPECTED_EFFECTIVE_VIEW_DEFINITION = (
     "erage_revisions cr ON cr.import_id = d.import_id\n     LEFT JOIN "
     "amex_direct_sign_rows sr ON sr.direct_item_id = d.id;"
 )
+
+
+# Owner-installed account treatment/policy contract, 2026-10-23.
+EXPECTED_CHECKS.update(
+    {
+        (
+            "amex_direct_account_treatment_decisions",
+            "amex_direct_account_treatment_decisi_economic_source_hash_check",
+        ): "CHECK "
+        "((length((economic_source_hash)::text) "
+        "= "
+        "64))",
+        (
+            "amex_direct_account_treatment_decisions",
+            "amex_direct_account_treatment_decisions_action_check",
+        ): "CHECK "
+        "(((action)::text "
+        "= "
+        "ANY "
+        "((ARRAY['set'::character "
+        "varying, "
+        "'revoke'::character "
+        "varying])::text[])))",
+        (
+            "amex_direct_account_treatment_decisions",
+            "amex_direct_account_treatment_decisions_check",
+        ): "CHECK "
+        "((((treatment)::text "
+        "= "
+        "'partner_receivable'::text) "
+        "= "
+        "(debtor_account_id "
+        "IS "
+        "NOT "
+        "NULL)))",
+        (
+            "amex_direct_account_treatment_decisions",
+            "amex_direct_account_treatment_decisions_context_version_check",
+        ): "CHECK "
+        "((context_version "
+        "> "
+        "0))",
+        (
+            "amex_direct_account_treatment_decisions",
+            "amex_direct_account_treatment_decisions_idempotency_key_check",
+        ): "CHECK "
+        "((length((idempotency_key)::text) "
+        "= "
+        "64))",
+        (
+            "amex_direct_account_treatment_decisions",
+            "amex_direct_account_treatment_decisions_payload_hash_check",
+        ): "CHECK "
+        "((length((payload_hash)::text) "
+        "= "
+        "64))",
+        (
+            "amex_direct_account_treatment_decisions",
+            "amex_direct_account_treatment_decisions_reason_check",
+        ): "CHECK "
+        "(((length(TRIM(BOTH "
+        "FROM "
+        "reason)) "
+        ">= "
+        "1) "
+        "AND "
+        "(length(TRIM(BOTH "
+        "FROM "
+        "reason)) "
+        "<= "
+        "1000)))",
+        (
+            "amex_direct_account_treatment_decisions",
+            "amex_direct_account_treatment_decisions_request_id_check",
+        ): "CHECK "
+        "(((length(TRIM(BOTH "
+        "FROM "
+        "request_id)) "
+        ">= "
+        "1) "
+        "AND "
+        "(length(TRIM(BOTH "
+        "FROM "
+        "request_id)) "
+        "<= "
+        "160)))",
+        (
+            "amex_direct_account_treatment_decisions",
+            "amex_direct_account_treatment_decisions_revision_check",
+        ): "CHECK "
+        "((revision "
+        "> "
+        "0))",
+        (
+            "amex_direct_account_treatment_decisions",
+            "amex_direct_account_treatment_decisions_source_hash_check",
+        ): "CHECK "
+        "((length((source_hash)::text) "
+        "= "
+        "64))",
+        (
+            "amex_direct_account_treatment_decisions",
+            "amex_direct_account_treatment_decisions_source_version_check",
+        ): "CHECK "
+        "((source_version "
+        "> "
+        "0))",
+        (
+            "amex_direct_account_treatment_decisions",
+            "amex_direct_account_treatment_decisions_treatment_check",
+        ): "CHECK "
+        "(((treatment)::text "
+        "= "
+        "ANY "
+        "((ARRAY['project_expense'::character "
+        "varying, "
+        "'benefit_expense'::character "
+        "varying, "
+        "'partner_receivable'::character "
+        "varying])::text[])))",
+        (
+            "amex_direct_account_treatment_policies",
+            "amex_direct_account_treatment_policies_base_config_hash_check",
+        ): "CHECK "
+        "((length((base_config_hash)::text) "
+        "= "
+        "64))",
+        (
+            "amex_direct_account_treatment_policies",
+            "amex_direct_account_treatment_policies_config_hash_check",
+        ): "CHECK "
+        "((length((config_hash)::text) "
+        "= "
+        "64))",
+        (
+            "amex_direct_account_treatment_policies",
+            "amex_direct_account_treatment_policies_payload_hash_check",
+        ): "CHECK "
+        "((length((payload_hash)::text) "
+        "= "
+        "64))",
+        (
+            "amex_direct_account_treatment_policies",
+            "amex_direct_account_treatment_policies_reason_check",
+        ): "CHECK "
+        "(((length(TRIM(BOTH "
+        "FROM "
+        "reason)) "
+        ">= "
+        "1) "
+        "AND "
+        "(length(TRIM(BOTH "
+        "FROM "
+        "reason)) "
+        "<= "
+        "1000)))",
+        (
+            "amex_direct_account_treatment_policies",
+            "amex_direct_account_treatment_policies_request_id_check",
+        ): "CHECK "
+        "(((length(TRIM(BOTH "
+        "FROM "
+        "request_id)) "
+        ">= "
+        "1) "
+        "AND "
+        "(length(TRIM(BOTH "
+        "FROM "
+        "request_id)) "
+        "<= "
+        "160)))",
+        (
+            "amex_direct_account_treatment_policies",
+            "amex_direct_account_treatment_policies_revision_check",
+        ): "CHECK "
+        "((revision "
+        "> "
+        "0))",
+        (
+            "amex_direct_no_cfdi_decisions",
+            "amex_direct_no_cfdi_decisions_treatment_check",
+        ): "CHECK "
+        "(((treatment)::text "
+        "= "
+        "ANY "
+        "((ARRAY['full_amount_expense_no_tax'::character "
+        "varying, "
+        "'full_amount_partner_receivable_no_tax'::character "
+        "varying])::text[])))",
+    }
+)
+EXPECTED_TRIGGERS.update(
+    {
+        "ad_account_treatment_context": (
+            "amex_statement_direct_contexts",
+            "amex_direct_account_treatment_context_guard",
+            7,
+            False,
+            False,
+        ),
+        "ad_account_treatment_decision_seal": (
+            "amex_direct_account_treatment_decisions",
+            "amex_direct_account_treatment_seal",
+            5,
+            True,
+            True,
+        ),
+        "ad_account_treatment_event_seal": (
+            "amex_direct_events",
+            "amex_direct_account_treatment_seal",
+            5,
+            True,
+            True,
+        ),
+        "ad_account_treatment_expense_seal": (
+            "expense_reports",
+            "amex_direct_account_treatment_expense_seal",
+            17,
+            True,
+            True,
+        ),
+        "ad_account_treatment_immutable": (
+            "amex_direct_account_treatment_decisions",
+            "amex_direct_immutable",
+            27,
+            False,
+            False,
+        ),
+        "ad_account_treatment_insert": (
+            "amex_direct_account_treatment_decisions",
+            "amex_direct_account_treatment_insert_guard",
+            7,
+            False,
+            False,
+        ),
+        "ad_account_treatment_item_seal": (
+            "amex_direct_items",
+            "amex_direct_account_treatment_seal",
+            21,
+            True,
+            True,
+        ),
+        "ad_account_treatment_policy_dml": (
+            "amex_direct_account_treatment_policies",
+            "amex_direct_immutable",
+            31,
+            False,
+            False,
+        ),
+        "ad_account_treatment_policy_truncate": (
+            "amex_direct_account_treatment_policies",
+            "amex_direct_immutable",
+            34,
+            False,
+            False,
+        ),
+        "ad_account_treatment_projection": (
+            "amex_direct_items",
+            "amex_direct_account_treatment_projection_guard",
+            23,
+            False,
+            False,
+        ),
+        "ad_account_treatment_recovery": (
+            "amex_direct_coverage_revisions",
+            "amex_direct_account_treatment_context_guard",
+            7,
+            False,
+            False,
+        ),
+        "ad_account_treatment_sign": (
+            "amex_direct_sign_revisions",
+            "amex_direct_account_treatment_context_guard",
+            7,
+            False,
+            False,
+        ),
+        "ad_account_treatment_state": (
+            "amex_statement_direct_state",
+            "amex_direct_account_treatment_context_guard",
+            19,
+            False,
+            False,
+        ),
+    }
+)
+EXPECTED_FUNCTION_HASHES.update(
+    {
+        "amex_direct_account_treatment_context_guard": "c29112adadb721d955ab3d9552bc4796aa5efcb3a1146874f3be0b998823cbd5",
+        "amex_direct_account_treatment_expense_seal": "724deee520ae08f4fe48f2dd06b89289d70a87da04835b4a15b09ead9177d679",
+        "amex_direct_account_treatment_insert_guard": "ce2c202e297a9263cb3fcc9add479dc0135b502928499280417f9b9138cc2316",
+        "amex_direct_account_treatment_projection_guard": "ba6e0970507a822283cf75a2a851f97a8df2c90192c42f8a2a443fd7657d14ad",
+        "amex_direct_account_treatment_seal": "fc5f6f95ae804896f4983c0803af61a63e33b1eb86ffe1e16e3b83a34d1f63b6",
+        "amex_direct_check_cut": "e42da74b9cc4fcc5c63bc0c8f801313ccfbbc43b4e7538e3242ae09f0d1cfddc",
+        "amex_direct_cut_item_guard": "86a7b9a35a4dd4949f5cb4989c3f2d270bf263e40a26374677b41ce3f167057d",
+    }
+)
+EXPECTED_NO_CFDI_HELPER_HASHES.update(
+    {
+        "amex_direct_account_treatment_assert": "2ba7634381a2a4fbef3c6b6466b3981a04a5f1354d91cf7c1a2aaeb920f86f2c",
+        "amex_direct_no_cfdi_assert": "84c2d777f6e00c16fccfe88d432a3052b7df6cd64548e4f025dc4d5689464d0a",
+    }
+)
+EXPECTED_KEYS.extend(
+    [
+        (
+            "amex_direct_account_treatment_decisions",
+            "u",
+            ("item_id", "idempotency_key"),
+        ),
+        (
+            "amex_direct_account_treatment_decisions",
+            "f",
+            ("previous_decision_id",),
+            "amex_direct_account_treatment_decisions",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_account_treatment_decisions",
+            "f",
+            ("imported_expense_id",),
+            "expense_reports",
+            ("id",),
+            "r",
+        ),
+        ("amex_direct_account_treatment_decisions", "u", ("previous_decision_id",)),
+        (
+            "amex_direct_account_treatment_decisions",
+            "f",
+            ("actor_id",),
+            "empleados",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_account_treatment_decisions",
+            "f",
+            ("context_id",),
+            "amex_statement_direct_contexts",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_account_treatment_decisions",
+            "f",
+            ("debtor_account_id",),
+            "cuentas_contables",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_account_treatment_decisions",
+            "f",
+            ("import_id",),
+            "amex_statement_imports",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_account_treatment_decisions",
+            "f",
+            ("item_id",),
+            "amex_direct_items",
+            ("id",),
+            "r",
+        ),
+        ("amex_direct_account_treatment_decisions", "u", ("item_id", "revision")),
+        ("amex_direct_account_treatment_decisions", "p", ("id",)),
+        (
+            "amex_direct_account_treatment_decisions",
+            "f",
+            ("policy_id",),
+            "amex_direct_account_treatment_policies",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_account_treatment_policies",
+            "u",
+            ("base_config_hash", "revision"),
+        ),
+        (
+            "amex_direct_account_treatment_policies",
+            "f",
+            ("actor_id",),
+            "empleados",
+            ("id",),
+            "r",
+        ),
+        ("amex_direct_account_treatment_policies", "p", ("id",)),
+        (
+            "amex_direct_account_treatment_policies",
+            "f",
+            ("previous_policy_id",),
+            "amex_direct_account_treatment_policies",
+            ("id",),
+            "r",
+        ),
+        ("amex_direct_account_treatment_policies", "u", ("previous_policy_id",)),
+        ("amex_direct_account_treatment_policies", "u", ("request_id",)),
+        (
+            "amex_direct_cut_items",
+            "f",
+            ("account_treatment_decision_id",),
+            "amex_direct_account_treatment_decisions",
+            ("id",),
+            "r",
+        ),
+        (
+            "amex_direct_items",
+            "f",
+            ("account_treatment_decision_id",),
+            "amex_direct_account_treatment_decisions",
+            ("id",),
+            "r",
+        ),
+    ]
+)
+EXPECTED_EFFECTIVE_VIEW_HASH = (
+    "f6c5af30e9993cd66e2c4e4fadb7bfc1c759a78cadbeeca9de95613b9fa460c5"
+)
+EXPECTED_EFFECTIVE_VIEW_DEFINITION = " SELECT d.id,\n    d.import_id,\n    d.import_item_id,\n        CASE\n            WHEN sr.id IS NOT NULL THEN sr.imported_expense_id\n            ELSE COALESCE(rr.imported_expense_id, d.imported_expense_id)\n        END AS imported_expense_id,\n        CASE\n            WHEN sr.id IS NOT NULL THEN sr.movement_kind\n            ELSE COALESCE(rr.movement_kind, d.movement_kind)\n        END AS movement_kind,\n        CASE\n            WHEN sr.id IS NOT NULL THEN sr.raw_signed_amount\n            ELSE COALESCE(rr.raw_signed_amount, d.raw_signed_amount)\n        END AS raw_signed_amount,\n    COALESCE(rr.raw_amount, d.raw_amount) AS raw_amount,\n    COALESCE(rr.amount_column, d.amount_column) AS amount_column,\n        CASE\n            WHEN sr.id IS NOT NULL THEN sr.profile\n            ELSE COALESCE(rr.profile, d.profile)\n        END AS profile,\n    d.profile_version,\n        CASE\n            WHEN sr.id IS NOT NULL THEN sr.effective_source_json\n            ELSE COALESCE(rr.effective_source_json, d.source_json)\n        END AS source_json,\n    d.context_id,\n    d.context_version,\n    d.source_version,\n    d.source_hash,\n    d.match_status,\n    d.match_reason,\n    d.match_proof,\n    d.cfdi_id,\n    d.status_receipt_id,\n    d.merchant_alias_id,\n    d.declared_uuid,\n    d.issuer_rfc,\n    d.tournament_id,\n    d.project_code,\n    d.edition_year,\n    d.budget_concept_id,\n    d.budget_line_id,\n    d.budget_version_id,\n    d.budget_assignment_id,\n    d.budget_status,\n    d.accounting_status,\n    d.credit_excluded,\n    d.updated_at,\n    rr.id AS recovery_id,\n    rr.revision_id AS recovery_revision_id,\n    rr.proof_hash AS recovery_proof_hash,\n    COALESCE(cr.period_start, h.period_start) AS period_start,\n    COALESCE(cr.period_end, h.period_end) AS period_end,\n    sr.revision_id AS sign_revision_id,\n    sr.id AS sign_row_id,\n    sr.proof_hash AS sign_proof_hash,\n    d.account_treatment_decision_id\n   FROM amex_direct_items d\n     JOIN amex_statement_imports h ON h.id = d.import_id\n     LEFT JOIN amex_direct_recovered_rows rr ON rr.direct_item_id = d.id\n     LEFT JOIN amex_direct_coverage_revisions cr ON cr.import_id = d.import_id\n     LEFT JOIN amex_direct_sign_rows sr ON sr.direct_item_id = d.id;"

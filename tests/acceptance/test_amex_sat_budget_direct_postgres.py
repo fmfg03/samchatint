@@ -5,6 +5,7 @@ Business APIs stay real; only the external SAT transport may be substituted.
 """
 
 import hashlib
+import importlib.util
 import json
 import os
 from datetime import date
@@ -18,12 +19,25 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import ForeignKeyConstraint, MetaData, func, select, text
 from sqlalchemy.engine import make_url
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    async_sessionmaker,
+    close_all_sessions,
+    create_async_engine,
+)
 
 from devnous.gastos import models
 from devnous.gastos.amex_schema_policy import OWNER_MIGRATION_TABLES
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# Fixture-owner configuration uses its own isolated DDL boundary, never runtime DML.
+_policy_spec = importlib.util.spec_from_file_location(
+    "amex_account_treatment_fixture_support",
+    ROOT / "tests/acceptance/amex_account_treatment_support.py",
+)
+_policy_support = importlib.util.module_from_spec(_policy_spec)
+_policy_spec.loader.exec_module(_policy_support)
+install_account_treatment_policy = _policy_support.install_account_treatment_policy
 DIRECT_TABLES = frozenset(
     {
         "amex_statement_source_files",
@@ -95,6 +109,7 @@ async def direct_pg(monkeypatch):
             "20261020_amex_expense_account_settlements.sql",
             "20261021_amex_direct_no_cfdi.sql",
             "20261022_amex_direct_sign_correction.sql",
+            "20261023_amex_direct_account_treatments.sql",
         ):
             path = ROOT / "database/migrations" / filename
             assert path.is_file(), f"Owner migration absent: {filename}"
@@ -231,6 +246,9 @@ async def direct_pg(monkeypatch):
             line_id=line_id,
         )
     finally:
+        # Failed manual-session concurrency cases must release their advisory
+        # locks before teardown tries to take a schema-wide DDL lock.
+        await close_all_sessions()
         if connection is not None:
             if connection.is_in_transaction():
                 await connection.execute("ROLLBACK")
@@ -549,7 +567,9 @@ async def _assigned_statement(pg):
 @pytest.mark.asyncio
 async def test_actual_classification_cp_assignment_and_atomic_direct_cut(direct_pg):
     import io
+
     from openpyxl import load_workbook
+
     from devnous.gastos.services import amex_direct_accounting_service as direct
 
     pg = direct_pg
@@ -732,6 +752,7 @@ async def test_actual_access_rules_and_actor_identity_deny_intake_without_effect
     direct_pg, denial
 ):
     from sqlalchemy import update
+
     from devnous.gastos.services.access_control_service import (
         empleado_area,
         empleado_role,
@@ -773,12 +794,12 @@ async def test_actual_access_rules_and_actor_identity_deny_intake_without_effect
 
 @pytest.mark.asyncio
 async def test_original_download_is_exact_and_denial_is_reloaded(direct_pg):
-    from devnous.gastos.services.amex_direct_intake_service import (
-        download_direct_source,
-    )
     from devnous.gastos.services.access_control_service import (
         empleado_area,
         empleado_role,
+    )
+    from devnous.gastos.services.amex_direct_intake_service import (
+        download_direct_source,
     )
 
     pg = direct_pg
@@ -971,11 +992,11 @@ async def test_intake_failure_after_source_persistence_leaves_no_file_or_debit(
 
 @pytest.mark.asyncio
 async def test_all_credits_excluded_still_never_create_zero_journal(direct_pg):
-    from devnous.gastos.services.amex_direct_matching_service import (
-        exclude_direct_credit,
-    )
     from devnous.gastos.services.amex_direct_accounting_service import (
         preview_direct_accounting,
+    )
+    from devnous.gastos.services.amex_direct_matching_service import (
+        exclude_direct_credit,
     )
 
     pg = direct_pg
@@ -1045,7 +1066,6 @@ async def test_real_budget_reader_replaces_pending_projection_with_one_fiscal_jo
 
 
 async def _cross_calendar_state(pg, *, two_debits=True):
-    from devnous.gastos.services.cfdi_ingestion_service import ingest_cfdi_xml
     from devnous.gastos.services.amex_direct_matching_service import (
         confirm_merchant_alias,
         reconcile_direct_statement,
@@ -1053,6 +1073,7 @@ async def _cross_calendar_state(pg, *, two_debits=True):
     from devnous.gastos.services.amex_direct_status_service import (
         consult_direct_statement_status,
     )
+    from devnous.gastos.services.cfdi_ingestion_service import ingest_cfdi_xml
 
     first = _synthetic_sat_xml().replace("2026-10-03", "2026-09-30")
     second = (
@@ -1246,12 +1267,12 @@ async def test_context_revision_releases_own_application_and_assignment(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("with_cut", [False, True])
 async def test_payment_owner_schedules_and_posts_only_liability(direct_pg, with_cut):
+    from devnous.gastos.services.amex_accounting_posting_service import (
+        ensure_amex_payment_posting,
+    )
     from devnous.gastos.services.amex_card_payment_service import (
         AmexCardPaymentRequest,
         create_amex_card_payment_request,
-    )
-    from devnous.gastos.services.amex_accounting_posting_service import (
-        ensure_amex_payment_posting,
     )
 
     pg = direct_pg
@@ -1379,7 +1400,9 @@ async def test_observed_receipt_ttl_boundary_and_changed_xml_invalidate_status(
     direct_pg,
 ):
     from datetime import timedelta
+
     from sqlalchemy import update
+
     from devnous.gastos.services.amex_direct_matching_service import (
         current_status_receipt,
     )
@@ -1420,6 +1443,7 @@ async def test_observed_receipt_ttl_boundary_and_changed_xml_invalidate_status(
 @pytest.mark.asyncio
 async def test_classify_budget_confirm_export_execute_no_schema_ddl(direct_pg):
     from sqlalchemy import event
+
     from devnous.gastos.services.amex_direct_accounting_service import export_direct_cut
 
     pg = direct_pg

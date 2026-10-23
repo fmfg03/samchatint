@@ -158,6 +158,9 @@ class AmexDirectItem(Base):
     no_cfdi_decision_id = reference(
         "amex_direct_no_cfdi_decisions", nullable=True, use_alter=True
     )
+    account_treatment_decision_id = reference(
+        "amex_direct_account_treatment_decisions", nullable=True, use_alter=True
+    )
     match_status = Column(String(30), nullable=False, default="pending")
     match_reason = Column(String(80), nullable=True)
     match_proof = Column(JSONB, nullable=True)
@@ -221,6 +224,9 @@ class AmexDirectCutItem(Base):
     accounting_poliza_id = reference("accounting_polizas", nullable=True)
     no_cfdi_decision_id = reference(
         "amex_direct_no_cfdi_decisions", nullable=True, use_alter=True
+    )
+    account_treatment_decision_id = reference(
+        "amex_direct_account_treatment_decisions", nullable=True, use_alter=True
     )
     coverage_kind = Column(String(30), nullable=False)
     source_hash = Column(String(64), nullable=False)
@@ -287,7 +293,10 @@ class AmexDirectNoCFDIDecision(Base):
         UniqueConstraint("previous_decision_id"),
         CheckConstraint("revision > 0"),
         CheckConstraint("action IN ('declare','revoke')"),
-        CheckConstraint("treatment = 'full_amount_expense_no_tax'"),
+        CheckConstraint(
+            "treatment IN ('full_amount_expense_no_tax',"
+            "'full_amount_partner_receivable_no_tax')"
+        ),
         CheckConstraint("length(trim(reason)) BETWEEN 1 AND 1000"),
         CheckConstraint("length(payload_hash) = 64"),
         CheckConstraint("length(economic_source_hash) = 64"),
@@ -310,6 +319,89 @@ class AmexDirectNoCFDIDecision(Base):
     idempotency_key = Column(String(64), nullable=False)
     payload_hash = Column(String(64), nullable=False)
     economic_source_hash = Column(String(64), nullable=False)
+    versions_json = Column(JSONB, nullable=False)
+    created_at = timestamp()
+
+
+class AmexDirectAccountTreatmentPolicy(Base):
+    """Immutable owner-installed grant configuration; never runtime-written."""
+
+    __tablename__ = "amex_direct_account_treatment_policies"
+    __table_args__ = (
+        UniqueConstraint("base_config_hash", "revision"),
+        UniqueConstraint("previous_policy_id"),
+        UniqueConstraint("request_id"),
+        CheckConstraint("revision > 0"),
+        CheckConstraint("length(config_hash) = 64"),
+        CheckConstraint("length(base_config_hash) = 64"),
+        CheckConstraint("length(payload_hash) = 64"),
+        CheckConstraint("length(trim(reason)) BETWEEN 1 AND 1000"),
+        CheckConstraint("length(trim(request_id)) BETWEEN 1 AND 160"),
+    )
+    id = identifier()
+    config_hash = Column(String(64), nullable=False)
+    base_config_hash = Column(String(64), nullable=False)
+    config_text = Column(Text, nullable=False)
+    base_config_text = Column(Text, nullable=False)
+    revision = Column(Integer, nullable=False)
+    previous_policy_id = reference(
+        "amex_direct_account_treatment_policies", nullable=True
+    )
+    actor_id = reference("empleados")
+    reason = Column(Text, nullable=False)
+    request_id = Column(String(160), nullable=False)
+    payload_hash = Column(String(64), nullable=False)
+    created_at = timestamp()
+
+
+class AmexDirectAccountTreatmentDecision(Base):
+    """Append-only Finance destination, independent of fiscal/budget evidence."""
+
+    __tablename__ = "amex_direct_account_treatment_decisions"
+    __table_args__ = (
+        UniqueConstraint("item_id", "revision"),
+        UniqueConstraint("item_id", "idempotency_key"),
+        UniqueConstraint("previous_decision_id"),
+        CheckConstraint("revision > 0"),
+        CheckConstraint("action IN ('set','revoke')"),
+        CheckConstraint(
+            "treatment IN ('project_expense','benefit_expense','partner_receivable')"
+        ),
+        CheckConstraint(
+            "(treatment = 'partner_receivable') = (debtor_account_id IS NOT NULL)"
+        ),
+        CheckConstraint("source_version > 0"),
+        CheckConstraint("length(source_hash) = 64"),
+        CheckConstraint("length(trim(reason)) BETWEEN 1 AND 1000"),
+        CheckConstraint("length(payload_hash) = 64"),
+        CheckConstraint("length(economic_source_hash) = 64"),
+        CheckConstraint("length(idempotency_key) = 64"),
+        CheckConstraint("length(trim(request_id)) BETWEEN 1 AND 160"),
+    )
+    id = identifier()
+    policy_id = reference("amex_direct_account_treatment_policies")
+    item_id = reference("amex_direct_items")
+    import_id = reference("amex_statement_imports")
+    imported_expense_id = reference("expense_reports")
+    context_id = reference("amex_statement_direct_contexts")
+    context_version = Column(Integer, nullable=False)
+    revision = Column(Integer, nullable=False)
+    action = Column(String(10), nullable=False)
+    previous_decision_id = reference(
+        "amex_direct_account_treatment_decisions", nullable=True
+    )
+    treatment = Column(String(30), nullable=False)
+    debtor_account_id = reference("cuentas_contables", nullable=True)
+    account_snapshot_json = Column(JSONB, nullable=False)
+    authorization_json = Column(JSONB, nullable=False)
+    reason = Column(Text, nullable=False)
+    actor_id = reference("empleados")
+    request_id = Column(String(160), nullable=False)
+    idempotency_key = Column(String(64), nullable=False)
+    payload_hash = Column(String(64), nullable=False)
+    economic_source_hash = Column(String(64), nullable=False)
+    source_version = Column(Integer, nullable=False)
+    source_hash = Column(String(64), nullable=False)
     versions_json = Column(JSONB, nullable=False)
     created_at = timestamp()
 

@@ -90,11 +90,23 @@ async def test_complete_owner_admission_and_empty_rollback(direct_pg):
     pg = direct_pg
     async with pg.factory() as session:
         assert (await inspect_amex_direct_schema(session))["ready"]
+    # Unwind the newer empty account-policy layer before this historical owner.
+    await direct_pg.conn.execute(
+        (
+            ROOT
+            / "database/migrations/20261023_amex_direct_account_treatments_rollback.sql"
+        ).read_text()
+    )
     await pg.conn.execute(ROLLBACK.read_text())
     assert not await pg.conn.fetchval(
         "SELECT to_regclass('amex_direct_sign_revisions')"
     )
     await pg.conn.execute(FORWARD.read_text())
+    await direct_pg.conn.execute(
+        (
+            ROOT / "database/migrations/20261023_amex_direct_account_treatments.sql"
+        ).read_text()
+    )
     async with pg.factory() as session:
         assert (await inspect_amex_direct_schema(session))["ready"]
 
@@ -185,16 +197,31 @@ async def test_rollback_waits_for_confirm_and_preserves_committed_evidence(direc
                 confirmed=True,
             )
             assert result.status == "corrected", result.reason
-            rollback_task = asyncio.create_task(
-                rollback_conn.execute(ROLLBACK.read_text())
+            # Both owner scripts are one transaction here: a refusal in the
+            # historical sign layer must also restore the newer empty layer.
+            latest_rollback = (
+                ROOT
+                / "database/migrations/20261023_amex_direct_account_treatments_rollback.sql"
+            ).read_text()
+
+            def strip_transaction(sql):
+                return sql.replace("\nBEGIN;\n", "\n", 1).rsplit("COMMIT;", 1)[0]
+
+            rollback_sql = (
+                "BEGIN;\n"
+                + strip_transaction(latest_rollback)
+                + strip_transaction(ROLLBACK.read_text())
+                + "COMMIT;"
             )
+            rollback_task = asyncio.create_task(rollback_conn.execute(rollback_sql))
 
             # Bounded witness of the actual PostgreSQL lock conflict, not timing.
             async def blocked():
                 while True:
                     waiting = await pg.conn.fetchval(
                         "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 "
-                        "AND relation='amex_direct_sign_revisions'::regclass "
+                        "AND relation IN ('amex_direct_sign_revisions'::regclass, "
+                        "'amex_direct_account_treatment_decisions'::regclass) "
                         "AND mode='AccessExclusiveLock' AND NOT granted)",
                         rollback_conn.get_server_pid(),
                     )

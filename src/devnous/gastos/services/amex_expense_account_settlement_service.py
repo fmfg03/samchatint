@@ -305,6 +305,19 @@ async def list_settlement_sources(
         }
 
 
+async def require_no_account_treatment(session: Any, item: Any) -> None:
+    """Historical selection cannot supersede an active explicit new destination."""
+    from .amex_direct_account_treatment_service import (
+        active_account_treatment,
+        load_account_treatment_heads,
+    )
+
+    if active_account_treatment(
+        item, await load_account_treatment_heads(session, [item])
+    ):
+        raise DirectConflict("account_treatment_historical_source_conflict")
+
+
 async def select_settlement_source(
     session: Any,
     *,
@@ -331,6 +344,7 @@ async def select_settlement_source(
     )
     if not item or item.import_id != statement.id or not context:
         raise DirectConflict("direct_item_missing")
+    await require_no_account_treatment(session, item)
     if (
         item.source_version != expected_item_version
         or state.source_version != expected_source_version

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import FormData, UploadFile
 
 from ..models import Empleado
+from ..services import amex_direct_account_treatment_service as treatments
 from ..services import amex_direct_accounting_service as accounting
 from ..services import amex_direct_budget_service as budget
 from ..services import amex_direct_cfdi_search_service as finder
@@ -39,6 +40,86 @@ BASE = "/admin/contabilidad/amex/estados"
 QUEUE = "/documentos/control-presupuestal/amex-directo"
 _CSRF_KEY = "amex_direct_csrf"
 _MAX_BYTES = 10 * 1024 * 1024
+_TREATMENT_LABELS = {
+    "benefit_expense": "Prestación absorbida por la empresa",
+    "partner_receivable": "Cargo a la cuenta deudora del socio",
+    "project_expense": "Gasto de proyecto / torneo",
+}
+
+
+def _treatment_kind(item) -> str:
+    return getattr(item, "treatment_kind", None) or "project_expense"
+
+
+def _treatment_form(
+    request, import_id, version, versions, options, initial=None
+) -> str:
+    initial = initial or {}
+    if initial.get("action") == "revoke":
+        body = _open(request, import_id, "tratamiento/preview", version)
+        body += _hidden("expected_versions", json.dumps(versions))
+        for value in initial.get("item_ids", []):
+            body += _hidden("item_ids", value)
+        for key in ("treatment", "debtor_account_id"):
+            body += _hidden(key, initial.get(key) or "")
+        body += _hidden("decision_action", "revoke")
+        body += '<label>Motivo del retiro<input name="reason" required maxlength="1000" value="'
+        body += escape(str(initial.get("reason", "")), quote=True) + '"></label>'
+        return body + _submit("Revisar retiro de tratamiento") + "</form>"
+    partner = initial.get("treatment") == "partner_receivable"
+    copied = "".join(
+        _hidden("item_ids", value) for value in initial.get("item_ids", [])
+    )
+    accounts = "".join(
+        f'<option value="{escape(str(row["id"]), quote=True)}"'
+        + (
+            " selected"
+            if str(row["id"]) == str(initial.get("debtor_account_id"))
+            else ""
+        )
+        + ">"
+        f'{_text(row.get("label") or (str(row.get("code", "")) + " · " + str(row.get("name", ""))))}</option>'
+        for row in options.get("partner_accounts", [])
+    )
+    choices = "".join(
+        f'<option value="{key}"'
+        + (" selected" if key == initial.get("treatment") else "")
+        + f">{label}</option>"
+        for key, label in _TREATMENT_LABELS.items()
+    )
+    return (
+        '<section aria-labelledby="direct-treatment-heading">'
+        '<h2 id="direct-treatment-heading">Tratamiento de los cargos seleccionados</h2>'
+        "<p>Prestaciones: Juan Pablo asigna la partida, sin proyecto ni categoría previos. "
+        "Cargos al socio: elige su cuenta deudora, sin envío a presupuesto. "
+        "Los gastos de proyecto conservan su clasificación.</p>"
+        + _open(request, import_id, "tratamiento/preview", version)
+        + _hidden("expected_versions", json.dumps(versions))
+        + '<div class="direct-copy-selection">'
+        + copied
+        + "</div>"
+        + '<label>Tratamiento<select name="treatment" id="direct-treatment" required>'
+        + '<option value="">Selecciona el tratamiento real</option>'
+        + choices
+        + '</select></label><label id="direct-debtor-label"'
+        + ("" if partner else " hidden")
+        + '>Cuenta deudora del socio<select name="debtor_account_id" id="direct-debtor"'
+        + (" required>" if partner else " disabled>")
+        + '<option value="">Selecciona una cuenta autorizada</option>'
+        + accounts
+        + '</select></label><label>Motivo<input name="reason" required maxlength="1000" value="'
+        + escape(str(initial.get("reason", "")), quote=True)
+        + '"></label>'
+        + _submit("Revisar tratamiento de los cargos seleccionados")
+        + "</form><p>La revisión muestra los cargos antes de confirmar; no genera la póliza.</p></section>"
+        + """<script>(()=>{const choice=document.getElementById('direct-treatment'),
+        account=document.getElementById('direct-debtor'),label=document.getElementById('direct-debtor-label');
+        choice.addEventListener('change',()=>{const partner=choice.value==='partner_receivable';
+        label.hidden=!partner;account.disabled=!partner;account.required=partner;
+        if(!partner)account.value='';
+        const project=document.getElementById('direct-project-classification');
+        if(project)project.open=choice.value==='project_expense';});})();</script>"""
+    )
 
 
 def _text(value) -> str:
@@ -73,10 +154,29 @@ def _stage_label(stage: str | None) -> str:
 
 def _reason(code: str | None) -> str:
     return {
+        "account_treatment_policy_unconfigured": "Finanzas debe habilitar el catálogo autorizado de tratamientos, partidas y cuentas antes de continuar.",
+        "benefit_budget_catalog_unconfigured": "Las prestaciones requieren un catálogo de partidas autorizado. Finanzas debe configurarlo; no hace falta capturar un proyecto ficticio.",
+        "account_treatment_head_conflict": "Cambió el tratamiento del cargo. Revisa la decisión vigente y vuelve a previsualizar.",
+        "account_treatment_source_changed": "Cambió la fuente del tratamiento. Revisa los cargos y sus versiones actuales.",
+        "account_treatment_policy_changed": "Cambió el catálogo autorizado de partidas o cuentas. Revisa las opciones actuales antes de confirmar.",
+        "account_treatment_account_changed": "Cambió la cuenta elegida o su estado. Vuelve a revisar la cuenta del cargo.",
+        "account_treatment_operational_project_conflict": "Este tratamiento no lleva proyecto operativo. Revisa la clasificación existente antes de cambiarlo.",
+        "account_treatment_reason_required": "Explica el motivo del tratamiento de los cargos seleccionados.",
+        "account_treatment_new_debit_required": "El tratamiento sólo aplica a cargos nuevos pendientes; revisa abonos o movimientos ya reconocidos.",
+        "account_treatment_transition_conflict": "La selección tiene un tratamiento incompatible. Revisa los cargos; no se modificó el lote.",
+        "account_treatment_economics_changed": "Cambió el importe o la identidad del cargo. Revisa el estado antes de confirmar.",
+        "account_treatment_homogeneous_batch_required": "Selecciona un lote de cargos con tratamiento compatible o revísalos en grupos separados.",
+        "account_treatment_confirmation_required": "Confirma explícitamente el tratamiento de todos los cargos revisados.",
+        "account_treatment_request_key_required": "La confirmación perdió su identidad de solicitud. Previsualiza el lote otra vez.",
+        "account_treatment_idempotency_conflict": "La solicitud ya se usó con otros datos. Revisa el resultado y previsualiza de nuevo.",
+        "account_treatment_preview_changed": "La revisión cambió. Conservamos tus datos para que previsualices otra vez antes de confirmar.",
+        "invalid_account_treatment": "Selecciona un tratamiento contable válido.",
+        "invalid_amex_partner_decision": "El cargo al socio requiere una cuenta deudora activa y un motivo explícito.",
+        "partner_budget_conflict": "El cargo al socio no debe conservar una imputación presupuestal. Solicita su devolución o liberación antes de cambiar el tratamiento.",
         "all_sources_already_recognized": "Todos los movimientos están cubiertos o declarados como no nuevo gasto. Se conservan sus pólizas; no se genera una póliza de importe cero.",
         "statement_row_unresolved": "Hay filas omitidas o signos sin resolver. Finanzas debe revisar el estado completo antes de generar la póliza.",
         "credit_exclusion_required": "Finanzas debe declarar cada crédito conocido como no nuevo gasto; no se registra un pago.",
-        "budget_assignment_required": "Control Presupuestal debe asignar la partida de cada cargo nuevo antes del corte completo.",
+        "budget_assignment_required": "Control Presupuestal debe asignar la partida de las prestaciones y los gastos de proyecto antes del corte completo.",
         "budget_assignment_changed": "Cambió la asignación presupuestal. Control Presupuestal debe revisar la partida y versión actuales.",
         "budget_version_not_operational": "La versión presupuestal no está habilitada para estos movimientos. Control Presupuestal debe revisar su estado.",
         "stale_item_context": "La fila pertenece a una revisión anterior de contexto. Contabilidad debe revisar la fuente actual.",
@@ -123,10 +223,10 @@ def _reason(code: str | None) -> str:
         "budget_submission_confirmation_required": "Contabilidad debe confirmar explícitamente los cargos seleccionados para Control Presupuestal.",
         "stale_item_version": "El cargo cambió. Recarga sus datos antes de asignar o clasificar.",
         "budget_submission_required": "El cargo debe estar enviado a Control Presupuestal en el contexto actual para asignarle partida.",
-        "budget_line_context_mismatch": "La partida o versión no corresponden al proyecto, categoría o edición. Control Presupuestal debe revisar la selección.",
+        "budget_line_context_mismatch": "La partida o versión no corresponde al tratamiento y ámbito autorizados. Control Presupuestal debe revisar la selección.",
         "budget_account_mapping_required": "Contabilidad debe completar la cuenta activa del catálogo de la partida presupuestal.",
         "invalid_amex_liability": "Finanzas debe revisar la cuenta pasivo activa de esta tarjeta; no se sustituye por una cuenta genérica.",
-        "account_mapping_conflict": "La cuenta existente contradice la del catálogo presupuestal. Contabilidad debe revisar el conflicto; no se sobrescribe.",
+        "account_mapping_conflict": "La cuenta existente contradice la del tratamiento actual. Contabilidad debe revisar el conflicto; no se sobrescribe.",
         "already_recognized_source": "El consumo ya tiene reconocimiento real. Su póliza y evidencia se conservan sin generar otro gasto.",
         "budget_return_reason_required": "Control Presupuestal debe devolver el cargo actual con un motivo explícito.",
         "direct_item_missing": "El cargo directo ya no está disponible en esta selección. Recarga el estado.",
@@ -933,7 +1033,11 @@ def _row(item, suggestion_html: str = "") -> str:
             + _text(decision.get("revision"))
             + "<br>Recibo de decisión: "
             + _text(decision.get("id"))
-            + "<br>Importe completo como gasto, sin movimientos fiscales."
+            + (
+                "<br>Importe completo a la cuenta deudora del socio, sin movimientos fiscales."
+                if decision.get("treatment") == "full_amount_partner_receivable_no_tax"
+                else "<br>Importe completo como gasto, sin movimientos fiscales."
+            )
         )
         suggestion_html = ""
     if item.match_reason and decision.get("action") != "declare":
@@ -953,17 +1057,54 @@ def _row(item, suggestion_html: str = "") -> str:
             + _text(decision.get("id"))
         )
     fiscal += suggestion_html
-    select_item = f'<input type="checkbox" name="item_ids" form="direct-classification-form" value="{item.id}" aria-label="Seleccionar fila {item.row_number}">'
+    kind_for_budget = _treatment_kind(item)
+    budget_eligible = (
+        kind_for_budget in {"benefit_expense", "project_expense"}
+        and item.budget_status == "classified"
+    )
+    select_item = f'<input type="checkbox" name="item_ids" form="direct-classification-form" value="{item.id}" aria-label="Seleccionar fila {item.row_number}" data-budget-eligible="{str(budget_eligible).lower()}">'
     if item.movement_kind != "debit" or item.accounting_status == "recognized":
         select_item = ""
+    treatment = _treatment_kind(item)
+    if treatment == "project_expense":
+        classification = (
+            _text(
+                getattr(item, "tournament_name", None)
+                or getattr(item, "project_name", None)
+                or item.tournament_id
+                or item.project_code
+            )
+            + "<br>Categoría: "
+            + _text(
+                getattr(item, "budget_concept_name", None) or item.budget_concept_id
+            )
+        )
+    elif treatment in {"benefit_expense", "partner_receivable"}:
+        classification = (
+            _text(_TREATMENT_LABELS[treatment]) + "<br>Sin proyecto requerido"
+        )
+    else:
+        classification = "Tratamiento por elegir"
+    if treatment == "partner_receivable":
+        budget_cell = "No aplica: cargo a la cuenta deudora del socio"
+        account_label = "Cuenta deudora"
+    elif treatment == "unclassified":
+        budget_cell = "Elige primero el tratamiento del cargo"
+        account_label = "Cuenta"
+    else:
+        budget_cell = (
+            f'{_stage_label(item.budget_status)}<br>Partida: {_text(getattr(item, "budget_line_label", None) or item.budget_line_id)}'
+            f'<br>Versión: {_text(getattr(item, "budget_version_label", None) or item.budget_version_id)}'
+        )
+        account_label = "Gasto"
     return (
         f'<tr data-item-id="{item.id}"><td>{select_item}{item.row_number}</td>'
         f"<td>{_text(item.fecha)}<br>{_text(item.descriptor)}</td>"
         f"<td>Celda: {_text(item.raw_amount)}<br>Firmado: {_text(item.raw_signed_amount)}<br>{kind}<br>{escape(_profile_label(item.profile))}</td>"
         f"<td>{_text(item.amount)} {_text(item.currency)}</td><td>{fiscal}</td>"
-        f"<td>{_text(getattr(item, "tournament_name", None) or getattr(item, "project_name", None) or item.tournament_id or item.project_code)}<br>Categoría: {_text(getattr(item, "budget_concept_name", None) or item.budget_concept_id)}</td>"
-        f"<td>{_stage_label(item.budget_status)}<br>Partida: {_text(getattr(item, "budget_line_label", None) or item.budget_line_id)}<br>Versión: {_text(getattr(item, "budget_version_label", None) or item.budget_version_id)}</td>"
-        f"<td>Gasto: {_text(item.account_code)}<br>Pasivo tarjeta: {_text(item.liability_code)}</td>"
+        f"<td>{classification}</td>"
+        f"<td>{budget_cell}</td>"
+        f"<td>{account_label}: {_text(item.account_code)}<br>Pasivo tarjeta: {_text(item.liability_code)}</td>"
         f'<td>{_stage_label(item.accounting_status)}<br>{_text(", ".join(map(str, item.recognized_poliza_ids)) if item.recognized_poliza_ids else None)}</td></tr>'
     )
 
@@ -998,6 +1139,28 @@ async def direct_statement(
             raise
         classification_allowed = False
         options = {}
+
+    treatment_options = {}
+    treatment_allowed = classification_allowed
+    treatment_message = ""
+    if classification_allowed:
+        try:
+            treatment_options = await _call(
+                treatments.list_direct_account_treatment_options(
+                    session, actor_id=_actor_id(actor), import_id=import_id
+                )
+            )
+        except HTTPException as exc:
+            if exc.status_code == 409 and exc.detail == _reason(
+                "account_treatment_policy_unconfigured"
+            ):
+                treatment_allowed = False
+                treatment_message = str(exc.detail)
+            elif exc.status_code == 403:
+                treatment_allowed = False
+                treatment_message = "Tu acceso actual no permite elegir estos tratamientos. Los controles de clasificación autorizados se conservan."
+            else:
+                raise
 
     context_allowed = False
     fiscal_options = {}
@@ -1108,6 +1271,7 @@ async def direct_statement(
     pending_budget = sum(
         item.movement_kind == "debit"
         and item.accounting_status != "recognized"
+        and _treatment_kind(item) in {"benefit_expense", "project_expense"}
         and item.budget_status != "assigned"
         for item in view.items
     )
@@ -1115,6 +1279,12 @@ async def direct_statement(
         f"<p>Pendientes de factura: {pending_invoice} · Sin CFDI declarados: {active_no_cfdi}. "
         f"Pendientes de presupuesto: {pending_budget} · Pendientes de contabilización: {pending_accounting}.</p>"
     )
+    if treatment_allowed and not frozen:
+        body += _treatment_form(
+            request, import_id, _source_version(view), versions, treatment_options
+        )
+    elif treatment_message and not frozen:
+        body += '<p role="status">' + escape(treatment_message) + "</p>"
     if classification_allowed:
         body += _open(request, import_id, "clasificar", _source_version(view))
         body += _hidden("expected_versions", json.dumps(versions))
@@ -1149,7 +1319,14 @@ async def direct_statement(
                         f"{item.id}"
                         '">Buscar CFDI</a> · <a href="'
                         f"{BASE}/{import_id}/directo/cuenta-gastos?item_id={item.id}"
-                        '">Cuenta de gastos reconocida</a></td></tr>'
+                        '">Cuenta de gastos reconocida</a>'
+                        + (
+                            f'<br><a href="{BASE}/{import_id}/directo/tratamiento/revocar?item_id={item.id}">Retirar tratamiento actual</a>'
+                            if getattr(item, "account_treatment_decision_id", None)
+                            and _treatment_kind(item) in _TREATMENT_LABELS
+                            else ""
+                        )
+                        + "</td></tr>"
                     )
                     if item.movement_kind == "debit" and not frozen
                     else "</td></tr>"
@@ -1176,6 +1353,7 @@ async def direct_statement(
         body += "<p>Tu acceso de lectura se conserva; no tienes autorización para clasificar cargos.</p><fieldset disabled>"
         body += _open(request, import_id, "clasificar", _source_version(view))
         body += _hidden("expected_versions", json.dumps(versions))
+    body += '<details id="direct-project-classification"><summary>Clasificación sólo para gastos de proyecto / torneo</summary>'
     project_opts = "".join(
         (
             '<option value="t:'
@@ -1238,7 +1416,9 @@ async def direct_statement(
         for year in options.get("edition_years", [])
     )
     body += f'<label>Edición presupuestal<select name="edition_year" required><option value="">Selecciona edición autorizada</option>{edition_options}</select></label><label>Motivo<input name="reason"></label>'
-    body += _submit("Guardar clasificación de cargos seleccionados") + "</form>"
+    body += (
+        _submit("Guardar clasificación de cargos seleccionados") + "</details></form>"
+    )
     body += _open(request, import_id, "enviar-presupuesto", _source_version(view))
     body += _hidden("expected_versions", json.dumps(versions))
     body += (
@@ -1250,7 +1430,8 @@ async def direct_statement(
         "envían.</p>"
     )
     body += _confirm("Confirmo enviar los cargos seleccionados a Control Presupuestal")
-    body += _submit("Enviar seleccionados a Control Presupuestal") + "</form>"
+    body += '<p id="direct-budget-selection-count" role="status">0 cargos listos para enviar a Control Presupuestal.</p>'
+    body += '<button id="direct-send-budget" class="button primary" type="submit" disabled>Enviar seleccionados a Control Presupuestal</button></form>'
     if not classification_allowed:
         body += "</fieldset>"
     if finance and not frozen:
@@ -1276,9 +1457,16 @@ async def direct_statement(
     box.addEventListener('change',()=>{
     document.getElementById('direct-selection-count').textContent=
     selectedBoxes().length+' cargos seleccionados';
+    const selected=Array.from(selectedBoxes());
+    const budgetSelected=selected.filter(box=>box.dataset.budgetEligible==='true');
+    document.getElementById('direct-send-budget').disabled=budgetSelected.length===0;
+    const omitted=selected.length-budgetSelected.length;
+    document.getElementById('direct-budget-selection-count').textContent=
+    budgetSelected.length+' cargos listos para enviar a Control Presupuestal.'+
+    (omitted?' '+omitted+' seleccionados no se enviarán: su tratamiento o etapa no permite este envío.':'');
     document.querySelectorAll('#direct-send-selection,.direct-copy-selection').forEach(target=>{
     target.replaceChildren();
-    document.querySelectorAll('input[type=checkbox][name=item_ids]:checked').forEach(selected=>{
+    (target.id==='direct-send-selection'?budgetSelected:selected).forEach(selected=>{
     const input=document.createElement('input');
     input.type='hidden';input.name='item_ids';
     input.value=selected.value;target.append(input);});});}));})();</script>"""
@@ -2065,6 +2253,299 @@ async def direct_expense_account_sources(
     return _html("Cuenta de gastos reconocida", body, actor)
 
 
+def _treatment_input(form: FormData) -> dict:
+    permitted = {
+        "_csrf_token",
+        "expected_source_version",
+        "item_ids",
+        "expected_versions",
+        "treatment",
+        "debtor_account_id",
+        "reason",
+        "decision_action",
+        "expected_preview_hash",
+        "idempotency_key",
+        "confirmed",
+    }
+    if set(form) - permitted:
+        raise HTTPException(422, "El formulario contiene campos ajenos al tratamiento.")
+    ids, versions = _selection(form)
+    kind = _value(form, "treatment", required=True)
+    action = _value(form, "decision_action") or "set"
+    if kind not in _TREATMENT_LABELS or action not in {"set", "revoke"}:
+        raise HTTPException(422, "Selecciona un tratamiento válido.")
+    debtor = _optional_uuid(form, "debtor_account_id")
+    if action == "set" and (kind == "partner_receivable") != (debtor is not None):
+        raise HTTPException(
+            422, "El cargo al socio requiere una cuenta deudora explícita."
+        )
+    return {
+        "item_ids": ids,
+        "expected_versions": versions,
+        "treatment": kind,
+        "debtor_account_id": debtor,
+        "reason": _value(form, "reason", required=True),
+        "action": action,
+    }
+
+
+async def _treatment_retry(
+    request, session, actor, import_id, values, reason, *, human_message=False
+):
+    """Retain entered values and require a fresh preview against current rows."""
+    await session.rollback()
+    view = await _call(
+        context.list_direct_statement(
+            session, actor_id=_actor_id(actor), import_id=import_id
+        )
+    )
+    message = str(reason) if human_message else _reason(reason)
+    body = '<p role="alert">' + escape(message) + "</p>"
+    body += f'<p><a href="{BASE}/{import_id}/directo">Volver al estado completo</a></p>'
+    body += "<p>Tratamiento solicitado: " + _text(
+        _TREATMENT_LABELS[values["treatment"]]
+    )
+    body += "<br>Motivo conservado: " + _text(values["reason"]) + "</p>"
+    selected = {str(value) for value in values["item_ids"]}
+    current = [row for row in view.items if str(row.id) in selected]
+    if (
+        len(current) == len(selected)
+        and getattr(view, "cut", None) is None
+        and all(
+            row.movement_kind == "debit" and row.accounting_status != "recognized"
+            for row in current
+        )
+    ):
+        options = await _call(
+            treatments.list_direct_account_treatment_options(
+                session, actor_id=_actor_id(actor), import_id=import_id
+            )
+        )
+        body += "<p>Los datos ingresados se conservan. Revisa las versiones actuales y previsualiza otra vez antes de confirmar.</p>"
+        body += _treatment_form(
+            request,
+            import_id,
+            _source_version(view),
+            {str(row.id): row.source_version for row in current},
+            options,
+            values,
+        )
+    else:
+        body += "<p>La selección cambió o ya está reconocida. Revisa el estado antes de volver a seleccionar cargos.</p>"
+    response = _html("Revisar el tratamiento AMEX", body, actor)
+    response.status_code = 409
+    await session.rollback()
+    return response
+
+
+@router.post(BASE + "/{import_id}/directo/tratamiento/preview")
+async def direct_treatment_preview(
+    import_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    actor: Empleado = Depends(get_current_empleado),
+):
+    """Preview an explicit batch through its owner without business writes."""
+    if not actor.activo:
+        raise HTTPException(403, "La cuenta está inactiva.")
+    form = await _form(request)
+    try:
+        values = _treatment_input(form)
+        try:
+            result = await _call(
+                treatments.preview_direct_account_treatment(
+                    session, actor_id=_actor_id(actor), import_id=import_id, **values
+                )
+            )
+        except HTTPException as exc:
+            if exc.status_code != 409:
+                raise
+            return await _treatment_retry(
+                request,
+                session,
+                actor,
+                import_id,
+                values,
+                exc.detail,
+                human_message=True,
+            )
+        if result.status != "preview":
+            return await _treatment_retry(
+                request, session, actor, import_id, values, result.reason
+            )
+        progress = result.progress
+        manifest = progress["manifest"]
+        body = f'<p><a href="{BASE}/{import_id}/directo">Volver al estado sin confirmar</a></p>'
+        body += "<h2>Revisa los cargos seleccionados</h2><p>Acción: "
+        body += (
+            "Retirar el tratamiento actual"
+            if values["action"] == "revoke"
+            else "Asignar o cambiar tratamiento"
+        )
+        body += "</p><p>Tratamiento: "
+        body += _text(_TREATMENT_LABELS[values["treatment"]]) + "</p>"
+        account = (manifest.get("account_snapshot") or {}).get("debtor")
+        if account:
+            body += (
+                "<p>Cuenta deudora: "
+                + _text(account.get("code"))
+                + " · "
+                + _text(account.get("name"))
+                + "</p>"
+            )
+        body += "<p>Motivo: " + _text(values["reason"]) + "</p>"
+        body += '<div class="table-shell"><table><thead><tr><th>Fila</th><th>Comercio</th><th>Importe</th></tr></thead><tbody>'
+        for item in manifest["items"]:
+            body += (
+                "<tr><td>"
+                + _text(item.get("row_number"))
+                + "</td><td>"
+                + _text(item.get("description"))
+                + "</td><td>"
+                + _text(item.get("amount"))
+                + "</td></tr>"
+            )
+        body += (
+            "</tbody></table></div><p>"
+            + str(len(manifest["items"]))
+            + " cargos seleccionados. Se conservarán sus facturas e historia.</p>"
+        )
+        body += _open(request, import_id, "tratamiento", manifest["source_version"])
+        for item_id in values["item_ids"]:
+            body += _hidden("item_ids", item_id)
+        body += _hidden("expected_versions", json.dumps(values["expected_versions"]))
+        for key in ("treatment", "reason", "debtor_account_id"):
+            body += _hidden(key, values[key] if values[key] is not None else "")
+        body += _hidden("decision_action", values["action"])
+        body += _hidden("expected_preview_hash", progress["preview_hash"])
+        body += _hidden("idempotency_key", str(uuid4()))
+        body += _confirm(
+            "Confirmo retirar el tratamiento de todos los cargos mostrados"
+            if values["action"] == "revoke"
+            else "Confirmo aplicar este tratamiento a todos los cargos mostrados"
+        )
+        body += (
+            _submit(
+                "Confirmar retiro del tratamiento"
+                if values["action"] == "revoke"
+                else "Confirmar tratamiento del lote"
+            )
+            + "</form>"
+        )
+        return _html("Revisión del tratamiento AMEX", body, actor)
+    finally:
+        await session.rollback()
+
+
+@router.post(BASE + "/{import_id}/directo/tratamiento")
+async def direct_treatment_confirm(
+    import_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    actor: Empleado = Depends(get_current_empleado),
+):
+    """Confirm the exact reviewed batch; the owner enforces atomicity and scope."""
+    if not actor.activo:
+        raise HTTPException(403, "La cuenta está inactiva.")
+    form = await _form(request)
+    try:
+        values = _treatment_input(form)
+        if not _confirmed(form):
+            raise HTTPException(
+                422, "Confirma el tratamiento de todos los cargos revisados."
+            )
+        try:
+            result = await _call(
+                treatments.confirm_direct_account_treatment(
+                    session,
+                    actor_id=_actor_id(actor),
+                    import_id=import_id,
+                    **values,
+                    expected_preview_hash=_value(
+                        form, "expected_preview_hash", required=True
+                    ),
+                    idempotency_key=_value(form, "idempotency_key", required=True),
+                    confirmed=_confirmed(form),
+                )
+            )
+        except HTTPException as exc:
+            if exc.status_code != 409:
+                raise
+            return await _treatment_retry(
+                request,
+                session,
+                actor,
+                import_id,
+                values,
+                exc.detail,
+                human_message=True,
+            )
+        if result.status == "pending":
+            return await _treatment_retry(
+                request, session, actor, import_id, values, result.reason
+            )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    message = (
+        "Tratamiento retirado; historial conservado. Elige el nuevo tratamiento antes de continuar."
+        if values["action"] == "revoke"
+        else "Tratamiento del lote guardado. Las prestaciones requieren partida de Control Presupuestal; los cargos al socio no se envían a presupuesto."
+    )
+    return _redirect(import_id, message)
+
+
+@router.get(BASE + "/{import_id}/directo/tratamiento/revocar")
+async def direct_treatment_revoke_form(
+    import_id: UUID,
+    item_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    actor: Empleado = Depends(get_current_empleado),
+):
+    """Read the current treatment for an explicit, separately confirmed withdrawal."""
+    if not actor.activo:
+        raise HTTPException(403, "La cuenta está inactiva.")
+    view = await _call(
+        context.list_direct_statement(
+            session, actor_id=_actor_id(actor), import_id=import_id
+        )
+    )
+    await _call(
+        treatments.list_direct_account_treatment_options(
+            session, actor_id=_actor_id(actor), import_id=import_id
+        )
+    )
+    item = next((row for row in view.items if row.id == item_id), None)
+    if (
+        item is None
+        or getattr(view, "cut", None) is not None
+        or not getattr(item, "account_treatment_decision_id", None)
+        or _treatment_kind(item) not in _TREATMENT_LABELS
+        or item.accounting_status == "recognized"
+    ):
+        raise HTTPException(
+            409,
+            "El tratamiento no está disponible para retiro. Revisa el estado actual.",
+        )
+    body = f'<p><a href="{BASE}/{import_id}/directo">Volver al estado</a></p>'
+    body += "<p>Retirar: " + _text(_TREATMENT_LABELS[_treatment_kind(item)])
+    body += "<br>Cargo: " + _text(item.descriptor) + " · " + _text(item.amount) + "</p>"
+    body += "<p>Los vínculos fiscales y el historial se conservan. Si existe una asignación presupuestal, primero debe devolverse o liberarse por su autoridad.</p>"
+    body += _open(request, import_id, "tratamiento/preview", _source_version(view))
+    body += _hidden("item_ids", item.id)
+    body += _hidden(
+        "expected_versions", json.dumps({str(item.id): item.source_version})
+    )
+    body += _hidden("treatment", _treatment_kind(item))
+    body += _hidden("debtor_account_id", getattr(item, "debtor_account_id", None) or "")
+    body += _hidden("decision_action", "revoke")
+    body += '<label>Motivo del retiro<input name="reason" required maxlength="1000"></label>'
+    body += _submit("Revisar retiro de tratamiento") + "</form>"
+    return _html("Retirar tratamiento AMEX", body, actor)
+
+
 @router.post(BASE + "/{import_id}/directo/{action}")
 async def direct_action(
     import_id: UUID,
@@ -2284,7 +2765,7 @@ async def direct_action(
             context_request_key,
         )
     messages = {
-        "sin-cfdi": "Lote declarado Sin CFDI. Continúan clasificación, partida y confirmación del corte completo.",
+        "sin-cfdi": "Lote declarado Sin CFDI. Revisa el tratamiento, sus requisitos contables y la confirmación del corte completo.",
         "revocar-sin-cfdi": "Declaración Sin CFDI revocada para el lote; historial conservado. Puedes volver a buscar factura.",
         "clasificar": "Clasificación guardada; no acredita asignación ni póliza.",
         "enviar-presupuesto": "Cargos enviados a Control Presupuestal; todavía requieren partida.",
@@ -2386,11 +2867,12 @@ async def direct_budget_queue(
     rows = await _call(
         budget.list_direct_budget_queue(session, actor_id=_actor_id(actor))
     )
-    body = "<p>Contabilidad declara proyecto y categoría. Aquí sólo se asigna la partida o se devuelve con motivo; el plan no se edita.</p>"
+    body = "<p>Asigna la partida de los gastos de proyecto y las prestaciones. Las prestaciones no requieren proyecto ni categoría previos: la partida determina su cuenta. Los cargos a cuenta deudora del socio no entran a esta cola. El plan no se edita aquí.</p>"
     for item in rows:
+        can_assign = getattr(item, "can_assign", item.budget_status == "sent")
         lines = (
             []
-            if item.budget_status == "assigned"
+            if not can_assign
             else await _call(
                 budget.list_direct_budget_lines(
                     session, actor_id=_actor_id(actor), item_id=item.id
@@ -2403,11 +2885,15 @@ async def direct_budget_queue(
         )
         if not lines and item.budget_status != "assigned":
             body += "<p>No hay partidas compatibles en este contexto. Devuelve el cargo a Contabilidad con el motivo de revisión.</p>"
-        body += f"<section><h2>Fila {item.row_number} · {_text(item.descriptor)}</h2><p>{_text(item.amount)} {_text(item.currency)} · Proyecto: {_text(getattr(item, "tournament_name", None) or getattr(item, "project_name", None) or item.tournament_id or item.project_code)} · Categoría: {_text(getattr(item, "budget_concept_name", None) or item.budget_concept_id)}</p>"
+        body += f"<section><h2>Fila {item.row_number} · {_text(item.descriptor)}</h2><p>{_text(item.amount)} {_text(item.currency)}"
+        if _treatment_kind(item) == "benefit_expense":
+            body += " · Prestación sin proyecto; la partida determina la cuenta.</p>"
+        else:
+            body += f" · Proyecto: {_text(getattr(item, 'tournament_name', None) or getattr(item, 'project_name', None) or item.tournament_id or item.project_code)} · Categoría: {_text(getattr(item, 'budget_concept_name', None) or item.budget_concept_id)}</p>"
         hidden = _csrf(request) + _hidden(
             "expected_source_version", item.source_version
         )
-        if item.budget_status == "sent":
+        if item.budget_status == "sent" and can_assign:
             body += (
                 '<form class="direct-form" '
                 'method="POST" action="'

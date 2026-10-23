@@ -155,6 +155,17 @@ def complete_direct_workspace(direct_workspace, monkeypatch):
         "edition_years": [2026],
     }
     values = {
+        "treatments": {
+            "list_direct_account_treatment_options": {
+                "partner_accounts": [],
+                "benefit_budget_available": False,
+                "treatments": [
+                    "benefit_expense",
+                    "partner_receivable",
+                    "project_expense",
+                ],
+            },
+        },
         "context": {
             "list_direct_statement": w.view,
             "list_direct_statements": [
