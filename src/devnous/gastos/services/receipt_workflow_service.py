@@ -148,7 +148,7 @@ async def create_personal_receipt_workflow(
         session.add(account)
         await session.flush()
         operations_reference = await allocate_referencia_operaciones_for_empleado(
-            session, employee
+            session, employee, torneo_id=tournament_id
         )
         report_document = Documento(
             empleado_id=employee_id,

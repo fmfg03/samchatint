@@ -253,11 +253,15 @@ from ..services.cfdi_income_bridge_service import (
 )
 from ..services.documento_telegram import ensure_finance_pending_payment_notifications
 from ..services.project_authorization_service import (
+    actor_is_approval_supervisor,
     actor_is_route_approver,
     actor_route_approver_document_ids,
     document_route_approver_sql,
     has_operations_reference,
     prepare_document_authorization_route,
+    project_excludes_operations_reference,
+    provisional_policy_active_sql,
+    provisional_policy_is_active,
 )
 from ..services.beneficiary_onboarding_service import (
     BENEFICIARY_ATTACHMENT_LABELS,
@@ -12809,6 +12813,8 @@ async def _can_review_pending_approvals(
     if not empleado_id:
         return False
     try:
+        if await actor_is_approval_supervisor(session, actor_id=empleado_id):
+            return True
         legacy_result = await session.execute(
             select(Empleado.id).where(Empleado.aprobador_id == empleado_id).limit(1)
         )
@@ -12830,6 +12836,47 @@ async def _can_review_pending_approvals(
             extra={"empleado_id": str(empleado_id)},
         )
         return False
+
+
+async def _can_decide_document_approval(
+    session: AsyncSession,
+    current_empleado: Empleado,
+    documento: Documento,
+    empleado: Optional[Empleado],
+) -> bool:
+    """Mirror canonical actor eligibility without changing workflow state guards."""
+    if documento.estado != "enviado":
+        return False
+    if await actor_is_approval_supervisor(session, actor_id=current_empleado.id):
+        return True
+    route_exists = (
+        await session.execute(
+            text(
+                "SELECT 1 FROM documento_authorization_routes "
+                "WHERE documento_id = :documento_id"
+            ),
+            {"documento_id": str(documento.id)},
+        )
+    ).scalar_one_or_none() is not None
+    provisional_policy = await provisional_policy_is_active(session)
+    if route_exists or has_operations_reference(documento) or provisional_policy:
+        return await actor_is_route_approver(
+            session,
+            actor_id=current_empleado.id,
+            documento_id=documento.id,
+        ) or (
+            not provisional_policy
+            and not has_operations_reference(documento)
+            and current_empleado.rol in ("superadmin", "super_admin")
+        )
+    approval_subject = approval_subject_empleado(documento) or empleado
+    if approval_subject and getattr(approval_subject, "aprobador_id", None):
+        return (
+            approval_subject.aprobador_id == current_empleado.id
+            or current_empleado.rol
+            in ("finanzas", "admin", "superadmin", "super_admin")
+        )
+    return current_empleado.rol in ("finanzas", "admin", "superadmin", "super_admin")
 
 
 def _can_manage_budget_classification(current_empleado: Empleado) -> bool:
@@ -18508,11 +18555,19 @@ async def solicitar_anticipo_form(
             selected_id=preserve_proveedor or None,
         )
 
-    if empleado_allocates_referencia_operaciones(current_empleado):
+    if preserve_uuid and await project_excludes_operations_reference(
+        session, tournament_id=preserve_uuid
+    ):
+        ro_display_value = "No aplica"
+        ro_help_text = "Este proyecto no genera folios de Operaciones."
+    elif empleado_allocates_referencia_operaciones(current_empleado):
         ro_display_value = escape(
-            "Se asignará al crear la solicitud (mismo número que el informe)"
+            "Se asignará al crear si corresponde al proyecto seleccionado"
         )
-        ro_help_text = "Se asigna automáticamente por el sistema (igual que el informe)."
+        ro_help_text = (
+            "Se comparte con el informe. Patrocinios y RRSS y Transmisiones "
+            "no generan folios de Operaciones."
+        )
     else:
         ro_na_value, ro_na_help = referencia_operaciones_form_display(current_empleado)
         ro_display_value = escape(ro_na_value)
@@ -30778,6 +30833,7 @@ async def _reject_control_presupuestal_document(
     *,
     documento_id: UUIDType,
     actor: Empleado,
+    motivo_rechazo: Optional[str] = None,
 ) -> Documento:
     documento = await session.get(Documento, documento_id)
     if documento is None:
@@ -30799,13 +30855,17 @@ async def _reject_control_presupuestal_document(
     else:
         documento.estado = "rechazado"
         documento.enviado_en = None
+    reason = (motivo_rechazo or "").strip()
+    audit_context = (
+        "Control Presupuestal regresó el documento para corrección antes de aprobación."
+    )
     session.add(
         Aprobacion(
             tipo_entidad="documento",
             entidad_id=documento.id,
             aprobador_id=actor.id,
             accion="rechazar_control_presupuestal",
-            comentario="Control Presupuestal regresó el documento para corrección antes de aprobación.",
+            comentario=f"{audit_context}\nMotivo: {reason}" if reason else audit_context,
             fecha=now,
         )
     )
@@ -30970,6 +31030,18 @@ async def documentos_control_presupuestal(
     table_html = f"""
         <form method="POST" action="/documentos/control-presupuestal/asignar-lote" class="budget-control-bulk-form">
             <input type="hidden" name="next" value="/documentos/control-presupuestal">
+            <div class="form-group" style="margin-bottom:12px;">
+                <label for="motivo-rechazo-control">
+                    Motivo de rechazo (opcional)
+                </label>
+                <textarea id="motivo-rechazo-control" name="motivo_rechazo"
+                    rows="2" aria-describedby="motivo-rechazo-control-ayuda"
+                ></textarea>
+                <small id="motivo-rechazo-control-ayuda">
+                    Se registra al rechazar un documento o los documentos
+                    seleccionados. Puedes dejarlo vacío.
+                </small>
+            </div>
             <div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;margin-bottom:12px;">
                 <button type="button" class="button secondary" data-select-all-budget>Seleccionar todo</button>
                 <button type="submit" class="button primary">Asignar seleccionados</button>
@@ -31204,7 +31276,9 @@ async def _apply_control_presupuestal_assignment(
             if not getattr(expense, "budget_concept_id", None):
                 expense.budget_concept_id = concept_uuid
 
-    await prepare_document_authorization_route(session, documento)
+    await prepare_document_authorization_route(
+        session, documento, audit_actor_id=actor.id
+    )
     session.add(
         Aprobacion(
             tipo_entidad="documento",
@@ -31344,7 +31418,9 @@ async def _apply_control_presupuestal_expense_assignment(
         documento.budget_concept_id = concept_uuid
         documento.estado = "enviado"
         documento.enviado_en = now
-        await prepare_document_authorization_route(session, documento)
+        await prepare_document_authorization_route(
+            session, documento, audit_actor_id=actor.id
+        )
         session.add(
             Aprobacion(
                 tipo_entidad="documento",
@@ -31426,6 +31502,7 @@ async def asignar_control_presupuestal_lote(
     single_documento_id: Optional[str] = Form(None),
     reject_documento_id: Optional[str] = Form(None),
     bulk_action: Optional[str] = Form(None),
+    motivo_rechazo: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """Assign budget concepts to one or more selected budget-control items."""
     if not _is_budget_control_user(current_empleado):
@@ -31445,6 +31522,9 @@ async def asignar_control_presupuestal_lote(
                 session,
                 documento_id=documento_id,
                 actor=current_empleado,
+                motivo_rechazo=(
+                    motivo_rechazo if isinstance(motivo_rechazo, str) else None
+                ),
             )
             await session.commit()
         except DocumentoWorkflowValidationError as exc:
@@ -31517,6 +31597,9 @@ async def asignar_control_presupuestal_lote(
                     session,
                     documento_id=documento_id,
                     actor=current_empleado,
+                    motivo_rechazo=(
+                        motivo_rechazo if isinstance(motivo_rechazo, str) else None
+                    ),
                 )
             await session.commit()
         except DocumentoWorkflowValidationError as exc:
@@ -31708,6 +31791,7 @@ async def documentos_pendientes(
     filters = [Documento.estado == 'enviado', ~already_actioned_by_current_user]
     if current_empleado.rol not in ('superadmin', 'super_admin'):
         has_no_project_route = and_(
+            text(f"NOT ({provisional_policy_active_sql()})"),
             func.nullif(func.trim(Documento.referencia_operaciones), "").is_(None),
             text(
                 "NOT EXISTS (SELECT 1 FROM documento_authorization_routes route "
@@ -31784,12 +31868,15 @@ async def documentos_pendientes(
     documentos = result.scalars().unique().all()
     aprobador_by_doc = await fetch_documento_aprobador_display_batch(session, documentos)
 
-    operations_ids = {
-        documento.id for documento in documentos if has_operations_reference(documento)
+    provisional_policy = await provisional_policy_is_active(session)
+    restricted_ids = {
+        documento.id
+        for documento in documentos
+        if provisional_policy or has_operations_reference(documento)
     } if current_empleado.rol in ("superadmin", "super_admin") else set()
-    actionable_operations_ids = await actor_route_approver_document_ids(
-        session, actor_id=current_empleado.id, documento_ids=operations_ids
-    ) if operations_ids else set()
+    actionable_route_ids = await actor_route_approver_document_ids(
+        session, actor_id=current_empleado.id, documento_ids=restricted_ids
+    ) if restricted_ids else set()
 
     def _pending_torneo_display(documento: Documento) -> str:
         cuenta = getattr(documento, "cuenta_gastos", None)
@@ -31817,9 +31904,9 @@ async def documentos_pendientes(
         can_decide = True
         if (
             current_empleado.rol in ("superadmin", "super_admin")
-            and has_operations_reference(documento)
+            and (provisional_policy or has_operations_reference(documento))
         ):
-            can_decide = documento.id in actionable_operations_ids
+            can_decide = documento.id in actionable_route_ids
         actionable_count += int(can_decide)
         row_values = _documentos_todos_reporting_row_values(
             documento,
@@ -40092,45 +40179,9 @@ async def ver_documento(
     # Mirror the canonical workflow authorization.  A persisted project route
     # takes precedence; only documents without one use the legacy beneficiary
     # or requester approver fallback.
-    can_approve_or_reject = False
-    if documento.estado == 'enviado':
-        route_exists = (
-            (
-                await session.execute(
-                    text(
-                        "SELECT 1 FROM documento_authorization_routes "
-                        "WHERE documento_id = :documento_id"
-                    ),
-                    {"documento_id": str(documento.id)},
-                )
-            ).scalar_one_or_none()
-            is not None
-        )
-        if route_exists or has_operations_reference(documento):
-            can_approve_or_reject = (
-                await actor_is_route_approver(
-                    session,
-                    actor_id=current_empleado.id,
-                    documento_id=documento.id,
-                )
-                or (
-                    not has_operations_reference(documento)
-                    and current_empleado.rol in ("superadmin", "super_admin")
-                )
-            )
-        else:
-            approval_subject = approval_subject_empleado(documento) or empleado
-            if approval_subject and getattr(approval_subject, "aprobador_id", None):
-                es_aprobador_asignado = approval_subject.aprobador_id == current_empleado.id
-                es_finanzas_o_admin = current_empleado.rol in ("finanzas", "admin")
-                es_superadmin = current_empleado.rol in ("superadmin", "super_admin")
-                can_approve_or_reject = (
-                    es_aprobador_asignado or es_finanzas_o_admin or es_superadmin
-                )
-            else:
-                can_approve_or_reject = current_empleado.rol in (
-                    "finanzas", "admin", "superadmin", "super_admin"
-                )
+    can_approve_or_reject = await _can_decide_document_approval(
+        session, current_empleado, documento, empleado
+    )
 
     # Determine permission for payment registration
     can_register_payment = (
@@ -40442,7 +40493,7 @@ async def ver_documento(
             <td>{format_value(aprobacion.fecha)}</td>
             <td>{aprobacion.accion}</td>
             <td>{aprobador_nombre}</td>
-            <td>{format_value(aprobacion.comentario)}</td>
+            <td>{escape(format_value(aprobacion.comentario))}</td>
         </tr>
         """
 
@@ -41973,7 +42024,7 @@ async def _create_cuenta_de_gastos_with_informe(
         session.add(cuenta)
         await session.flush()
         ro_informe = await allocate_referencia_operaciones_for_empleado(
-            session, empleado
+            session, empleado, torneo_id=torneo_id
         )
         informe = Documento(
             empleado_id=empleado.id,
@@ -42278,7 +42329,9 @@ async def _sync_informe_documento_to_enviado(
         aprobacion_comentario = (
             "Enviado automaticamente al cerrar el informe de gastos."
         )
-    await prepare_document_authorization_route(session, informe_doc)
+    await prepare_document_authorization_route(
+        session, informe_doc, audit_actor_id=actor.id
+    )
     session.add(
         Aprobacion(
             tipo_entidad="documento",
@@ -43171,7 +43224,7 @@ async def adjuntar_gastos_a_cuenta(
             await session.flush()  # Get the ID
 
             ro_informe_adj = await allocate_referencia_operaciones_for_empleado(
-                session, current_empleado
+                session, current_empleado, torneo_id=torneo_id_uuid
             )
             # Create INFORME document only (Solicitudes created later from cuenta detail)
             informe = Documento(
@@ -47007,8 +47060,13 @@ async def nueva_solicitud_desde_cuenta_form(
     if ro_existing:
         ro_display_value = escape(ro_existing)
         ro_help_text = (
-            "Referencia operaciones del informe (se reutiliza en la solicitud)."
+            "Referencia existente del informe; se conserva sin generar un folio nuevo."
         )
+    elif await project_excludes_operations_reference(
+        session, tournament_id=cuenta.torneo_id
+    ):
+        ro_display_value = "No aplica"
+        ro_help_text = "Este proyecto no genera folios de Operaciones."
     elif empleado_allocates_referencia_operaciones(current_empleado):
         ro_display_value = escape(
             "Se asignará al crear la solicitud (mismo número que el informe)"

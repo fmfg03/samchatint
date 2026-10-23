@@ -28,7 +28,11 @@ from ..models import (
     RFCConfig,
     Tournament,
 )
-from ..expense_metadata import normalize_categories, normalize_currency, normalize_edition
+from ..expense_metadata import (
+    normalize_categories,
+    normalize_currency,
+    normalize_edition,
+)
 from .tournament_project_visibility import visibility_validation_error
 from ..utils.receipt_bytes import (
     ALLOWED_SOLICITUD_ATTACHMENT_MIME_TYPES,
@@ -89,8 +93,14 @@ def referencia_operaciones_form_display(empleado: object) -> tuple[str, str]:
 async def allocate_referencia_operaciones_for_empleado(
     session: AsyncSession,
     empleado: object,
+    *,
+    torneo_id: object = None,
 ) -> Optional[str]:
-    """Allocate the next RO only for Operaciones creators; otherwise return None."""
+    """Decide project exclusions before allocating an Operations reference."""
+    from .project_authorization_service import project_excludes_operations_reference
+
+    if await project_excludes_operations_reference(session, tournament_id=torneo_id):
+        return None
     if not empleado_allocates_referencia_operaciones(empleado):
         return None
     return await allocate_next_referencia_operaciones(session)
@@ -573,7 +583,8 @@ def build_solicitud_terceros_payload(
     if is_supplier_advance:
         if normalized_currency != "MXN":
             raise SolicitudValidationError(
-                "advance_currency_unsupported", "Los anticipos a proveedores requieren MXN."
+                "advance_currency_unsupported",
+                "Los anticipos a proveedores requieren MXN.",
             )
         if due_date is None:
             raise SolicitudValidationError(
@@ -872,7 +883,7 @@ async def create_solicitud_terceros_document(
         payload.empleado_id,
     )
     referencia_operaciones = await allocate_referencia_operaciones_for_empleado(
-        session, empleado
+        session, empleado, torneo_id=payload.torneo_id
     )
 
     cfdi_report_id = None
@@ -902,7 +913,8 @@ async def create_solicitud_terceros_document(
                         message = conflict.message()
                     raise SolicitudValidationError(
                         "duplicate_cfdi",
-                        message + " Confirme explícitamente que es una factura compartida para continuar.",
+                        message
+                        + " Confirme explícitamente que es una factura compartida para continuar.",
                     )
                 await validate_shared_cfdi_payment_amount(
                     session,
@@ -1394,7 +1406,10 @@ async def add_solicitud_documento_adjuntos(
     if getattr(documento, "is_supplier_advance", False) or getattr(
         documento, "supplier_advance_id", None
     ):
-        if any((a.categoria or "").strip().lower() in {"cfdi_xml", "cfdi_pdf"} for a in attachments):
+        if any(
+            (a.categoria or "").strip().lower() in {"cfdi_xml", "cfdi_pdf"}
+            for a in attachments
+        ):
             raise SolicitudValidationError(
                 "advance_invoice_immutable",
                 "Registre cada factura desde Comprobar anticipo; no sustituya la evidencia fiscal de un movimiento existente.",
@@ -1532,10 +1547,12 @@ async def remove_solicitud_documento_adjunto(
 
     if categoria in {"cfdi_xml", "cfdi_pdf"}:
         remaining_cfdi = await session.execute(
-            select(Adjunto.id).where(
+            select(Adjunto.id)
+            .where(
                 Adjunto.documento_id == documento_id,
                 Adjunto.categoria.in_(["cfdi_xml", "cfdi_pdf"]),
-            ).limit(1)
+            )
+            .limit(1)
         )
         if remaining_cfdi.first() is None:
             documento = await session.get(Documento, documento_id)
@@ -1613,8 +1630,7 @@ async def update_solicitud_terceros_document(
         )
     estado_norm = (documento.estado or "").strip().lower()
     editable_before_budget = (
-        estado_norm == "borrador"
-        or estado_norm == "control_presupuestal"
+        estado_norm == "borrador" or estado_norm == "control_presupuestal"
     ) and not getattr(documento, "budget_concept_id", None)
     editable_rejected = estado_norm == "rechazado"
     if not editable_before_budget:
@@ -1832,8 +1848,12 @@ async def create_solicitud_personal_document(
         )
     concept = await resolve_budget_concept(
         session,
-        budget_concept_id=str(payload.budget_concept_id) if payload.budget_concept_id else None,
-        tournament_id=str(cuenta.torneo_id) if getattr(cuenta, "torneo_id", None) else None,
+        budget_concept_id=(
+            str(payload.budget_concept_id) if payload.budget_concept_id else None
+        ),
+        tournament_id=(
+            str(cuenta.torneo_id) if getattr(cuenta, "torneo_id", None) else None
+        ),
         tournament_code=None,
         fase=getattr(cuenta, "fase", None),
         budget_direction="expense",
@@ -1898,7 +1918,7 @@ async def create_solicitud_personal_document(
     ro_shared = (informe_doc.referencia_operaciones or "").strip()
     if not ro_shared:
         allocated = await allocate_referencia_operaciones_for_empleado(
-            session, empleado
+            session, empleado, torneo_id=cuenta.torneo_id
         )
         if allocated:
             ro_shared = allocated
@@ -1958,8 +1978,8 @@ async def fetch_documento_aprobador_display_batch(
 ) -> Dict[UUID, str]:
     """Resolve Aprobador display names for document list views.
 
-    Prefer the actor on the latest aprobar/rechazar aprobacion; otherwise fall
-    back to the solicitante's assigned approver (empleado.aprobador).
+    Pending provisional documents display current assigned approvers, excluding
+    global supervision. Decided documents preserve their actual decision actor.
     """
     if not documentos:
         return {}
@@ -1984,9 +2004,44 @@ async def fetch_documento_aprobador_display_batch(
         if aprobador and aprobador.nombre:
             latest_by_doc[aprobacion.entidad_id] = aprobador.nombre
 
+    from .project_authorization_service import (
+        document_route_approver_sql,
+        provisional_policy_is_active,
+    )
+
+    pending_ids = [
+        doc.id
+        for doc in documentos
+        if doc.tipo in {"SOLICITUD", "INFORME"}
+        and str(doc.estado).lower() in {"borrador", "enviado", "control_presupuestal"}
+    ]
+    canonical_by_doc: Dict[UUID, str] = {}
+    if pending_ids and await provisional_policy_is_active(session):
+        predicate = document_route_approver_sql(
+            "label_document", include_supervisor=False
+        ).replace(":route_employee_id", "label_actor.id::text")
+        rows = await session.execute(
+            text(
+                "SELECT label_document.id AS documento_id, "
+                "string_agg(label_actor.nombre, ' / ' ORDER BY label_actor.nombre) AS nombre "
+                "FROM documentos label_document JOIN empleados label_actor ON ("
+                + predicate
+                + ") WHERE label_document.id = ANY(CAST(:document_ids AS uuid[])) "
+                "GROUP BY label_document.id"
+            ),
+            {"document_ids": [str(value) for value in pending_ids]},
+        )
+        canonical_by_doc = {value: "—" for value in pending_ids}
+        canonical_by_doc.update(
+            {
+                UUID(str(row["documento_id"])): row["nombre"]
+                for row in rows.mappings().all()
+            }
+        )
+
     subject_ids_by_doc: Dict[UUID, UUID] = {}
     for doc in documentos:
-        if doc.id in latest_by_doc:
+        if doc.id in latest_by_doc or doc.id in canonical_by_doc:
             continue
         subject_id = approval_subject_empleado_id(doc)
         if subject_id:
@@ -2006,6 +2061,9 @@ async def fetch_documento_aprobador_display_batch(
 
     display_by_doc: Dict[UUID, str] = {}
     for doc in documentos:
+        if doc.id in canonical_by_doc:
+            display_by_doc[doc.id] = canonical_by_doc[doc.id]
+            continue
         if doc.id in latest_by_doc:
             display_by_doc[doc.id] = latest_by_doc[doc.id]
             continue

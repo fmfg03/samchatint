@@ -40,6 +40,14 @@ async def test_final_workflow_snapshot_success_or_atomic_failure(
         await session.execute(
             text("CREATE TABLE documento_authorization_routes (documento_id uuid)")
         )
+        # Empty policy tables keep this synthetic legacy fixture unactivated.
+        # Exercise real policy reads without changing AMEX authorization guards.
+        for definition in (
+            "CREATE TABLE authorization_positions (position_key varchar(100) PRIMARY KEY, label varchar(200), active boolean NOT NULL DEFAULT TRUE)",
+            "CREATE TABLE authorization_position_assignments (position_key varchar(100) REFERENCES authorization_positions, empleado_id uuid REFERENCES empleados, active boolean NOT NULL DEFAULT TRUE, PRIMARY KEY(position_key, empleado_id))",
+            "CREATE TABLE project_authorization_rules (tournament_id uuid PRIMARY KEY, eligible_position_keys jsonb NOT NULL, requires_operations_reference boolean NOT NULL DEFAULT FALSE, active boolean NOT NULL DEFAULT TRUE)",
+        ):
+            await session.execute(text(definition))
         await session.execute(
             update(models.Documento)
             .where(models.Documento.id == data.informe.id)

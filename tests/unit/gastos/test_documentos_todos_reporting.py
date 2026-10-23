@@ -366,6 +366,9 @@ async def test_pending_approval_queue_renders_expense_with_attachment_without_la
             return Result()
 
     monkeypatch.setattr(
+        user_routes, "provisional_policy_is_active", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr(
         user_routes, "fetch_documento_aprobador_display_batch", AsyncMock(return_value={})
     )
     monkeypatch.setattr(
@@ -2108,7 +2111,13 @@ class _FakeAprobadorSession:
         return _FakeResult([self._employee])
 
 
-async def test_fetch_documento_aprobador_display_batch_does_not_lazy_load_subject_approver():
+async def test_fetch_documento_aprobador_display_batch_does_not_lazy_load_subject_approver(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "devnous.gastos.services.project_authorization_service.provisional_policy_is_active",
+        AsyncMock(return_value=False),
+    )
     empleado_id = uuid4()
     documento = _doc(
         empleado_id=empleado_id,

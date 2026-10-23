@@ -40,15 +40,26 @@ class RoutingSession:
     async def execute(self, statement, params=None):
         sql = str(statement)
         self.queries.append((sql, params))
+        if "policy_activation" in sql and sql.lstrip().startswith("SELECT EXISTS"):
+            return Result([False])
         if sql.lstrip().startswith("INSERT"):
             self.writes.append(params)
             return Result([])
         if "FROM documento_authorization_routes" in sql:
             return Result([self.existing] if self.existing else [])
-        if "SELECT position_key" in sql:
+        if "SELECT a.position_key" in sql:
             return Result(self.positions)
         if "FROM cuentas_de_gastos" in sql:
-            return Result([{"torneo_id": "account-tournament"}])
+            return Result(
+                [
+                    {
+                        "torneo_id": "account-tournament",
+                        "empleado_id": "account-owner",
+                        "beneficiario_empleado_id": None,
+                        "beneficiario_proveedor_cliente_id": None,
+                    }
+                ]
+            )
         if "FROM project_authorization_rules" in sql:
             return Result(
                 [
@@ -58,7 +69,7 @@ class RoutingSession:
                     }
                 ]
             )
-        if "SELECT empleado_id" in sql:
+        if "SELECT DISTINCT a.empleado_id" in sql:
             return Result(["configured-holder"])
         raise AssertionError(sql)
 
@@ -71,6 +82,8 @@ async def test_routing_uses_account_only_when_document_tournament_is_missing(
     session = RoutingSession()
     doc = SimpleNamespace(
         id="report",
+        estado="enviado",
+        tipo="INFORME",
         empleado_id="finance-requester",
         beneficiario_empleado_id=None,
         torneo_id=direct_tournament,
@@ -83,9 +96,8 @@ async def test_routing_uses_account_only_when_document_tournament_is_missing(
         p for sql, p in session.queries if "project_authorization_rules" in sql
     )
     assert rule_params["tournament_id"] == (direct_tournament or "account-tournament")
-    assert bool([sql for sql, _ in session.queries if "cuentas_de_gastos" in sql]) == (
-        direct_tournament is None
-    )
+    # An explicit document project wins; account parties are still resolved.
+    assert any("cuentas_de_gastos" in sql for sql, _ in session.queries)
     assert len(session.writes) == 1
 
 
@@ -102,7 +114,9 @@ async def test_existing_route_is_not_recomputed_from_account():
         session, SimpleNamespace(id="report")
     )
     assert route.eligible_position_keys == ("direccion_general",)
-    assert len(session.queries) == 1
+    assert (
+        len([sql for sql, _ in session.queries if "policy_activation" not in sql]) == 1
+    )
     assert not session.writes
 
 
@@ -110,7 +124,12 @@ async def test_existing_route_is_not_recomputed_from_account():
 async def test_account_route_preserves_beneficiary_exception():
     session = RoutingSession(beneficiary_positions=["director_operaciones"])
     doc = SimpleNamespace(
-        id="report", empleado_id="requester", torneo_id=None, cuenta_gastos_id="account"
+        id="report",
+        estado="enviado",
+        tipo="INFORME",
+        empleado_id="requester",
+        torneo_id=None,
+        cuenta_gastos_id="account",
     )
     route = await routing.resolve_and_snapshot_document_route(session, doc)
     assert not route.requires_operations_reference

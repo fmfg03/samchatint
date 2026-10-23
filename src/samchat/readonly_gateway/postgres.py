@@ -16,7 +16,7 @@ from decimal import Decimal
 from typing import Any, Callable, Mapping, Protocol, Sequence
 from uuid import UUID
 
-from .canonical_policy import document_route_approver_sql
+from .canonical_policy import document_route_approver_sql, provisional_policy_active_sql
 from .contracts import Principal, ReadError
 
 
@@ -113,6 +113,9 @@ EXPECTED_COLUMNS = {
         "concepto_pago",
         "informe_origen_id",
         "motivo_comprobacion_parcial",
+        "empleado_id",
+        "beneficiario_empleado_id",
+        "beneficiario_proveedor_cliente_id",
     },
     "aprobaciones": {"id", "entidad_id", "tipo_entidad", "accion", "fecha"},
     "expense_reports": {
@@ -133,6 +136,18 @@ EXPECTED_COLUMNS = {
     "authorization_position_assignments": {"position_key", "empleado_id", "active"},
     "authorization_positions": {"position_key", "active"},
     "empleados": {"id", "activo"},
+    "project_authorization_rules": {
+        "tournament_id",
+        "active",
+        "eligible_position_keys",
+    },
+    "cuentas_de_gastos": {
+        "id",
+        "torneo_id",
+        "empleado_id",
+        "beneficiario_empleado_id",
+        "beneficiario_proveedor_cliente_id",
+    },
 }
 
 
@@ -362,19 +377,30 @@ class PostgresCanonicalAdapter:
                 if cleanup_failed:
                     raise ReadError("SOURCE_UNAVAILABLE")
 
-    def observation(
-        self, principal: Principal, document_id: str
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    @staticmethod
+    def _route_authority_sql() -> str:
+        """Canonical authority over admitted physical policy tables only."""
         predicate = re.sub(
             r":route_actor\b",
             "%(actor)s",
             document_route_approver_sql("d", "route_actor"),
         )
+        return (
+            f"CASE WHEN ({predicate}) THEN TRUE "
+            f"WHEN (({provisional_policy_active_sql()}) AND d.tipo IN ('SOLICITUD','INFORME')) "
+            "OR NULLIF(BTRIM(d.referencia_operaciones),'') IS NOT NULL "
+            "THEN FALSE ELSE NULL END"
+        )
 
+    def observation(
+        self, principal: Principal, document_id: str
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         def build(grant: ScopeGrant) -> tuple[str, dict[str, Any]]:
             scope, args = self._scope(principal, grant)
             args["id"] = document_id
-            args["actor"] = grant.actor_uuid
+            authority_sql = self._route_authority_sql()
+            if "%(actor)s" in authority_sql:
+                args["actor"] = grant.actor_uuid
             return (
                 "SELECT d.id AS document_id,d.torneo_id AS tournament_id,d.tipo AS kind,d.estado AS state,d.referencia_operaciones AS reference_operations,d.numero_referencia AS reference_samchat,d.referencia_base AS reference_base,d.creado_en AS created_at,d.enviado_en AS submitted_at,d.currency,d.monto_total AS amount,(d.budget_concept_id IS NOT NULL) AS classification_present,"
                 "d.informe_origen_id IS NOT NULL AS partial_report,"
@@ -384,10 +410,7 @@ class PostgresCanonicalAdapter:
                 "EXISTS (SELECT 1 FROM aprobaciones prior WHERE prior.tipo_entidad='documento' AND prior.entidad_id=d.id AND prior.accion='aprobar') AS recorded_approval,"
                 "(d.tipo='SOLICITUD' AND d.cuenta_gastos_id IS NOT NULL AND COALESCE(d.concepto_pago,'') LIKE 'Reembolso de saldo a favor%') AS employee_reimbursement,"
                 "EXISTS (SELECT 1 FROM documentos informe WHERE informe.cuenta_gastos_id=d.cuenta_gastos_id AND informe.tipo='INFORME' AND informe.estado='aprobado') AS linked_informe_approved,"
-                # False route authority alone cannot exclude legacy-role authority.
-                f"CASE WHEN ({predicate}) THEN TRUE "
-                "WHEN NULLIF(BTRIM(d.referencia_operaciones),'') IS NOT NULL "
-                "THEN FALSE ELSE NULL END AS actor_can_decide "
+                f"{authority_sql} AS actor_can_decide "
                 f"FROM documentos d WHERE {scope} AND d.id=%(id)s::uuid",
                 args,
             )

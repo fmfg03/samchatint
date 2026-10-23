@@ -1093,13 +1093,21 @@ def test_document_detail_approval_actions_prioritize_persisted_project_route() -
     end = source.index("    # Determine permission for payment registration", start)
     block = source[start:end]
 
-    assert "documento_authorization_routes" in block
-    assert "await actor_is_route_approver(" in block
+    assert "await _can_decide_document_approval(" in block
+    helper_start = source.index("async def _can_decide_document_approval(")
+    helper_end = source.index("def _can_manage_budget_classification", helper_start)
+    policy = source[helper_start:helper_end]
+    assert "documento_authorization_routes" in policy
+    assert "await actor_is_route_approver(" in policy
     assert (
-        "if route_exists or has_operations_reference(documento):" in block
+        "if route_exists or has_operations_reference(documento) or provisional_policy:"
+        in policy
     )
-    assert "approval_subject = approval_subject_empleado(documento) or empleado" in block
-    assert "approval_subject.aprobador_id == current_empleado.id" in block
+    assert "approval_subject = approval_subject_empleado(documento) or empleado" in policy
+    assert "approval_subject.aprobador_id == current_empleado.id" in policy
+    assert policy.index("await actor_is_route_approver(") < policy.index(
+        "approval_subject = approval_subject_empleado(documento)"
+    )
 
 
 def test_document_detail_inherits_project_context_from_expense_account() -> None:

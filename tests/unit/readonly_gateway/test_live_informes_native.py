@@ -159,6 +159,28 @@ class LiveInformeNativeTests(unittest.TestCase):
             ),
         )
 
+    def test_live_authority_stays_unresolved_with_historical_route(self) -> None:
+        original_reference = self.admin(
+            f"SELECT referencia_operaciones FROM documentos WHERE id='{FIRST}'"
+        )
+        self.admin(
+            f"""
+            UPDATE documentos SET referencia_operaciones='SYNTH-LEGACY' WHERE id='{FIRST}';
+            INSERT INTO documento_authorization_routes VALUES
+                ('{FIRST}','["{ACTOR}"]','["director_operaciones"]',TRUE);
+        """
+        )
+        try:
+            document, authority = self.backend.observation(self.actor, FIRST)
+            self.assertEqual(authority["resolution"], "unresolved")
+            self.assertIsNone(authority["actor_can_decide"])
+            self.assertEqual(document["reference_operations"], "SYNTH-LEGACY")
+            self.assertIn("legacy_approval_authority_not_projected", authority["gaps"])
+        finally:
+            self.admin(
+                f"DELETE FROM documento_authorization_routes WHERE documento_id='{FIRST}'; UPDATE documentos SET referencia_operaciones='{original_reference}' WHERE id='{FIRST}'"
+            )
+
     def test_legacy_authority_is_unresolved_without_new_permission_reads(self) -> None:
         from samchat.readonly_gateway.diagnosis import diagnose
 

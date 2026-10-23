@@ -208,6 +208,34 @@ class PostgresTests(unittest.TestCase):
             callback()
         self.assertEqual(raised.exception.code, code)
 
+    def test_seeded_statistics_avoid_unnecessary_observation_jit(self) -> None:
+        stats = self.engine.query(
+            "SELECT reltuples FROM pg_class WHERE oid='documentos'::regclass"
+        )["rows"][0]
+        self.assertEqual(stats["reltuples"], 2)
+        captured = {}
+        original_query = self.backend._query
+
+        def capture(principal, build, cap):
+            sql, args = build(self.backend.owner.resolve(principal))
+            captured.update(sql=sql, args=args)
+            return [{"actor_can_decide": None}]
+
+        self.backend._query = capture
+        try:
+            self.backend.observation(self.actor, DOCUMENT)
+        finally:
+            self.backend._query = original_query
+        result = self.engine.query(
+            "EXPLAIN (FORMAT JSON) " + captured["sql"], captured["args"]
+        )["rows"][0]["QUERY PLAN"]
+        plan = (json.loads(result) if isinstance(result, str) else result)[0]
+        jit_threshold = self.engine.query(
+            "SELECT current_setting('jit_above_cost')::float AS threshold"
+        )["rows"][0]["threshold"]
+        self.assertLess(plan["Plan"]["Total Cost"], jit_threshold)
+        self.assertNotIn("JIT", plan)
+
     def test_actual_pg_status_authority_diagnose_audit(self) -> None:
         result = self.gateway.call(
             "samchat.document_diagnose",
@@ -417,22 +445,117 @@ class PostgresTests(unittest.TestCase):
         executor.tools = {"samchat.study": ()}
         self.error("TOOL_COLLISION", lambda: AgentiusReadSlice(executor, self.gateway))
 
+    @unittest.skipUnless(
+        os.environ.get("SAMCHAT_TEST_SOCKET"), "native disposable socket required"
+    )
+    def test_provisional_authority_and_unadmitted_dependency_fail_closed(self) -> None:
+        def admin(sql: str) -> None:
+            subprocess.run(
+                [
+                    "psql",
+                    "-Xq",
+                    "-h",
+                    os.environ["SAMCHAT_TEST_SOCKET"],
+                    "-U",
+                    "postgres",
+                    "-d",
+                    "fixture_legacy",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    "-c",
+                    sql,
+                ],
+                check=True,
+                capture_output=True,
+            )
+
+        gn = "40000000-0000-4000-8000-000000000002"
+        requester = "40000000-0000-4000-8000-000000000003"
+        try:
+            admin(
+                f"""
+                INSERT INTO empleados VALUES ('{gn}',TRUE),('{requester}',TRUE);
+                INSERT INTO authorization_positions VALUES
+                    ('aprobaciones_escalan_gn',TRUE),('aprobador_federico_gn',TRUE),
+                    ('supervision_aprobaciones_federico_gv',TRUE);
+                INSERT INTO authorization_position_assignments VALUES
+                    ('aprobador_federico_gn','{gn}',TRUE),
+                    ('aprobaciones_escalan_gn','{requester}',TRUE);
+                INSERT INTO project_authorization_rules VALUES
+                    ('{TOURNAMENT}',TRUE,'["aprobador_federico_gn"]');
+                UPDATE documentos SET empleado_id='{requester}' WHERE id='{DOCUMENT}';
+            """
+            )
+            # Historical Operations snapshot never overrides the active personal GN rule.
+            authority = self.backend.authority(self.actor, DOCUMENT)
+            self.assertEqual(authority["resolution"], "resolved")
+            self.assertIs(authority["actor_can_decide"], False)
+            admin(
+                f"UPDATE documentos SET referencia_operaciones=NULL WHERE id='{DOCUMENT}'"
+            )
+            self.assertIs(
+                self.backend.authority(self.actor, DOCUMENT)["actor_can_decide"], False
+            )
+            admin(
+                f"UPDATE authorization_position_assignments SET empleado_id='{ACTOR}' WHERE position_key='aprobador_federico_gn'"
+            )
+            self.assertIs(
+                self.backend.authority(self.actor, DOCUMENT)["actor_can_decide"], True
+            )
+            admin(
+                f"UPDATE authorization_position_assignments SET empleado_id='{gn}' WHERE position_key='aprobador_federico_gn'; INSERT INTO authorization_position_assignments VALUES ('supervision_aprobaciones_federico_gv','{ACTOR}',TRUE)"
+            )
+            self.assertIs(
+                self.backend.authority(self.actor, DOCUMENT)["actor_can_decide"], True
+            )
+            # GN or supervisor authority cannot add document visibility or tool rights.
+            self.error(
+                "NOT_FOUND_OR_NOT_VISIBLE",
+                lambda: self.backend.document(self.actor, OTHER_DOCUMENT),
+            )
+            admin("REVOKE SELECT ON project_authorization_rules FROM fixture_reader")
+            self.error(
+                "SCHEMA_MISMATCH", lambda: self.backend.authority(self.actor, DOCUMENT)
+            )
+        finally:
+            admin(
+                f"""
+                GRANT SELECT ON project_authorization_rules TO fixture_reader;
+                DELETE FROM project_authorization_rules;
+                DELETE FROM authorization_position_assignments;
+                DELETE FROM authorization_positions;
+                DELETE FROM empleados WHERE id IN ('{gn}','{requester}');
+                UPDATE documentos SET empleado_id=NULL,referencia_operaciones='SYNTH-001' WHERE id='{DOCUMENT}';
+            """
+            )
+
     def test_canonical_policy_exact_ast_and_identifier_validation(self) -> None:
         source = ROOT / "src/devnous/gastos/services/project_authorization_service.py"
-        original = next(
-            node
+        canonical = {
+            node.name: node
             for node in ast.parse(source.read_text(encoding="utf-8")).body
             if isinstance(node, ast.FunctionDef)
-            and node.name == "document_route_approver_sql"
-        )
-        copied = next(
-            node
+        }
+        copied = {
+            node.name: node
             for node in ast.parse(
                 (ROOT / "src/samchat/readonly_gateway/canonical_policy.py").read_text()
             ).body
             if isinstance(node, ast.FunctionDef)
+        }
+        self.assertEqual(
+            set(copied),
+            {
+                "document_route_approver_sql",
+                "provisional_policy_active_sql",
+                "effective_tournament_sql",
+                "effective_beneficiary_sql",
+                "approval_supervisor_sql",
+            },
         )
-        self.assertEqual(ast.dump(original), ast.dump(copied))
+        for name, node in copied.items():
+            with self.subTest(canonical_helper=name):
+                self.assertEqual(ast.dump(canonical[name]), ast.dump(node))
         with self.assertRaises(ValueError):
             document_route_approver_sql("d;DELETE", "actor")
         moment = utc_now()
