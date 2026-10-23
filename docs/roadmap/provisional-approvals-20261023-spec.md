@@ -105,6 +105,7 @@ No ejecutar `repair_tournament_budget_reconciliation.py`: su alcance actual exig
 
 - Política/configuración/folios: `services/project_authorization_service.py`, `services/documento_service.py`, configuración versionada de las tablas existentes y herramienta acotada de preview/aplicación de pendientes.
 - Decisiones: `services/documento_workflow_service.py`.
+- Compatibilidad de consumidores: copia pura de la política en `samchat/readonly_gateway`, con equivalencia AST y fixtures sintéticas actualizadas; la proyección limitada conserva autoridad no resuelta sin ampliar vistas, permisos ni ámbito. La instalación independiente del gateway permanece fuera del despliegue.
 - Web/Control: `routes/user_routes.py`, con cambios delimitados a formularios, emisión de folio, predicados, controles y motivo. Se preservan los cambios ajenos del checkout primario.
 - Telegram: `services/documento_telegram.py`, y `services/telegram_document_runtime.py` únicamente si su interfaz lo requiere; adapters del asistente sólo si una prueba demuestra que el owner compartido no basta.
 - Pruebas próximas existentes: `test_project_authorization_service`, `test_operations_reference_policy`, `test_operations_route_entrypoints`, `test_pending_approval_visibility_controls`, `test_document_detail_approval_controls`, `test_telegram_document_approvals`, `test_budget_control_gate`, `test_reimbursement_document_semantics`.

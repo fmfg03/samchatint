@@ -45,3 +45,15 @@ No hay desviaciones de reglas aprobadas. Canon unchanged: justificación concret
 Este informe registra la validación local antes de publicación. La CI del head final, merge, release exacto, activación y reparación del caso conservarán recibos separados. El operador debe ejecutarse desde el release publicado con commit y hash frescos y realizar una lectura independiente tras commit. No se envían mensajes a usuarios ni se aprueba o paga ningún documento. UAT autenticada y aceptación financiera son evidencia separada.
 
 La actualización del catálogo presupuestal (3) se aplicó por separado con su propio plan/auditoría: 2248 partidas, tres altas, 53 retiros indicados por el archivo, cero identidades activas duplicadas, referencias/importes/calendarios preservados. Sus datos privados no se incorporan a la PR.
+
+## Compatibilidad detectada por CI
+
+La primera CI detectó dos dependencias de prueba/consumo adicionales dentro del mismo alcance de coherencia de autoridad: la copia pura del predicado en readonly_gateway y la fixture PostgreSQL de aprobación final AMEX. Las pruebas generales dieron 650 integraciones correctas, seis omisiones preexistentes y cuatro fallos por ausencia de tablas de configuración en esa fixture; no se omiten ni debilitan esos escenarios.
+
+El candidato mantiene equivalencia AST exacta del predicado y sus cuatro helpers puros. El adaptador canónico reconoce también una denegación de política activa sin folio. El adaptador limitado de informes no cuenta con los datos para resolver esa autoridad y devuelve explícitamente autoridad no resuelta, conservando sus vistas, ámbito admitido y permisos. Las pruebas ejercitan permisos insuficientes y mantienen la denegación segura. No se modifica, reactiva ni reinicia el gateway instalado separadamente en /opt/agentius-samchat.
+
+La suite aislada exacta de CI del gateway pasó **80 pruebas**, cobertura **88%**, en PostgreSQL desechable sin acceso a datos de negocio. La fixture AMEX recibe únicamente tablas vacías sin activar la política; conserva las comprobaciones de aprobación/evidencia, rollback y carrera de edición. Esta corrección no introduce esquema productivo, dependencias ni autoridad nuevas. Canon unchanged por la misma razón de la especificación: reutilización de los propietarios de autoridad y auditoría existentes.
+
+Tras incluir esa compatibilidad, la cobertura combinada local de instrucciones modificadas es **90% (197/218)** contra la misma base, con los 80 casos aislados adicionales. Inventarios regenerados nuevamente: sin cambios de superficie ni gaps de parseo.
+
+La suite afectada de aprobación final AMEX pasó sus **5 casos en PostgreSQL 16 real, cero omisiones**, incluidos los cuatro resultados que fallaron en CI y el escenario de enlace/exportación. Se ejecutó en un namespace de red desechable para conservar intacto un cluster ajeno que ocupaba el puerto requerido. Black, Flake8 F/E9 y diff check de la fixture: PASS.

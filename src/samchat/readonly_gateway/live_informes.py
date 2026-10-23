@@ -132,6 +132,15 @@ def load_report_delegation(source: DelegationFile) -> ReportDelegation:
 class LiveInformeAdapter(PostgresCanonicalAdapter):
     """Run the canonical closed queries over protected report projections only."""
 
+    @staticmethod
+    def _route_authority_sql() -> str:
+        """Limited report views do not admit current approval-policy context.
+
+        Do not read additional base tables or infer authority from an old folio.
+        Existing projection receipts and the scope owner remain unchanged.
+        """
+        return "NULL::boolean"
+
     def _grant(self, principal: Principal) -> ScopeGrant:
         self.binding.check()
         if principal.scope_policy != POLICY or not principal.valid(utc_now()):
