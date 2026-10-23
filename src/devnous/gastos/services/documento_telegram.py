@@ -262,7 +262,10 @@ async def run_document_workflow_telegram_notifications(
         doc_uuid = UUID(str(documento_id))
         actor_uuid = UUID(str(actor_id))
     except ValueError:
-        logger.warning("Invalid UUID for telegram notification", extra={"documento_id": documento_id})
+        logger.warning(
+            "Invalid UUID for telegram notification",
+            extra={"documento_id": documento_id},
+        )
         return
 
     async with session_maker() as session:
@@ -289,10 +292,7 @@ async def run_document_workflow_telegram_notifications(
                 session, documento, approved=False, actor=actor, comentario=comentario
             )
 
-        if (
-            documento.tipo == "SOLICITUD"
-            and documento.estado == "aprobado"
-        ):
+        if documento.tipo == "SOLICITUD" and documento.estado == "aprobado":
             try:
                 await notify_finance_pending_payment_on_solicitud_approve(
                     session, documento
@@ -322,7 +322,9 @@ async def load_informe_active_expenses(
         ExpenseReport.informe_documento_id == documento.id,
     ]
     if documento.cuenta_gastos_id:
-        expense_conditions.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
+        expense_conditions.append(
+            ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id
+        )
 
     expenses_result = await session.execute(
         select(ExpenseReport).where(
@@ -335,7 +337,9 @@ async def load_informe_active_expenses(
     return list(expenses_result.scalars().all())
 
 
-async def compute_informe_total_readonly(session: AsyncSession, documento: Documento) -> float:
+async def compute_informe_total_readonly(
+    session: AsyncSession, documento: Documento
+) -> float:
     """Derive INFORME total from active expenses (no DB writes)."""
     active_expenses = await load_informe_active_expenses(session, documento)
     return _sum_active_expense_amounts(active_expenses)
@@ -381,9 +385,7 @@ def _fmt_mxn(amount: Any) -> str:
     try:
         if amount is None:
             return "—"
-        value = Decimal(str(amount)).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
-        )
+        value = Decimal(str(amount)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         return f"${value:,.2f} MXN"
     except (InvalidOperation, TypeError, ValueError):
         return "—"
@@ -439,7 +441,9 @@ def _leading_identity_lines(documento: Documento) -> List[str]:
         if documento.tipo == "INFORME":
             return [
                 _bold_field_line("Tipo de documento", "Informe de gastos"),
-                _bold_field_line("Persona que comprueba", beneficiario_label(documento)),
+                _bold_field_line(
+                    "Persona que comprueba", beneficiario_label(documento)
+                ),
             ]
         return [_bold_field_line("Beneficiario", beneficiario_label(documento))]
     beneficiario_heading = (
@@ -526,12 +530,15 @@ async def _active_employees_for_profiles(
     useful_profiles = [
         profile
         for profile in profiles
-        if isinstance(profile, dict) and _telegram_text_key(profile.get("employee_matcher"))
+        if isinstance(profile, dict)
+        and _telegram_text_key(profile.get("employee_matcher"))
     ]
     if not useful_profiles:
         return []
     result = await session.execute(
-        select(Empleado).where(Empleado.activo.is_(True)).order_by(Empleado.nombre.asc())
+        select(Empleado)
+        .where(Empleado.activo.is_(True))
+        .order_by(Empleado.nombre.asc())
     )
     employees = list(result.scalars().all())
     matched: list[Empleado] = []
@@ -866,7 +873,9 @@ async def load_documento_for_telegram(
         select(Documento)
         .options(
             selectinload(Documento.empleado).selectinload(Empleado.aprobador),
-            selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
+            selectinload(Documento.beneficiario_empleado).selectinload(
+                Empleado.aprobador
+            ),
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.torneo),
             selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
@@ -904,9 +913,12 @@ async def approver_can_see_document_in_queue_live(
     from .project_authorization_service import (
         actor_is_route_approver,
         has_operations_reference,
+        provisional_policy_is_active,
     )
 
-    if has_operations_reference(documento):
+    if has_operations_reference(documento) or await provisional_policy_is_active(
+        session
+    ):
         return await actor_is_route_approver(
             session, actor_id=empleado.id, documento_id=documento.id
         )
@@ -947,7 +959,10 @@ async def query_pending_documentos_for_approver(
         selectinload(Documento.torneo),
         selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
     )
-    from .project_authorization_service import document_route_approver_sql
+    from .project_authorization_service import (
+        document_route_approver_sql,
+        provisional_policy_active_sql,
+    )
 
     role = (getattr(empleado, "rol", "") or "").strip().lower()
     if role in SUPERADMIN_ROLES:
@@ -957,10 +972,16 @@ async def query_pending_documentos_for_approver(
             .where(Documento.estado == "enviado")
             .order_by(
                 or_(
-                    func.nullif(func.trim(Documento.referencia_operaciones), "").is_(None),
+                    and_(
+                        text("NOT (" + provisional_policy_active_sql() + ")"),
+                        func.nullif(
+                            func.trim(Documento.referencia_operaciones), ""
+                        ).is_(None),
+                    ),
                     text(document_route_approver_sql()),
                 ).desc(),
-                Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc(),
+                Documento.enviado_en.desc().nulls_last(),
+                Documento.creado_en.desc(),
             )
             .params(route_employee_id=str(empleado.id))
             .limit(limit)
@@ -973,6 +994,8 @@ async def query_pending_documentos_for_approver(
 
     has_no_project_route = text(
         "NULLIF(BTRIM(documentos.referencia_operaciones), '') IS NULL AND "
+        "NOT EXISTS (SELECT 1 FROM authorization_positions policy_activation "
+        "WHERE policy_activation.position_key='aprobaciones_escalan_gn' AND policy_activation.active=TRUE) AND "
         "NOT EXISTS (SELECT 1 FROM documento_authorization_routes route "
         "WHERE route.documento_id = documentos.id)"
     )
@@ -1018,7 +1041,9 @@ async def query_documentos_for_requester(
         select(Documento)
         .options(
             selectinload(Documento.empleado),
-            selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
+            selectinload(Documento.beneficiario_empleado).selectinload(
+                Empleado.aprobador
+            ),
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.torneo),
             selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
@@ -1043,7 +1068,9 @@ async def find_documento_by_referencia_for_requester(
         select(Documento)
         .options(
             selectinload(Documento.empleado),
-            selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
+            selectinload(Documento.beneficiario_empleado).selectinload(
+                Empleado.aprobador
+            ),
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.torneo),
             selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
@@ -1194,9 +1221,10 @@ async def _workflow_outbox_status_by_recipient(
     documento_id: UUID,
 ) -> dict[UUID, str]:
     rows = (
-        await session.execute(
-            text(
-                """
+        (
+            await session.execute(
+                text(
+                    """
                 SELECT DISTINCT ON (recipient_empleado_id)
                     recipient_empleado_id, status
                 FROM telegram_notification_outbox
@@ -1205,10 +1233,13 @@ async def _workflow_outbox_status_by_recipient(
                   AND recipient_empleado_id IS NOT NULL
                 ORDER BY recipient_empleado_id, created_at DESC
                 """
-            ),
-            {"documento_id": str(documento_id)},
+                ),
+                {"documento_id": str(documento_id)},
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
     return {row["recipient_empleado_id"]: row["status"] for row in rows}
 
 
@@ -1269,7 +1300,9 @@ async def monitor_workflow_telegram_notifications(
         select(Documento)
         .options(
             selectinload(Documento.empleado).selectinload(Empleado.aprobador),
-            selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
+            selectinload(Documento.beneficiario_empleado).selectinload(
+                Empleado.aprobador
+            ),
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.torneo),
             selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
@@ -1362,7 +1395,9 @@ async def notify_requester_decision(
             extra += f"*Comentario* {escape_markdown_light(comentario)}\n"
 
     text = header + "\n\n" + extra + "\n" + body
-    chat_id = int(owner.telegram_user_id) if owner.telegram_user_id is not None else None
+    chat_id = (
+        int(owner.telegram_user_id) if owner.telegram_user_id is not None else None
+    )
     await deliver_telegram_notification(
         session,
         notification_type=notification_type,
@@ -1400,9 +1435,7 @@ async def notify_finance_pending_payment_on_solicitud_approve(
     )
     recipients = list(result.scalars().all())
     if not recipients:
-        logger.info(
-            "Finance pending payment alert skipped; no active Finance users"
-        )
+        logger.info("Finance pending payment alert skipped; no active Finance users")
         return 0
 
     pending_recipients: list[tuple[Empleado, Optional[int]]] = []
@@ -1436,9 +1469,11 @@ async def notify_finance_pending_payment_on_solicitud_approve(
     body = format_documento_resumen_es(
         documento, context=ctx, include_actions_hint=False
     )
-    header = "*Solicitud aprobada URGENTE - pendiente de pago*" if bool(
-        getattr(documento, "pago_urgente", False)
-    ) else "📥 *Solicitud aprobada — pendiente de pago*"
+    header = (
+        "*Solicitud aprobada URGENTE - pendiente de pago*"
+        if bool(getattr(documento, "pago_urgente", False))
+        else "📥 *Solicitud aprobada — pendiente de pago*"
+    )
     text = header + "\n\n" + body
 
     sent = 0
@@ -1495,9 +1530,7 @@ async def notify_solicitud_transferencia_paid(
 
     if owner is not None:
         chat_id = (
-            int(owner.telegram_user_id)
-            if owner.telegram_user_id is not None
-            else None
+            int(owner.telegram_user_id) if owner.telegram_user_id is not None else None
         )
         header = "✅ *Tu solicitud de transferencia fue pagada*"
         text = header + "\n\n" + extra + body
@@ -1561,9 +1594,7 @@ async def notify_finance_when_odilon_approves(
     )
     recipients = list(result.scalars().all())
     if not recipients:
-        logger.info(
-            "Temporary Odilon approval alert skipped; no Finance Telegram IDs"
-        )
+        logger.info("Temporary Odilon approval alert skipped; no Finance Telegram IDs")
         return 0
 
     ctx = await build_documento_telegram_context(session, documento)

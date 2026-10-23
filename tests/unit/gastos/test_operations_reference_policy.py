@@ -320,7 +320,8 @@ async def test_explicit_send_prepares_folio_before_budget_lane_without_reallocat
     ]:
         monkeypatch.setattr(workflow, name, AsyncMock(return_value=value))
 
-    async def prepare(session, documento):
+    async def prepare(session, documento, **kwargs):
+        assert kwargs["audit_actor_id"] == actor.id
         assert documento.estado == "borrador"
         if not documento.referencia_operaciones:
             documento.referencia_operaciones = "300"
@@ -345,7 +346,7 @@ async def test_explicit_send_prepares_folio_before_budget_lane_without_reallocat
     assert doc.estado == ("enviado" if classified else "control_presupuestal")
     assert doc.referencia_operaciones == (existing_reference or "300")
     assert invalidate.call_count == int(existing_reference is None)
-    prepared.assert_awaited_once_with(session, doc)
+    prepared.assert_awaited_once_with(session, doc, audit_actor_id=actor.id)
     session.commit.assert_awaited_once()
 
 

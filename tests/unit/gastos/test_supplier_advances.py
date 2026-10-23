@@ -66,6 +66,13 @@ async def case(monkeypatch):
         await connection.execute(
             text("CREATE TABLE documento_authorization_routes (documento_id TEXT)")
         )
+        # No activation row: these scenarios retain the legacy approval policy.
+        for policy_table in (
+            "CREATE TABLE authorization_positions (position_key TEXT PRIMARY KEY, active BOOLEAN)",
+            "CREATE TABLE authorization_position_assignments (position_key TEXT, empleado_id TEXT, active BOOLEAN)",
+            "CREATE TABLE project_authorization_rules (tournament_id TEXT, eligible_position_keys JSON, requires_operations_reference BOOLEAN, active BOOLEAN)",
+        ):
+            await connection.execute(text(policy_table))
     async with AsyncSession(engine, expire_on_commit=False) as session:
         owner = Empleado(id=uuid4(), nombre="Solicitante", rol="empleado")
         accountant = Empleado(id=uuid4(), nombre="Contabilidad", rol="superadmin")

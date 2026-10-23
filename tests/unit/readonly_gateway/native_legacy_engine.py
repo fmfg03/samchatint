@@ -67,6 +67,8 @@ class NativeLegacyEngine:
             "authorization_positions",
             "authorization_position_assignments",
             "documento_authorization_routes",
+            "project_authorization_rules",
+            "cuentas_de_gastos",
         ]
         schema = self.query(
             "SELECT table_name,column_name,data_type,is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name=ANY(%(tables)s::text[]) ORDER BY table_name,column_name",
@@ -80,7 +82,7 @@ class NativeLegacyEngine:
     def query(self, sql, args=None):
         sql, values = positional_sql(sql, args)
         try:
-            if sql.lstrip().upper().startswith("SELECT"):
+            if sql.lstrip().upper().startswith(("SELECT", "EXPLAIN")):
                 records = self.connection._run(self.connection.raw.fetch(sql, *values))
                 rows = [dict(record) for record in records]
                 return {"rows": rows, "fields": list(rows[0]) if rows else []}

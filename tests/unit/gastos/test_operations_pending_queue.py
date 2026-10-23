@@ -30,7 +30,8 @@ async def test_pending_queue_superadmin_visibility_preserves_other_roles_scope(
     database.create_function(
         "btrim", 1, lambda value: value.strip() if value else value
     )
-    database.executescript("""
+    database.executescript(
+        """
         CREATE TABLE documentos (id TEXT, estado TEXT, referencia_operaciones TEXT,
                                  enviado_en TEXT, creado_en TEXT,
                                  empleado_id TEXT, beneficiario_empleado_id TEXT);
@@ -43,6 +44,10 @@ async def test_pending_queue_superadmin_visibility_preserves_other_roles_scope(
                                        position_key TEXT, active BOOLEAN);
         CREATE TABLE authorization_positions (position_key TEXT, active BOOLEAN);
         CREATE TABLE empleados (id TEXT, activo BOOLEAN, aprobador_id TEXT);
+        CREATE TABLE project_authorization_rules (tournament_id TEXT,
+                 eligible_position_keys TEXT, active BOOLEAN);
+        CREATE TABLE cuentas_de_gastos (id TEXT, torneo_id TEXT, empleado_id TEXT,
+                 beneficiario_empleado_id TEXT, beneficiario_proveedor_cliente_id TEXT);
         INSERT INTO documentos (id, estado, referencia_operaciones, enviado_en, creado_en) VALUES
             ('operations', 'enviado', '177', NULL, '2026-01-01');
         INSERT INTO documentos (id, estado, referencia_operaciones, enviado_en, creado_en) VALUES
@@ -52,7 +57,8 @@ async def test_pending_queue_superadmin_visibility_preserves_other_roles_scope(
             ('paid', 'pagado', '178', NULL, '2026-01-01'),
             ('budget', 'control_presupuestal', '179', NULL, '2026-01-01');
         INSERT INTO authorization_positions VALUES ('director_operaciones', TRUE);
-        """)
+        """
+    )
     database.execute("INSERT INTO empleados VALUES (?, TRUE, ?)", (actor, actor))
     database.execute("UPDATE documentos SET empleado_id = ?", (actor,))
     database.execute(
@@ -79,6 +85,14 @@ async def test_pending_queue_superadmin_visibility_preserves_other_roles_scope(
                 "INSERT INTO documento_authorization_routes VALUES (?, ?, TRUE, ?)",
                 (f"observer-{i}", '["director_operaciones"]', '["other-actor"]'),
             )
+    for column in (
+        "tipo",
+        "torneo_id",
+        "cuenta_gastos_id",
+        "beneficiario_proveedor_cliente_id",
+    ):
+        database.execute(f"ALTER TABLE documentos ADD COLUMN {column} TEXT")
+    database.execute("UPDATE documentos SET tipo='SOLICITUD'")
     canonical_policy = Mock(wraps=user_routes.document_route_approver_sql)
     monkeypatch.setattr(user_routes, "document_route_approver_sql", canonical_policy)
     monkeypatch.setattr(
@@ -103,7 +117,9 @@ async def test_pending_queue_superadmin_visibility_preserves_other_roles_scope(
     visible = []
 
     class Session:
-        async def execute(self, query):
+        async def execute(self, query, params=None):
+            if not hasattr(query, "_whereclause"):
+                return SimpleNamespace(scalar_one_or_none=lambda: False)
             compiled = query._whereclause.compile(
                 dialect=asyncpg_dialect(paramstyle="named")
             )
@@ -115,18 +131,27 @@ async def test_pending_queue_superadmin_visibility_preserves_other_roles_scope(
                 str(compiled),
                 flags=re.IGNORECASE,
             )
-            if crowded and channel == "telegram" and role in {"superadmin", "super_admin"}:
-                ordering = str(query._order_by_clause.compile(
-                    dialect=asyncpg_dialect(paramstyle="named")
-                ))
+            if (
+                crowded
+                and channel == "telegram"
+                and role in {"superadmin", "super_admin"}
+            ):
+                ordering = str(
+                    query._order_by_clause.compile(
+                        dialect=asyncpg_dialect(paramstyle="named")
+                    )
+                )
                 predicate += " ORDER BY " + ordering
                 predicate = re.sub(
-                    r"::(?:jsonb|text|uuid|varchar)(?:\(\d+\))?", "", predicate,
+                    r"::(?:jsonb|text|uuid|varchar)(?:\(\d+\))?",
+                    "",
+                    predicate,
                     flags=re.IGNORECASE,
                 )
-            predicate = predicate.replace(
-                "SELECT jsonb_array_elements_text(route.eligible_empleado_ids)",
-                "SELECT value FROM json_each(route.eligible_empleado_ids)",
+            predicate = re.sub(
+                r"SELECT jsonb_array_elements_text\(([^)]+)\)",
+                r"SELECT value FROM json_each(\1)",
+                predicate,
             )
             # SQLite executes the same canonical policy; only PostgreSQL casts,
             # bind markers and the JSON set-returning function are adapted.
@@ -139,7 +164,11 @@ async def test_pending_queue_superadmin_visibility_preserves_other_roles_scope(
                     predicate = predicate.replace(f"__[POSTCOMPILE_{key}]", markers)
                     params.update({f"{key}_{i}": item for i, item in enumerate(value)})
             params.update({"nullif_1": "", "estado_1": "enviado"})
-            if crowded and channel == "telegram" and role in {"superadmin", "super_admin"}:
+            if (
+                crowded
+                and channel == "telegram"
+                and role in {"superadmin", "super_admin"}
+            ):
                 predicate += " LIMIT 20"
             visible.extend(
                 row[0]
@@ -178,8 +207,10 @@ async def test_pending_queue_superadmin_visibility_preserves_other_roles_scope(
             if operations_holder and not route_snapshot:
                 assert "operations" in visible
         else:
-            assert set(visible) == ({"operations", "natural", "blank", "other-route"}
-                                   | ({f"observer-{i}" for i in range(35)} if crowded else set()))
+            assert set(visible) == (
+                {"operations", "natural", "blank", "other-route"}
+                | ({f"observer-{i}" for i in range(35)} if crowded else set())
+            )
         if channel == "telegram":
             canonical_policy.assert_called_once_with()
         else:

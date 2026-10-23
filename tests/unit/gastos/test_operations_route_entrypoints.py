@@ -41,7 +41,7 @@ async def test_close_prepares_route_without_skipping_budget_control(
     assert await user_routes._sync_informe_documento_to_enviado(
         session, cuenta=account, informe_doc=report, actor=actor
     )
-    prepare.assert_awaited_once_with(session, report)
+    prepare.assert_awaited_once_with(session, report, audit_actor_id=actor.id)
     assert report.estado == ("enviado" if classified else "control_presupuestal")
     assert bool(report.enviado_en) == classified
 
@@ -93,15 +93,16 @@ async def test_classification_prepares_route_before_returning_for_notification(
     )
     prepare = AsyncMock()
     monkeypatch.setattr(user_routes, "prepare_document_authorization_route", prepare)
+    actor = SimpleNamespace(id=uuid4())
     result, _ = await user_routes._apply_control_presupuestal_assignment(
         session,
         documento_id=report.id,
         budget_concept_id=str(concept_id),
-        actor=SimpleNamespace(id=uuid4()),
+        actor=actor,
     )
     assert result.estado == "enviado"
     assert result.budget_concept_id == concept_id
-    prepare.assert_awaited_once_with(session, report)
+    prepare.assert_awaited_once_with(session, report, audit_actor_id=actor.id)
 
 
 @pytest.mark.asyncio
