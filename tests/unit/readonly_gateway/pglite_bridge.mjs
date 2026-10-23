@@ -35,6 +35,8 @@ INSERT INTO aprobaciones VALUES('50000000-0000-4000-8000-000000000001','20000000
 CREATE ROLE fixture_reader NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 GRANT USAGE ON SCHEMA public TO fixture_reader;
 GRANT SELECT ON documentos,aprobaciones,expense_reports,anticipos,reembolsos,empleados,authorization_positions,authorization_position_assignments,documento_authorization_routes,project_authorization_rules,cuentas_de_gastos TO fixture_reader;
+-- Match the seeded cardinalities before native PostgreSQL chooses JIT for default estimates.
+ANALYZE;
 SET ROLE fixture_reader;
 `);
 const tables=['documentos','aprobaciones','expense_reports','anticipos','reembolsos','empleados','authorization_positions','authorization_position_assignments','documento_authorization_routes','project_authorization_rules','cuentas_de_gastos'];

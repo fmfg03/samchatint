@@ -208,6 +208,34 @@ class PostgresTests(unittest.TestCase):
             callback()
         self.assertEqual(raised.exception.code, code)
 
+    def test_seeded_statistics_avoid_unnecessary_observation_jit(self) -> None:
+        stats = self.engine.query(
+            "SELECT reltuples FROM pg_class WHERE oid='documentos'::regclass"
+        )["rows"][0]
+        self.assertEqual(stats["reltuples"], 2)
+        captured = {}
+        original_query = self.backend._query
+
+        def capture(principal, build, cap):
+            sql, args = build(self.backend.owner.resolve(principal))
+            captured.update(sql=sql, args=args)
+            return [{"actor_can_decide": None}]
+
+        self.backend._query = capture
+        try:
+            self.backend.observation(self.actor, DOCUMENT)
+        finally:
+            self.backend._query = original_query
+        result = self.engine.query(
+            "EXPLAIN (FORMAT JSON) " + captured["sql"], captured["args"]
+        )["rows"][0]["QUERY PLAN"]
+        plan = (json.loads(result) if isinstance(result, str) else result)[0]
+        jit_threshold = self.engine.query(
+            "SELECT current_setting('jit_above_cost')::float AS threshold"
+        )["rows"][0]["threshold"]
+        self.assertLess(plan["Plan"]["Total Cost"], jit_threshold)
+        self.assertNotIn("JIT", plan)
+
     def test_actual_pg_status_authority_diagnose_audit(self) -> None:
         result = self.gateway.call(
             "samchat.document_diagnose",
