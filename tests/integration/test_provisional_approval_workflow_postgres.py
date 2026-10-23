@@ -8,6 +8,8 @@ their financial-source internals remain covered by their own acceptance suites.
 import asyncio
 import importlib.util
 import json
+import os
+import time
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -680,41 +682,59 @@ async def test_serving_audit_checks_reject_unapproved_enum_values(
 async def test_typed_edit_route_audit_does_not_approve_or_notify(
     pg_workflow, monkeypatch
 ):
-    pg = pg_workflow
-    document_id = await seed_document(pg)
-    notify = AsyncMock()
-    monkeypatch.setattr(
-        documento_telegram, "schedule_document_workflow_telegram_notifications", notify
-    )
-    async with pg.factory.begin() as session:
-        doc = await session.get(models.Documento, document_id)
-        await policy.resolve_and_snapshot_document_route(
-            session, doc, audit_actor_id=pg.requester
+    original_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "Europe/Berlin"
+    time.tzset()
+    try:
+        pg = pg_workflow
+        document_id = await seed_document(pg)
+        notify = AsyncMock()
+        monkeypatch.setattr(
+            documento_telegram,
+            "schedule_document_workflow_telegram_notifications",
+            notify,
         )
-        await session.execute(
-            text(
-                "UPDATE project_authorization_rules SET eligible_position_keys=CAST(:keys AS jsonb)"
-            ),
-            {"keys": json.dumps([policy.PROVISIONAL_GN])},
-        )
-        await policy.resolve_and_snapshot_document_route(
-            session, doc, audit_actor_id=pg.gn, audit_context={"plan_sha256": "a" * 64}
-        )
-    async with pg.factory() as session:
-        doc = await session.get(models.Documento, document_id)
-        rows = (
-            await session.scalars(
-                select(models.Aprobacion).where(
-                    models.Aprobacion.entidad_id == document_id
-                )
+        async with pg.factory.begin() as session:
+            database_before = await session.scalar(text("SELECT clock_timestamp()"))
+            doc = await session.get(models.Documento, document_id)
+            await policy.resolve_and_snapshot_document_route(
+                session, doc, audit_actor_id=pg.requester
             )
-        ).all()
-        assert len(rows) == 1 and rows[0].accion == "editar"
-        assert rows[0].aprobador_id == pg.gn
-        payload = json.loads(rows[0].comentario)
-        assert payload["action"] == "actualizar_ruta_autorizacion"
-        assert payload["audit_context"]["plan_sha256"] == "a" * 64
-        assert doc.estado == "enviado" and doc.aprobado_en is None
-        assert doc.referencia_operaciones == "363"
-        assert not await workflow.documento_has_approval(session, doc)
-    notify.assert_not_called()
+            await session.execute(
+                text(
+                    "UPDATE project_authorization_rules SET eligible_position_keys=CAST(:keys AS jsonb)"
+                ),
+                {"keys": json.dumps([policy.PROVISIONAL_GN])},
+            )
+            await policy.resolve_and_snapshot_document_route(
+                session,
+                doc,
+                audit_actor_id=pg.gn,
+                audit_context={"plan_sha256": "a" * 64},
+            )
+        async with pg.factory() as session:
+            doc = await session.get(models.Documento, document_id)
+            rows = (
+                await session.scalars(
+                    select(models.Aprobacion).where(
+                        models.Aprobacion.entidad_id == document_id
+                    )
+                )
+            ).all()
+            assert len(rows) == 1 and rows[0].accion == "editar"
+            assert rows[0].aprobador_id == pg.gn
+            database_after = await session.scalar(text("SELECT clock_timestamp()"))
+            assert database_before <= rows[0].fecha <= database_after
+            payload = json.loads(rows[0].comentario)
+            assert payload["action"] == "actualizar_ruta_autorizacion"
+            assert payload["audit_context"]["plan_sha256"] == "a" * 64
+            assert doc.estado == "enviado" and doc.aprobado_en is None
+            assert doc.referencia_operaciones == "363"
+            assert not await workflow.documento_has_approval(session, doc)
+        notify.assert_not_called()
+    finally:
+        if original_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original_tz
+        time.tzset()

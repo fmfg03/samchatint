@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 from uuid import UUID
 
@@ -381,6 +382,7 @@ async def resolve_and_snapshot_document_route(
                 entidad_id=UUID(document_id),
                 aprobador_id=UUID(str(audit_actor_id)),
                 accion="editar",
+                fecha=datetime.now(timezone.utc),
                 comentario=json.dumps(
                     {
                         "action": "actualizar_ruta_autorizacion",
