@@ -180,7 +180,7 @@
   status = document.createElement('p'); status.className = 'amex-dialog-status'; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   content = document.createElement('div'); content.className = 'amex-dialog-content';
   reviewButton = document.createElement('button'); reviewButton.type = 'button'; reviewButton.className = 'button secondary'; reviewButton.textContent = 'Actualizar evidencia y revisar'; reviewButton.hidden = true; reviewButton.dataset.amexReview = '';
-  reviewButton.addEventListener('click', () => { if (!writing && recovery) { pendingRecovery = recovery; reviewButton.hidden = true; request(recovery.url); } });
+  reviewButton.addEventListener('click', () => { if (!writing && recovery) { pendingRecovery = {...recovery, draft: recoveryPlan().draft}; reviewButton.hidden = true; request(recovery.url); } });
   header.append(title, reviewButton, closeButton); dialog.append(header, status, content); document.body.append(dialog);
   if (!$('#amex-workspace-status')) { const node = document.createElement('p'); node.id = 'amex-workspace-status'; node.setAttribute('role', 'status'); view.prepend(node); }
   function restoreMoved() {
@@ -295,7 +295,7 @@
     const requestedRecovery = pendingRecovery; pendingRecovery = null;
     const draft = recoveryPlan();
     reviewButton.hidden = true;
-    if (writing) return;
+    if (writing) return false;
     const requestGeneration = ++generation;
     const requestDraftEpoch = draftEpoch;
     reading?.abort(); reading = null;
@@ -308,15 +308,15 @@
     announce(mutation ? 'Guardando. Espera a que termine la operación…' : 'Consultando…');
     try {
       const response = await fetch(url, {...options, credentials: 'same-origin', signal: controller?.signal});
-      if (requestGeneration !== generation || (!mutation && requestDraftEpoch !== draftEpoch)) return;
+      if (requestGeneration !== generation || (!mutation && requestDraftEpoch !== draftEpoch)) return false;
       if ((response.headers.get('Content-Type') || '').includes('json')) {
         const payload = await response.json();
-        if (requestGeneration !== generation || (!mutation && requestDraftEpoch !== draftEpoch)) return;
+        if (requestGeneration !== generation || (!mutation && requestDraftEpoch !== draftEpoch)) return false;
         if (response.status === 409) offerRecovery(draft);
         throw new Error(typeof payload.detail === 'string' ? payload.detail : 'No se pudo completar la operación. Comprueba tu sesión y el estado actual.');
       }
       const html = await response.text();
-      if (requestGeneration !== generation || (!mutation && requestDraftEpoch !== draftEpoch)) return;
+      if (requestGeneration !== generation || (!mutation && requestDraftEpoch !== draftEpoch)) return false;
       const doc = new DOMParser().parseFromString(html, 'text/html');
       if ($$('#amex-workspace-view', doc).length !== 1) throw new Error('La sesión o el contexto cambió. Vuelve a entrar y comprueba el estado.');
       const next = $('#amex-workspace-view', doc);
@@ -327,16 +327,17 @@
       const message = responseUrl.searchParams.get('msg');
       if (next.dataset.amexView === 'statement' || next.dataset.amexView === 'intake') {
         const retry = requestedRecovery || (mutation && errorMessage ? draft : null);
-        if (retry && !retry.key && errorMessage) { offerRecovery(retry); announce(errorMessage, true); return; }
+        if (retry && !retry.key && errorMessage) { offerRecovery(retry); announce(errorMessage, true); return false; }
         staleReview = false;
         replaceRoot(next, responseUrl.href);
         if (retry?.key) {
           if (dialog.open) dialog.close(); content.replaceChildren();
           showSource(retry.key, retry.label, true); restoreDraft(retry.draft, content);
-          dirty = true; announce(errorMessage || 'Evidencia actualizada. Revisa y confirma de nuevo.', Boolean(errorMessage)); return;
+          dirty = true; announce(errorMessage || 'Evidencia actualizada. Revisa y confirma de nuevo.', Boolean(errorMessage)); return response.ok && !errorMessage;
         }
         if (dialog.open) { dialog.close(); content.replaceChildren(); returnFocus(); }
         announce(errorMessage || message || 'Estado actualizado.', Boolean(errorMessage));
+        return response.ok && !errorMessage;
       } else {
         // Keep the original source detached until close, so retry forms never duplicate its IDs.
         staleReview = false;
@@ -359,6 +360,7 @@
       }
       if (requestGeneration === generation) reading = null;
     }
+    return false;
   }
   document.addEventListener('click', event => {
     const trigger = event.target.closest('[data-amex-open]');
@@ -422,7 +424,7 @@
       if (!response.ok || response.redirected || !(response.headers.get('Content-Type') || '').includes('json')) return;
       const payload = await response.json();
       if (snapshot !== generation || writing || dirty || dialog.open || document.hidden) return;
-      if (payload.source_version != null && Number(payload.source_version) !== Number(view.dataset.sourceVersion)) { reading = null; await request(canonical); announce('Avance actualizado desde Control Presupuestal.'); }
+      if (payload.source_version != null && Number(payload.source_version) !== Number(view.dataset.sourceVersion)) { reading = null; if (await request(canonical)) announce('Avance actualizado desde Control Presupuestal.'); }
     } catch (error) { if (error.name !== 'AbortError') announce('No se pudo actualizar el avance. Puedes usar Actualizar.', true); }
     finally { if (reading === controller) reading = null; }
   }, 20000);

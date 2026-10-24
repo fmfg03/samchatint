@@ -265,6 +265,7 @@ def test_json_error_preserves_capture_and_never_injects_html(
         if status == 409:
             w.view.source_version = 6
             w.item.source_version = 4
+            form.locator('[name="reason"]').fill("Edición posterior al conflicto")
             preview = form.get_by_role(
                 "button", name="Revisar tratamiento de los cargos seleccionados"
             )
@@ -275,7 +276,7 @@ def test_json_error_preserves_capture_and_never_injects_html(
             fresh = page.locator('dialog[open] form[action$="/tratamiento/preview"]')
             expect(fresh.locator('[name="expected_source_version"]')).to_have_value("6")
             expect(fresh.locator('[name="reason"]')).to_have_value(
-                "Captura que no debe perderse"
+                "Edición posterior al conflicto"
             )
             import json
 
@@ -292,6 +293,92 @@ def test_json_error_preserves_capture_and_never_injects_html(
             ).to_be_enabled()
             assert page.locator('dialog[open] [name="confirmed"]:checked').count() == 0
     w.routes.treatments.confirm_direct_account_treatment.assert_not_awaited()
+    w.session.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "outcome", ["success", "network", "http_error", "context", "concurrent_edit"]
+)
+def test_budget_poll_announces_only_a_successful_root_refresh(
+    page, complete_direct_workspace, outcome
+):
+    w = complete_direct_workspace
+    page.add_init_script(
+        """(() => {
+        const original = window.setInterval;
+        window.setInterval = (callback, delay, ...args) => {
+            if (delay === 20000) { window.__amexPoll = callback; return 0; }
+            return original(callback, delay, ...args);
+        };
+        })();"""
+    )
+    with live_app(w.app) as base:
+        url = base + f"{w.routes.BASE}/{w.statement.id}/directo"
+        page.goto(url)
+        old_version = page.locator("#amex-workspace-view").get_attribute(
+            "data-source-version"
+        )
+        w.view.source_version = int(old_version) + 1
+        page.evaluate(
+            """({canonical, outcome}) => {
+            document.getElementById('amex-workspace-view').dataset.pendingBudget = '1';
+            const original = window.fetch;
+            window.fetch = (target, options) => {
+                if (String(target) !== canonical) return original(target, options);
+                window.__amexRefreshStarted = true;
+                if (outcome === 'network') return Promise.reject(new TypeError('Red interrumpida'));
+                if (outcome === 'http_error') return Promise.resolve(new Response(JSON.stringify({detail: 'Servicio temporalmente indisponible'}), {status: 503, headers: {'Content-Type': 'application/json'}}));
+                if (outcome === 'context') {
+                    const html = '<div id="amex-workspace-view" data-amex-view="statement" data-statement-url="/admin/contabilidad/amex/estados/another-state/directo"></div>';
+                    const response = new Response(html, {headers: {'Content-Type': 'text/html'}});
+                    Object.defineProperty(response, 'url', {value: canonical});
+                    return Promise.resolve(response);
+                }
+                if (outcome === 'concurrent_edit') {
+                    // Ignore abort deliberately to verify the generation guard too.
+                    return new Promise(resolve => setTimeout(() => resolve(original(target)), 500));
+                }
+                return original(target, options);
+            };
+            window.__amexPollPromise = window.__amexPoll();
+            }""",
+            {"canonical": url, "outcome": outcome},
+        )
+        page.wait_for_function("window.__amexRefreshStarted")
+        if outcome == "concurrent_edit":
+            page.locator('[data-amex-open="journal"]').click()
+            page.locator('dialog[open] [name="reason"]').fill("Captura más reciente")
+        page.evaluate("window.__amexPollPromise")
+        success = "Avance actualizado desde Control Presupuestal."
+        if outcome == "success":
+            expect(page.locator("#amex-workspace-status")).to_have_text(success)
+            assert page.locator("#amex-workspace-view").get_attribute(
+                "data-source-version"
+            ) == str(w.view.source_version)
+        else:
+            assert success not in page.locator("body").inner_text()
+            assert (
+                page.locator("#amex-workspace-view").get_attribute(
+                    "data-source-version"
+                )
+                == old_version
+            )
+            if outcome == "concurrent_edit":
+                expect(page.locator('dialog[open] [name="reason"]')).to_have_value(
+                    "Captura más reciente"
+                )
+            else:
+                expect(page.locator("#amex-workspace-status")).to_have_attribute(
+                    "data-error", "true"
+                )
+                expect(page.locator("#amex-workspace-status")).to_contain_text(
+                    {
+                        "network": "Red interrumpida",
+                        "http_error": "Servicio temporalmente indisponible",
+                        "context": "otro estado",
+                    }[outcome]
+                )
+        assert page.url == url
     w.session.commit.assert_not_awaited()
 
 
