@@ -1,8 +1,10 @@
 """Browser acceptance of account-treatment forms over synthetic owner boundaries."""
 
+import json
 from unittest.mock import AsyncMock
 
 import pytest
+from playwright.sync_api import expect
 
 from devnous.gastos.services.amex_direct_common import DirectConflict
 from tests.browser.test_amex_statement_workflow import live_app
@@ -36,8 +38,10 @@ def test_benefit_reaches_review_and_confirm_without_project(
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     with live_app(w.app) as base:
-        page.goto(base + f"{w.routes.BASE}/{w.statement.id}/directo")
+        statement_url = base + f"{w.routes.BASE}/{w.statement.id}/directo"
+        page.goto(statement_url)
         page.locator('input[type="checkbox"][name="item_ids"]').check()
+        page.locator('[data-amex-open="treatment"]').click()
         page.locator("#direct-treatment").select_option("benefit_expense")
         form = page.locator('form[action$="/tratamiento/preview"]')
         assert (
@@ -49,15 +53,17 @@ def test_benefit_reaches_review_and_confirm_without_project(
         form.get_by_role(
             "button", name="Revisar tratamiento de los cargos seleccionados"
         ).click()
-        page.wait_for_url("**/tratamiento/preview")
-        assert "Prestación absorbida" in page.locator("main").inner_text()
-        assert "1 cargos seleccionados" in page.locator("main").inner_text()
+        expect(page.locator("dialog[open]")).to_contain_text("1 cargos seleccionados")
+        assert page.url == statement_url
+        assert "Prestación absorbida" in page.locator("body").inner_text()
+        assert "1 cargos seleccionados" in page.locator("body").inner_text()
         assert page.locator("img").count() == 0
         w.session.commit.assert_not_awaited()
-        page.locator('[name="confirmed"]').check()
+        page.locator('dialog[open] [name="confirmed"]').check()
         page.get_by_role("button", name="Confirmar tratamiento del lote").click()
-        page.wait_for_url("**/directo?msg=**")
-        assert "Las prestaciones requieren partida" in page.locator("main").inner_text()
+        expect(page.locator("dialog[open]")).to_have_count(0)
+        assert page.url == statement_url
+        assert "Las prestaciones requieren partida" in page.locator("body").inner_text()
         assert not errors
     values = w.routes.treatments.confirm_direct_account_treatment.await_args.kwargs
     assert values["treatment"] == "benefit_expense"
@@ -77,8 +83,10 @@ def test_partner_requires_account_and_confirms_without_budget_submission(
         "name": "Socio sintético",
     }
     with live_app(w.app) as base:
-        page.goto(base + f"{w.routes.BASE}/{w.statement.id}/directo")
+        statement_url = base + f"{w.routes.BASE}/{w.statement.id}/directo"
+        page.goto(statement_url)
         page.locator('input[type="checkbox"][name="item_ids"]').check()
+        page.locator('[data-amex-open="treatment"]').click()
         page.locator("#direct-treatment").select_option("partner_receivable")
         account = page.locator("#direct-debtor")
         assert account.is_visible() and account.is_enabled()
@@ -89,11 +97,13 @@ def test_partner_requires_account_and_confirms_without_budget_submission(
         form.get_by_role(
             "button", name="Revisar tratamiento de los cargos seleccionados"
         ).click()
-        page.wait_for_url("**/tratamiento/preview")
-        assert "1170-002-099" in page.locator("main").inner_text()
-        page.locator('[name="confirmed"]').check()
+        expect(page.locator("dialog[open]")).to_contain_text("1 cargos seleccionados")
+        assert page.url == statement_url
+        assert "1170-002-099" in page.locator("body").inner_text()
+        page.locator('dialog[open] [name="confirmed"]').check()
         page.get_by_role("button", name="Confirmar tratamiento del lote").click()
-        page.wait_for_url("**/directo?msg=**")
+        expect(page.locator("dialog[open]")).to_have_count(0)
+        assert page.url == statement_url
     values = w.routes.treatments.confirm_direct_account_treatment.await_args.kwargs
     assert values["treatment"] == "partner_receivable"
     assert values["debtor_account_id"] == w.debtor_id
@@ -105,31 +115,64 @@ def test_stale_owner_response_preserves_reason_and_requires_new_review(
     page, account_treatment_workspace
 ):
     w = account_treatment_workspace
+
+    async def stale_confirmation(*args, **kwargs):
+        w.view.source_version = 5
+        w.item.source_version = 3
+        raise DirectConflict("stale_item_version")
+
     w.routes.treatments.confirm_direct_account_treatment = AsyncMock(
-        side_effect=DirectConflict("stale_item_version")
+        side_effect=stale_confirmation
     )
     with live_app(w.app) as base:
-        page.goto(base + f"{w.routes.BASE}/{w.statement.id}/directo")
+        statement_url = base + f"{w.routes.BASE}/{w.statement.id}/directo"
+        page.goto(statement_url)
         page.locator('input[type="checkbox"][name="item_ids"]').check()
+        page.locator('[data-amex-open="treatment"]').click()
         page.locator("#direct-treatment").select_option("benefit_expense")
         form = page.locator('form[action$="/tratamiento/preview"]')
         form.locator('[name="reason"]').fill("Motivo conservado al cambiar la fuente")
         form.get_by_role(
             "button", name="Revisar tratamiento de los cargos seleccionados"
         ).click()
-        page.wait_for_url("**/tratamiento/preview")
-        page.locator('[name="confirmed"]').check()
+        expect(page.locator("dialog[open]")).to_contain_text("1 cargos seleccionados")
+        assert page.url == statement_url
+        page.locator('dialog[open] [name="confirmed"]').check()
         page.get_by_role("button", name="Confirmar tratamiento del lote").click()
-        page.wait_for_url("**/tratamiento")
-        assert "El cargo cambió" in page.locator('[role="alert"]').inner_text()
+        expect(page.locator('dialog[open] [role="alert"]')).to_contain_text(
+            "El cargo cambió"
+        )
+        assert page.url == statement_url
         assert (
-            page.locator('[name="reason"]').input_value()
+            "El cargo cambió"
+            in page.locator('dialog[open] [role="alert"]').inner_text()
+        )
+        assert (
+            page.locator('dialog[open] [name="reason"]').input_value()
             == "Motivo conservado al cambiar la fuente"
         )
-        assert page.locator('[name="treatment"]').input_value() == "benefit_expense"
+        assert (
+            page.locator('dialog[open] [name="treatment"]').input_value()
+            == "benefit_expense"
+        )
         assert page.get_by_role(
             "button", name="Revisar tratamiento de los cargos seleccionados"
         ).is_visible()
+        fresh_form = page.locator('dialog[open] form[action$="/tratamiento/preview"]')
+        assert (
+            fresh_form.locator('[name="expected_source_version"]').input_value() == "5"
+        )
+        assert (
+            json.loads(fresh_form.locator('[name="expected_versions"]').input_value())[
+                str(w.item.id)
+            ]
+            == 3
+        )
+        assert (
+            page.get_by_role("button", name="Confirmar tratamiento del lote").count()
+            == 0
+        )
+    w.routes.treatments.confirm_direct_account_treatment.assert_awaited_once()
     w.session.commit.assert_not_awaited()
 
 
@@ -139,7 +182,8 @@ def test_partner_selection_cannot_be_sent_to_budget(page, account_treatment_work
     w.item.treatment_kind = "partner_receivable"
     w.item.budget_status = "not_applicable"
     with live_app(w.app) as base:
-        page.goto(base + f"{w.routes.BASE}/{w.statement.id}/directo")
+        statement_url = base + f"{w.routes.BASE}/{w.statement.id}/directo"
+        page.goto(statement_url)
         page.locator('input[type="checkbox"][name="item_ids"]').check()
         assert page.locator("#direct-send-budget").is_disabled()
         assert (
@@ -184,7 +228,8 @@ def test_mixed_selection_explains_and_submits_only_budget_eligible_benefits(
     )
     w.view.items.append(partner)
     with live_app(w.app) as base:
-        page.goto(base + f"{w.routes.BASE}/{w.statement.id}/directo")
+        statement_url = base + f"{w.routes.BASE}/{w.statement.id}/directo"
+        page.goto(statement_url)
         page.locator("#direct-select-all").check()
         assert (
             "2 cargos seleccionados"
@@ -206,12 +251,14 @@ def test_mixed_selection_explains_and_submits_only_budget_eligible_benefits(
             ).count()
             == 2
         )
+        page.locator('[data-amex-open="budget"]').click()
         form = page.locator('form[action$="/enviar-presupuesto"]')
         form.locator('[name="confirmed"]').check()
         form.get_by_role(
             "button", name="Enviar seleccionados a Control Presupuestal"
         ).click()
-        page.wait_for_url("**/directo?msg=**")
+        expect(page.locator("dialog[open]")).to_have_count(0)
+        assert page.url == statement_url
     values = w.routes.budget.send_direct_items_to_budget.await_args.kwargs
     assert values["item_ids"] == [w.item.id]
     assert str(partner.id) not in values["expected_versions"]

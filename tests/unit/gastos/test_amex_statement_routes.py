@@ -2,6 +2,7 @@
 
 from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -9,6 +10,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from fastapi import FastAPI
+from starlette.staticfiles import StaticFiles
 
 from devnous.gastos.routes import admin_amex_statement_routes as routes
 from devnous.gastos.routes.dependencies import get_current_empleado, get_db_session
@@ -143,6 +145,11 @@ def workspace(monkeypatch):
     )
     session.get = AsyncMock(return_value=NS(informe_id=informe.id))
     app = FastAPI()
+    app.mount(
+        "/static",
+        StaticFiles(directory=Path(__file__).resolve().parents[3] / "static"),
+        name="static",
+    )
     app.include_router(routes.router)
     app.dependency_overrides[get_current_empleado] = lambda: actor
     app.dependency_overrides[get_db_session] = lambda: session

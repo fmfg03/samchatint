@@ -7,6 +7,7 @@ this test never configures SAT transport or queries a production target.
 import importlib.util
 import io
 import json
+import os
 import zipfile
 from collections import Counter
 from decimal import Decimal
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import pytest
 from openpyxl import load_workbook
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, expect
 from sqlalchemy import text
 
 from devnous.gastos.routes import admin_amex_direct_routes as routes
@@ -30,12 +31,13 @@ direct_pg = journey.direct_pg
 
 async def _submit_selection(page, action, label, reason):
     await page.locator("#direct-select-all").check()
+    await page.locator('[data-amex-open="no-cfdi"]').click()
     form = page.locator(f'form[action$="/{action}"]')
     assert await form.locator('input[name="item_ids"]').count() == 2
     await form.locator('input[name="reason"]').fill(reason)
     await form.locator('input[name="confirmed"]').check()
     await form.get_by_role("button", name=label, exact=True).click()
-    await page.wait_for_url("**/directo?msg=**")
+    await expect(page.locator("dialog[open]")).to_have_count(0)
 
 
 def _assert_decision_export(content, fmt, decision_ids):
@@ -89,7 +91,10 @@ async def test_bulk_no_cfdi_revoke_redeclare_classify_budget_cut_and_export(dire
     async with journey.real_owner_browser_server(
         pg
     ) as base, async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True)
+        browser = await playwright.chromium.launch(
+            headless=True,
+            executable_path=os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"),
+        )
         finance = await browser.new_context(
             extra_http_headers={"x-qa-actor": "finance"}
         )
@@ -144,20 +149,25 @@ async def test_bulk_no_cfdi_revoke_redeclare_classify_budget_cut_and_export(dire
             await page.locator("#direct-select-all").uncheck()
             await page.locator("#direct-select-all").check()
             for action in ("sin-cfdi", "revocar-sin-cfdi", "enviar-presupuesto"):
-                assert (
-                    await page.locator(
-                        f'form[action$="/{action}"] input[name="item_ids"]'
-                    ).count()
-                    == 2
-                )
+                assert await page.locator(
+                    f'form[action$="/{action}"] input[name="item_ids"]'
+                ).count() == (0 if action == "enviar-presupuesto" else 2), action
             classification = page.locator('form[action$="/clasificar"]')
             assert (
-                await classification.locator(
-                    'input[type="checkbox"][name="item_ids"]'
+                await page.locator(
+                    'input[type="checkbox"][name="item_ids"][form="direct-classification-form"]'
                 ).count()
                 == 2
             )
-            await page.locator("#direct-project-classification > summary").click()
+            await page.locator('[data-amex-open="project"]').click()
+            assert (
+                len(
+                    await classification.evaluate(
+                        "form => new FormData(form).getAll('item_ids')"
+                    )
+                )
+                == 2
+            )
             await classification.locator("#direct-project").select_option(
                 f"t:{pg.tournament.id}"
             )
@@ -170,16 +180,17 @@ async def test_bulk_no_cfdi_revoke_redeclare_classify_budget_cut_and_export(dire
                 name="Guardar clasificación de cargos seleccionados",
                 exact=True,
             ).click()
-            await page.wait_for_url("**/directo?msg=**")
+            await expect(page.locator("dialog[open]")).to_have_count(0)
             assert "Sin CFDI declarados: 2" in await page.locator("body").inner_text()
             await page.locator("#direct-select-all").check()
+            await page.locator('[data-amex-open="budget"]').click()
             send = page.locator('form[action$="/enviar-presupuesto"]')
             assert await send.locator('input[name="item_ids"]').count() == 2
             await send.locator('[name="confirmed"]').check()
             await send.get_by_role(
                 "button", name="Enviar seleccionados a Control Presupuestal", exact=True
             ).click()
-            await page.wait_for_url("**/directo?msg=**")
+            await expect(page.locator("dialog[open]")).to_have_count(0)
 
             budget_page = await cp.new_page()
             await budget_page.goto(base + routes.QUEUE)
@@ -213,7 +224,11 @@ async def test_bulk_no_cfdi_revoke_redeclare_classify_budget_cut_and_export(dire
             assert len(lines) == 4
             assert sum(Decimal(str(line["debe"])) for line in lines) == 348
             assert sum(Decimal(str(line["haber"])) for line in lines) == 348
-            await page.goto(statement_url)
+            await page.locator("[data-amex-refresh]").click()
+            await page.wait_for_function(
+                "document.querySelector('#amex-workspace-view').dataset.pendingBudget === '0'"
+            )
+            await page.locator('[data-amex-open="journal"]').click()
             rendered = Counter()
             for row in await page.locator("#direct-journal tbody tr").all():
                 cells = await row.locator("td").all_text_contents()
@@ -233,7 +248,7 @@ async def test_bulk_no_cfdi_revoke_redeclare_classify_budget_cut_and_export(dire
             await confirm.get_by_role(
                 "button", name="Generar póliza directa completa", exact=True
             ).click()
-            await page.wait_for_url("**/directo?msg=**")
+            await expect(page.locator("dialog[open]")).to_have_count(0)
             assert (
                 await pg.conn.fetchval("SELECT count(*) FROM accounting_polizas") == 1
             )

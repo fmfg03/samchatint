@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from playwright.sync_api import expect
 
 from devnous.gastos.routes import admin_amex_statement_routes as statements
 from tests.browser.test_amex_statement_workflow import live_app
@@ -34,6 +35,15 @@ def test_preview_actual_original_then_intake_and_complete_state(
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     with live_app(w.app) as base:
+        navigations = []
+        page.on(
+            "request",
+            lambda request: (
+                navigations.append(request.url)
+                if request.is_navigation_request() and request.frame == page.main_frame
+                else None
+            ),
+        )
         page.goto(base + statements.BASE + "/directo/nuevo")
         assert page.locator(".container").count() == 1
         hero = page.locator(".workspace-hero")
@@ -77,7 +87,12 @@ def test_preview_actual_original_then_intake_and_complete_state(
         page.locator('[name="confirmed"]').check()
         assert page.locator("#amex-direct-import").is_enabled()
         page.get_by_role("button", name="Cargar estado directo", exact=True).click()
-        page.wait_for_url("**/directo?msg=**")
+        expect(page.locator('[data-amex-view="statement"]')).to_be_visible()
+        assert (
+            page.url.split("?", 1)[0]
+            == base + statements.BASE + f"/{w.statement.id}/directo"
+        )
+        assert len(navigations) == 1
         assert "-116.00" in page.locator("main").inner_text()
         assert "1170-002-003" in page.locator("main").inner_text()
         assert page.locator('select[name="informe_id"]').count() == 0
@@ -153,6 +168,7 @@ def test_finance_can_correct_context_when_classification_is_denied(
         page.goto(base + statements.BASE + f"/{w.statement.id}/directo")
         classification = page.locator('form[action$="/clasificar"]')
         assert classification.locator('select[name="budget_concept_id"]').is_disabled()
+        page.locator('[data-amex-open="review"]').click()
         context = page.locator('form[action$="/contexto"]')
         context.locator('[name="company_code"]').select_option("TEST")
         context.locator('[name="receiver_rfc"]').select_option("AAA010101AAA")
@@ -160,7 +176,7 @@ def test_finance_can_correct_context_when_classification_is_denied(
         context.locator('[name="reason"]').fill("Corrección fiscal autorizada")
         context.locator('[name="confirmed"]').check()
         context.get_by_role("button", name="Guardar revisión de contexto").click()
-        page.wait_for_url("**/directo?msg=**")
+        expect(page.locator('[data-amex-view="statement"]')).to_be_visible()
     w.routes.context.set_direct_context.assert_awaited_once()
     w.routes.budget.classify_direct_items.assert_not_awaited()
     w.routes.status.consult_direct_statement_status.assert_not_awaited()
