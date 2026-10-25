@@ -704,7 +704,7 @@ def _accept_match_form(
         for account in (bank_accounts or [])
     )
     hidden = {
-        "budget_version_id": budget_version_id,
+        "budget_version_id": item.get("budget_version_id") or budget_version_id,
         "ar_item_id": item.get("ar_item_id"),
         "budget_line_id": item.get("budget_line_id"),
         "cfdi_report_id": item.get("cfdi_report_id"),
@@ -802,18 +802,8 @@ def _accepted_match_rows(
     for item in rows:
         match_id = _text(item.get("id"), "")
         reverse_form = (
-            '<span class="ar-muted">sin permiso operativo</span>'
-            if not can_operate_matches
-            else f"""
-            <form method="POST"
-                  action="{escape(action_base)}/matches/{match_id}/reverse"
-                  style="display:grid;gap:6px;min-width:180px;">
-                <input type="hidden" name="return_to" value="{_text(return_to, "")}">
-                <input name="reversal_reason" required
-                       placeholder="Razon de reversion">
-                <button class="button secondary" type="submit">Revertir</button>
-            </form>
-        """
+            '<span class="ar-muted">Reversa explícita pendiente de fecha contable '
+            "y validación de periodo por Finanzas. El original se conserva.</span>"
         )
         rendered.append(
             _row(

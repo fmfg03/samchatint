@@ -817,63 +817,46 @@ async def confirm_cfdi_income_collection(
     actor_empleado_id: str,
     collection_date: Any,
 ) -> dict[str, Any]:
-    """Record a dated collection and clear the exact CxC line created at billing."""
+    """Read a legacy receipt on replay; reject every new manual collection."""
     collected_at = _coerce_income_datetime(collection_date)
     if collected_at is None:
         raise CFDIIncomeBridgeError("La fecha de cobro es obligatoria.")
-    link = (await session.execute(text("""
+    link = (
+        (
+            await session.execute(
+                text("""
         SELECT id, cfdi_report_id, amount, accounting_poliza_id, collection_poliza_id,
                status, collection_date
-        FROM budget_cfdi_income_links WHERE id = CAST(:link_id AS uuid) FOR UPDATE
-    """), {"link_id": link_id})).mappings().first()
+        FROM budget_cfdi_income_links WHERE id = CAST(:link_id AS uuid)
+    """),
+                {"link_id": link_id},
+            )
+        )
+        .mappings()
+        .first()
+    )
     if not link or str(link["status"] or "") != "approved":
         raise CFDIIncomeBridgeError("Sólo puede cobrarse un CFDI aprobado.")
+    from samchat.ar.collection_integrity import (
+        CollectionSourceConflict,
+        guard_collection_channel,
+    )
+
+    try:
+        await guard_collection_channel(
+            session,
+            cfdi_report_id=str(link["cfdi_report_id"]),
+            channel="direct",
+            existing_direct_poliza_id=str(link.get("collection_poliza_id") or ""),
+        )
+    except CollectionSourceConflict as exc:
+        raise CFDIIncomeBridgeError(str(exc)) from exc
     if link.get("collection_poliza_id"):
         return {"status": "already_collected", "poliza_id": str(link["collection_poliza_id"])}
-    cxc_line = (await session.execute(text("""
-        SELECT cuenta_codigo, cuenta_contable_id, debe
-        FROM accounting_poliza_lines
-        WHERE poliza_id = CAST(:poliza_id AS uuid)
-          AND raw_row_json->>'movement' = 'debe_cxc'
-        LIMIT 1
-    """), {"poliza_id": str(link["accounting_poliza_id"])})).mappings().first()
-    if not cxc_line:
-        raise CFDIIncomeBridgeError("No se encontró la subcuenta CxC de la facturación.")
-    bank = await _load_account_by_code(session, "1120-001-001")
-    poliza_id = str(uuid.uuid4())
-    amount = _safe_decimal(cxc_line.get("debe") or link.get("amount"))
-    concept = "Cobranza CFDI " + str(link["cfdi_report_id"])[:8]
-    await session.execute(text("""
-        INSERT INTO accounting_polizas (id, source_file, source_sheet, tipo_poliza,
-          numero_poliza, fecha_poliza, concepto, concepto_resumen, line_count_declared,
-          line_count_actual, cfdi_report_id, origen, created_at, updated_at)
-        VALUES (CAST(:id AS uuid), :source, 'cxc_collection', 'Diario', :number,
-          :date, :concept, :concept, 2, 2, CAST(:cfdi AS uuid), 'cxc_collection', NOW(), NOW())
-    """), {"id": poliza_id, "source": f"samchat:cobranza:{link['cfdi_report_id']}",
-            "number": f"COB-{str(link['cfdi_report_id'])[:8]}", "date": collected_at,
-            "concept": concept, "cfdi": str(link["cfdi_report_id"])})
-    for line_no, account, debe, haber, movement in (
-        (1, bank, amount, Decimal("0.00"), "debe_bancos"),
-        (2, dict(cxc_line), Decimal("0.00"), amount, "haber_cxc"),
-    ):
-        await session.execute(text("""
-            INSERT INTO accounting_poliza_lines (id, poliza_id, line_no, cuenta_codigo,
-             cuenta_contable_id, concepto, movimiento_no, debe, haber, raw_row_json, created_at)
-            VALUES (CAST(:id AS uuid), CAST(:poliza AS uuid), :line_no, :code,
-             CAST(:account_id AS uuid), :concept, :movement, :debe, :haber,
-             CAST(:raw AS jsonb), NOW())
-        """), {"id": str(uuid.uuid4()), "poliza": poliza_id, "line_no": line_no,
-                "code": account["codigo"] if "codigo" in account else account["cuenta_codigo"],
-                "account_id": str(account["id"] if "id" in account else account["cuenta_contable_id"]),
-                "concept": concept, "movement": str(line_no), "debe": float(debe), "haber": float(haber),
-                "raw": json.dumps({"origin": "cxc_collection", "cfdi_report_id": str(link["cfdi_report_id"]), "movement": movement})})
-    await session.execute(text("""
-        UPDATE budget_cfdi_income_links SET collection_date = :date,
-          collected_by_empleado_id = CAST(:actor AS uuid), collection_poliza_id = CAST(:poliza AS uuid),
-          updated_at = NOW() WHERE id = CAST(:link AS uuid)
-    """), {"date": collected_at, "actor": actor_empleado_id, "poliza": poliza_id, "link": link_id})
-    await session.commit()
-    return {"status": "collected", "poliza_id": poliza_id}
+    raise CFDIIncomeBridgeError(
+        "bank_reconciliation_required: los nuevos cobros se registran exclusivamente "
+        "mediante conciliación bancaria en Cuentas por Cobrar."
+    )
 
 
 async def ingest_and_link_cfdi_income(

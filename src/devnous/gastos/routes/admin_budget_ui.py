@@ -1688,11 +1688,15 @@ def render_cfdi_income_bridge_panel(
         amount = float(link.get("amount") or 0)
         income_date = str(link.get("income_date") or "")[:10]
         link_status = str(link.get("status") or "pending_approval")
-        status = "Desvinculado; no acredita reversa contable" if not is_active else {
-            "pending_approval": "Pendiente de aprobación",
-            "approved": "Aprobado",
-            "rejected": "Rechazado",
-        }.get(link_status, link_status)
+        status = (
+            "Desvinculado; no acredita reversa contable"
+            if not is_active
+            else {
+                "pending_approval": "Pendiente de aprobación",
+                "approved": "Aprobado",
+                "rejected": "Rechazado",
+            }.get(link_status, link_status)
+        )
         unlink_form = ""
         if can_edit and is_active:
             unlink_form = f"""
@@ -1715,13 +1719,10 @@ def render_cfdi_income_bridge_panel(
             """
         collection_form = ""
         if can_edit and is_active and link_status == "approved" and not link.get("collection_date"):
-            collection_form = f"""
-                <form method="POST" action="/admin/presupuestos/torneo/{quote(str(tournament_key))}/cfdi-ingresos/{escape(str(link.get('id') or ''))}/collection" style="display:flex;gap:4px;">
-                    <input type="hidden" name="edition_year" value="{int(edition_year)}">{return_to_hidden}
-                    <input type="date" name="collection_date" required>
-                    <button type="submit">Confirmar cobro</button>
-                </form>
-            """
+            collection_form = (
+                '<a href="/admin/finanzas/cuentas-por-cobrar">'
+                "Conciliar cobro bancario</a>"
+            )
         row_html = f"""
             <tr>
                 <td><code>{escape(str(link.get("cfdi_uuid") or ""))}</code></td>

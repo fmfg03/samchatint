@@ -205,3 +205,17 @@ def test_admin_ar_mutations_are_restricted_to_cxc_operator_guard():
     assert '"luis angel" in name' in source
     assert '"contabilidad"' in source
     assert '"superadmin"' in source
+
+
+def test_new_manual_collection_is_not_offered_and_reversal_keeps_finance_gate():
+    budget_ui = Path("src/devnous/gastos/routes/admin_budget_ui.py").read_text()
+    assert "Confirmar cobro" not in budget_ui
+    assert "Conciliar cobro bancario" in budget_ui
+    source = ADMIN_ROUTES.read_text()
+    reverse_route = source.split("async def admin_finance_ar_match_reverse", 1)[
+        1
+    ].split("@router.get(", 1)[0]
+    assert "require_admin_finanzas()" in reverse_route
+    assert "_can_operate_ar_cxc(current_empleado)" in reverse_route
+    assert "status_code=403" in reverse_route
+    assert "reverse_ar_collection_match(" in reverse_route

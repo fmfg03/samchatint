@@ -39,6 +39,8 @@ class _ScalarResult:
 
 class _PostingSession:
     async def execute(self, _statement, _params=None):
+        if "has_other_direct" in str(_statement):
+            return _ScalarResult({"has_matches": False, "has_other_direct": False})
         return _ScalarResult({"total": 0, "id": "bank-account", "codigo": "1020-001"})
 
 
@@ -90,6 +92,10 @@ async def test_accept_ar_collection_match_accepts_valid_match():
     inserted = {"id": "match-1", "status": ACCEPTED_STATUS}
     with (
         patch(
+            "samchat.ar.collection_matches.load_collection_source_context",
+            new=AsyncMock(return_value={"accounting_poliza_id": "source-poliza"}),
+        ),
+        patch(
             "samchat.ar.collection_matches.ensure_ar_collection_match_schema",
             new=AsyncMock(),
         ),
@@ -105,9 +111,24 @@ async def test_accept_ar_collection_match_accepts_valid_match():
             "samchat.ar.collection_matches._insert_match",
             new=AsyncMock(return_value=inserted),
         ) as insert_match,
-        patch("samchat.ar.collection_matches._resolve_bank_account", new=AsyncMock(return_value={"id": "bank-account", "codigo": "1020-001"})),
-        patch("samchat.ar.collection_matches._resolve_cxc_account", new=AsyncMock(return_value={"id": "cxc-account", "codigo": "1150-001"})),
-        patch("samchat.ar.collection_matches._create_collection_poliza", new=AsyncMock(return_value="poliza-1")) as create_poliza,
+        patch(
+            "samchat.ar.collection_matches._resolve_bank_account",
+            new=AsyncMock(return_value={"id": "bank-account", "codigo": "1020-001"}),
+        ),
+        patch(
+            "samchat.ar.collection_matches._resolve_cxc_account",
+            new=AsyncMock(
+                return_value={
+                    "id": "cxc-account",
+                    "codigo": "1150-001",
+                    "receivable_amount": 100,
+                }
+            ),
+        ),
+        patch(
+            "samchat.ar.collection_matches._create_collection_poliza",
+            new=AsyncMock(return_value="poliza-1"),
+        ) as create_poliza,
         patch(
             "samchat.ar.collection_matches._audit_match_event",
             new=AsyncMock(),
@@ -239,46 +260,45 @@ async def test_accept_rejects_active_duplicate_for_bank_movement():
                 acceptance_reason="manual",
             )
 @pytest.mark.asyncio
-async def test_reverse_marks_match_reversed_without_deleting():
+async def test_reverse_blocks_posting_until_accounting_policy_is_defined():
     before = {
-        "id": "match-1", "status": ACCEPTED_STATUS,
-        "accounting_poliza_id": "poliza-1", "bank_movement_id": "bank-1",
-        "cfdi_report_id": "33333333-3333-3333-3333-333333333333",
+        "id": "match-1",
+        "status": ACCEPTED_STATUS,
+        "accounting_poliza_id": "poliza-1",
+        "cfdi_report_id": "cfdi-1",
     }
-    after = {"id": "match-1", "status": REVERSED_STATUS}
     with (
-        patch(
-            "samchat.ar.collection_matches.ensure_ar_collection_match_schema",
-            new=AsyncMock(),
-        ),
         patch(
             "samchat.ar.collection_matches._load_match",
             new=AsyncMock(return_value=before),
         ),
         patch(
-            "samchat.ar.collection_matches._update_match_reversed",
-            new=AsyncMock(return_value=after),
-        ) as update_match,
-        patch("samchat.ar.collection_matches._load_bank_movement", new=AsyncMock(return_value=_bank_movement(cuenta_bancaria="1234"))),
-        patch("samchat.ar.collection_matches._resolve_cxc_account", new=AsyncMock(return_value={"id": "cxc-account", "codigo": "1150-001"})),
-        patch("samchat.ar.collection_matches._create_collection_poliza", new=AsyncMock(return_value="reversal-1")) as create_reversal,
+            "samchat.ar.reversal_preview.prepare_collection_reversal", new=AsyncMock()
+        ) as preview,
         patch(
-            "samchat.ar.collection_matches._audit_match_event",
+            "samchat.ar.collection_matches._create_collection_poliza", new=AsyncMock()
+        ) as create,
+        patch(
+            "samchat.ar.collection_matches._update_match_reversed", new=AsyncMock()
+        ) as update,
+        patch(
+            "samchat.ar.collection_matches.ensure_ar_collection_match_schema",
             new=AsyncMock(),
-        ) as audit_event,
+        ) as schema,
     ):
-        result = await reverse_ar_collection_match(
-            _PostingSession(),
-            match_id="match-1",
-            actor_empleado_id="employee-1",
-            reversal_reason="error de captura",
-        )
-
-    assert result["status"] == REVERSED_STATUS
-    assert result["reversal_poliza_id"] == "reversal-1"
-    update_match.assert_awaited_once()
-    create_reversal.assert_awaited_once()
-    audit_event.assert_awaited_once()
+        with pytest.raises(
+            ARCollectionMatchError, match="reversal_accounting_policy_required"
+        ):
+            await reverse_ar_collection_match(
+                object(),
+                match_id="match-1",
+                actor_empleado_id="employee-1",
+                reversal_reason="correction",
+            )
+    preview.assert_awaited_once()
+    create.assert_not_awaited()
+    update.assert_not_awaited()
+    schema.assert_not_awaited()
 
 
 def test_collection_match_service_does_not_update_bank_reconciliation():
