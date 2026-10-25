@@ -142,11 +142,16 @@ Cambios por responsabilidad:
   identidad/cuentas/balance y bloqueo explícito de contabilización.
 - `cashflow/service.py`: integración necesaria de la lectura modificada;
   clave año-mes, cada parcial en su propia fecha, ingreso desde póliza. No se
-  cambia la fórmula general del forecast ni se presenta como conciliación total.
+  presenta como conciliación total. La revisión independiente detectó que la
+  fórmula heredada mezclaba ingreso neto con cobros brutos: con documentos CxC
+  o cobertura incompleta, esperado no cobrado y forecast se muestran N/D hasta
+  acreditar base comparable y calendario de cobranza. No se asigna el saldo
+  al mes de reconocimiento ni se inventa tratamiento fiscal. Una desvinculación
+  contable no reconciliada también invalida totales de saldo/cobros/vencido.
 - Rutas presupuestales/contables: desvincular se etiqueta “sin reversa”; nuevas
   entradas manuales CxC se rechazan. Módulos AMEX/SinCFDI no modificados.
 
-**171 pruebas pasan**, con un warning preexistente de SQLAlchemy. Incluyen:
+**Evidencia v2: 171 pruebas pasan**, con un warning preexistente de SQLAlchemy. Incluyen:
 
 - Happy path bancario, dos parciales, repetición sin duplicar y exceso de saldo
   por un alias alterno del mismo CFDI; cambio del importe fuente entre UI y POST.
@@ -268,3 +273,36 @@ No push, merge, deploy, activación de empresa, SATsync, mensajes externos ni
 transacciones productivas. Inventario privado remoto no confirmado: operación
 `agentius_directo_work_list` rechazada, sin job ID y sin repetición. Las negativas
 previas de servicio/path/gateway permanecen respetadas y no se eludieron.
+
+
+### Cierre de revisión independiente del PR #503
+
+La revisión independiente detectó dos defectos de lectura: mezcla de ingreso
+neto con cobros brutos en el forecast, y totales cero tras desvincular sin reversa
+contable verificada. Ambos se corrigen propagando N/D, conservando por separado
+los hechos disponibles y sin reconstruir ni reclasificar historia.
+
+Se ajustaron los consumidores necesarios: asistente (incluye cobros parciales
+aceptados y no suma registros directos como prueba bancaria), reportes y XLSX
+conservan N/D y saldo cero real. El asistente resuelve el año de la versión con
+`get_budget_version(..., ensure_schema=False)`; el año del banco no determina
+la edición. Si no hay año canónico, muestra falta de cobertura.
+
+CI detectó también expectativas antiguas: los tests de CxC ahora pasan año
+explícito y el journey de navegador comprueba que la reversa sigue bloqueada,
+sin borrar el match original. El reloj del fixture de Dirección se fija a su
+fecha de colección para evitar que un cruce de medianoche cambie los resultados;
+no se cambia el reloj ni la lógica de producción. El inventario generado pasó
+su control de reproducibilidad en CI tras el commit documental 87fbaf9.
+
+Canon unchanged: correcciones de consumidores al contrato de lectura ya
+aprobado; no se define base fiscal, fecha de reversa, permisos ni política
+MULTIEMPRESA. La revisión de código no sustituye aprobación GitHub si es
+obligatoria, CI, PostgreSQL nativo concurrente, ni UAT.
+
+Validación local posterior a la revisión: 275 pruebas pasan, incluidas 21 SQL
+con PGlite; cobertura de líneas ejecutables modificadas 269/282 (95.39%).
+Además, 28 pruebas de distribución pasan (incluidas las dos de CxC señaladas
+por CI); una prueba PDF del mismo archivo no pudo ejecutarse localmente por
+falta de PyMuPDF. El journey de navegador corregido queda sujeto al CI.
+Los números locales no acreditan PostgreSQL nativo multiconexión ni UAT.

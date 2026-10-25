@@ -627,7 +627,7 @@ def test_finance_cxc_keeps_candidate_separate_until_acceptance(
     ).to_be_visible()
     expect(
         page.get_by_text(
-            "Un CFDI vinculado no prueba pago; solo los matches aceptados cuentan como cobro.",
+            "Un CFDI vinculado no prueba pago.",
             exact=False,
         )
     ).to_be_visible()
@@ -653,22 +653,20 @@ def test_finance_cxc_keeps_candidate_separate_until_acceptance(
     expect(page).to_have_url(f"{browser_server}/admin/finanzas/cuentas-por-cobrar")
     expect(page.get_by_text("accepted_collection_match", exact=True)).to_be_visible()
     expect(
-        page.get_by_text(
-            "2. Matches AR aceptados — cobranza comprobada", exact=True
-        )
+        page.get_by_text("2. Matches AR aceptados — cobranza comprobada", exact=True)
     ).to_be_visible()
     expect(page.get_by_text("Reversión auditada", exact=True)).to_be_visible()
     operational = page.locator("tbody tr").filter(has_text="UX-CXC-001").first
     expect(operational.get_by_text("Cobrado", exact=True)).to_be_visible()
     _capture(page, "finance-cxc-accepted-match")
 
-    page.locator('input[name="reversal_reason"]').fill(
-        "Evidencia bancaria corregida"
-    )
-    page.get_by_role("button", name="Revertir", exact=True).click()
-    expect(page).to_have_url(f"{browser_server}/admin/finanzas/cuentas-por-cobrar")
-    expect(page.get_by_text("candidate_match", exact=True)).to_be_visible()
-    expect(page.get_by_text("Cobranza desconocida", exact=True).first).to_be_visible()
+    # Reversal posting remains blocked until Finance defines date/treatment.
+    expect(page.locator('input[name="reversal_reason"]')).to_have_count(0)
+    expect(page.get_by_role("button", name="Revertir", exact=True)).to_have_count(0)
+    expect(
+        page.get_by_text("Reversa explícita pendiente de fecha contable", exact=False)
+    ).to_be_visible()
+    expect(page.get_by_text("accepted_collection_match", exact=True)).to_be_visible()
 
 
 def test_finance_cxc_exposes_prepolliza_and_accounting_context(

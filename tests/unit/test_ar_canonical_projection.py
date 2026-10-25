@@ -210,10 +210,14 @@ async def test_missing_evidence_never_gets_tax_or_exchange_estimate(
 async def test_unlink_preserves_accounting_gap_without_claiming_reversal(sources):
     link, mocks = sources
     link["unlinked_at"] = "2026-03-01"
+    link["fecha"] = "2025-12-01"
     mocks["list_budget_cfdi_income_links"].side_effect = [[], [link]]
     mocks["list_ar_collection_matches"].return_value = []
     payload = await read()
     assert payload["summary"]["recognized_income_total"] is None
+    assert payload["source_coverage"]["unlinked_accounting_count"] == 1
+    for key in ("balance_total", "collected_total", "overdue_total"):
+        assert payload["summary"][key] is None
     assert (
         payload["unlinked_income_links"][0]["recognized_poliza_id"]
         == "receivable-policy"
@@ -260,7 +264,7 @@ def test_cashflow_preserves_receipt_periods_across_year_boundary():
             }
         ]
     }
-    assert _apply_ar(payload, buckets) == []
+    assert _apply_ar(payload, buckets) == ["ar_forecast_basis_and_schedule_unproven"]
     assert buckets["2026-12"]["recognized_income"] == 1000
     assert buckets["2026-12"]["collected_income"] == 400
     assert buckets["2027-01"]["collected_income"] == 760

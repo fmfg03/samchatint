@@ -156,7 +156,7 @@ def _add(bucket: dict[str, Any], field: str, value: Any) -> None:
     bucket[field] = _safe_float(bucket.get(field)) + _safe_float(value)
 
 
-def _summarize(buckets: list[dict[str, Any]]) -> dict[str, float]:
+def _summarize(buckets: list[dict[str, Any]]) -> dict[str, float | None]:
     fields = [
         "actual_cash_in",
         "actual_cash_out",
@@ -170,7 +170,11 @@ def _summarize(buckets: list[dict[str, Any]]) -> dict[str, float]:
         "forecast_net",
     ]
     return {
-        field: _safe_float(sum(_safe_float(bucket.get(field)) for bucket in buckets))
+        field: (
+            None
+            if any(bucket.get(field) is None for bucket in buckets)
+            else _safe_float(sum(_safe_float(bucket.get(field)) for bucket in buckets))
+        )
         for field in fields
     }
 
@@ -229,8 +233,34 @@ def _apply_ar(
 ) -> list[str]:
     """Keep journal income and each dated collection in their own periods."""
     notes: set[str] = set()
-    if (ar_payload.get("source_coverage") or {}).get("currency_gap"):
-        return ["ar_currency_coverage_missing"]
+    coverage = ar_payload.get("source_coverage") or {}
+    if (
+        ar_payload.get("issued_linked")
+        or ar_payload.get("issued_unlinked")
+        or ar_payload.get("unlinked_income_links")
+        or any(
+            coverage.get(key)
+            for key in (
+                "candidates_year_missing",
+                "currency_gap",
+                "income_lines_truncated",
+                "candidates_truncated",
+                "unlinked_accounting_count",
+                "unknown_balance_count",
+                "gross_amount_gap",
+                "recognized_income_gap",
+                "collection_conflict_count",
+            )
+        )
+    ):
+        # Journal income is not a cash receivable basis or a future receipt date.
+        # Keep source facts, but do not combine net income with gross bank receipts.
+        notes.add("ar_forecast_basis_and_schedule_unproven")
+    if coverage.get("currency_gap"):
+        for bucket in buckets_by_key.values():
+            bucket["recognized_income"] = None
+            bucket["collected_income"] = None
+        return sorted(notes | {"ar_currency_coverage_missing"})
     for item in ar_payload.get("issued_linked") or []:
         amount = item.get("recognized_income_amount")
         period = _safe_str(item.get("recognized_income_date"))[:7]
@@ -394,11 +424,19 @@ async def build_cashflow_planning_read_model(
     if buckets:
         buckets[0]["approved_obligations"] = _safe_float(approved_obligations)
 
+    ar_forecast_unknown = (
+        "ar_forecast_basis_and_schedule_unproven" in source_notes
+        or any(note.startswith("ar_unavailable:") for note in source_notes)
+    )
     for bucket in buckets:
         bucket["actual_cash_net"] = _safe_float(
             _safe_float(bucket.get("actual_cash_in"))
             - _safe_float(bucket.get("actual_cash_out"))
         )
+        if ar_forecast_unknown:
+            bucket["expected_uncollected_income"] = None
+            bucket["forecast_net"] = None
+            continue
         bucket["expected_uncollected_income"] = _safe_float(
             max(
                 _safe_float(bucket.get("planned_budget_income"))

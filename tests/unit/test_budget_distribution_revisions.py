@@ -86,7 +86,7 @@ async def test_ar_reads_original_links_and_matches_even_without_income_lines(
         AsyncMock(return_value=("original", {"old-line": "new-line"})),
     )
     result = await ar.build_ar_read_model(
-        object(), budget_version_id="revision", ensure_schema=False
+        object(), budget_version_id="revision", calendar_year=2026, ensure_schema=False
     )
     assert all(
         call.kwargs["budget_version_id"] == "original" for call in links.await_args_list

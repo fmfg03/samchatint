@@ -120,7 +120,7 @@ async def test_cashflow_matched_collected_counts_as_collected_income():
 
     assert result["summary"]["recognized_income"] == 500.0
     assert result["summary"]["collected_income"] == 500.0
-    assert result["monthly_buckets"][0]["expected_uncollected_income"] == 0.0
+    assert result["monthly_buckets"][0]["expected_uncollected_income"] is None
 
 
 @pytest.mark.asyncio
@@ -160,7 +160,7 @@ async def test_cashflow_collection_unknown_does_not_count_as_collected_income():
 
     assert result["summary"]["recognized_income"] == 500.0
     assert result["summary"]["collected_income"] == 0.0
-    assert result["monthly_buckets"][0]["expected_uncollected_income"] == 500.0
+    assert result["monthly_buckets"][0]["expected_uncollected_income"] is None
 
 
 @pytest.mark.asyncio
@@ -199,7 +199,7 @@ async def test_cashflow_does_not_consume_candidate_prematching():
         )
 
     assert result["summary"]["collected_income"] == 0.0
-    assert result["summary"]["expected_uncollected_income"] == 400.0
+    assert result["summary"]["expected_uncollected_income"] is None
 
 
 @pytest.mark.asyncio
@@ -279,3 +279,121 @@ async def test_cashflow_uses_finance_platform_for_obligations():
 
     assert result["summary"]["approved_obligations"] == 900.0
     assert result["monthly_buckets"][0]["approved_obligations"] == 900.0
+
+
+@pytest.mark.asyncio
+async def test_cashflow_does_not_subtract_gross_collections_from_net_income():
+    item = {
+        "invoiced_gross_amount": 1160,
+        "linked_income_amount": 1160,
+        "recognized_income_amount": 1000,
+        "recognized_income_date": "2026-01-10",
+        "collection_status": "partially_collected",
+        "balance_amount": 760,
+        "collected_amount": 400,
+        "collection_receipts": [
+            {"accepted_amount": 400, "collection_date": "2026-01-20"}
+        ],
+    }
+    with (
+        patch(
+            "samchat.cashflow.service.list_budget_lines", new=AsyncMock(return_value=[])
+        ),
+        patch(
+            "samchat.cashflow.service.list_monthly_plan_for_lines",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "samchat.cashflow.service.build_ar_read_model",
+            new=AsyncMock(
+                return_value={
+                    "issued_linked": [item],
+                    "issued_unlinked": [],
+                }
+            ),
+        ),
+    ):
+        result = await build_cashflow_planning_read_model(
+            object(),
+            budget_version_id="version-1",
+            edition_year=2026,
+            year=2026,
+            month=1,
+            horizon_months=2,
+        )
+    assert result["summary"]["recognized_income"] == 1000
+    assert result["summary"]["collected_income"] == 400
+    assert item["balance_amount"] == 760
+    assert "ar_forecast_basis_and_schedule_unproven" in result["source_notes"]
+    for row in [result["summary"], *result["monthly_buckets"]]:
+        assert row["expected_uncollected_income"] is None
+        assert row["forecast_net"] is None
+
+
+@pytest.mark.asyncio
+async def test_cashflow_unavailable_ar_does_not_report_a_zero_forecast():
+    with (
+        patch(
+            "samchat.cashflow.service.list_budget_lines", new=AsyncMock(return_value=[])
+        ),
+        patch(
+            "samchat.cashflow.service.list_monthly_plan_for_lines",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "samchat.cashflow.service.build_ar_read_model",
+            new=AsyncMock(side_effect=RuntimeError("unavailable")),
+        ),
+    ):
+        result = await build_cashflow_planning_read_model(
+            object(),
+            budget_version_id="version-1",
+            year=2026,
+            month=1,
+        )
+    assert result["summary"]["forecast_net"] is None
+    assert result["summary"]["expected_uncollected_income"] is None
+
+
+@pytest.mark.asyncio
+async def test_cashflow_unlinked_accounting_gap_keeps_forecast_unknown():
+    with (
+        patch(
+            "samchat.cashflow.service.list_budget_lines", new=AsyncMock(return_value=[])
+        ),
+        patch(
+            "samchat.cashflow.service.list_monthly_plan_for_lines",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "samchat.cashflow.service.build_ar_read_model",
+            new=AsyncMock(
+                return_value={
+                    "issued_linked": [],
+                    "issued_unlinked": [],
+                    "source_coverage": {"unlinked_accounting_count": 1},
+                }
+            ),
+        ),
+    ):
+        result = await build_cashflow_planning_read_model(
+            object(),
+            budget_version_id="version-1",
+            year=2026,
+            month=1,
+        )
+    assert result["summary"]["forecast_net"] is None
+    assert "ar_forecast_basis_and_schedule_unproven" in result["source_notes"]
+
+
+def test_cashflow_currency_gap_does_not_show_zero_income_or_collection():
+    from samchat.cashflow.service import _apply_ar, _bucket_months, _summarize
+
+    buckets = _bucket_months(2026, 1, 2)
+    notes = _apply_ar(
+        {"source_coverage": {"currency_gap": True}}, {b["key"]: b for b in buckets}
+    )
+    assert "ar_currency_coverage_missing" in notes
+    for row in [*buckets, _summarize(buckets)]:
+        assert row["recognized_income"] is None
+        assert row["collected_income"] is None

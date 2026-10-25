@@ -7,6 +7,8 @@ from typing import Any
 
 
 def _money(value: Any) -> str:
+    if value is None:
+        return "N/D"
     try:
         amount = float(value or 0)
     except (TypeError, ValueError):
@@ -58,7 +60,15 @@ def _monthly_rows(rows: list[dict[str, Any]]) -> str:
 def _source_notes(notes: list[Any]) -> str:
     if not notes:
         return '<li class="cashflow-muted">Fuentes completas sin notas.</li>'
-    return "".join(f"<li>{_text(note)}</li>" for note in notes)
+    descriptions = {
+        "ar_forecast_basis_and_schedule_unproven": (
+            "Proyección no disponible: falta una base comparable y una fecha "
+            "prevista de cobro para CxC. Consulte el saldo en Cuentas por Cobrar."
+        ),
+    }
+    return "".join(
+        f"<li>{_text(descriptions.get(str(note), note))}</li>" for note in notes
+    )
 
 
 def render_cashflow_planning_html(payload: dict[str, Any]) -> str:
@@ -86,9 +96,9 @@ def render_cashflow_planning_html(payload: dict[str, Any]) -> str:
                 "Presupuesto",
             ),
             _metric(
-                "Ingreso facturado/reconocido",
+                "Ingreso reconocido contable",
                 summary.get("recognized_income"),
-                "Facturacion reconocida",
+                "Póliza de ingreso",
             ),
             _metric(
                 "Cobranza confirmada",
@@ -98,9 +108,17 @@ def render_cashflow_planning_html(payload: dict[str, Any]) -> str:
             _metric(
                 "Ingreso esperado no cobrado",
                 summary.get("expected_uncollected_income"),
-                "Pendiente de cobro",
+                "Estimación de flujo",
             ),
-            _metric("Proyección neta", summary.get("forecast_net"), "Calculada"),
+            _metric(
+                "Proyección neta",
+                summary.get("forecast_net"),
+                (
+                    "Base y fecha pendientes"
+                    if summary.get("forecast_net") is None
+                    else "Calculada"
+                ),
+            ),
         ]
     )
     return f"""
@@ -130,7 +148,7 @@ def render_cashflow_planning_html(payload: dict[str, Any]) -> str:
                         <th>Pagos pendientes</th>
                         <th>Ingresos presupuestados</th>
                         <th>Egresos presupuestados</th>
-                        <th>Facturado/reconocido</th>
+                        <th>Ingreso reconocido contable</th>
                         <th>Cobranza confirmada</th>
                         <th>Esperado no cobrado</th>
                         <th>Proyección neta</th>

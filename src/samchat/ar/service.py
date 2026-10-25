@@ -833,6 +833,7 @@ async def build_ar_read_model(
         or source_coverage["currency_gap"]
         or source_coverage["income_lines_truncated"]
         or source_coverage["candidates_truncated"]
+        or unlinked_accounting_count > 0
     )
     balance_total = (
         None
