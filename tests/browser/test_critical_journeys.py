@@ -644,7 +644,11 @@ def test_finance_cxc_keeps_candidate_separate_until_acceptance(
     ).to_be_visible()
     expect(page.get_by_text("Cobranza desconocida", exact=True).first).to_be_visible()
 
-    row = page.locator("tbody tr").filter(has_text="cfdi:UX-CXC-001").last
+    row = (
+        page.locator("tbody tr")
+        .filter(has_text="linked:91000000-0000-0000-0000-000000000009")
+        .last
+    )
     expect(row.get_by_text("candidate_match", exact=True)).to_be_visible()
     row.locator('select[name="bank_account_id"]').select_option(index=1)
     row.locator('input[name="acceptance_reason"]').fill("RFC y monto verificados")
