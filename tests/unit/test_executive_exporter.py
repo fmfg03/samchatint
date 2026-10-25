@@ -105,3 +105,32 @@ def test_generate_executive_export_xlsx_handles_empty_payloads() -> None:
     assert wb["Resumen ejecutivo"]["A1"].value == "Export ejecutivo SamChat"
     assert wb["Alertas"].max_row == 1
     assert wb["Fuentes y limites"]["A8"].value == "Límite"
+
+
+def test_ar_export_preserves_unknown_and_zero_balance_without_invoice_fallback():
+    from samchat.executive.exporter import _ar_rows, _summary_metric_rows
+
+    payload = {
+        "summary": {
+            "balance_total": None,
+            "collected_total": None,
+            "invoiced_gross_total": 1160,
+        }
+    }
+    summary = dict(
+        _summary_metric_rows(
+            finance_platform={}, budget_snapshot={}, ar_payload=payload, alerts=[]
+        )
+    )
+    assert summary["Saldo pendiente CxC"] is None
+    assert summary["Cobrado registrado CxC"] is None
+    assert summary["Facturado bruto CxC"] == 1160
+    rows = _ar_rows(
+        payload,
+        [
+            {"balance_amount": None, "issued_amount": 1160},
+            {"balance_amount": 0, "issued_amount": 1160},
+        ],
+    )
+    assert rows[-2][2] is None
+    assert rows[-1][2] == 0

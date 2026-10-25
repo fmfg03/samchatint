@@ -25,6 +25,7 @@ def test_render_ar_summary_uses_collection_proof_only_for_matched_items() -> Non
             "issued_linked": [
                 {
                     "collection_status": "matched_collected",
+                    "collection_source": "accepted_match",
                     "collected_amount": 500,
                 }
             ],
@@ -360,3 +361,76 @@ def test_renderer_source_has_no_legacy_sql_or_write_surfaces() -> None:
     assert "text(" not in source
     assert "pending_confirmation" not in source
     assert "db_write_universal" not in source
+
+
+def test_ar_summary_separates_gross_net_partial_and_direct_evidence():
+    payload = {
+        "summary": {
+            "invoiced_gross_total": 1160,
+            "recognized_income_total": 1000,
+            "balance_total": 760,
+        },
+        "issued_linked": [
+            {
+                "collection_status": "partially_collected",
+                "collection_source": "accepted_match",
+                "collected_amount": 400,
+                "collection_match_ids": ["receipt-1"],
+            },
+            {
+                "collection_status": "matched_collected",
+                "collection_source": "direct_record",
+                "collected_amount": 1160,
+            },
+        ],
+    }
+    answer = render_finance_read_answer(
+        {"ok": True, "intent": "ar.summary", "payload": payload}
+    )
+    assert "CFDI facturado bruto: $1,160.00" in answer
+    assert "Ingreso reconocido contable: $1,000.00" in answer
+    assert "Saldo CxC: $760.00" in answer
+    assert "Cobranza AR probada: $400.00 en 1 matches aceptados" in answer
+
+
+def test_cashflow_answer_keeps_unavailable_forecast_distinct_from_zero():
+    answer = render_finance_read_answer(
+        {
+            "ok": True,
+            "intent": "cashflow.summary",
+            "payload": {
+                "summary": {
+                    "actual_cash_net": 0,
+                    "recognized_income": 1000,
+                    "collected_income": 400,
+                    "expected_uncollected_income": None,
+                    "forecast_net": None,
+                }
+            },
+        }
+    )
+    assert "Caja real neta: $0.00" in answer
+    assert "Ingreso esperado no cobrado: N/D" in answer
+    assert "Forecast derivado: N/D" in answer
+
+
+def test_ar_answer_does_not_recompute_invalid_canonical_collection_total():
+    answer = render_finance_read_answer(
+        {
+            "ok": True,
+            "intent": "ar.summary",
+            "payload": {
+                "summary": {"collected_total": None},
+                "source_coverage": {"currency_gap": True},
+                "issued_linked": [
+                    {
+                        "collection_status": "partially_collected",
+                        "collection_source": "accepted_match",
+                        "collected_amount": 400,
+                    }
+                ],
+            },
+        }
+    )
+    assert "Cobranza AR probada: N/D" in answer
+    assert "$400.00" not in answer

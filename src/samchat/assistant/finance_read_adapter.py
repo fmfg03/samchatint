@@ -6,7 +6,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from samchat.ar.matching import build_ar_matching_workbench
 from samchat.ar.service import build_ar_read_model
-from samchat.budgets.service import build_budget_snapshot
+from samchat.budgets.service import build_budget_snapshot, get_budget_version
 from samchat.cashflow.service import build_cashflow_planning_read_model
 from samchat.executive.template_reports import (
     build_budget_vs_actual_report,
@@ -81,6 +81,13 @@ def _source_notes(payload: dict[str, Any], *extra: str) -> list[str]:
     for note in payload.get("source_notes") or []:
         if note not in notes:
             notes.append(str(note))
+    coverage = payload.get("source_coverage") or {}
+    if coverage.get("candidates_year_missing"):
+        notes.append(
+            "budget_year_unresolved; candidate and period coverage unavailable"
+        )
+    if coverage.get("unlinked_accounting_count"):
+        notes.append("unlinked_accounting_not_reversed; financial totals unavailable")
     for note in extra:
         if note not in notes:
             notes.append(note)
@@ -229,6 +236,26 @@ async def run_finance_read_adapter(
             "safety_labels": _safety_labels("no_estimated_tax_aggregate"),
         }
 
+    budget_year = None
+    budget_year_notes = []
+    if intent in {"ar.summary", "ar.prematching"} and budget_version_id:
+        try:
+            version = await get_budget_version(
+                session,
+                version_id=budget_version_id,
+                ensure_schema=False,
+            )
+            raw_year = version.get("edition_year")
+            if raw_year is not None and not isinstance(raw_year, bool):
+                budget_year = int(raw_year)
+            if budget_year is None or not 1 <= budget_year <= 9999:
+                raise ValueError("missing budget year")
+        except Exception:
+            budget_year = None
+            budget_year_notes.append(
+                "budget_year_unresolved; candidate and period coverage unavailable"
+            )
+
     if intent == "ar.summary":
         if not budget_version_id:
             return _unsupported_missing_budget_version(intent)
@@ -239,11 +266,13 @@ async def run_finance_read_adapter(
             source_function="samchat.ar.service.build_ar_read_model",
             safety_labels=_safety_labels(*AR_SAFETY_LABELS),
             source_note_overrides=[
-                "matched_collected is the only AR collection proof",
+                "accepted bank matches, including partial receipts, are collection evidence",
+                *budget_year_notes,
                 "candidate_match is evidence only",
             ],
             source_kwargs={
                 "budget_version_id": budget_version_id,
+                "calendar_year": budget_year,
                 "tournament_id": tournament_id,
                 "tournament_code": tournament_code,
                 "limit": limit,
@@ -262,9 +291,11 @@ async def run_finance_read_adapter(
             source_note_overrides=[
                 "candidate_match is evidence only",
                 "pre-matching has no AR collection authority",
+                *budget_year_notes,
             ],
             source_kwargs={
                 "budget_version_id": budget_version_id,
+                "budget_year": budget_year,
                 "tournament_id": tournament_id,
                 "tournament_code": tournament_code,
                 "year": year,

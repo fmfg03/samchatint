@@ -4267,7 +4267,7 @@ async def contabilidad_ingresos_view(
                 </div>
                 <div style="margin-top:14px;">
                     <button type="submit" class="button" {'disabled' if period_closed else ''}>Registrar ingreso cobrado</button>
-                    <span class="muted" style="margin-left:10px;">No hay autorización ni CxC: sólo se guarda si ya fue cobrado.</span>
+                    <span class="muted" style="margin-left:10px;">Si la factura tiene CxC, registra su cobro mediante conciliación bancaria en Finanzas.</span>
                 </div>
             </form>
         </div>
@@ -4356,6 +4356,15 @@ async def contabilidad_ingresos_save(
         cfdi_uuid=cfdi_uuid,
         cfdi_report_id=(cfdi_report.id if cfdi_report else None),
     )
+    if cuenta_cxc is not None:
+        return RedirectResponse(
+            url="/admin/finanzas/cuentas-por-cobrar?error_msg="
+            + quote(
+                "bank_reconciliation_required: los cobros de CxC se registran "
+                "exclusivamente mediante conciliación bancaria."
+            ),
+            status_code=303,
+        )
     cuenta_ingreso = await session.get(CuentaContable, form.get("cuenta_ingreso_id"))
     cuenta_iva = None
     cuenta_iva_id = str(form.get("cuenta_iva_id") or "").strip()

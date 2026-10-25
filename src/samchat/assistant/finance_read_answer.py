@@ -20,6 +20,8 @@ def _safe_int(value: Any) -> int:
 
 
 def _money(value: Any) -> str:
+    if value is None:
+        return "N/D"
     amount = _safe_float(value)
     return f"${amount:,.2f}"
 
@@ -34,19 +36,26 @@ def _notes(result: dict[str, Any], payload: dict[str, Any]) -> list[str]:
     return notes[:5]
 
 
-def _matched_collection_totals(payload: dict[str, Any]) -> tuple[int, float]:
+def _matched_collection_totals(payload: dict[str, Any]) -> tuple[int, float | None]:
     count = 0
     total = 0.0
     for key in ("issued_linked", "issued_unlinked"):
         for item in payload.get(key) or []:
-            if item.get("collection_status") != "matched_collected":
+            if item.get("collection_source") != "accepted_match" or item.get(
+                "collection_status"
+            ) not in {
+                "matched_collected",
+                "partially_collected",
+                "over_collected_review",
+            }:
                 continue
-            count += 1
-            total += _safe_float(
-                item.get("collected_amount")
-                or item.get("linked_income_amount")
-                or item.get("issued_amount")
-            )
+            if item.get("collected_amount") is None:
+                continue
+            count += len(item.get("collection_match_ids") or []) or 1
+            total += _safe_float(item["collected_amount"])
+    summary = payload.get("summary") or {}
+    if "collected_total" in summary and summary["collected_total"] is None:
+        return count, None
     return count, _safe_float(total)
 
 
@@ -77,8 +86,9 @@ def _render_ar_summary(result: dict[str, Any], payload: dict[str, Any]) -> str:
         "CxC AR read-only",
         f"- Ingreso esperado: {_money(summary.get('expected_income_total'))} "
         f"en {_safe_int(summary.get('expected_income_count'))} líneas.",
-        f"- Ingreso reconocido/linkeado: {_money(summary.get('linked_income_total'))} "
-        f"en {_safe_int(summary.get('issued_linked_count'))} CFDI vinculados.",
+        f"- CFDI facturado bruto: {_money(summary.get('invoiced_gross_total'))}.",
+        f"- Ingreso reconocido contable: {_money(summary.get('recognized_income_total'))}.",
+        f"- Saldo CxC: {_money(summary.get('balance_total'))}.",
         f"- CFDI emitidos no vinculados: "
         f"{_money(summary.get('issued_unlinked_total'))} "
         f"en {_safe_int(summary.get('issued_unlinked_count'))} registros.",
