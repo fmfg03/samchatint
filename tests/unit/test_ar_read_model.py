@@ -80,6 +80,7 @@ async def test_ar_read_model_groups_expected_income_lines():
             session,
             budget_version_id="version-1",
             tournament_id="tournament-1",
+            calendar_year=2026,
         )
 
     list_lines.assert_awaited_once_with(
@@ -94,8 +95,7 @@ async def test_ar_read_model_groups_expected_income_lines():
     assert result["read_only"] is True
     assert result["expected_income"][0]["expected_income_amount"] == 1200.0
     assert result["expected_income"][0]["monthly_plan"] == [
-        {"month": 1, "expected_income_amount": 500.0},
-        {"month": 2, "expected_income_amount": 700.0},
+        {"month": 1, "expected_income_amount": 1200.0},
     ]
     assert result["summary"]["expected_income_total"] == 1200.0
 
@@ -135,7 +135,9 @@ async def test_ar_read_model_marks_linked_cfdi_as_collection_unknown():
             new=AsyncMock(return_value=[]),
         ),
     ):
-        result = await build_ar_read_model(object(), budget_version_id="version-1")
+        result = await build_ar_read_model(
+            object(), budget_version_id="version-1", calendar_year=2026
+        )
 
     linked = result["issued_linked"][0]
     assert linked["status"] == "recognized"
@@ -176,7 +178,9 @@ async def test_ar_read_model_includes_unlinked_psp_candidates():
             ),
         ),
     ):
-        result = await build_ar_read_model(object(), budget_version_id="version-1")
+        result = await build_ar_read_model(
+            object(), budget_version_id="version-1", calendar_year=2026
+        )
 
     candidate = result["issued_unlinked"][0]
     assert candidate["status"] == "issued_unlinked"
@@ -215,7 +219,9 @@ async def test_ar_read_model_reports_matching_gaps_for_missing_payer_or_line():
             new=AsyncMock(return_value=[]),
         ),
     ):
-        result = await build_ar_read_model(object(), budget_version_id="version-1")
+        result = await build_ar_read_model(
+            object(), budget_version_id="version-1", calendar_year=2026
+        )
 
     reasons = {gap["reason"] for gap in result["matching_gaps"]}
     assert "payer_gap" in reasons
@@ -246,7 +252,9 @@ async def test_ar_read_model_never_sets_outstanding_without_collection_source():
             new=AsyncMock(return_value=[{"id": "cfdi-1", "total": 50}]),
         ),
     ):
-        result = await build_ar_read_model(object(), budget_version_id="version-1")
+        result = await build_ar_read_model(
+            object(), budget_version_id="version-1", calendar_year=2026
+        )
 
     assert result["collection_source"] == "unknown"
     assert result["outstanding_amount_status"] == "unknown"
@@ -279,15 +287,32 @@ async def test_ar_read_model_is_read_only_shape():
             new=AsyncMock(return_value=[]),
         ),
     ):
-        result = await build_ar_read_model(object(), budget_version_id="version-1")
+        result = await build_ar_read_model(
+            object(), budget_version_id="version-1", calendar_year=2026
+        )
 
     assert result == {
         "ok": True,
         "read_only": True,
         "budget_version_id": "version-1",
+        "financial_version_id": "version-1",
         "tournament_id": None,
         "tournament_code": None,
         "collection_source": "unknown",
+        "source_coverage": {
+            "budget_year": 2026,
+            "candidates_year_missing": False,
+            "period_status": "known",
+            "income_lines_truncated": False,
+            "candidates_truncated": False,
+            "currency_gap": False,
+            "gross_amount_gap": False,
+            "recognized_income_gap": False,
+            "unlinked_accounting_count": 0,
+            "unknown_balance_count": 0,
+            "collection_conflict_count": 0,
+        },
+        "unlinked_income_links": [],
         "credit_days_default": 0,
         "outstanding_amount_status": "unknown",
         "summary": {
@@ -299,6 +324,9 @@ async def test_ar_read_model_is_read_only_shape():
             "issued_unlinked_count": 0,
             "issued_unlinked_total": 0.0,
             "invoiced_total": 0.0,
+            "invoiced_gross_total": 0.0,
+            "recognized_income_total": 0.0,
+            "known_balance_total": 0.0,
             "collected_total": 0.0,
             "balance_total": 0.0,
             "overdue_total": 0.0,
@@ -358,7 +386,9 @@ async def test_ar_read_model_marks_active_match_as_collected():
             ),
         ),
     ):
-        result = await build_ar_read_model(object(), budget_version_id="version-1")
+        result = await build_ar_read_model(
+            object(), budget_version_id="version-1", calendar_year=2026
+        )
 
     linked = result["issued_linked"][0]
     assert linked["collection_status"] == "matched_collected"
@@ -388,6 +418,7 @@ async def test_ar_read_model_marks_partial_collection_and_balance():
                         "budget_line_id": "line-1",
                         "budget_version_id": "version-1",
                         "amount": 100,
+                        "moneda": "MXN",
                         "cfdi_fecha": datetime(2026, 1, 15),
                     }
                 ]
@@ -415,6 +446,7 @@ async def test_ar_read_model_marks_partial_collection_and_balance():
             object(),
             budget_version_id="version-1",
             as_of_date=datetime(2026, 1, 15).date(),
+            calendar_year=2026,
         )
 
     linked = result["issued_linked"][0]
@@ -467,7 +499,9 @@ async def test_ar_read_model_marks_overpayment_for_manual_review():
             ),
         ),
     ):
-        result = await build_ar_read_model(object(), budget_version_id="version-1")
+        result = await build_ar_read_model(
+            object(), budget_version_id="version-1", calendar_year=2026
+        )
 
     linked = result["issued_linked"][0]
     assert linked["collection_status"] == "over_collected_review"
@@ -481,6 +515,7 @@ def test_build_ar_operational_rows_filters_and_sorts():
             {
                 "ar_item_id": "expected:1",
                 "status": "planned",
+                "calendar_year": 2026,
                 "concept_name": "Patrocinio B",
                 "expected_income_amount": 100,
             }
@@ -516,7 +551,12 @@ def test_build_ar_operational_rows_filters_and_sorts():
 def test_build_ar_operational_rows_keeps_missing_dates_last_on_desc_sort():
     payload = {
         "expected_income": [
-            {"ar_item_id": "expected:1", "status": "planned", "budget_amount": 100}
+            {
+                "ar_item_id": "expected:1",
+                "status": "planned",
+                "calendar_year": 2026,
+                "budget_amount": 100,
+            }
         ],
         "issued_linked": [
             {
@@ -548,6 +588,7 @@ def test_build_ar_billing_schedule_includes_planned_rows_with_remaining():
             {
                 "ar_item_id": "expected:line-1",
                 "status": "planned",
+                "calendar_year": 2026,
                 "tournament_name": "Copa",
                 "phase": "Nacional",
                 "concept_name": "Patrocinio",
@@ -576,6 +617,8 @@ def test_build_ar_billing_schedule_includes_planned_rows_with_remaining():
             "budgeted_amount": 1200.0,
             "linked_amount": 500.0,
             "remaining_to_invoice": 700.0,
+            "calendar_year": 2026,
+            "period_status": "known",
             "months": [
                 {
                     "month": 8,
@@ -595,6 +638,7 @@ def test_build_ar_billing_schedule_priority_media_for_current_month():
                 {
                     "ar_item_id": "expected:current",
                     "status": "planned",
+                    "calendar_year": 2026,
                     "expected_income_amount": 100,
                     "monthly_plan": [
                         {"month": 9, "expected_income_amount": 100},
@@ -615,6 +659,7 @@ def test_build_ar_billing_schedule_priority_baja_for_future_or_unclear_months():
                 {
                     "ar_item_id": "expected:future",
                     "status": "planned",
+                    "calendar_year": 2026,
                     "expected_income_amount": 100,
                     "monthly_plan": [
                         {"month": 10, "expected_income_amount": 100},
@@ -623,6 +668,7 @@ def test_build_ar_billing_schedule_priority_baja_for_future_or_unclear_months():
                 {
                     "ar_item_id": "expected:unclear",
                     "status": "planned",
+                    "calendar_year": 2026,
                     "expected_income_amount": 80,
                     "monthly_plan": [],
                 },
@@ -642,6 +688,7 @@ def test_build_ar_billing_schedule_excludes_completed_or_non_planned_rows():
                 {
                     "ar_item_id": "expected:complete",
                     "status": "planned",
+                    "calendar_year": 2026,
                     "expected_income_amount": 100,
                     "linked_income_amount": 100,
                 },
@@ -665,18 +712,21 @@ def test_build_ar_billing_schedule_sorts_priority_then_remaining_desc():
             {
                 "ar_item_id": "expected:media",
                 "status": "planned",
+                "calendar_year": 2026,
                 "expected_income_amount": 900,
                 "monthly_plan": [{"month": 9, "expected_income_amount": 900}],
             },
             {
                 "ar_item_id": "expected:alta-small",
                 "status": "planned",
+                "calendar_year": 2026,
                 "expected_income_amount": 100,
                 "monthly_plan": [{"month": 8, "expected_income_amount": 100}],
             },
             {
                 "ar_item_id": "expected:alta-large",
                 "status": "planned",
+                "calendar_year": 2026,
                 "expected_income_amount": 500,
                 "monthly_plan": [{"month": 8, "expected_income_amount": 500}],
             },
@@ -701,6 +751,7 @@ def test_build_ar_billing_schedule_respects_status_and_search_filters():
             {
                 "ar_item_id": "expected:copa",
                 "status": "planned",
+                "calendar_year": 2026,
                 "tournament_name": "Copa Nacional",
                 "expected_income_amount": 100,
             }
@@ -730,6 +781,7 @@ def test_build_ar_actionable_gaps_prioritizes_high_medium_low():
             {
                 "ar_item_id": "expected:1",
                 "status": "planned",
+                "calendar_year": 2026,
                 "tournament_name": "Copa",
                 "concept_name": "Inscripciones",
                 "expected_income_amount": 100,
@@ -802,6 +854,7 @@ def test_build_ar_actionable_gaps_marks_expected_income_without_cfdi_low_only():
             {
                 "ar_item_id": "expected:1",
                 "status": "planned",
+                "calendar_year": 2026,
                 "expected_income_amount": 100,
                 "operational_status": "Presupuestado sin CFDI",
             }
@@ -968,7 +1021,9 @@ async def test_ar_read_model_allows_collected_status_for_unlinked_cfdi_with_matc
             ),
         ),
     ):
-        result = await build_ar_read_model(object(), budget_version_id="version-1")
+        result = await build_ar_read_model(
+            object(), budget_version_id="version-1", calendar_year=2026
+        )
 
     candidate = result["issued_unlinked"][0]
     assert candidate["status"] == "issued_unlinked"
@@ -1005,6 +1060,7 @@ async def test_ar_read_model_can_skip_schema_ensure_for_render_paths():
             session,
             budget_version_id="version-1",
             ensure_schema=False,
+            calendar_year=2026,
         )
 
     assert list_lines.await_args.kwargs["ensure_schema"] is False

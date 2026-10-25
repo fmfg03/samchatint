@@ -179,10 +179,15 @@ async def _apply_budget_plan(
     session: Any,
     *,
     budget_version_id: str,
-    buckets_by_month: dict[int, dict[str, Any]],
+    buckets_by_key: dict[str, dict[str, Any]],
+    budget_year: Optional[int],
     limit: int,
 ) -> list[str]:
     notes: list[str] = []
+    if budget_year is None:
+        return ["budget_plan_year_missing"]
+    from samchat.budgets.distribution import week_bounds
+
     try:
         lines = await list_budget_lines(
             session,
@@ -196,8 +201,9 @@ async def _apply_budget_plan(
             direction = _safe_str(line.get("budget_direction")).lower()
             if not direction:
                 direction = _safe_str(line.get("line_direction")).lower()
-            for month_number, values in (plan.get(line_id) or {}).items():
-                bucket = buckets_by_month.get(int(month_number))
+            for week_number, values in (plan.get(line_id) or {}).items():
+                start, _ = week_bounds(int(budget_year), int(week_number))
+                bucket = buckets_by_key.get(start.strftime("%Y-%m"))
                 if not bucket:
                     continue
                 if direction == "income":
@@ -219,39 +225,45 @@ async def _apply_budget_plan(
 
 def _apply_ar(
     ar_payload: dict[str, Any],
-    buckets_by_month: dict[int, dict[str, Any]],
-) -> None:
+    buckets_by_key: dict[str, dict[str, Any]],
+) -> list[str]:
+    """Keep journal income and each dated collection in their own periods."""
+    notes: set[str] = set()
+    if (ar_payload.get("source_coverage") or {}).get("currency_gap"):
+        return ["ar_currency_coverage_missing"]
     for item in ar_payload.get("issued_linked") or []:
-        amount = _safe_float(
-            item.get("linked_income_amount") or item.get("issued_amount")
-        )
-        month_number = _month_from_iso(item.get("recognized_income_date"))
-        bucket = buckets_by_month.get(month_number)
-        if bucket:
-            _add(bucket, "recognized_income", amount)
-        if item.get("collection_status") == "matched_collected":
-            collection_month = _month_from_iso(item.get("collection_date"))
-            collection_month = collection_month or month_number
-            collected_bucket = buckets_by_month.get(collection_month)
-            if collected_bucket:
-                _add(
-                    collected_bucket,
-                    "collected_income",
-                    item.get("collected_amount") or amount,
-                )
-    for item in ar_payload.get("issued_unlinked") or []:
-        if item.get("collection_status") != "matched_collected":
+        amount = item.get("recognized_income_amount")
+        period = _safe_str(item.get("recognized_income_date"))[:7]
+        if amount is None:
+            notes.add("ar_recognized_income_evidence_missing")
+        elif period in buckets_by_key:
+            _add(buckets_by_key[period], "recognized_income", amount)
+    for item in (ar_payload.get("issued_linked") or []) + (
+        ar_payload.get("issued_unlinked") or []
+    ):
+        if item.get("collection_status") == "collection_conflict":
+            notes.add("ar_collection_conflict")
             continue
-        collection_month = _month_from_iso(
-            item.get("collection_date") or item.get("issued_date")
-        )
-        bucket = buckets_by_month.get(collection_month)
-        if bucket:
-            _add(
-                bucket,
-                "collected_income",
-                item.get("collected_amount") or item.get("issued_amount"),
-            )
+        if item.get("collection_status") not in {
+            "matched_collected",
+            "partially_collected",
+            "over_collected_review",
+        }:
+            continue
+        receipts = item.get("collection_receipts") or [
+            {
+                "collection_date": item.get("collection_date"),
+                "accepted_amount": item.get("collected_amount"),
+            }
+        ]
+        for receipt in receipts:
+            period = _safe_str(receipt.get("collection_date"))[:7]
+            amount = receipt.get("accepted_amount")
+            if not period or amount is None:
+                notes.add("ar_collection_period_or_amount_missing")
+            elif period in buckets_by_key:
+                _add(buckets_by_key[period], "collected_income", amount)
+    return sorted(notes)
 
 
 async def _apply_actual_cash(
@@ -337,7 +349,6 @@ async def build_cashflow_planning_read_model(
     clean_horizon = max(1, min(int(horizon_months or 3), 24))
     row_limit = max(1, min(int(limit or 500), 5000))
     buckets = _bucket_months(clean_year, clean_month, clean_horizon)
-    buckets_by_month = {bucket["month"]: bucket for bucket in buckets}
     buckets_by_key = {bucket["key"]: bucket for bucket in buckets}
     source_notes: list[str] = []
 
@@ -348,7 +359,8 @@ async def build_cashflow_planning_read_model(
             await _apply_budget_plan(
                 session,
                 budget_version_id=clean_budget_version_id,
-                buckets_by_month=buckets_by_month,
+                buckets_by_key=buckets_by_key,
+                budget_year=edition_year or year,
                 limit=row_limit,
             )
         )
@@ -356,9 +368,10 @@ async def build_cashflow_planning_read_model(
             ar_payload = await build_ar_read_model(
                 session,
                 budget_version_id=clean_budget_version_id,
+                calendar_year=edition_year or year,
                 limit=row_limit,
             )
-            _apply_ar(ar_payload, buckets_by_month)
+            source_notes.extend(_apply_ar(ar_payload, buckets_by_key))
         except Exception as exc:
             source_notes.append(f"ar_unavailable:{type(exc).__name__}")
 

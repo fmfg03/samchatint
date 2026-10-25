@@ -2425,7 +2425,7 @@ def register_presupuestos_routes(router) -> None:
                 edition_year=edition_year,
                 budget_view="income",
                 success_msg=(
-                    "El CFDI PSP dejó de contar como ingreso real."
+                    "Vínculo presupuestal retirado. Esta acción no cancela el CFDI ni revierte pólizas o cobros."
                     if unlinked
                     else "El CFDI PSP ya estaba desvinculado."
                 ),

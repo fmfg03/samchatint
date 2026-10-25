@@ -206,6 +206,7 @@ async def build_ar_matching_workbench(
     tournament_id: Optional[str] = None,
     tournament_code: Optional[str] = None,
     year: Optional[int] = None,
+    budget_year: Optional[int] = None,
     month: Optional[int] = None,
     tolerance: float = 1.0,
     limit: int = 500,
@@ -218,6 +219,7 @@ async def build_ar_matching_workbench(
     ar_payload = await build_ar_read_model(
         session,
         budget_version_id=budget_version_id,
+        calendar_year=budget_year,
         tournament_id=tournament_id,
         tournament_code=tournament_code,
         limit=row_limit,

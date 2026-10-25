@@ -3823,6 +3823,11 @@ async def admin_executive_export_xlsx(
             ar_payload = await build_ar_read_model(
                 session,
                 budget_version_id=str(selected_version["id"]),
+                calendar_year=(
+                    int(selected_version["edition_year"])
+                    if selected_version.get("edition_year")
+                    else None
+                ),
                 limit=safe_limit,
                 credit_days_default=safe_credit_days,
                 ensure_schema=False,
@@ -8124,6 +8129,11 @@ async def admin_finance_accounts_receivable(
         payload = await build_ar_read_model(
             session,
             budget_version_id=str(selected_version["id"]),
+            calendar_year=(
+                int(selected_version["edition_year"])
+                if selected_version.get("edition_year")
+                else None
+            ),
             tournament_id=tournament_id,
             tournament_code=tournament_code,
             limit=safe_limit,
@@ -8133,6 +8143,11 @@ async def admin_finance_accounts_receivable(
         matching_payload = await build_ar_matching_workbench(
             session,
             budget_version_id=str(selected_version["id"]),
+            budget_year=(
+                int(selected_version["edition_year"])
+                if selected_version.get("edition_year")
+                else None
+            ),
             tournament_id=tournament_id,
             tournament_code=tournament_code,
             year=year,
@@ -8372,6 +8387,11 @@ async def admin_finance_accounts_receivable_item_detail(
     payload = await build_ar_read_model(
         session,
         budget_version_id=str(selected_version["id"]),
+        calendar_year=(
+            int(selected_version["edition_year"])
+            if selected_version.get("edition_year")
+            else None
+        ),
         tournament_id=tournament_id,
         tournament_code=tournament_code,
         limit=safe_limit,
@@ -8578,6 +8598,11 @@ async def admin_finance_accounts_receivable_export_xlsx(
     payload = await build_ar_read_model(
         session,
         budget_version_id=str(selected_version["id"]),
+        calendar_year=(
+            int(selected_version["edition_year"])
+            if selected_version.get("edition_year")
+            else None
+        ),
         tournament_id=tournament_id,
         tournament_code=tournament_code,
         limit=safe_limit,
@@ -8615,7 +8640,7 @@ async def admin_finance_accounts_receivable_export_xlsx(
         "Monto presupuestado",
         "Monto facturado",
         "Monto reconocido",
-        "Monto cobrado comprobado",
+        "Monto cobrado registrado",
         "Saldo",
         "Estado",
         "Fuente",
@@ -8634,8 +8659,8 @@ async def admin_finance_accounts_receivable_export_xlsx(
                 row.get("issued_date"),
                 row.get("due_date"),
                 row.get("expected_income_amount"),
-                row.get("issued_amount"),
-                row.get("linked_income_amount"),
+                row.get("invoiced_gross_amount"),
+                row.get("recognized_income_amount"),
                 row.get("collected_amount"),
                 row.get("balance_amount"),
                 row.get("operational_status"),
@@ -8655,9 +8680,9 @@ async def admin_finance_accounts_receivable_export_xlsx(
     ws_summary.append(["Métrica", "Valor"])
     for label, key in [
         ("Ingreso presupuestado", "expected_income_total"),
-        ("CFDI facturado", "invoiced_total"),
-        ("Ingreso reconocido", "linked_income_total"),
-        ("Cobrado comprobado", "collected_total"),
+        ("CFDI facturado bruto", "invoiced_gross_total"),
+        ("Ingreso reconocido contable", "recognized_income_total"),
+        ("Cobrado registrado", "collected_total"),
         ("Saldo", "balance_total"),
         ("Vencido", "overdue_total"),
         ("Gaps cobranza", "collection_gap_count"),
@@ -8887,6 +8912,11 @@ async def admin_finance_accounts_receivable_prepolizas_coi_xlsx(
     payload = await build_ar_read_model(
         session,
         budget_version_id=str(selected_version["id"]),
+        calendar_year=(
+            int(selected_version["edition_year"])
+            if selected_version.get("edition_year")
+            else None
+        ),
         tournament_id=tournament_id,
         tournament_code=tournament_code,
         limit=safe_limit,

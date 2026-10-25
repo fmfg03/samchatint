@@ -98,7 +98,8 @@ async def test_cashflow_matched_collected_counts_as_collected_income():
                 return_value={
                     "issued_linked": [
                         {
-                            "linked_income_amount": 500,
+                            "linked_income_amount": 580,
+                            "recognized_income_amount": 500,
                             "recognized_income_date": "2026-01-10T00:00:00",
                             "collection_status": "matched_collected",
                             "collected_amount": 500,
@@ -139,7 +140,8 @@ async def test_cashflow_collection_unknown_does_not_count_as_collected_income():
                 return_value={
                     "issued_linked": [
                         {
-                            "linked_income_amount": 500,
+                            "linked_income_amount": 580,
+                            "recognized_income_amount": 500,
                             "recognized_income_date": "2026-01-10T00:00:00",
                             "collection_status": "collection_unknown",
                         }
@@ -178,7 +180,8 @@ async def test_cashflow_does_not_consume_candidate_prematching():
                 return_value={
                     "issued_linked": [
                         {
-                            "linked_income_amount": 400,
+                            "linked_income_amount": 464,
+                            "recognized_income_amount": 400,
                             "recognized_income_date": "2026-01-10T00:00:00",
                             "collection_status": "candidate_match",
                         }

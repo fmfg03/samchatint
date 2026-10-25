@@ -130,7 +130,7 @@ def test_admin_routes_expose_cxc_export_from_canonical_read_model():
     assert '"Prepólizas CxC"' in export_body
     assert "Monto presupuestado" in export_body
     assert "Monto facturado" in export_body
-    assert "Monto cobrado comprobado" in export_body
+    assert "Monto cobrado registrado" in export_body
     assert "Saldo" in export_body
 
 

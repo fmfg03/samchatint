@@ -564,14 +564,28 @@ async def list_budget_cfdi_income_links(
     if approved_only:
         filters.extend(["l.status = 'approved'", "l.unlinked_at IS NULL"])
     rows = (
-        await session.execute(
-            text(
-                f"""
+        (
+            await session.execute(
+                text(f"""
                 SELECT l.id, l.cfdi_report_id, l.budget_line_id, l.budget_version_id,
                        l.tournament_id, l.phase, l.budget_concept_id, l.amount,
                        l.income_date, l.source, l.status, l.collection_date,
                        l.collection_poliza_id, l.created_at, l.unlinked_at,
-                       c.cfdi_uuid, c.fecha AS cfdi_fecha, c.moneda,
+                       c.cfdi_uuid, c.fecha AS cfdi_fecha, c.moneda, c.total AS cfdi_total,
+                       l.accounting_poliza_id AS recognized_poliza_id,
+                       EXISTS (SELECT 1 FROM ar_collection_matches cm
+                               WHERE cm.cfdi_report_id = l.cfdi_report_id
+                                 AND cm.status = 'accepted_collection_match') AS has_accepted_collection,
+                       ARRAY(SELECT p.id::text FROM accounting_polizas p
+                             WHERE p.origen = 'ingreso_cobrado_ui'
+                               AND (p.cfdi_report_id = c.id
+                                    OR (NULLIF(c.cfdi_uuid, '') IS NOT NULL
+                                        AND UPPER(p.cfdi_uuid) = UPPER(c.cfdi_uuid)))
+                             ORDER BY p.id) AS manual_collection_poliza_ids,
+                       (SELECT SUM(pl.haber - pl.debe)
+                        FROM accounting_poliza_lines pl
+                        WHERE pl.poliza_id = l.accounting_poliza_id
+                          AND (pl.cuenta_codigo = '4100' OR pl.cuenta_codigo LIKE '4100-%')) AS recognized_income_amount,
                        c.total_impuestos_trasladados,
                        c.emisor_rfc, c.emisor_nombre,
                        c.receptor_rfc, c.receptor_nombre,
@@ -585,11 +599,13 @@ async def list_budget_cfdi_income_links(
                     l.unlinked_at NULLS FIRST,
                     l.income_date DESC,
                     l.created_at DESC
-                """
-            ),
-            params,
+                """),
+                params,
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
     return [dict(row) for row in rows]
 
 

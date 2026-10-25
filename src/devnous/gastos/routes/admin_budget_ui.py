@@ -1688,7 +1688,7 @@ def render_cfdi_income_bridge_panel(
         amount = float(link.get("amount") or 0)
         income_date = str(link.get("income_date") or "")[:10]
         link_status = str(link.get("status") or "pending_approval")
-        status = "Desvinculado" if not is_active else {
+        status = "Desvinculado; no acredita reversa contable" if not is_active else {
             "pending_approval": "Pendiente de aprobación",
             "approved": "Aprobado",
             "rejected": "Rechazado",
@@ -1700,7 +1700,7 @@ def render_cfdi_income_bridge_panel(
                     <input type="hidden" name="edition_year" value="{int(edition_year)}">
                     {return_to_hidden}
                     <button type="submit" style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;">
-                        Dejar de contar
+                        Desvincular presupuesto (sin reversa)
                     </button>
                 </form>
             """
