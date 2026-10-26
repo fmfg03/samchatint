@@ -36,6 +36,7 @@ async def test_adapter_routes_ar_summary_to_canonical_read_model():
     source.assert_awaited_once_with(
         session,
         budget_version_id="version-1",
+        calendar_year=None,
         tournament_id="tournament-1",
         tournament_code="COPA",
         limit=25,
@@ -47,7 +48,10 @@ async def test_adapter_routes_ar_summary_to_canonical_read_model():
     assert result["payload"]["summary"]["matched_collected_count"] == 1
     assert "matched_collected_is_only_collection_proof" in result["safety_labels"]
     assert "candidate_match_is_evidence_only" in result["safety_labels"]
-    assert "matched_collected is the only AR collection proof" in result["source_notes"]
+    assert (
+        "accepted bank matches, including partial receipts, are collection evidence"
+        in result["source_notes"]
+    )
 
 
 @pytest.mark.asyncio
@@ -78,6 +82,7 @@ async def test_adapter_routes_ar_prematching_to_canonical_workbench():
     source.assert_awaited_once_with(
         session,
         budget_version_id="version-1",
+        budget_year=None,
         tournament_id="tournament-1",
         tournament_code=None,
         year=2026,
@@ -428,3 +433,50 @@ def test_adapter_source_has_no_legacy_route_or_write_mechanisms():
     assert "openpyxl" not in source
     assert "requests" not in source
     assert "httpx" not in source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "intent,source_name,year_key",
+    [
+        ("ar.summary", "build_ar_read_model", "calendar_year"),
+        ("ar.prematching", "build_ar_matching_workbench", "budget_year"),
+    ],
+)
+async def test_ar_adapter_uses_canonical_edition_not_bank_year(
+    intent, source_name, year_key
+):
+    source = AsyncMock(return_value={})
+    version = AsyncMock(return_value={"id": "version", "edition_year": 2025})
+    session = object()
+    with (
+        patch.object(finance_read_adapter, source_name, source),
+        patch.object(finance_read_adapter, "get_budget_version", version),
+    ):
+        await run_finance_read_adapter(
+            session, intent=intent, budget_version_id="version", year=2026
+        )
+    version.assert_awaited_once_with(session, version_id="version", ensure_schema=False)
+    assert source.await_args.kwargs[year_key] == 2025
+    if intent == "ar.prematching":
+        assert source.await_args.kwargs["year"] == 2026
+
+
+@pytest.mark.asyncio
+async def test_ar_adapter_does_not_invent_edition_when_metadata_is_unavailable():
+    source = AsyncMock(
+        return_value={"source_coverage": {"candidates_year_missing": True}}
+    )
+    with (
+        patch.object(finance_read_adapter, "build_ar_read_model", source),
+        patch.object(
+            finance_read_adapter,
+            "get_budget_version",
+            AsyncMock(side_effect=RuntimeError("unavailable")),
+        ),
+    ):
+        result = await run_finance_read_adapter(
+            object(), intent="ar.summary", budget_version_id="version", year=2026
+        )
+    assert source.await_args.kwargs["calendar_year"] is None
+    assert any("budget_year_unresolved" in note for note in result["source_notes"])

@@ -115,17 +115,24 @@ def _ar_items_from_read_model(payload: dict[str, Any]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for source_key in ("issued_linked", "issued_unlinked"):
         for item in payload.get(source_key) or []:
+            if item.get("collection_status") == "collection_conflict":
+                continue
             amount = item.get("issued_amount") or item.get("linked_income_amount")
             items.append(
                 {
                     "ar_item_id": _safe_str(item.get("ar_item_id")),
+                    "budget_version_id": item.get("budget_version_id"),
+                    "budget_line_id": item.get("budget_line_id"),
+                    "cfdi_report_id": item.get("cfdi_report_id"),
                     "source": source_key,
                     "payer_rfc": _safe_str(item.get("payer_rfc")) or None,
                     "payer_name": _safe_str(item.get("payer_name")) or None,
                     "amount": _safe_float(amount),
                     "issued_date": item.get("recognized_income_date")
                     or item.get("issued_date"),
-                    "collection_status": "collection_unknown",
+                    "collection_status": item.get("collection_status")
+                    or "collection_unknown",
+                    "outstanding_amount": item.get("outstanding_amount"),
                 }
             )
     return items
@@ -137,7 +144,11 @@ def _score_candidate(
     *,
     tolerance: float,
 ) -> Optional[dict[str, Any]]:
-    ar_amount = _safe_float(ar_item.get("amount"))
+    ar_amount = _safe_float(
+        ar_item.get("outstanding_amount")
+        if ar_item.get("outstanding_amount") is not None
+        else ar_item.get("amount")
+    )
     bank_amount = _safe_float(movement.get("importe"))
     amount_delta = round(abs(ar_amount - bank_amount), 2)
     amount_match = amount_delta <= tolerance
@@ -206,6 +217,7 @@ async def build_ar_matching_workbench(
     tournament_id: Optional[str] = None,
     tournament_code: Optional[str] = None,
     year: Optional[int] = None,
+    budget_year: Optional[int] = None,
     month: Optional[int] = None,
     tolerance: float = 1.0,
     limit: int = 500,
@@ -218,6 +230,7 @@ async def build_ar_matching_workbench(
     ar_payload = await build_ar_read_model(
         session,
         budget_version_id=budget_version_id,
+        calendar_year=budget_year,
         tournament_id=tournament_id,
         tournament_code=tournament_code,
         limit=row_limit,
@@ -231,7 +244,7 @@ async def build_ar_matching_workbench(
     )
     accepted_matches = await list_ar_collection_matches(
         session,
-        budget_version_id=budget_version_id,
+        budget_version_id=ar_payload.get("financial_version_id") or budget_version_id,
         include_reversed=False,
         ensure_schema=ensure_schema,
     )
@@ -243,7 +256,10 @@ async def build_ar_matching_workbench(
     used_bank_ids: set[str] = set()
 
     for ar_item in ar_items:
-        if _safe_str(ar_item.get("ar_item_id")) in accepted_item_ids:
+        if _safe_str(ar_item.get("ar_item_id")) in accepted_item_ids and not (
+            ar_item.get("collection_status") == "partially_collected"
+            and _safe_float(ar_item.get("outstanding_amount")) > 0
+        ):
             continue
         candidates = [
             candidate

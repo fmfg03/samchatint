@@ -61,20 +61,28 @@ def _month_values_from_buckets(
     *,
     field: str,
     scale: float,
-) -> list[float]:
+    preserve_unknown: bool = False,
+) -> list[float | None]:
     values = [0.0 for _ in range(12)]
     for bucket in buckets:
         month = _safe_int(bucket.get("month"))
         if 1 <= month <= 12:
-            values[month - 1] = _safe_float(_safe_float(bucket.get(field)) / scale)
+            value = bucket.get(field)
+            values[month - 1] = (
+                None
+                if preserve_unknown and value is None
+                else _safe_float(_safe_float(value) / scale)
+            )
     return values
 
 
-def _row(label: str, values: list[float], note: str = "") -> dict[str, Any]:
+def _row(label: str, values: list[float | None], note: str = "") -> dict[str, Any]:
     return {
         "segment": label,
         "months": values,
-        "total": _safe_float(sum(values)),
+        "total": (
+            None if any(value is None for value in values) else _safe_float(sum(values))
+        ),
         "note": note,
     }
 
@@ -111,10 +119,10 @@ def build_cashflow_statement_report(
         buckets, field="actual_cash_in", scale=scale
     )
     cobranza = _month_values_from_buckets(
-        buckets, field="collected_income", scale=scale
+        buckets, field="collected_income", scale=scale, preserve_unknown=True
     )
     ingreso_esperado = _month_values_from_buckets(
-        buckets, field="expected_uncollected_income", scale=scale
+        buckets, field="expected_uncollected_income", scale=scale, preserve_unknown=True
     )
     salidas = _month_values_from_buckets(
         buckets, field="actual_cash_out", scale=scale
@@ -126,17 +134,25 @@ def build_cashflow_statement_report(
         _safe_float(salidas[idx] + obligaciones[idx]) for idx in range(12)
     ]
 
-    saldo_inicial: list[float] = []
-    saldo_final: list[float] = []
+    origins = [
+        None if cobranza[i] is None else _safe_float(ingresos[i] + cobranza[i])
+        for i in range(12)
+    ]
+    saldo_inicial: list[float | None] = []
+    saldo_final: list[float | None] = []
     running = opening_scaled
     for idx in range(12):
-        saldo_inicial.append(_safe_float(running))
-        running = _safe_float(running + ingresos[idx] + cobranza[idx] - aplicaciones[idx])
+        saldo_inicial.append(running)
+        running = (
+            None
+            if running is None or origins[idx] is None
+            else _safe_float(running + origins[idx] - aplicaciones[idx])
+        )
         saldo_final.append(running)
 
     rows = [
         _row("SALDO INICIAL:", saldo_inicial, "Saldo inicial bancario de corte."),
-        _row("Origen", [_safe_float(ingresos[i] + cobranza[i]) for i in range(12)]),
+        _row("Origen", origins),
         _row("Ingresos reales", ingresos),
         _row("Cobranza comprobada", cobranza),
         _row(
