@@ -212,6 +212,7 @@ from ..services.expense_coi_export_service import (
 from ..services.documento_service import (
     build_solicitud_personal_payload,
     SolicitudTercerosAttachment,
+    SolicitudProviderRFCUpdate,
     SolicitudValidationError,
     allocate_next_referencia_operaciones as service_allocate_next_referencia_operaciones,
     allocate_referencia_operaciones_for_empleado,
@@ -39365,6 +39366,7 @@ async def agregar_documento_adjuntos(
             )
 
         payment_registered = False
+        provider_rfc_updates: list[SolicitudProviderRFCUpdate] = []
         if categoria_norm == "comprobante_pago":
             count = await add_solicitud_documento_adjuntos(
                 session,
@@ -39387,6 +39389,7 @@ async def agregar_documento_adjuntos(
                 evidence_only=documento.estado not in {"borrador", "control_presupuestal"}
                 or bool(getattr(documento, "budget_concept_id", None)),
                 actor_id=actor_id,
+                rfc_updates=provider_rfc_updates,
             )
     except SolicitudValidationError as exc:
         await session.rollback()
@@ -39440,6 +39443,11 @@ async def agregar_documento_adjuntos(
         )
 
     success_detail = f"{count} archivo(s) adjuntado(s) exitosamente."
+    if provider_rfc_updates:
+        success_detail += (
+            " El proveedor no tenía RFC registrado. "
+            "Se agregó automáticamente desde la factura."
+        )
     if categoria_norm in {"cfdi_xml", "cfdi_pdf"} and (
         documento.estado not in {"borrador", "control_presupuestal"}
         or bool(getattr(documento, "budget_concept_id", None))
