@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import re
+import unicodedata
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -1109,10 +1112,104 @@ async def _persist_solicitud_terceros_adjuntos(
         )
 
 
+@dataclass(frozen=True)
+class SolicitudProviderRFCUpdate:
+    """Catalog enrichment proposed from XML, persisted with its attachment only."""
+
+    provider_id: UUID
+    previous_rfc: Optional[str]
+    rfc: str
+    fiscal_uuid: str
+
+
+def _provider_fiscal_name(value: str) -> str:
+    plain = "".join(
+        char
+        for char in unicodedata.normalize("NFD", value or "")
+        if not unicodedata.combining(char)
+    )
+    return " ".join(plain.upper().split())
+
+
+async def _plan_solicitud_provider_rfc(
+    session: AsyncSession,
+    documento: Documento,
+    validated: list[tuple[bytes, str, str, str]],
+) -> Optional[SolicitudProviderRFCUpdate]:
+    """Lock the selected provider and propose filling only an empty fiscal ID."""
+    for raw, _, _, category in validated:
+        if category not in {"cfdi_xml", "cfdi_pdf"}:
+            continue
+        resolved, error = resolve_cfdi_upload(
+            **{"xml_bytes" if category == "cfdi_xml" else "pdf_bytes": raw}
+        )
+        if error or not resolved or not resolved.xml_text:
+            continue  # A text-only PDF cannot establish a catalog identity.
+        data = resolved.parsed
+        issuer = str(data.get("emisor_rfc") or "").strip().upper()
+        # Serialize two missing catalog entries proposing the same RFC, too.
+        if session.get_bind().dialect.name == "postgresql":
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+                {"key": f"provider-rfc:{issuer}"},
+            )
+        provider = (
+            await session.execute(
+                select(ProveedorCliente)
+                .where(ProveedorCliente.id == documento.proveedor_cliente_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        if not provider or (provider.rfc or "").strip():
+            return None
+        if not provider.activo:
+            raise SolicitudValidationError(
+                "inactive_provider", "El proveedor seleccionado no está activo."
+            )
+        if not re.fullmatch(r"[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}", issuer):
+            raise SolicitudValidationError(
+                "invalid_issuer_rfc",
+                "El RFC emisor del XML no tiene un formato válido.",
+            )
+        issuer_name = _provider_fiscal_name(data.get("emisor_nombre"))
+        if not issuer_name or issuer_name != _provider_fiscal_name(provider.nombre):
+            raise SolicitudValidationError(
+                "provider_identity_mismatch",
+                "El nombre del emisor no coincide con el proveedor seleccionado; "
+                "revise su identidad antes de registrar el RFC.",
+            )
+        duplicate = await session.scalar(
+            select(ProveedorCliente.id)
+            .where(
+                ProveedorCliente.id != provider.id,
+                func.upper(func.trim(ProveedorCliente.rfc)) == issuer,
+            )
+            .limit(1)
+        )
+        if duplicate:
+            raise SolicitudValidationError(
+                "provider_rfc_ambiguous",
+                "El RFC del emisor ya está registrado en otro proveedor; "
+                "se requiere revisar el catálogo.",
+            )
+        try:
+            fiscal_uuid = normalize_cfdi_uuid_to_canonical(data.get("cfdi_uuid"))
+        except ValueError as exc:
+            raise SolicitudValidationError(
+                "invalid_cfdi", "La factura debe contener un UUID válido."
+            ) from exc
+        return SolicitudProviderRFCUpdate(
+            provider.id, provider.rfc, issuer, fiscal_uuid
+        )
+    return None
+
+
 async def _validate_late_invoice_evidence(
     session: AsyncSession,
     documento: Documento,
     validated: list[tuple[bytes, str, str, str]],
+    provider_rfc_update: Optional[SolicitudProviderRFCUpdate] = None,
 ) -> Optional[str]:
     """Validate late fiscal evidence without linking or rewriting recognized facts."""
     fiscal = [item for item in validated if item[3] in {"cfdi_xml", "cfdi_pdf"}]
@@ -1200,7 +1297,15 @@ async def _validate_late_invoice_evidence(
             )
         provider = await session.get(ProveedorCliente, documento.proveedor_cliente_id)
         issuer = str(data.get("emisor_rfc") or "").strip().upper()
-        if not provider or not provider.rfc or issuer != provider.rfc.strip().upper():
+        expected_rfc = (provider.rfc or "").strip().upper() if provider else ""
+        if (
+            provider_rfc_update
+            and provider
+            and provider.id == provider_rfc_update.provider_id
+            and not expected_rfc
+        ):
+            expected_rfc = provider_rfc_update.rfc
+        if not provider or not expected_rfc or issuer != expected_rfc:
             raise SolicitudValidationError(
                 "issuer_mismatch",
                 "El RFC emisor debe coincidir con el proveedor de la solicitud.",
@@ -1395,6 +1500,7 @@ async def add_solicitud_documento_adjuntos(
     commit: bool = True,
     evidence_only: bool = False,
     actor_id: Optional[UUID] = None,
+    rfc_updates: Optional[list[SolicitudProviderRFCUpdate]] = None,
 ) -> int:
     """Append validated attachments to an existing SOLICITUD document."""
     # Never let another caller silently re-link a classified/authorized request.
@@ -1419,29 +1525,51 @@ async def add_solicitud_documento_adjuntos(
     if evidence_only or actor_id is not None:
         validated = [validate_solicitud_terceros_attachment(a) for a in attachments]
         evidence_uuid = None
-        if evidence_only:
-            if (
-                any(
-                    category in {"cfdi_xml", "cfdi_pdf"}
-                    for _, _, _, category in validated
-                )
-                and actor_id is None
-            ):
+        provider_rfc_update = None
+        fiscal = any(c in {"cfdi_xml", "cfdi_pdf"} for _, _, _, c in validated)
+        if fiscal:
+            if actor_id is None:
                 raise SolicitudValidationError(
                     "evidence_actor_required",
                     "La carga fiscal posterior requiere un actor auditado.",
                 )
-            evidence_uuid = await _validate_late_invoice_evidence(
+            provider_rfc_update = await _plan_solicitud_provider_rfc(
                 session, documento, validated
             )
-        elif any(
-            category in {"cfdi_xml", "cfdi_pdf"} for _, _, _, category in validated
-        ):
+            validated_uuid = await _validate_late_invoice_evidence(
+                session, documento, validated, provider_rfc_update
+            )
+            if evidence_only:
+                evidence_uuid = validated_uuid
+        if fiscal and not evidence_only:
             await _ingest_solicitud_cfdi_from_attachments(
                 session,
                 documento=documento,
                 validated_attachments=validated,
                 numero_referencia=documento.numero_referencia or str(documento.id),
+            )
+        if provider_rfc_update:
+            provider = await session.get(
+                ProveedorCliente, provider_rfc_update.provider_id
+            )
+            provider.rfc = provider_rfc_update.rfc
+            session.add(
+                Aprobacion(
+                    tipo_entidad="documento",
+                    entidad_id=documento.id,
+                    aprobador_id=actor_id,
+                    accion="adjuntar_soporte",
+                    comentario=json.dumps(
+                        {
+                            "event": "provider_rfc_added_from_invoice",
+                            "provider_id": str(provider_rfc_update.provider_id),
+                            "previous_rfc": provider_rfc_update.previous_rfc,
+                            "rfc": provider_rfc_update.rfc,
+                            "cfdi_uuid": provider_rfc_update.fiscal_uuid,
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
             )
         existing = (
             (
@@ -1502,6 +1630,8 @@ async def add_solicitud_documento_adjuntos(
                 )
         if commit:
             await session.commit()
+        if provider_rfc_update and rfc_updates is not None:
+            rfc_updates.append(provider_rfc_update)
         return count
     await _persist_solicitud_terceros_adjuntos(
         session,
