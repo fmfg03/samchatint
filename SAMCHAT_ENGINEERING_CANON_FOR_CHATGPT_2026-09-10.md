@@ -531,6 +531,19 @@ permissions and concurrent connections. This describes the approved correction
 only; implementation, review, merge, deployment and authenticated 11-document
 UAT require their own evidence.
 
+Las tablas append-only de lotes y vínculos pertenecen a un rol administrativo
+NOLOGIN separado del rol de ejecución. El propietario mantiene los privilegios
+necesarios para las comprobaciones nativas de integridad referencial; el rol de
+ejecución conserva únicamente SELECT/INSERT y no puede asumir el rol propietario.
+
+Enmienda expresamente aprobada: 2026-10-27. Razón: reproducción de PostgreSQL
+42501 en la clave foránea cuando el propietario era el rol de ejecución con
+UPDATE revocado. La migración administrativa separa propiedad y ejecución sin
+ampliar la autoridad del runtime. Evidencia: migración
+`20261027_copa_telmex_batch_table_owner.sql` y regresión del helper con propiedad
+productiva antes y después de la corrección. La aprobación del diseño no
+sustituye los recibos de aplicación ni la UAT autenticada.
+
 Evidence: `docs/roadmap/ctt-pilot-batch-admission.md`, focused unit and regression
 tests, and isolated PostgreSQL migration/constraint/rollback tests. This remains
 repository evidence under review, not deployment, data admission, UAT, or
