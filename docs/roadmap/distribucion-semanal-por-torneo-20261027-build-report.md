@@ -10,4 +10,6 @@ La revisión independiente detectó una posibilidad de suplantar el linaje finan
 
 Canon unchanged: el cambio concreta el contrato ya documentado de distribución semanal y no altera sus definiciones de estado financiero, autoridad, historial o ámbitos. La representación por torneo es detalle de implementación compatible con los límites y principios existentes; la especificación y el procedimiento de migración documentan su almacenamiento y evidencias. No se alteran los textos canónicos.
 
+El primer CI falló el inventario reproducible: se había generado antes de incorporar el nuevo módulo al índice de Git y contaba 481 archivos en vez de 482. Se regeneró después de registrar el módulo y se vuelve a ejecutar la verificación; las pruebas restantes de ese run no se consideran evidencia de la nueva cabeza.
+
 Pendiente tras verificación técnica: prueba autenticada y aceptación real de Dirección/Finanzas; equivalencia y carga de Copa, balanzas posteriores a marzo y otros pendientes previamente informados. No se afirma completa la aceptación de negocio por la ejecución de pruebas.
