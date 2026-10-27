@@ -6959,12 +6959,35 @@ async def build_budget_snapshot(
             line_ids=[str(row["id"]) for row in distribution_lines],
             ensure_schema=False,
         )
+        from .tournament_weekly_overlay import effective_plans_for_lines
+
+        plan, conflicts = await effective_plans_for_lines(
+            session,
+            version_id=str(selected_version["id"]),
+            line_ids=[str(row["id"]) for row in distribution_lines],
+            baseline_plans=plan,
+        )
         distribution = period_projection(
             distribution_lines,
             plan,
             edition_year,
             date_to or date(edition_year, 12, 31),
         )
+        distribution["source"] = "budget_line_monthly_plan_with_tournament_overlays"
+        if conflicts:
+            line_tournaments = {
+                str(row["id"]): str(row.get("tournament_id") or "")
+                for row in distribution_lines
+            }
+            for projected in distribution["rows"]:
+                if line_tournaments.get(projected["line_id"]) in conflicts:
+                    projected["status"] = "conflict"
+                    projected["scheduled"] = None
+                    projected["budget_month"] = None
+                    projected["budget_ytd"] = None
+                    projected["monthly"] = None
+            distribution["status"] = "pending"
+            distribution["conflicts"] = sorted(conflicts)
     return {
         "ok": True,
         "source": "budget_db",

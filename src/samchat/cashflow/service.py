@@ -156,7 +156,7 @@ def _add(bucket: dict[str, Any], field: str, value: Any) -> None:
     bucket[field] = _safe_float(bucket.get(field)) + _safe_float(value)
 
 
-def _summarize(buckets: list[dict[str, Any]]) -> dict[str, float]:
+def _summarize(buckets: list[dict[str, Any]]) -> dict[str, float | None]:
     fields = [
         "actual_cash_in",
         "actual_cash_out",
@@ -170,20 +170,44 @@ def _summarize(buckets: list[dict[str, Any]]) -> dict[str, float]:
         "forecast_net",
     ]
     return {
-        field: _safe_float(sum(_safe_float(bucket.get(field)) for bucket in buckets))
+        field: (
+            None
+            if any(bucket.get(field) is None for bucket in buckets)
+            else _safe_float(sum(_safe_float(bucket.get(field)) for bucket in buckets))
+        )
         for field in fields
     }
+
+
+async def _budget_edition_year(session: Any, budget_version_id: str) -> Optional[int]:
+    """Read the budget's own edition; the view horizon may use a different year."""
+    value = (
+        await session.execute(
+            text("SELECT edition_year FROM budget_versions WHERE id=CAST(:id AS uuid)"),
+            {"id": budget_version_id},
+        )
+    ).scalar_one_or_none()
+    return int(value) if value is not None else None
 
 
 async def _apply_budget_plan(
     session: Any,
     *,
     budget_version_id: str,
-    buckets_by_month: dict[int, dict[str, Any]],
+    buckets_by_key: dict[str, dict[str, Any]],
+    budget_year: Optional[int],
     limit: int,
 ) -> list[str]:
     notes: list[str] = []
+    from samchat.budgets.distribution import week_bounds
+
     try:
+        budget_year = await _budget_edition_year(session, budget_version_id)
+        if budget_year is None:
+            for bucket in buckets_by_key.values():
+                bucket["planned_budget_income"] = None
+                bucket["planned_budget_expense"] = None
+            return ["budget_plan_year_missing"]
         lines = await list_budget_lines(
             session,
             version_id=budget_version_id,
@@ -191,13 +215,30 @@ async def _apply_budget_plan(
         )
         line_ids = [_safe_str(line.get("id")) for line in lines if line.get("id")]
         plan = await list_monthly_plan_for_lines(session, line_ids=line_ids)
+        from samchat.budgets.tournament_weekly_overlay import effective_plans_for_lines
+
+        overlay_failed = False
+        try:
+            plan, conflicts = await effective_plans_for_lines(
+                session,
+                version_id=budget_version_id,
+                line_ids=line_ids,
+                baseline_plans=plan,
+            )
+        except Exception as exc:
+            # The raw plan still provides expected income, but expense cannot
+            # safely fall back to an old distribution if the overlay failed.
+            conflicts = {}
+            overlay_failed = True
+            notes.append(f"budget_plan_unavailable:{type(exc).__name__}")
         for line in lines:
             line_id = _safe_str(line.get("id"))
             direction = _safe_str(line.get("budget_direction")).lower()
             if not direction:
                 direction = _safe_str(line.get("line_direction")).lower()
-            for month_number, values in (plan.get(line_id) or {}).items():
-                bucket = buckets_by_month.get(int(month_number))
+            for week_number, values in (plan.get(line_id) or {}).items():
+                start, _ = week_bounds(int(budget_year), int(week_number))
+                bucket = buckets_by_key.get(start.strftime("%Y-%m"))
                 if not bucket:
                     continue
                 if direction == "income":
@@ -206,13 +247,21 @@ async def _apply_budget_plan(
                         "planned_budget_income",
                         values.get("expected_income_amount"),
                     )
-                else:
+                elif not overlay_failed:
                     _add(
                         bucket,
                         "planned_budget_expense",
                         values.get("budget_expense_amount"),
                     )
+        if conflicts or overlay_failed:
+            for bucket in buckets_by_key.values():
+                bucket["planned_budget_expense"] = None
+            if conflicts:
+                notes.append("budget_distribution_requires_reconciliation")
     except Exception as exc:
+        for bucket in buckets_by_key.values():
+            bucket["planned_budget_expense"] = None
+            bucket["planned_budget_income"] = None
         notes.append(f"budget_plan_unavailable:{type(exc).__name__}")
     return notes
 
@@ -348,7 +397,8 @@ async def build_cashflow_planning_read_model(
             await _apply_budget_plan(
                 session,
                 budget_version_id=clean_budget_version_id,
-                buckets_by_month=buckets_by_month,
+                buckets_by_key=buckets_by_key,
+                budget_year=edition_year or year,
                 limit=row_limit,
             )
         )
@@ -386,6 +436,10 @@ async def build_cashflow_planning_read_model(
             _safe_float(bucket.get("actual_cash_in"))
             - _safe_float(bucket.get("actual_cash_out"))
         )
+        if bucket.get("planned_budget_income") is None:
+            bucket["expected_uncollected_income"] = None
+            bucket["forecast_net"] = None
+            continue
         bucket["expected_uncollected_income"] = _safe_float(
             max(
                 _safe_float(bucket.get("planned_budget_income"))

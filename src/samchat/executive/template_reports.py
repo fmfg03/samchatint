@@ -7,7 +7,7 @@ not execute business effects.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal, overload
 
 
 MONTH_LABELS_ES = [
@@ -56,25 +56,49 @@ def _period_label(year: int | None, month: int | None) -> str:
     return f"Al {month_label} {clean_year}" if clean_year else month_label
 
 
+@overload
+def _month_values_from_buckets(
+    buckets: list[dict[str, Any]], *, field: str, scale: float,
+    preserve_unknown: Literal[False] = False,
+) -> list[float]: ...
+
+
+@overload
+def _month_values_from_buckets(
+    buckets: list[dict[str, Any]], *, field: str, scale: float,
+    preserve_unknown: Literal[True],
+) -> list[float | None]: ...
+
+
 def _month_values_from_buckets(
     buckets: list[dict[str, Any]],
     *,
     field: str,
     scale: float,
-) -> list[float]:
-    values = [0.0 for _ in range(12)]
+    preserve_unknown: bool = False,
+) -> list[float | None]:
+    values: list[float | None] = [0.0 for _ in range(12)]
     for bucket in buckets:
         month = _safe_int(bucket.get("month"))
         if 1 <= month <= 12:
-            values[month - 1] = _safe_float(_safe_float(bucket.get(field)) / scale)
+            value = bucket.get(field)
+            values[month - 1] = (
+                None
+                if preserve_unknown and value is None
+                else _safe_float(_safe_float(value) / scale)
+            )
     return values
 
 
-def _row(label: str, values: list[float], note: str = "") -> dict[str, Any]:
+def _row(label: str, values: list[float | None], note: str = "") -> dict[str, Any]:
     return {
         "segment": label,
         "months": values,
-        "total": _safe_float(sum(values)),
+        "total": (
+            None
+            if any(value is None for value in values)
+            else _safe_float(sum(value for value in values if value is not None))
+        ),
         "note": note,
     }
 
@@ -114,7 +138,7 @@ def build_cashflow_statement_report(
         buckets, field="collected_income", scale=scale
     )
     ingreso_esperado = _month_values_from_buckets(
-        buckets, field="expected_uncollected_income", scale=scale
+        buckets, field="expected_uncollected_income", scale=scale, preserve_unknown=True
     )
     salidas = _month_values_from_buckets(
         buckets, field="actual_cash_out", scale=scale

@@ -124,6 +124,7 @@ def render_budget_distribution(tournaments: list[dict]) -> str:
                 "missing": "Completar distribución",
                 "mismatch": "Suma pendiente de conciliar",
                 "invalid": "Revisar distribución",
+                "conflict": "Distribución requiere conciliación",
             }.get(row.get("status"), "Fuente pendiente")
             rows.append(
                 f'<tr><th>{escape(tournament["name"])}</th><td>{escape(str(row.get("phase") or "Sin fase"))} · {escape(row["concept"])}</td>{"".join(values)}<td>{state}</td></tr>'

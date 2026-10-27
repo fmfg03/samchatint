@@ -1735,6 +1735,17 @@ def register_presupuestos_routes(router) -> None:
                 line["id"] for line in (filtered_expense_lines + filtered_income_lines)
             ],
         )
+        from samchat.budgets.tournament_weekly_overlay import effective_plans_for_lines
+
+        plan_map, distribution_conflicts = await effective_plans_for_lines(
+            session,
+            version_id=str(selected_version["id"]),
+            line_ids=[
+                str(line["id"])
+                for line in (filtered_expense_lines + filtered_income_lines)
+            ],
+            baseline_plans=plan_map,
+        )
         actuals_snapshot = await build_budget_actuals_snapshot(
             session,
             edition_year=resolved_year,
@@ -1786,9 +1797,13 @@ def register_presupuestos_routes(router) -> None:
             for cuenta in cuentas_rows
         ]
 
+        expense_plan_map = dict(plan_map)
+        for line in filtered_expense_lines:
+            if str(line.get("tournament_id") or "") in distribution_conflicts:
+                expense_plan_map.pop(str(line["id"]), None)
         gastos_matrix_html = render_budget_partida_matrix(
             filtered_expense_lines,
-            plan_map=plan_map,
+            plan_map=expense_plan_map,
             actuals_map=actuals_map,
             actual_movements=actuals_snapshot["movements"],
             version_id=selected_version["id"],
@@ -1803,6 +1818,12 @@ def register_presupuestos_routes(router) -> None:
             budget_view="expenses",
             budget_period=budget_period,
         )
+        if distribution_conflicts:
+            gastos_matrix_html = (
+                '<p role="status">La distribución requiere conciliación: '
+                'cambiaron las partidas o importes del torneo.</p>'
+                + gastos_matrix_html
+            )
         ingresos_matrix_html = render_budget_partida_matrix(
             filtered_income_lines,
             plan_map=plan_map,
@@ -2003,7 +2024,7 @@ def register_presupuestos_routes(router) -> None:
             {success_html}{error_html}
             {render_budget_executive_dashboard(
                 filtered_income_lines if selected_budget_view == "income" else filtered_expense_lines,
-                plan_map=plan_map,
+                plan_map=plan_map if selected_budget_view == "income" else expense_plan_map,
                 actuals_map=actuals_map,
                 tournament_key=tournament_key,
                 edition_year=resolved_year,

@@ -20,6 +20,8 @@ def _safe_int(value: Any) -> int:
 
 
 def _money(value: Any) -> str:
+    if value is None:
+        return "N/D"
     amount = _safe_float(value)
     return f"${amount:,.2f}"
 

@@ -7,6 +7,8 @@ from typing import Any
 
 
 def _money(value: Any) -> str:
+    if value is None:
+        return "N/D"
     try:
         amount = float(value or 0)
     except (TypeError, ValueError):

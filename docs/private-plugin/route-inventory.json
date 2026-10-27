@@ -4929,7 +4929,7 @@
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
       "line": 636,
       "handler": "admin_presupuestos_dashboard",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "GET",
       "paths": [
         "/admin/presupuestos"
@@ -5021,7 +5021,7 @@
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
       "line": 970,
       "handler": "admin_presupuestos_export_xlsx",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "GET",
       "paths": [
         "/admin/presupuestos/export.xlsx"
@@ -5105,7 +5105,7 @@
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
       "line": 1031,
       "handler": "admin_presupuestos_create_version",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/versiones/create"
@@ -5190,7 +5190,7 @@
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
       "line": 1069,
       "handler": "admin_presupuestos_transition_version",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/versiones/{version_id}/transition"
@@ -5277,7 +5277,7 @@
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
       "line": 1121,
       "handler": "admin_presupuestos_distribution_revision",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/versiones/{version_id}/distribucion"
@@ -5362,7 +5362,7 @@
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
       "line": 1154,
       "handler": "admin_presupuestos_update_version",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/versiones/{version_id}/update"
@@ -5447,7 +5447,7 @@
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
       "line": 1196,
       "handler": "admin_presupuestos_create_line",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/versiones/{version_id}/lineas/create"
@@ -5548,7 +5548,7 @@
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
       "line": 1289,
       "handler": "admin_presupuestos_assign_existing_line",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/versiones/{version_id}/lineas/assign-existing"
@@ -5641,7 +5641,7 @@
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
       "line": 1374,
       "handler": "admin_presupuestos_update_line",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/lineas/{line_id}/update"
@@ -5745,7 +5745,7 @@
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
       "line": 1609,
       "handler": "admin_presupuestos_tournament_detail",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "GET",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}"
@@ -5835,11 +5835,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "36c5c7ec1921",
+      "id": "6627e2b95b07",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2023,
+      "line": 2044,
       "handler": "admin_presupuestos_import_income_lines",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/ingresos/import"
@@ -5896,7 +5896,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_import_income_lines",
-      "proposed_tool": "budgets_admin_presupuestos_import_income_lines_post_36c5c7",
+      "proposed_tool": "budgets_admin_presupuestos_import_income_lines_post_6627e2",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -5921,11 +5921,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "1c58667ae013",
+      "id": "f0292e3733c0",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2085,
+      "line": 2106,
       "handler": "admin_presupuestos_export_income_xlsx",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "GET",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/ingresos/export.xlsx"
@@ -5985,7 +5985,7 @@
         "build_budget_monthly_actuals"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_export_income_xlsx",
-      "proposed_tool": "budgets_admin_presupuestos_export_income_xlsx_get_1c5866",
+      "proposed_tool": "budgets_admin_presupuestos_export_income_xlsx_get_f0292e",
       "scope_proposal": "budgets:read; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -6006,11 +6006,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "dc3c98d39672",
+      "id": "f9690f51763a",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2193,
+      "line": 2214,
       "handler": "admin_presupuestos_cfdi_income_redirect",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "GET",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos"
@@ -6067,7 +6067,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_cfdi_income_redirect",
-      "proposed_tool": "budgets_admin_presupuestos_cfdi_income_redirect_get_dc3c98",
+      "proposed_tool": "budgets_admin_presupuestos_cfdi_income_redirect_get_f9690f",
       "scope_proposal": "budgets:read; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -6086,11 +6086,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "0f7e1fc875cf",
+      "id": "9b15f3b14d39",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2207,
+      "line": 2228,
       "handler": "admin_presupuestos_link_cfdi_income",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/link"
@@ -6147,7 +6147,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_link_cfdi_income",
-      "proposed_tool": "budgets_admin_presupuestos_link_cfdi_income_post_0f7e1f",
+      "proposed_tool": "budgets_admin_presupuestos_link_cfdi_income_post_9b15f3",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -6175,11 +6175,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "c6321424ece9",
+      "id": "fee6f2eab028",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2271,
+      "line": 2292,
       "handler": "admin_presupuestos_decide_cfdi_income",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/{link_id}/decision"
@@ -6236,7 +6236,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_decide_cfdi_income",
-      "proposed_tool": "budgets_admin_presupuestos_decide_cfdi_income_post_c63214",
+      "proposed_tool": "budgets_admin_presupuestos_decide_cfdi_income_post_fee6f2",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -6263,11 +6263,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "467f07c833bb",
+      "id": "6ebe24162cb3",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2304,
+      "line": 2325,
       "handler": "admin_presupuestos_confirm_cfdi_income_collection",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/{link_id}/collection"
@@ -6324,7 +6324,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_confirm_cfdi_income_collection",
-      "proposed_tool": "budgets_admin_presupuestos_confirm_cfdi_income_collectio_467f07",
+      "proposed_tool": "budgets_admin_presupuestos_confirm_cfdi_income_collectio_6ebe24",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -6350,11 +6350,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "7c6a1bffaed1",
+      "id": "ca678ce8bc8b",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2336,
+      "line": 2357,
       "handler": "admin_presupuestos_upload_link_cfdi_income",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/upload-link"
@@ -6411,7 +6411,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_upload_link_cfdi_income",
-      "proposed_tool": "budgets_admin_presupuestos_upload_link_cfdi_income_post_7c6a1b",
+      "proposed_tool": "budgets_admin_presupuestos_upload_link_cfdi_income_post_ca678c",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -6440,11 +6440,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "1bf8e9d6c30e",
+      "id": "3124127965c4",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2408,
+      "line": 2429,
       "handler": "admin_presupuestos_unlink_cfdi_income",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/{link_id}/unlink"
@@ -6501,7 +6501,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_unlink_cfdi_income",
-      "proposed_tool": "budgets_admin_presupuestos_unlink_cfdi_income_post_1bf8e9",
+      "proposed_tool": "budgets_admin_presupuestos_unlink_cfdi_income_post_312412",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "tournament_key",
@@ -6526,11 +6526,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ec427be0f8b9",
+      "id": "335b1cb62315",
       "source": "src/devnous/gastos/routes/admin_budget_routes.py",
-      "line": 2452,
+      "line": 2473,
       "handler": "admin_presupuestos_copy_forward",
-      "source_sha256": "c1c11363c3732df48e3b2eb1185a5d052635b9a36c9c8c61eb4fd0593333975c",
+      "source_sha256": "363150e45c9f181bff18067a87df7f3d8e4c30dd61cffb1261dbd8e9d025c62d",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/versiones/copy-forward"
@@ -6587,7 +6587,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_budget_routes.py:admin_presupuestos_copy_forward",
-      "proposed_tool": "budgets_admin_presupuestos_copy_forward_post_ec427b",
+      "proposed_tool": "budgets_admin_presupuestos_copy_forward_post_335b1c",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "source_version_id",
