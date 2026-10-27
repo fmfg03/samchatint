@@ -18,7 +18,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 2216,
       "handler": "serve_photo_asset",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/photos/{path:path}"
@@ -69,7 +69,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 2251,
       "handler": "password_change_discovery",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/.well-known/change-password"
@@ -117,7 +117,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4259,
       "handler": "copa_america_spa",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/copa-america"
@@ -167,7 +167,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4259,
       "handler": "copa_america_spa",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/copa-america/"
@@ -217,7 +217,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4259,
       "handler": "copa_america_spa",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/copa-america/{path:path}"
@@ -267,7 +267,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4274,
       "handler": "assistant_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/assistant"
@@ -330,7 +330,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4274,
       "handler": "assistant_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/assistant/"
@@ -393,7 +393,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4274,
       "handler": "assistant_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/assistant/{path:path}"
@@ -456,7 +456,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4298,
       "handler": "rag_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/RAG"
@@ -506,7 +506,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4298,
       "handler": "rag_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/RAG/"
@@ -556,7 +556,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4298,
       "handler": "rag_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/RAG/{path:path}"
@@ -606,7 +606,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4298,
       "handler": "rag_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/rag"
@@ -656,7 +656,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4298,
       "handler": "rag_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/rag/"
@@ -706,7 +706,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4298,
       "handler": "rag_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/rag/{path:path}"
@@ -756,7 +756,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4316,
       "handler": "admin_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/admin"
@@ -817,7 +817,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4316,
       "handler": "admin_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/admin/"
@@ -878,7 +878,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4334,
       "handler": "folders_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/folders"
@@ -928,7 +928,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4334,
       "handler": "folders_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/folders/"
@@ -978,7 +978,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4334,
       "handler": "folders_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/folders/{path:path}"
@@ -1028,7 +1028,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4353,
       "handler": "operations_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/operations"
@@ -1078,7 +1078,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4353,
       "handler": "operations_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/operations/"
@@ -1128,7 +1128,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4353,
       "handler": "operations_spa_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/operations/{path:path}"
@@ -1178,7 +1178,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4371,
       "handler": "finance_root_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/finance"
@@ -1226,7 +1226,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4371,
       "handler": "finance_root_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/finance/"
@@ -1274,7 +1274,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4381,
       "handler": "finance_expenses_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/finance/expenses"
@@ -1322,7 +1322,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4381,
       "handler": "finance_expenses_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/finance/expenses/"
@@ -1370,7 +1370,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4390,
       "handler": "finance_my_expenses_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/finance/my-expenses"
@@ -1418,7 +1418,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4390,
       "handler": "finance_my_expenses_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/finance/my-expenses/"
@@ -1466,7 +1466,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4399,
       "handler": "finance_accounts_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/finance/accounts"
@@ -1514,7 +1514,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4399,
       "handler": "finance_accounts_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/finance/accounts/"
@@ -1562,7 +1562,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4408,
       "handler": "finance_unmapped_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/finance/unmapped"
@@ -1610,7 +1610,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4408,
       "handler": "finance_unmapped_alias",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/finance/unmapped/"
@@ -1658,7 +1658,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4418,
       "handler": "copa_telmex_spa",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/telmex"
@@ -1708,7 +1708,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4418,
       "handler": "copa_telmex_spa",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/telmex/"
@@ -1758,7 +1758,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4418,
       "handler": "copa_telmex_spa",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/telmex/{path:path}"
@@ -1808,7 +1808,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4482,
       "handler": "root_enterprise_home",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/"
@@ -1856,7 +1856,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4496,
       "handler": "healthz",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/healthz"
@@ -1904,7 +1904,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4511,
       "handler": "readyz",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/readyz"
@@ -1952,7 +1952,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4561,
       "handler": "tournament_selector",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/torneos"
@@ -2000,7 +2000,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4574,
       "handler": "home",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/dashboard"
@@ -2054,7 +2054,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4651,
       "handler": "get_stats",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/api/stats"
@@ -2102,7 +2102,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4661,
       "handler": "list_teams",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/teams"
@@ -2150,7 +2150,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4704,
       "handler": "view_team",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/team/{team_id}"
@@ -2200,7 +2200,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4770,
       "handler": "list_players",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/players"
@@ -2250,7 +2250,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4823,
       "handler": "list_registration_review_sessions",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/registration-review"
@@ -2298,7 +2298,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4874,
       "handler": "new_registration_review_session",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/registration-review/new"
@@ -2346,7 +2346,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4891,
       "handler": "create_registration_review_session",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "POST",
       "paths": [
         "/api/registration-review"
@@ -2399,7 +2399,7 @@
       "source": "copa_telmex_dashboard.py",
       "line": 4964,
       "handler": "admit_registration_review_batch",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "POST",
       "paths": [
         "/api/registration-review/batches"
@@ -2449,11 +2449,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "429cd6994a10",
+      "id": "08a14b1e7a90",
       "source": "copa_telmex_dashboard.py",
-      "line": 5430,
+      "line": 5433,
       "handler": "create_registration_batch_upload",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "POST",
       "paths": [
         "/api/registration-review/batch-uploads"
@@ -2485,7 +2485,7 @@
         "validate_batch_admission_manifest"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:create_registration_batch_upload",
-      "proposed_tool": "registration_create_registration_batch_upload_post_429cd6",
+      "proposed_tool": "registration_create_registration_batch_upload_post_08a14b",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [],
       "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
@@ -2504,11 +2504,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "f8f2ae7e4601",
+      "id": "268100cf0b43",
       "source": "copa_telmex_dashboard.py",
-      "line": 5550,
+      "line": 5553,
       "handler": "registration_batch_upload_status",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/api/registration-review/batch-uploads/{upload_id}"
@@ -2536,7 +2536,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:registration_batch_upload_status",
-      "proposed_tool": "registration_registration_batch_upload_status_get_f8f2ae",
+      "proposed_tool": "registration_registration_batch_upload_status_get_268100",
       "scope_proposal": "registration:read; never grants business authority",
       "object_parameters": [
         "upload_id"
@@ -2554,11 +2554,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "559c3bb228fc",
+      "id": "ff2fb9073371",
       "source": "copa_telmex_dashboard.py",
-      "line": 5565,
+      "line": 5568,
       "handler": "upload_registration_batch_file",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "POST",
       "paths": [
         "/api/registration-review/batch-uploads/{upload_id}/files"
@@ -2588,7 +2588,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:upload_registration_batch_file",
-      "proposed_tool": "registration_upload_registration_batch_file_post_559c3b",
+      "proposed_tool": "registration_upload_registration_batch_file_post_ff2fb9",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "upload_id"
@@ -2609,11 +2609,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "5050a69a8343",
+      "id": "56afd5d69475",
       "source": "copa_telmex_dashboard.py",
-      "line": 5630,
+      "line": 5633,
       "handler": "admit_next_registration_batch_document",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "POST",
       "paths": [
         "/api/registration-review/batch-uploads/{upload_id}/admit-next"
@@ -2645,7 +2645,7 @@
         "lock_session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:admit_next_registration_batch_document",
-      "proposed_tool": "registration_admit_next_registration_batch_document_post_5050a6",
+      "proposed_tool": "registration_admit_next_registration_batch_document_post_56afd5",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "upload_id"
@@ -2666,11 +2666,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "7a8853c297de",
+      "id": "aca24506cc2d",
       "source": "copa_telmex_dashboard.py",
-      "line": 5774,
+      "line": 5777,
       "handler": "cancel_registration_batch_upload",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "DELETE",
       "paths": [
         "/api/registration-review/batch-uploads/{upload_id}"
@@ -2700,7 +2700,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:cancel_registration_batch_upload",
-      "proposed_tool": "registration_cancel_registration_batch_upload_delete_7a8853",
+      "proposed_tool": "registration_cancel_registration_batch_upload_delete_aca245",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "upload_id"
@@ -2721,11 +2721,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "623216011025",
+      "id": "f98091e38b46",
       "source": "copa_telmex_dashboard.py",
-      "line": 5810,
+      "line": 5813,
       "handler": "get_registration_review_session_payload",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/api/registration-review/{session_id}"
@@ -2756,7 +2756,7 @@
         "_build_review_validation"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:get_registration_review_session_payload",
-      "proposed_tool": "registration_get_registration_review_session_payload_get_623216",
+      "proposed_tool": "registration_get_registration_review_session_payload_get_f98091",
       "scope_proposal": "registration:read; never grants business authority",
       "object_parameters": [
         "session_id"
@@ -2774,11 +2774,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "664e9e3af4dd",
+      "id": "61de4476a89c",
       "source": "copa_telmex_dashboard.py",
-      "line": 5864,
+      "line": 5867,
       "handler": "view_registration_review_session",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "GET",
       "paths": [
         "/registration-review/{session_id}"
@@ -2813,7 +2813,7 @@
         "build_canonical_review_view"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:view_registration_review_session",
-      "proposed_tool": "registration_view_registration_review_session_get_664e9e",
+      "proposed_tool": "registration_view_registration_review_session_get_61de44",
       "scope_proposal": "registration:read; never grants business authority",
       "object_parameters": [
         "session_id"
@@ -2831,11 +2831,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "7566a1472d2b",
+      "id": "5c2e99397bb3",
       "source": "copa_telmex_dashboard.py",
-      "line": 5995,
+      "line": 5998,
       "handler": "edit_registration_review_session",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "POST",
       "paths": [
         "/api/registration-review/{session_id}/edit"
@@ -2884,7 +2884,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:edit_registration_review_session",
-      "proposed_tool": "registration_edit_registration_review_session_post_7566a1",
+      "proposed_tool": "registration_edit_registration_review_session_post_5c2e99",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "session_id"
@@ -2905,11 +2905,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e230fc5d7774",
+      "id": "3cdd34235096",
       "source": "copa_telmex_dashboard.py",
-      "line": 6418,
+      "line": 6421,
       "handler": "adopt_canonical_review_fields",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "POST",
       "paths": [
         "/api/registration-review/{session_id}/canonical-adopt"
@@ -2937,7 +2937,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:adopt_canonical_review_fields",
-      "proposed_tool": "registration_adopt_canonical_review_fields_post_e230fc",
+      "proposed_tool": "registration_adopt_canonical_review_fields_post_3cdd34",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "session_id"
@@ -2958,11 +2958,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "4bd34b79dff3",
+      "id": "a1fae163e644",
       "source": "copa_telmex_dashboard.py",
-      "line": 6431,
+      "line": 6434,
       "handler": "reject_registration_review_session",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "POST",
       "paths": [
         "/api/registration-review/{session_id}/reject"
@@ -2993,7 +2993,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:reject_registration_review_session",
-      "proposed_tool": "registration_reject_registration_review_session_post_4bd34b",
+      "proposed_tool": "registration_reject_registration_review_session_post_a1fae1",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "session_id"
@@ -3014,11 +3014,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "bd9f1d753086",
+      "id": "31756695d222",
       "source": "copa_telmex_dashboard.py",
-      "line": 6510,
+      "line": 6513,
       "handler": "reprocess_registration_review_session",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "POST",
       "paths": [
         "/api/registration-review/{session_id}/reprocess"
@@ -3055,7 +3055,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:reprocess_registration_review_session",
-      "proposed_tool": "registration_reprocess_registration_review_session_post_bd9f1d",
+      "proposed_tool": "registration_reprocess_registration_review_session_post_317566",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "session_id"
@@ -3076,11 +3076,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ab3f7623396d",
+      "id": "f2e8111d0c0c",
       "source": "copa_telmex_dashboard.py",
-      "line": 6849,
+      "line": 6852,
       "handler": "append_assets_to_registration_review_session",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "POST",
       "paths": [
         "/api/registration-review/{session_id}/assets"
@@ -3115,7 +3115,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:append_assets_to_registration_review_session",
-      "proposed_tool": "registration_append_assets_to_registration_review_sessio_ab3f76",
+      "proposed_tool": "registration_append_assets_to_registration_review_sessio_f2e811",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "session_id"
@@ -3136,11 +3136,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "1b8c6f93e524",
+      "id": "366cac73a861",
       "source": "copa_telmex_dashboard.py",
-      "line": 7206,
+      "line": 7209,
       "handler": "commit_registration_review_session",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "POST",
       "paths": [
         "/api/registration-review/{session_id}/commit"
@@ -3183,7 +3183,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:commit_registration_review_session",
-      "proposed_tool": "registration_commit_registration_review_session_post_1b8c6f",
+      "proposed_tool": "registration_commit_registration_review_session_post_366cac",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "session_id"
@@ -3204,11 +3204,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "2c186071e002",
+      "id": "c1da04906a7e",
       "source": "copa_telmex_dashboard.py",
-      "line": 7759,
+      "line": 7762,
       "handler": "edit_team",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "POST",
       "paths": [
         "/api/team/{team_id}/edit"
@@ -3236,7 +3236,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:edit_team",
-      "proposed_tool": "registration_edit_team_post_2c1860",
+      "proposed_tool": "registration_edit_team_post_c1da04",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "team_id"
@@ -3257,11 +3257,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "c9a10284455e",
+      "id": "9b5a5ae8c577",
       "source": "copa_telmex_dashboard.py",
-      "line": 7803,
+      "line": 7806,
       "handler": "edit_player",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "POST",
       "paths": [
         "/api/player/{player_id}/edit"
@@ -3289,7 +3289,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:edit_player",
-      "proposed_tool": "registration_edit_player_post_c9a102",
+      "proposed_tool": "registration_edit_player_post_9b5a5a",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "player_id"
@@ -3310,11 +3310,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "948932ac24e6",
+      "id": "06507d804b71",
       "source": "copa_telmex_dashboard.py",
-      "line": 7860,
+      "line": 7863,
       "handler": "verify_player",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "POST",
       "paths": [
         "/api/player/{player_id}/verify"
@@ -3342,7 +3342,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:verify_player",
-      "proposed_tool": "registration_verify_player_post_948932",
+      "proposed_tool": "registration_verify_player_post_06507d",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "player_id"
@@ -3363,11 +3363,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "3acec0c8ff58",
+      "id": "c6ab2368408f",
       "source": "copa_telmex_dashboard.py",
-      "line": 7898,
+      "line": 7901,
       "handler": "delete_player",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "DELETE",
       "paths": [
         "/api/player/{player_id}"
@@ -3395,7 +3395,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:delete_player",
-      "proposed_tool": "registration_delete_player_delete_3acec0",
+      "proposed_tool": "registration_delete_player_delete_c6ab23",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "player_id"
@@ -3416,11 +3416,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "60e86761276c",
+      "id": "40bdc176d3cc",
       "source": "copa_telmex_dashboard.py",
-      "line": 7910,
+      "line": 7913,
       "handler": "delete_team",
-      "source_sha256": "01b0342333f073afc9776b6a6b5e72d6662472ea27dd2dccbc58ed30a339e30e",
+      "source_sha256": "bdec1b282ad5c13f13764281c03ed9017f61e7bc496b65f2075c8910cf06453d",
       "method": "DELETE",
       "paths": [
         "/api/team/{team_id}"
@@ -3448,7 +3448,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: copa_telmex_dashboard.py:delete_team",
-      "proposed_tool": "registration_delete_team_delete_60e867",
+      "proposed_tool": "registration_delete_team_delete_40bdc1",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "team_id"
