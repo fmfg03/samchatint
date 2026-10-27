@@ -200,3 +200,51 @@ identifiers from the canonical draft, following the existing web-upload path.
 No trigger or grant is relaxed. A negative case verifies that later page
 rebinding and draft edits still fail closed. This is additional evidence
 completion within the same admission helper, not a new authority surface.
+
+## Native FK ownership correction: 2026-10-27
+
+The authenticated pilot on release `7b91ab36c` reached draft preparation but
+failed on the document-binding INSERT with PostgreSQL 42501. In production,
+`devnous_user` owned both append-only tables with UPDATE revoked. PostgreSQL's
+native composite-FK check takes a key-share lock using the referenced table's
+owner. Revoking UPDATE from that owner therefore prevented even the permitted
+INSERT. The prior fixture retained the superuser migration owner and missed
+this production condition.
+
+The human-approved correction is the administrator-run migration
+`database/migrations/20261027_copa_telmex_batch_table_owner.sql`. It transfers
+only the batch and document-binding tables to `samchat_ctt_admission_owner`, a
+NOLOGIN, non-superuser role with no memberships. That owner has USAGE of the
+target schema and its own table privileges. The runtime retains SELECT/INSERT
+only; UPDATE, DELETE, TRUNCATE, REFERENCES and TRIGGER privileges are absent.
+Constraints, native triggers, source identities, draft receipts and staff gates
+are unchanged. No application restart or runtime code change is required.
+
+Run as the database administrator with `search_path=public` in production. The
+migration checks the expected owner, runtime ACL, role properties, lack of
+memberships and validated batch-edition FK. It fails closed for unexpected
+state, uses five-second lock and sixty-second statement timeouts, and commits
+atomically. Reapplying the same migration is safe. It is never startup DDL.
+
+Before application, privately back up DDL, ownership, ACL, memberships and
+counts. Verify the same row and constraint fingerprints afterwards, effective
+runtime privileges, login prohibition and lack of role membership. Do not admit
+production dossiers as part of the administrative deployment. The rollback
+script restores the previously observed owner and ACL and intentionally
+restores the known FK failure; prefer roll-forward and preserve the NOLOGIN
+role if it may have other dependencies.
+
+The integrated fixture now reproduces the original owner and revoked UPDATE,
+connects directly as the non-superuser runtime (current_user and session_user
+both `devnous_user`), then applies the migration. Regression cases cover the
+original failing INSERT, successful admission/retry, independent concurrent
+connections, eleven dossiers, owner isolation, effective grants and actual
+UPDATE/DELETE/TRUNCATE and SET ROLE denials. The native FK still rejects a
+missing batch; migration reapplication and rollback preserve admitted rows;
+an incompatible pre-existing role or a runtime attempt to migrate is rejected.
+REG-S02/04/05 guards remain installed. External Zaubern authorization is the
+only simulated component. Local evidence does not replace authenticated UAT.
+
+Canon: engineering section 20 includes the explicitly human-approved ownership
+amendment and its reason. Product and sweep are unchanged: no business authority,
+team capture, eligibility or historical inventory changes.

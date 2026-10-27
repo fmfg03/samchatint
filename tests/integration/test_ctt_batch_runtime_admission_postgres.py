@@ -14,7 +14,7 @@ from uuid import uuid4
 import asyncpg
 import pytest
 import pytest_asyncio
-from sqlalchemy import event, text
+from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -143,7 +143,7 @@ def runtime_postgres():
 
 
 @pytest_asyncio.fixture
-async def admission_db(monkeypatch, tmp_path, runtime_postgres):
+async def admission_db(monkeypatch, tmp_path, runtime_postgres, request):
     socket, port = runtime_postgres
     schema = "test_runtime_admission_" + uuid4().hex
     admin = await asyncpg.connect(
@@ -158,18 +158,11 @@ async def admission_db(monkeypatch, tmp_path, runtime_postgres):
         "postgresql+asyncpg://postgres@/postgres", connect_args=options
     )
     runtime_engine = create_async_engine(
-        "postgresql+asyncpg://postgres@/postgres", connect_args=options
+        "postgresql+asyncpg://devnous_user@/postgres", connect_args=options
     )
 
-    @event.listens_for(runtime_engine.sync_engine, "connect")
-    def use_runtime_role(connection, _record):
-        cursor = connection.cursor()
-        cursor.execute("SET ROLE devnous_user")
-        cursor.close()
-        connection.commit()
-
     try:
-        await admin.execute("CREATE ROLE devnous_user NOLOGIN")
+        await admin.execute("CREATE ROLE devnous_user LOGIN")
         await admin.execute(f'CREATE SCHEMA "{schema}"')
         await admin.execute(f'SET search_path TO "{schema}"')
         await admin.execute(
@@ -203,6 +196,17 @@ async def admission_db(monkeypatch, tmp_path, runtime_postgres):
                 root / "database/migrations/20261006_copa_telmex_batch_admission.sql"
             ).read_text()
         )
+        # Production installed these tables as the runtime role, then revoked
+        # UPDATE. PostgreSQL's native FK check locks as the referenced owner.
+        for table in (
+            "copa_telmex_registration_batches",
+            "copa_telmex_registration_batch_documents",
+        ):
+            await admin.execute(f"ALTER TABLE {table} OWNER TO devnous_user")
+            await admin.execute(f"GRANT ALL ON {table} TO devnous_user")
+            await admin.execute(f"REVOKE UPDATE, DELETE ON {table} FROM devnous_user")
+        if getattr(request, "param", True):
+            await admin.execute(_owner_migration())
         for filename, function, trigger, kind in [
             (
                 "20260716_regs02_append_only_review_drafts.sql",
@@ -268,8 +272,18 @@ async def admission_db(monkeypatch, tmp_path, runtime_postgres):
         await owner_engine.dispose()
         await admin.execute("SET search_path TO public")
         await admin.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        await admin.execute("DROP ROLE IF EXISTS samchat_ctt_admission_owner")
         await admin.execute("DROP ROLE IF EXISTS devnous_user")
         await admin.close()
+
+
+def _owner_migration(*, rollback=False):
+    suffix = ".rollback.sql" if rollback else ".sql"
+    return (
+        Path(__file__).resolve().parents[2]
+        / "database/migrations"
+        / ("20261027_copa_telmex_batch_table_owner" + suffix)
+    ).read_text()
 
 
 def _sources(tournament_id, documents=1):
@@ -337,6 +351,7 @@ async def test_runtime_role_admits_real_draft_and_recovers_retry(admission_db):
     admin, factory, tournament_id, gate = admission_db
     async with factory() as session:
         assert await session.scalar(text("SELECT current_user")) == "devnous_user"
+        assert await session.scalar(text("SELECT session_user")) == "devnous_user"
         assert not await session.scalar(
             text(
                 "SELECT has_table_privilege(current_user, "
@@ -390,6 +405,157 @@ async def test_runtime_role_admits_real_draft_and_recovers_retry(admission_db):
         == 2
     )
     assert first["committed_teams"] == 0 and first["grants_eligibility"] is False
+
+
+@pytest.mark.parametrize("admission_db", [False], indirect=True)
+@pytest.mark.asyncio
+async def test_legacy_runtime_ownership_reproduces_fk_failure(admission_db):
+    admin, _factory, tournament_id, _gate = admission_db
+    manifest, uploads = _sources(tournament_id)
+    with pytest.raises(DBAPIError, match="permission denied for table .*batches"):
+        await _admit(manifest, uploads)
+    assert (
+        await admin.fetchval(
+            "SELECT count(*) FROM copa_telmex_registration_batch_documents"
+        )
+        == 0
+    )
+    await admin.execute(_owner_migration())
+    result = await _admit(manifest, uploads)
+    assert result["documents"][0]["status"] == "ADMITTED_FOR_REVIEW"
+
+
+@pytest.mark.asyncio
+async def test_owner_migration_is_idempotent_and_runtime_remains_append_only(
+    admission_db,
+):
+    admin, factory, tournament_id, _gate = admission_db
+    await admin.execute(_owner_migration())
+    role = await admin.fetchrow(
+        "SELECT rolcanlogin,rolsuper,rolcreatedb,rolcreaterole,rolreplication,"
+        "rolbypassrls,rolinherit FROM pg_roles "
+        "WHERE rolname='samchat_ctt_admission_owner'"
+    )
+    assert role is not None and not any(role.values())
+    assert (
+        await admin.fetchval(
+            "SELECT count(*) FROM pg_auth_members WHERE roleid="
+            "'samchat_ctt_admission_owner'::regrole OR member="
+            "'samchat_ctt_admission_owner'::regrole"
+        )
+        == 0
+    )
+    for table in (
+        "copa_telmex_registration_batches",
+        "copa_telmex_registration_batch_documents",
+    ):
+        assert (
+            await admin.fetchval(
+                "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid=$1::regclass",
+                table,
+            )
+            == "samchat_ctt_admission_owner"
+        )
+        async with factory() as session:
+            for privilege in ("SELECT", "INSERT"):
+                assert await session.scalar(
+                    text("SELECT has_table_privilege(current_user,:table,:privilege)"),
+                    {"table": table, "privilege": privilege},
+                )
+            for privilege in ("UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
+                assert not await session.scalar(
+                    text("SELECT has_table_privilege(current_user,:table,:privilege)"),
+                    {"table": table, "privilege": privilege},
+                )
+        for statement in (
+            f"UPDATE {table} SET id=id WHERE false",
+            f"DELETE FROM {table} WHERE false",
+            f"TRUNCATE {table}",
+        ):
+            async with factory() as session:
+                with pytest.raises(DBAPIError, match="permission denied"):
+                    await session.execute(text(statement))
+                await session.rollback()
+    async with factory() as session:
+        with pytest.raises(DBAPIError, match="permission denied to set role"):
+            await session.execute(text("SET ROLE samchat_ctt_admission_owner"))
+        await session.rollback()
+    manifest, uploads = _sources(tournament_id)
+    await _admit(manifest, uploads)
+    # Check the native composite FK using its real trigger and a missing parent.
+    tx = admin.transaction()
+    await tx.start()
+    try:
+        with pytest.raises(asyncpg.ForeignKeyViolationError):
+            await admin.execute(
+                "UPDATE copa_telmex_registration_batch_documents SET batch_id=$1",
+                uuid4(),
+            )
+    finally:
+        await tx.rollback()
+
+
+@pytest.mark.asyncio
+async def test_owner_rollback_and_reapply_preserve_admitted_drafts(admission_db):
+    admin, _factory, tournament_id, _gate = admission_db
+    manifest, uploads = _sources(tournament_id)
+    await _admit(manifest, uploads)
+    before = await admin.fetchval(
+        "SELECT jsonb_agg(to_jsonb(d))::text "
+        "FROM copa_telmex_registration_batch_documents d"
+    )
+    await admin.execute(_owner_migration(rollback=True))
+    assert (
+        await admin.fetchval(
+            "SELECT pg_get_userbyid(relowner) FROM pg_class "
+            "WHERE oid='copa_telmex_registration_batches'::regclass"
+        )
+        == "devnous_user"
+    )
+    await admin.execute(_owner_migration())
+    result = await _admit(manifest, uploads)
+    assert result["documents"][0]["status"] == "RECOVERED"
+    assert (
+        await admin.fetchval(
+            "SELECT jsonb_agg(to_jsonb(d))::text "
+            "FROM copa_telmex_registration_batch_documents d"
+        )
+        == before
+    )
+
+
+@pytest.mark.asyncio
+async def test_owner_migration_rejects_incompatible_existing_role_atomically(
+    admission_db,
+):
+    admin, _factory, _tournament_id, _gate = admission_db
+    await admin.execute("ALTER ROLE samchat_ctt_admission_owner LOGIN")
+    try:
+        with pytest.raises(asyncpg.RaiseError, match="owner role is incompatible"):
+            await admin.execute(_owner_migration())
+        await admin.execute("ROLLBACK")
+        assert (
+            await admin.fetchval(
+                "SELECT pg_get_userbyid(relowner) FROM pg_class "
+                "WHERE oid='copa_telmex_registration_batches'::regclass"
+            )
+            == "samchat_ctt_admission_owner"
+        )
+    finally:
+        await admin.execute("ALTER ROLE samchat_ctt_admission_owner NOLOGIN")
+
+
+@pytest.mark.asyncio
+async def test_runtime_cannot_apply_owner_migration(admission_db):
+    _admin, factory, _tournament_id, _gate = admission_db
+    async with factory() as session:
+        # SQLAlchemy prepares one statement at a time; asyncpg can execute the
+        # administrator migration verbatim on the same authenticated connection.
+        connection = await session.connection()
+        raw = await connection.get_raw_connection()
+        with pytest.raises(asyncpg.RaiseError, match="requires an administrator"):
+            await raw.driver_connection.execute(_owner_migration())
+        await raw.driver_connection.execute("ROLLBACK")
 
 
 @pytest.mark.asyncio
