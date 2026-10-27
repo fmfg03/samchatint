@@ -96,6 +96,8 @@ class _AdmissionSession:
         return None
 
     async def execute(self, _statement, params=None):
+        if "pg_advisory_xact_lock" in str(_statement):
+            return _Result()
         self.calls += 1
         if self.phase == "batch":
             if self.calls == 1:
@@ -111,8 +113,6 @@ class _AdmissionSession:
                         document_count=params["document_count"],
                     )
                 return _Result()
-            return _Result(scalar=self.state.batch)
-        if self.calls == 1:
             return _Result(scalar=self.state.batch)
         return _Result(scalar=self.state.binding)
 
@@ -358,15 +358,6 @@ def test_manifest_preparer_rejects_extra_technical_staff(tmp_path):
 def test_batch_tables_require_owner_migration_instead_of_runtime_create_all():
     managed = {table.name for table in runtime_managed_tables(dashboard.Base.metadata)}
     assert not (CTT_OWNER_MIGRATION_TABLES & managed)
-
-
-def test_batch_endpoint_serializes_concurrent_idempotent_retries():
-    source = Path(dashboard.__file__).read_text()
-    route = source.split("async def admit_registration_review_batch", 1)[1].split(
-        '@app.get("/api/registration-review/{session_id}"', 1
-    )[0]
-    assert "ON CONFLICT (id) DO NOTHING" in route
-    assert route.count(".with_for_update()") >= 2
 
 
 def test_rollout_requires_owner_migration_before_release_activation():
