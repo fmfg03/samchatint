@@ -23,6 +23,10 @@ def default_sources():
             "samchat.cashflow.service.build_finance_platform_snapshot",
             new=Mock(return_value={}),
         ),
+        patch(
+            "samchat.cashflow.service._budget_edition_year",
+            new=AsyncMock(return_value=2026),
+        ),
     ):
         yield
 
@@ -61,6 +65,12 @@ async def test_cashflow_monthly_plan_separates_income_and_expense():
                     "income-1": {1: {"expected_income_amount": 1200}},
                     "expense-1": {1: {"budget_expense_amount": 700}},
                 }
+            ),
+        ),
+        patch(
+            "samchat.budgets.tournament_weekly_overlay.effective_plans_for_lines",
+            new=AsyncMock(
+                side_effect=lambda session, **kwargs: (kwargs["baseline_plans"], {})
             ),
         ),
         patch(
