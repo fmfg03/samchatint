@@ -5012,6 +5012,21 @@ async def admit_registration_review_batch(request: Request):
     return JSONResponse(result, status_code=200)
 
 
+async def _lock_registration_batch(session: AsyncSession, batch_id: UUID) -> None:
+    """Serialize batch transactions without UPDATE on append-only tables.
+
+    PostgreSQL's two-integer lock namespace is separate from the single-bigint
+    upload locks. Hash collisions only serialize otherwise unrelated batches.
+    """
+    batch_key = int.from_bytes(
+        hashlib.sha256(batch_id.bytes).digest()[:4], "big", signed=True
+    )
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:namespace, :batch_key)"),
+        {"namespace": 0x43545442, "batch_key": batch_key},
+    )
+
+
 async def _admit_validated_registration_review_batch(
     *,
     manifest: Dict[str, Any],
@@ -5045,6 +5060,7 @@ async def _admit_validated_registration_review_batch(
             NAMESPACE_URL,
             f"ctt-registration-batch:{edition_id}:{manifest['manifest_sha256']}",
         )
+        await _lock_registration_batch(session, batch_id)
         documents_by_id = {
             item["document_id"]: item for item in manifest["documents"]
         }
@@ -5099,9 +5115,7 @@ async def _admit_validated_registration_review_batch(
         )
         batch = (
             await session.execute(
-                select(RegistrationBatch)
-                .where(RegistrationBatch.id == batch_id)
-                .with_for_update()
+                select(RegistrationBatch).where(RegistrationBatch.id == batch_id)
             )
         ).scalar_one()
         if (
@@ -5121,11 +5135,7 @@ async def _admit_validated_registration_review_batch(
         ):
             break
         async with async_session_maker() as session:
-            await session.execute(
-                select(RegistrationBatch)
-                .where(RegistrationBatch.id == batch_id)
-                .with_for_update()
-            )
+            await _lock_registration_batch(session, batch_id)
             existing = (
                 await session.execute(
                     select(RegistrationBatchDocument).where(
@@ -5170,6 +5180,8 @@ async def _admit_validated_registration_review_batch(
                 provider="reviewed_manifest",
                 tournament_slug=edition["roster_slug"],
                 created_by_user_id=actor_id,
+                assets=[],
+                drafts=[],
             )
             session.add(review_session)
             await session.flush()
@@ -5200,6 +5212,7 @@ async def _admit_validated_registration_review_batch(
                         ),
                     )
                     session.add(asset)
+                    review_session.assets.append(asset)
                     assets.append(asset)
             except BaseException:
                 shutil.rmtree(session_assets_dir, ignore_errors=True)
@@ -5241,6 +5254,9 @@ async def _admit_validated_registration_review_batch(
                     asset.admitted_draft_id = draft.id
                     asset.source_base_draft_id = draft.id
                     asset.source_base_content_hash = draft.content_hash
+                    asset.admission_operation_id = draft.mutation_operation_id
+                    asset.admission_decision_id = draft.mutation_decision_id
+                    asset.admission_receipt_id = draft.mutation_receipt_id
                 receipt = build_batch_admission_receipt(
                     manifest_sha256=manifest["manifest_sha256"],
                     document=document,

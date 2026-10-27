@@ -512,13 +512,24 @@ Date: 2026-10-06
 The candidate adds owner-migrated batch, document-binding, and team-staff tables.
 Runtime `create_all` excludes all three. Manifest validation recomputes immutable
 source, payload, page, and staff-evidence identities before persistence. Batch and
-session UUIDs are deterministic; atomic insert plus batch-row locking serializes
-concurrent retries. Rollback refuses destructive schema removal after admitted
-documents or staff records exist. The authenticated endpoint renders only declared
+session UUIDs are deterministic; atomic insert plus transaction-scoped PostgreSQL
+advisory locking on the canonical batch identity serializes concurrent retries.
+The batch and document-binding tables remain append-only for the runtime role;
+admission does not require UPDATE or DELETE privileges on them. Mutable upload
+rows retain their row locks. Rollback refuses destructive schema removal after
+admitted documents or staff records exist. The authenticated endpoint renders only declared
 PDF pages and writes registration-review drafts with `human_reviewed=false` and
 `canonical_import_ready=false`. The existing team commit path remains blocked for
 staff-bearing drafts because no current Zaubern receipt authorizes ordered staff
 slots.
+
+Amendment approved: 2026-10-27. Reason: the authenticated pilot exposed that
+SELECT FOR UPDATE requires UPDATE privilege on the append-only batch table.
+The correction reuses transaction-scoped advisory locking already present in
+staged admission and requires regression evidence with the actual runtime-role
+permissions and concurrent connections. This describes the approved correction
+only; implementation, review, merge, deployment and authenticated 11-document
+UAT require their own evidence.
 
 Evidence: `docs/roadmap/ctt-pilot-batch-admission.md`, focused unit and regression
 tests, and isolated PostgreSQL migration/constraint/rollback tests. This remains

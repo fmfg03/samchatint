@@ -48,7 +48,8 @@ constraints fail closed. Rollback refuses to drop the schema after an admitted
 document or staff record exists.
 
 Batch and review-session UUIDs are deterministic. Batch creation is atomic and
-document admission locks the batch row, so sequential or concurrent retries
+document admission takes a transaction-scoped advisory lock on the canonical
+batch identity, so sequential or concurrent retries
 recover the existing binding instead of creating a second review session. A
 failed later document does not erase earlier admitted documents; rerunning the
 same exact manifest resumes through the recovered bindings.
@@ -151,3 +152,51 @@ The staged-upload amendment changes transport, progress, and recovery only. It
 does not change the manifest, draft authority, team/eligibility boundary, or
 staff-governance blocker. Canon unchanged for this corrective amendment; the
 actual pilot admission remains a separate runtime and UAT fact.
+
+## Runtime-role admission correction: 2026-10-27
+
+The authenticated pilot uploaded all seven PDFs (133,003,456 bytes), then failed
+on the first dossier with PostgreSQL 42501. The admission migration intentionally
+withholds UPDATE/DELETE from the runtime role on batch and document bindings,
+while SELECT FOR UPDATE also requires UPDATE privilege. The former isolated
+migration test checked grants but executed its operations as administrator.
+
+The human-approved correction replaces batch-row locking with transaction-scoped
+PostgreSQL advisory locks. A fixed two-integer namespace is separate from the
+single-bigint staging locks. Its key comes from the canonical batch UUID, so
+all authorized actors and both intake paths share the same serialization domain.
+Hash collisions only serialize unrelated batches; they cannot bypass a lock.
+Each lock is taken on the connection performing the protected check, insertion,
+and commit, and is released on commit or rollback. Staging row locks remain.
+No runtime grants, owner migrations, permissions or eligibility rules change.
+
+The same real-helper test exposed an implicit async relationship load while
+preparing the first draft after flush. New batch sessions now initialize their
+assets/drafts collections explicitly and bind rendered assets to that collection
+before draft preparation; existing draft authority and validation are unchanged.
+
+The new PostgreSQL runtime tests use SET ROLE devnous_user on every connection
+and retain the session role across pooled-connection rollbacks. They exercise
+the actual admission helper, PDF rendering, ORM writes, draft preparation and
+version persistence. Only the external Zaubern authorization response is
+simulated; this is not evidence of live external authorization or authenticated
+operator UAT. Synthetic sources cover single and eleven-dossier admissions,
+one-dossier advancement, retries, foreign edition denial, rollback recovery and
+concurrent actors observed waiting on an actual PostgreSQL advisory lock.
+
+Implementation and isolated verification do not constitute merge, deployment,
+production data application or 11/11 authenticated pilot acceptance. The seven
+stored production PDFs must be retained; the later operator retry should reuse
+the same manifest and files. Canon Engineering section 20 and its register hash
+are updated only with the exact human-approved concurrency amendment. Product
+and sweep canon remain unchanged because draft/team/eligibility authority and
+the historical inventory do not change.
+
+The runtime-role schema also installs the actual REG-S02, REG-S04 and REG-S05
+triggers from their versioned migrations. This exposed a further missing
+REG-S04 binding: admitted page updates must carry the draft operation, decision
+and receipt identifiers. Batch intake now copies those three already-verified
+identifiers from the canonical draft, following the existing web-upload path.
+No trigger or grant is relaxed. A negative case verifies that later page
+rebinding and draft edits still fail closed. This is additional evidence
+completion within the same admission helper, not a new authority surface.
