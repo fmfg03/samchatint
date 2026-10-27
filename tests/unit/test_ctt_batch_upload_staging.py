@@ -1,7 +1,7 @@
 import hashlib
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
@@ -138,7 +138,7 @@ def _upload_envelope(digest: str, *, status: str = "pending"):
         file_count=1,
         status="staging",
         created_by_user_id="operator-1",
-        expires_at=datetime.utcnow() + timedelta(hours=1),
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
     )
     upload.files = [
         dashboard.RegistrationBatchUploadFile(
@@ -464,9 +464,15 @@ async def test_upload_and_status_endpoints_report_verified_file(
     assert json.loads(status.body)["uploaded_files"] == 1
 
 
+@pytest.mark.parametrize("tz", [None, timezone.utc, timezone(timedelta(hours=-6))])
 @pytest.mark.asyncio
-async def test_batch_upload_actor_lookup_and_expiry_cleanup(monkeypatch, tmp_path):
+async def test_batch_upload_actor_lookup_and_expiry_cleanup(monkeypatch, tmp_path, tz):
     upload = _upload_envelope("b" * 64)
+    upload.expires_at = (datetime.now(timezone.utc) + timedelta(hours=1)).astimezone(
+        tz or timezone.utc
+    )
+    if tz is None:
+        upload.expires_at = upload.expires_at.replace(tzinfo=None)
     lookup_session = _Session(results=[_Result(scalar=upload)])
     found = await dashboard._batch_upload_for_actor(
         lookup_session,
@@ -494,10 +500,17 @@ async def test_batch_upload_actor_lookup_and_expiry_cleanup(monkeypatch, tmp_pat
     assert cleanup_session.commits == 1
 
 
+@pytest.mark.parametrize("tz", [None, timezone.utc, timezone(timedelta(hours=5))])
 @pytest.mark.asyncio
-async def test_expired_upload_is_rejected_and_removed_on_access(monkeypatch, tmp_path):
+async def test_expired_upload_is_rejected_and_removed_on_access(
+    monkeypatch, tmp_path, tz
+):
     upload = _upload_envelope("b" * 64)
-    upload.expires_at = datetime.utcnow() - timedelta(seconds=1)
+    upload.expires_at = (datetime.now(timezone.utc) - timedelta(seconds=1)).astimezone(
+        tz or timezone.utc
+    )
+    if tz is None:
+        upload.expires_at = upload.expires_at.replace(tzinfo=None)
     session = _Session(results=[_Result(scalar=upload)])
     purged = []
     monkeypatch.setattr(dashboard, "_batch_staging_root", lambda: tmp_path)

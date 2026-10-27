@@ -5315,10 +5315,13 @@ async def _batch_upload_for_actor(
             "La carga temporal no existe o pertenece a otra sesión.",
             status_code=404,
         )
-    if (
-        upload.expires_at <= datetime.utcnow()
-        and upload.status not in {"admitted", "cancelled"}
-    ):
+    expires_at = upload.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at <= datetime.now(timezone.utc) and upload.status not in {
+        "admitted",
+        "cancelled",
+    }:
         try:
             purge_staged_batch_upload(_batch_staging_root(), upload.id)
         except (BatchUploadStorageError, OSError):
