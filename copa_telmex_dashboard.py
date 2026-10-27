@@ -3249,14 +3249,16 @@ def _build_review_player_photo_previews(
     for idx, player_payload in enumerate(players_payload, 1):
         if batch_source:
             crop, status, _page_index = batch_crops.get(idx, (None, "uncertain", 0))
-            filepath = previews_dir / f"player_{idx:02d}.jpg"
+            legacy_path = previews_dir / f"player_{idx:02d}.jpg"
+            legacy_path.unlink(missing_ok=True)
             if status != "photo" or crop is None:
-                filepath.unlink(missing_ok=True)
                 previews[idx] = {"preview_status": status}
                 continue
             buffer = io.BytesIO()
             crop.save(buffer, format="JPEG", quality=88)
             preview_bytes = buffer.getvalue()
+            preview_digest = hashlib.sha256(preview_bytes).hexdigest()
+            filepath = previews_dir / f"player_{idx:02d}-{preview_digest}.jpg"
             temp_path = previews_dir / f".player-{idx:02d}-{uuid4().hex}.tmp"
             try:
                 temp_path.write_bytes(preview_bytes)
@@ -3267,7 +3269,7 @@ def _build_review_player_photo_previews(
                 "preview_path": str(filepath),
                 "preview_url": (
                     _review_public_path(str(filepath))
-                    + "?v=" + hashlib.sha256(preview_bytes).hexdigest()[:16]
+                    + "?v=" + preview_digest[:16]
                 ),
                 "preview_mode": "ctt_batch_aligned",
                 "preview_status": status,

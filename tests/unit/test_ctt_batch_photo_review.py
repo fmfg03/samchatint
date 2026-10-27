@@ -138,6 +138,34 @@ def test_tampered_or_duplicate_page_and_ambiguous_refs_fail_closed(
     )
 
 
+def test_preview_versions_are_immutable_across_concurrent_requests(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(dashboard, "review_uploads_dir", tmp_path / "reviews")
+    session_id = uuid4()
+    slots = [{"name": "Player", "_batch_source_slot": "page:5:jugador_1"}]
+    source = {1: (Image.new("RGB", (60, 80), "red"), "photo", 1)}
+    monkeypatch.setattr(dashboard, "_batch_review_photo_crops", lambda *_: source)
+
+    def preview():
+        return dashboard._build_review_player_photo_previews(
+            session_id=session_id,
+            players_payload=slots,
+            assets=[],
+            layout_regions={"source_pages": [5, 6]},
+            batch_source=True,
+        )[1]
+
+    first = preview()
+    first_bytes = Path(first["preview_path"]).read_bytes()
+    source[1] = (Image.new("RGB", (60, 80), "blue"), "photo", 1)
+    second = preview()
+    assert first["preview_path"] != second["preview_path"]
+    assert first["preview_url"] != second["preview_url"]
+    assert Path(first["preview_path"]).read_bytes() == first_bytes
+    assert Path(second["preview_path"]).read_bytes() != first_bytes
+
+
 def test_review_page_from_prior_release_uses_active_copy(tmp_path, monkeypatch):
     session_id = uuid4()
     releases = tmp_path / "releases"
