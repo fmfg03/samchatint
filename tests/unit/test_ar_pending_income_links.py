@@ -19,10 +19,17 @@ def ordinary_version_context(monkeypatch):
 @pytest.mark.asyncio
 async def test_pending_invoice_remains_visible_until_approved_without_financial_recognition(monkeypatch):
     link = {
-        "id": "link-1", "cfdi_report_id": "invoice-1", "cfdi_uuid": "uuid-1",
-        "budget_line_id": "line-1", "budget_version_id": "version-1",
-        "tournament_id": "tournament-1", "concept_name": "Patrocinio",
-        "amount": 1160, "receptor_nombre": "Cliente", "status": "pending_approval",
+        "id": "link-1",
+        "cfdi_report_id": "invoice-1",
+        "cfdi_uuid": "uuid-1",
+        "budget_line_id": "line-1",
+        "budget_version_id": "version-1",
+        "tournament_id": "tournament-1",
+        "concept_name": "Patrocinio",
+        "amount": 1160,
+        "moneda": "MXN",
+        "receptor_nombre": "Cliente",
+        "status": "pending_approval",
     }
     monkeypatch.setattr(service, "list_budget_lines", AsyncMock(return_value=[]))
     monkeypatch.setattr(service, "list_monthly_plan_for_lines", AsyncMock(return_value={}))
@@ -38,8 +45,11 @@ async def test_pending_invoice_remains_visible_until_approved_without_financial_
 
     monkeypatch.setattr(service, "list_budget_cfdi_income_links", links)
     pending = await service.build_ar_read_model(
-        object(), budget_version_id="version-1", tournament_id="tournament-1",
+        object(),
+        budget_version_id="version-1",
+        tournament_id="tournament-1",
         ensure_schema=False,
+        calendar_year=2026,
     )
     assert pending["pending_links"] == [link]
     assert pending["summary"]["pending_link_count"] == 1
@@ -59,8 +69,11 @@ async def test_pending_invoice_remains_visible_until_approved_without_financial_
 
     link["status"] = "approved"
     approved = await service.build_ar_read_model(
-        object(), budget_version_id="version-1", tournament_id="tournament-1",
+        object(),
+        budget_version_id="version-1",
+        tournament_id="tournament-1",
         ensure_schema=False,
+        calendar_year=2026,
     )
     assert approved["pending_links"] == []
     assert len(approved["issued_linked"]) == 1
@@ -77,7 +90,9 @@ async def test_inactive_or_unknown_links_do_not_enter_pending_queue(monkeypatch,
     monkeypatch.setattr(service, "list_ar_collection_matches", AsyncMock(return_value=[]))
     monkeypatch.setattr(service, "list_psp_cfdi_income_candidates", AsyncMock(return_value=[]))
     monkeypatch.setattr(service, "list_budget_cfdi_income_links", AsyncMock(side_effect=[[], [{"id": "link", "status": status, "unlinked_at": unlinked}]]))
-    payload = await service.build_ar_read_model(object(), budget_version_id="version", ensure_schema=False)
+    payload = await service.build_ar_read_model(
+        object(), budget_version_id="version", ensure_schema=False, calendar_year=2026
+    )
     assert payload["pending_links"] == []
     assert payload["summary"]["invoiced_total"] == 0
 
@@ -115,7 +130,11 @@ async def test_strict_scope_rejects_pending_links_outside_selected_tournament(
     monkeypatch.setattr(service, "list_ar_collection_matches", collections)
     with pytest.raises(ValueError, match="income links escaped tournament scope"):
         await service.build_ar_read_model(
-            object(), budget_version_id="version-1", tournament_id="tournament-1",
-            strict_tournament_scope=True, ensure_schema=False,
+            object(),
+            budget_version_id="version-1",
+            tournament_id="tournament-1",
+            strict_tournament_scope=True,
+            ensure_schema=False,
+            calendar_year=2026,
         )
     collections.assert_not_awaited()

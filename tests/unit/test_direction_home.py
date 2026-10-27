@@ -28,6 +28,18 @@ TODAY = datetime.now(home.TZ).date()
 YEAR = TODAY.year
 
 
+@pytest.fixture(autouse=True)
+def stable_home_clock(monkeypatch):
+    """Keep this module's date fixture stable if CI crosses local midnight."""
+
+    class FixtureDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(TODAY.year, TODAY.month, TODAY.day, 12, tzinfo=tz)
+
+    monkeypatch.setattr(home, "datetime", FixtureDateTime)
+
+
 class Result:
     def __init__(self, rows=()):
         self.rows = list(rows)
@@ -910,6 +922,7 @@ async def test_strict_ar_fails_foreign_candidates_before_loading_matches(monkeyp
         await ar.build_ar_read_model(
             Session(),
             budget_version_id=VERSION,
+            calendar_year=YEAR,
             tournament_id=T1,
             strict_tournament_scope=True,
             ensure_schema=False,
@@ -920,6 +933,7 @@ async def test_strict_ar_fails_foreign_candidates_before_loading_matches(monkeyp
     result = await ar.build_ar_read_model(
         Session(),
         budget_version_id=VERSION,
+        calendar_year=YEAR,
         tournament_id=T1,
         strict_tournament_scope=True,
         ensure_schema=False,

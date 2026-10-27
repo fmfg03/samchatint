@@ -64,6 +64,8 @@ def _operational_status(
     due_date: Optional[str],
     as_of: date,
 ) -> str:
+    if collection_status == "collection_conflict":
+        return "Conflicto de cobros"
     if status == "planned":
         return "Presupuestado sin CFDI"
     if collection_status == "over_collected_review":
@@ -127,18 +129,25 @@ async def list_ar_collection_matches(*args: Any, **kwargs: Any) -> list[dict[str
     return await _list_ar_collection_matches(*args, **kwargs)
 
 
-def _month_rows(monthly: dict[int, dict[str, float]]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for month, values in sorted((monthly or {}).items()):
-        rows.append(
-            {
-                "month": int(month),
-                "expected_income_amount": _safe_float(
-                    values.get("expected_income_amount")
-                ),
-            }
+def _month_rows(
+    weekly: dict[int, dict[str, float]], year: Optional[int]
+) -> list[dict[str, Any]]:
+    """Project canonical budget weeks into calendar months, never the inverse."""
+    if year is None:
+        return []
+    from samchat.budgets.distribution import week_bounds
+
+    monthly: dict[int, float] = {}
+    for week, values in weekly.items():
+        start, _ = week_bounds(int(year), int(week))
+        monthly[start.month] = _safe_float(
+            monthly.get(start.month, 0)
+            + _safe_float(values.get("expected_income_amount"))
         )
-    return rows
+    return [
+        {"month": month, "expected_income_amount": amount}
+        for month, amount in sorted(monthly.items())
+    ]
 
 
 def _matching_gap(
@@ -163,16 +172,18 @@ def _collection_gap(
     amount: float,
     payer_name: Optional[str],
     payer_rfc: Optional[str],
+    collection: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "item_id": item_id,
         "source": source,
-        "collection_status": "collection_unknown",
+        "collection_status": collection["collection_status"],
         "amount": _safe_float(amount),
         "payer_name": payer_name,
         "payer_rfc": payer_rfc,
-        "outstanding_amount": None,
-        "outstanding_amount_status": "unknown",
+        "collected_amount": collection["collected_amount"],
+        "outstanding_amount": collection["outstanding_amount"],
+        "outstanding_amount_status": collection["outstanding_amount_status"],
     }
 
 
@@ -238,6 +249,14 @@ def _apply_collection_match(
         {
             "collection_status": collection_status,
             "collection_match_id": _safe_str(match.get("id")) or None,
+            "collection_source": (
+                "accepted_match"
+                if match.get("collection_match_ids")
+                else "direct_record"
+            ),
+            "direct_collection_poliza_id": match.get("accounting_poliza_id"),
+            "collection_match_ids": list(match.get("collection_match_ids") or []),
+            "collection_receipts": list(match.get("collection_receipts") or []),
             "collected_amount": accepted_amount,
             "collection_date": _iso(match.get("collection_date"))
             or _iso(match.get("accepted_at")),
@@ -246,6 +265,62 @@ def _apply_collection_match(
         }
     )
     return item
+
+
+def _aggregate_collection_matches(
+    matches: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Sum active receipts per item without replacing their individual identities."""
+    grouped: dict[str, dict[str, Any]] = {}
+    seen: dict[str, dict[str, Any]] = {}
+    for match in matches:
+        if (
+            match.get("status", "accepted_collection_match")
+            != "accepted_collection_match"
+        ):
+            continue
+        match_id = _safe_str(match.get("id"))
+        if match_id in seen:
+            if seen[match_id] != match:
+                raise ValueError("Conflicting AR collection receipt identity")
+            continue
+        if not match_id:
+            raise ValueError("Missing AR collection receipt identity")
+        seen[match_id] = match
+        item_id = _safe_str(match.get("ar_item_id"))
+        aggregate = grouped.setdefault(
+            item_id,
+            {
+                "accepted_amount": 0.0,
+                "collection_match_ids": [],
+                "collection_receipts": [],
+            },
+        )
+        aggregate["accepted_amount"] = _safe_float(
+            aggregate["accepted_amount"] + _safe_float(match.get("accepted_amount"))
+        )
+        aggregate["collection_match_ids"].append(match_id)
+        aggregate["collection_receipts"].append(
+            {
+                "id": match_id,
+                "accepted_amount": _safe_float(match.get("accepted_amount")),
+                "collection_date": _iso(match.get("collection_date")),
+                "accepted_at": _iso(match.get("accepted_at")),
+                "bank_movement_id": match.get("bank_movement_id"),
+                "accounting_poliza_id": match.get("accounting_poliza_id"),
+            }
+        )
+    for aggregate in grouped.values():
+        ids = sorted(aggregate["collection_match_ids"])
+        aggregate["collection_match_ids"] = ids
+        # Several receipts must never masquerade as one accounting policy.
+        aggregate["id"] = ids[0] if len(ids) == 1 else None
+        aggregate["collection_receipts"].sort(key=lambda receipt: receipt["id"])
+        receipt = aggregate["collection_receipts"][0]
+        aggregate["collection_date"] = (
+            receipt["collection_date"] if len(ids) == 1 else None
+        )
+    return grouped
 
 
 async def build_ar_read_model(
@@ -323,20 +398,24 @@ async def build_ar_read_model(
         for link in proposed_links
         if link.get("status") == "pending_approval" and not link.get("unlinked_at")
     ]
-    candidates = await list_psp_cfdi_income_candidates(
-        session,
-        budget_version_id=financial_version_id,
-        limit=min(row_limit, 500),
-        ensure_schema=ensure_schema,
-        **(
-            {
-                "tournament_id": clean_tournament_id,
-                "assigned_only": True,
-                "calendar_year": calendar_year or as_of.year,
-            }
-            if strict_tournament_scope
-            else {}
-        ),
+    candidates = (
+        []
+        if calendar_year is None
+        else await list_psp_cfdi_income_candidates(
+            session,
+            budget_version_id=financial_version_id,
+            calendar_year=calendar_year,
+            limit=min(row_limit, 500),
+            ensure_schema=ensure_schema,
+            **(
+                {
+                    "tournament_id": clean_tournament_id,
+                    "assigned_only": True,
+                }
+                if strict_tournament_scope
+                else {}
+            ),
+        )
     )
     if strict_tournament_scope:
         if any(
@@ -373,9 +452,21 @@ async def build_ar_read_model(
             else {}
         ),
     )
-    matches_by_item = {
-        _safe_str(match.get("ar_item_id")): match for match in collection_matches
-    }
+    if strict_tournament_scope:
+        scoped_items = {
+            *[
+                f"linked:{_safe_str(link.get('id')) or _safe_str(link.get('cfdi_report_id'))}"
+                for link in links
+            ],
+            *[f"candidate:{_safe_str(row.get('id'))}" for row in candidates],
+        }
+        if any(
+            _safe_str(match.get("ar_item_id")) not in scoped_items
+            or _safe_str(match.get("budget_version_id")) != financial_version_id
+            for match in collection_matches
+        ):
+            raise ValueError("AR collection matches escaped budget/tournament scope")
+    matches_by_item = _aggregate_collection_matches(collection_matches)
     # Active links are absent from the candidate picker. Keep pending ones
     # visible separately, without treating them as recognized income or cash.
     active_cfdi_ids = {
@@ -401,10 +492,13 @@ async def build_ar_read_model(
     for line in income_lines:
         line_id = _safe_str(line.get("id"))
         line_monthly = monthly_plan.get(line_id, {})
-        monthly_rows = _month_rows(line_monthly)
+        monthly_rows = _month_rows(line_monthly, calendar_year)
         expected_total = (
-            sum(row["expected_income_amount"] for row in monthly_rows)
-            if monthly_rows
+            sum(
+                _safe_float(row.get("expected_income_amount"))
+                for row in line_monthly.values()
+            )
+            if line_monthly
             else _safe_float(line.get("budget_amount"))
         )
         financial_line_id = (line.get("metadata") or {}).get(
@@ -432,6 +526,10 @@ async def build_ar_read_model(
                 "balance_amount": None,
                 "due_date": None,
                 "monthly_plan": monthly_rows,
+                "calendar_year": calendar_year,
+                "period_status": (
+                    "known" if calendar_year is not None else "missing_budget_year"
+                ),
                 "linked_income_amount": _safe_float(linked_total),
                 "collection_status": "collection_unknown",
                 "outstanding_amount": None,
@@ -493,6 +591,9 @@ async def build_ar_read_model(
                 "payer_name": payer_name,
                 "issued_amount": amount,
                 "linked_income_amount": amount,
+                "invoiced_gross_amount": link.get("cfdi_total"),
+                "recognized_income_amount": link.get("recognized_income_amount"),
+                "recognized_poliza_id": link.get("recognized_poliza_id"),
                 "collected_amount": 0.0,
                 "balance_amount": None,
                 "issued_date": _iso(link.get("cfdi_fecha") or link.get("income_date")),
@@ -507,8 +608,45 @@ async def build_ar_read_model(
             },
             matches_by_item.get(item_id) or direct_collection,
         )
+        if (
+            link.get("manual_collection_poliza_ids")
+            or (
+                (link.get("collection_poliza_id") or link.get("collection_date"))
+                and (
+                    matches_by_item.get(item_id) or link.get("has_accepted_collection")
+                )
+            )
+            or (
+                link.get("has_accepted_collection") and not matches_by_item.get(item_id)
+            )
+        ):
+            linked_item.update(
+                collection_status="collection_conflict",
+                collection_source="conflict",
+                collected_amount=None,
+                outstanding_amount=None,
+                outstanding_amount_status="conflict",
+                direct_collection_evidence={
+                    "accounting_poliza_id": link.get("collection_poliza_id"),
+                    "collection_date": link.get("collection_date"),
+                },
+                accepted_collection_evidence=matches_by_item.get(item_id)
+                or (
+                    {
+                        "cfdi_report_id": link.get("cfdi_report_id"),
+                        "status": "accepted_collection_outside_projection",
+                    }
+                    if link.get("has_accepted_collection")
+                    else None
+                ),
+                external_collection_evidence={
+                    "origin": "ingreso_cobrado_ui",
+                    "accounting_poliza_ids": link.get("manual_collection_poliza_ids")
+                    or [],
+                },
+            )
         linked_item["balance_amount"] = (
-            _safe_float(amount - _safe_float(linked_item.get("collected_amount")))
+            _safe_float(linked_item.get("outstanding_amount"))
             if linked_item.get("outstanding_amount_status") == "known"
             else None
         )
@@ -532,6 +670,7 @@ async def build_ar_read_model(
                     amount=amount,
                     payer_name=payer_name,
                     payer_rfc=payer_rfc,
+                    collection=linked_item,
                 )
             )
         if not payer_rfc and not payer_name:
@@ -561,10 +700,13 @@ async def build_ar_read_model(
             {
                 "ar_item_id": item_id,
                 "status": "issued_unlinked",
+                "budget_version_id": financial_version_id,
                 "cfdi_report_id": candidate_id or None,
                 "cfdi_uuid": _safe_str(candidate.get("cfdi_uuid")) or None,
                 "iva_amount": _safe_float(candidate.get("total_impuestos_trasladados")),
                 "issued_amount": amount,
+                "invoiced_gross_amount": candidate.get("total"),
+                "recognized_income_amount": None,
                 "issued_date": _iso(candidate.get("fecha")),
                 "due_date": _due_date(candidate.get("fecha"), credit_days),
                 "emisor_rfc": _safe_str(candidate.get("emisor_rfc")) or None,
@@ -580,7 +722,7 @@ async def build_ar_read_model(
             matches_by_item.get(item_id),
         )
         unlinked_item["balance_amount"] = (
-            _safe_float(amount - _safe_float(unlinked_item.get("collected_amount")))
+            _safe_float(unlinked_item.get("outstanding_amount"))
             if unlinked_item.get("outstanding_amount_status") == "known"
             else None
         )
@@ -604,6 +746,7 @@ async def build_ar_read_model(
                     amount=amount,
                     payer_name=payer_name,
                     payer_rfc=payer_rfc,
+                    collection=unlinked_item,
                 )
             )
         matching_gaps.append(
@@ -635,11 +778,74 @@ async def build_ar_read_model(
         _safe_float(item.get("collected_amount"))
         for item in issued_linked + issued_unlinked
     )
-    balance_total = sum(
-        _safe_float(item.get("issued_amount"))
-        - _safe_float(item.get("collected_amount"))
-        for item in issued_linked + issued_unlinked
+    financial_items = issued_linked + issued_unlinked
+    unknown_balance_count = sum(
+        item.get("outstanding_amount_status") != "known" for item in financial_items
+    ) + len(pending_links)
+    conflict_count = sum(
+        item.get("collection_status") == "collection_conflict"
+        for item in financial_items
     )
+    known_balance_total = sum(
+        _safe_float(item.get("balance_amount"))
+        for item in financial_items
+        if item.get("outstanding_amount_status") == "known"
+    )
+    # Documentary gross is independent of approval and of the link's CxC amount.
+    invoice_amounts = {
+        _safe_str(row.get("cfdi_report_id")): row.get("cfdi_total")
+        for row in links + pending_links
+    }
+    invoice_amounts.update(
+        {_safe_str(row.get("id")): row.get("total") for row in candidates}
+    )
+    gross_known = calendar_year is not None and all(
+        key and value is not None for key, value in invoice_amounts.items()
+    )
+    unlinked_accounting_count = sum(
+        bool(row.get("unlinked_at"))
+        and bool(row.get("recognized_poliza_id") or row.get("status") == "approved")
+        for row in proposed_links
+    )
+    recognized_known = not unlinked_accounting_count and all(
+        row.get("recognized_income_amount") is not None for row in links
+    )
+    source_coverage = {
+        "budget_year": calendar_year,
+        "candidates_year_missing": calendar_year is None,
+        "period_status": (
+            "known" if calendar_year is not None else "missing_budget_year"
+        ),
+        "income_lines_truncated": len(income_lines) >= row_limit,
+        "candidates_truncated": len(candidates) >= min(row_limit, 500),
+        "currency_gap": any(
+            _safe_str(row.get("moneda")).upper() != "MXN"
+            for row in links + pending_links + candidates
+        ),
+        "gross_amount_gap": not gross_known,
+        "recognized_income_gap": not recognized_known,
+        "unlinked_accounting_count": unlinked_accounting_count,
+        "unknown_balance_count": unknown_balance_count,
+        "collection_conflict_count": conflict_count,
+    }
+    incomplete_source = (
+        source_coverage["candidates_year_missing"]
+        or source_coverage["currency_gap"]
+        or source_coverage["income_lines_truncated"]
+        or source_coverage["candidates_truncated"]
+        or unlinked_accounting_count > 0
+    )
+    balance_total = (
+        None
+        if unknown_balance_count or incomplete_source
+        else _safe_float(known_balance_total)
+    )
+    unlinked_links = [
+        dict(row, accounting_reversal_status="not_verified")
+        for row in proposed_links
+        if row.get("unlinked_at")
+    ]
+
     overdue_total = sum(
         max(
             _safe_float(item.get("issued_amount"))
@@ -665,15 +871,18 @@ async def build_ar_read_model(
                     ),
                     "amount_gap": any(row.get("amount") is None for row in links)
                     or any(row.get("total") is None for row in candidates),
-                    "calendar_year": calendar_year or as_of.year,
+                    "calendar_year": calendar_year,
                 }
             }
             if strict_tournament_scope
             else {}
         ),
         "budget_version_id": clean_version_id,
+        "financial_version_id": financial_version_id,
         "tournament_id": clean_tournament_id,
         "tournament_code": clean_tournament_code,
+        "source_coverage": source_coverage,
+        "unlinked_income_links": unlinked_links,
         "collection_source": "unknown",
         "credit_days_default": credit_days,
         "outstanding_amount_status": ("mixed" if collected_total else "unknown"),
@@ -686,9 +895,33 @@ async def build_ar_read_model(
             "issued_unlinked_count": len(issued_unlinked),
             "issued_unlinked_total": _safe_float(unlinked_total),
             "invoiced_total": _safe_float(linked_total + unlinked_total),
-            "collected_total": _safe_float(collected_total),
-            "balance_total": _safe_float(max(balance_total, 0.0)),
-            "overdue_total": _safe_float(overdue_total),
+            "invoiced_gross_total": (
+                _safe_float(sum(_safe_float(v) for v in invoice_amounts.values()))
+                if gross_known and not incomplete_source
+                else None
+            ),
+            "recognized_income_total": (
+                _safe_float(
+                    sum(
+                        _safe_float(row.get("recognized_income_amount"))
+                        for row in links
+                    )
+                )
+                if recognized_known and not incomplete_source
+                else None
+            ),
+            "collected_total": (
+                _safe_float(collected_total)
+                if not conflict_count and not incomplete_source
+                else None
+            ),
+            "known_balance_total": _safe_float(known_balance_total),
+            "balance_total": balance_total,
+            "overdue_total": (
+                _safe_float(overdue_total)
+                if not unknown_balance_count and not incomplete_source
+                else None
+            ),
             "collection_gap_count": len(collection_gaps),
             "matching_gap_count": len(matching_gaps),
         },
@@ -751,7 +984,7 @@ def build_ar_operational_rows(
         for item in list(items):
             issued = _safe_float(item.get("issued_amount"))
             collected = _safe_float(item.get("collected_amount"))
-            balance = max(issued - collected, 0.0)
+            balance = item.get("balance_amount")
             rows.append(
                 {
                     "source": source,
@@ -773,7 +1006,11 @@ def build_ar_operational_rows(
                     "linked_income_amount": _safe_float(
                         item.get("linked_income_amount")
                     ),
-                    "collected_amount": collected,
+                    "invoiced_gross_amount": item.get("invoiced_gross_amount"),
+                    "recognized_income_amount": item.get("recognized_income_amount"),
+                    "collected_amount": item.get("collected_amount"),
+                    "collection_status": item.get("collection_status"),
+                    "collection_source": item.get("collection_source"),
                     "balance_amount": balance,
                     "operational_status": item.get("operational_status")
                     or "Cobranza desconocida",
@@ -808,6 +1045,8 @@ def build_ar_operational_rows(
         "expected_income_amount",
         "issued_amount",
         "linked_income_amount",
+        "invoiced_gross_amount",
+        "recognized_income_amount",
         "collected_amount",
         "balance_amount",
         "operational_status",
@@ -878,9 +1117,17 @@ def build_ar_billing_schedule(
                     }
                 )
 
-        if any(entry["month"] < as_of.month for entry in month_entries):
+        plan_year = item.get("calendar_year")
+        if plan_year is None:
+            priority = "sin periodo"
+        elif int(plan_year) < as_of.year or (
+            int(plan_year) == as_of.year
+            and any(entry["month"] < as_of.month for entry in month_entries)
+        ):
             priority = "alta"
-        elif any(entry["month"] == as_of.month for entry in month_entries):
+        elif int(plan_year) == as_of.year and any(
+            entry["month"] == as_of.month for entry in month_entries
+        ):
             priority = "media"
         else:
             priority = "baja"
@@ -905,6 +1152,11 @@ def build_ar_billing_schedule(
                 "budgeted_amount": budgeted_amount,
                 "linked_amount": linked_amount,
                 "remaining_to_invoice": remaining_to_invoice,
+                "calendar_year": plan_year,
+                "period_status": item.get(
+                    "period_status",
+                    "missing_budget_year" if plan_year is None else "known",
+                ),
                 "months": month_entries,
                 "months_label": months_label,
             }
@@ -1033,7 +1285,13 @@ def build_ar_accounting_preview(
 
     collection_gaps: list[str] = []
     collection_lines: list[dict[str, Any]] = []
-    if not item.get("collection_match_id"):
+    if item.get("collection_status") == "collection_conflict":
+        collection_status = "incompleta"
+        collection_gaps.append("conflicting_collection_sources")
+    elif len(item.get("collection_match_ids") or []) > 1:
+        collection_status = "incompleta"
+        collection_gaps.append("multiple_collection_matches_use_posted_policies")
+    elif not item.get("collection_match_id"):
         collection_status = "sin match"
         collection_gaps.append("missing_collection_match")
     else:
@@ -1120,7 +1378,14 @@ def build_ar_actionable_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
     for item in operational_by_id.values():
         status = _safe_str(item.get("operational_status"))
-        if status == "Revisión sobrepago":
+        if status == "Conflicto de cobros":
+            _add_gap(
+                item=item,
+                gap_type="conflicto_cobros",
+                priority="alta",
+                suggested_action="Revisar recibos de ambas vías; no registrar otro cobro ni revertir automáticamente.",
+            )
+        elif status == "Revisión sobrepago":
             _add_gap(
                 item=item,
                 gap_type="sobrepago",
