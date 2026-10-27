@@ -278,6 +278,16 @@ def test_cashflow_preserves_receipt_periods_across_year_boundary():
 @pytest.mark.asyncio
 async def test_cashflow_weekly_plan_uses_edition_and_does_not_fold_years(monkeypatch):
     from samchat.cashflow import service as cashflow
+    from samchat.budgets import tournament_weekly_overlay
+
+    monkeypatch.setattr(
+        cashflow, "_budget_edition_year", AsyncMock(side_effect=[2026, None])
+    )
+    monkeypatch.setattr(
+        tournament_weekly_overlay,
+        "effective_plans_for_lines",
+        AsyncMock(side_effect=lambda session, **kwargs: (kwargs["baseline_plans"], {})),
+    )
 
     monkeypatch.setattr(
         cashflow,

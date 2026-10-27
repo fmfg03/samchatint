@@ -12,4 +12,6 @@ Canon unchanged: el cambio concreta el contrato ya documentado de distribución 
 
 El primer CI falló el inventario reproducible: se había generado antes de incorporar el nuevo módulo al índice de Git y contaba 481 archivos en vez de 482. Se regeneró después de registrar el módulo y se vuelve a ejecutar la verificación; las pruebas restantes de ese run no se consideran evidencia de la nueva cabeza.
 
+El segundo CI ejecutó 6,379 pruebas unitarias con un fallo adicional: una prueba existente de Cashflow usaba una sesión sintética que no simulaba la nueva consulta de la edición. Se actualizó el fixture para simular la versión y el lector efectivo; la prueba corregida y 35 relacionadas pasan localmente. La suite completa se vuelve a ejecutar en la cabeza nueva.
+
 Pendiente tras verificación técnica: prueba autenticada y aceptación real de Dirección/Finanzas; equivalencia y carga de Copa, balanzas posteriores a marzo y otros pendientes previamente informados. No se afirma completa la aceptación de negocio por la ejecución de pruebas.
