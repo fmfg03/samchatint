@@ -15,6 +15,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 from sqlalchemy import event, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 os.environ.setdefault(
@@ -202,6 +203,34 @@ async def admission_db(monkeypatch, tmp_path, runtime_postgres):
                 root / "database/migrations/20261006_copa_telmex_batch_admission.sql"
             ).read_text()
         )
+        for filename, function, trigger, kind in [
+            (
+                "20260716_regs02_append_only_review_drafts.sql",
+                "enforce_registration_review_draft_append_only",
+                "trg_registration_review_draft_append_only",
+                "CREATE TRIGGER",
+            ),
+            (
+                "20260716_regs04_page_composition.sql",
+                "guard_registration_review_asset_immutability",
+                "trg_registration_review_asset_immutable",
+                "CREATE TRIGGER",
+            ),
+            (
+                "20260716_regs05_human_field_authority.sql",
+                "enforce_registration_human_edit_atomicity",
+                "trg_registration_human_edit_draft_atomicity",
+                "CREATE CONSTRAINT TRIGGER",
+            ),
+        ]:
+            migration = (root / "database/migrations" / filename).read_text()
+            start = migration.index(f"CREATE OR REPLACE FUNCTION {function}()")
+            end = migration.index("\n$$;", start) + len("\n$$;")
+            await admin.execute(migration[start:end])
+            start = migration.index(f"{kind} {trigger}")
+            tail = f"EXECUTE FUNCTION {function}();"
+            end = migration.index(tail, start) + len(tail)
+            await admin.execute(migration[start:end])
         await admin.execute(f'GRANT USAGE ON SCHEMA "{schema}" TO devnous_user')
         await admin.execute(
             "GRANT SELECT ON tournaments, copa_telmex_tournament_editions "
@@ -350,6 +379,16 @@ async def test_runtime_role_admits_real_draft_and_recovers_retry(admission_db):
     assert raw["canonical_import_ready"] is False
     assert raw["extraction_metadata"]["source_asset_count"] == 2
     assert raw["extraction_metadata"]["page_count"] == 2
+    assert (
+        await admin.fetchval(
+            "SELECT count(*) FROM copa_telmex_registration_review_assets a "
+            "JOIN copa_telmex_registration_review_drafts d ON d.id=a.admitted_draft_id "
+            "WHERE a.admission_operation_id=d.mutation_operation_id "
+            "AND a.admission_decision_id=d.mutation_decision_id "
+            "AND a.admission_receipt_id=d.mutation_receipt_id"
+        )
+        == 2
+    )
     assert first["committed_teams"] == 0 and first["grants_eligibility"] is False
 
 
@@ -488,4 +527,39 @@ async def test_runtime_role_rejects_foreign_edition_without_creating_batch(
     assert (
         await admin.fetchval("SELECT count(*) FROM copa_telmex_registration_batches")
         == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_native_guards_still_reject_page_rebinding_and_draft_edits(admission_db):
+    admin, factory, tournament_id, _gate = admission_db
+    manifest, uploads = _sources(tournament_id)
+    await _admit(manifest, uploads)
+    for statement, reason in [
+        (
+            "UPDATE copa_telmex_registration_review_assets "
+            "SET image_path=image_path || '.changed'",
+            "REG-S04",
+        ),
+        (
+            "UPDATE copa_telmex_registration_review_drafts SET needs_review=false",
+            "REG-S02",
+        ),
+    ]:
+        async with factory() as session:
+            with pytest.raises(DBAPIError, match=reason):
+                await session.execute(text(statement))
+            await session.rollback()
+    assert (
+        await admin.fetchval(
+            "SELECT count(*) FROM copa_telmex_registration_review_assets "
+            "WHERE image_path LIKE '%.changed'"
+        )
+        == 0
+    )
+    assert (
+        await admin.fetchval(
+            "SELECT bool_and(needs_review) FROM copa_telmex_registration_review_drafts"
+        )
+        is True
     )

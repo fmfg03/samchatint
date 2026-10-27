@@ -516,7 +516,13 @@ async def test_batch_endpoint_admits_draft_then_recovers_exact_retry(
     async def upsert(_session, _review_session, extraction, *_args, **kwargs):
         assert extraction["staff"][1]["role"] == "auxiliar"
         assert kwargs["layout_regions"]["player_page_map"] == {}
-        return SimpleNamespace(id=uuid4(), content_hash="sha256:" + "9" * 64)
+        return SimpleNamespace(
+            id=uuid4(),
+            content_hash="sha256:" + "9" * 64,
+            mutation_operation_id="isolated-operation",
+            mutation_decision_id="sha256:" + "a" * 64,
+            mutation_receipt_id="isolated-receipt",
+        )
 
     monkeypatch.setattr(
         dashboard, "_ensure_registration_review_access", lambda _request: None
@@ -580,7 +586,13 @@ async def test_staged_admission_advances_at_most_one_new_document(
     state = _AdmissionState()
 
     async def upsert(*_args, **_kwargs):
-        return SimpleNamespace(id=uuid4(), content_hash="sha256:" + "9" * 64)
+        return SimpleNamespace(
+            id=uuid4(),
+            content_hash="sha256:" + "9" * 64,
+            mutation_operation_id="isolated-operation",
+            mutation_decision_id="sha256:" + "a" * 64,
+            mutation_receipt_id="isolated-receipt",
+        )
 
     monkeypatch.setattr(dashboard, "async_session_maker", state.session)
     monkeypatch.setattr(dashboard, "_upsert_review_draft", upsert)
