@@ -191,3 +191,12 @@ the same manifest and files. Canon Engineering section 20 and its register hash
 are updated only with the exact human-approved concurrency amendment. Product
 and sweep canon remain unchanged because draft/team/eligibility authority and
 the historical inventory do not change.
+
+The runtime-role schema also installs the actual REG-S02, REG-S04 and REG-S05
+triggers from their versioned migrations. This exposed a further missing
+REG-S04 binding: admitted page updates must carry the draft operation, decision
+and receipt identifiers. Batch intake now copies those three already-verified
+identifiers from the canonical draft, following the existing web-upload path.
+No trigger or grant is relaxed. A negative case verifies that later page
+rebinding and draft edits still fail closed. This is additional evidence
+completion within the same admission helper, not a new authority surface.

@@ -5254,6 +5254,9 @@ async def _admit_validated_registration_review_batch(
                     asset.admitted_draft_id = draft.id
                     asset.source_base_draft_id = draft.id
                     asset.source_base_content_hash = draft.content_hash
+                    asset.admission_operation_id = draft.mutation_operation_id
+                    asset.admission_decision_id = draft.mutation_decision_id
+                    asset.admission_receipt_id = draft.mutation_receipt_id
                 receipt = build_batch_admission_receipt(
                     manifest_sha256=manifest["manifest_sha256"],
                     document=document,
