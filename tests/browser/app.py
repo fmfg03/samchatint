@@ -105,6 +105,45 @@ class _ArMutationSession:
 
     async def execute(self, statement, *_args, **_kwargs):
         sql = str(statement)
+        params = _args[0] if _args else {}
+        if "SELECT id FROM cfdi_reports" in sql:
+            return _ArResult(
+                [{"id": self.fixture.cfdi_report_id}]
+                if params.get("cfdi_report_id") == self.fixture.cfdi_report_id
+                else []
+            )
+        if "AS has_other_direct" in sql:
+            return _ArResult(
+                [
+                    {
+                        "has_matches": bool(self.fixture.match),
+                        "has_other_direct": False,
+                    }
+                ]
+            )
+        if "FROM accounting_close_periods" in sql:
+            return _ArResult([{"status": "open"}])
+        if "FROM budget_cfdi_income_links l" in sql:
+            if (
+                not params.get("linked")
+                or params.get("link_id") != self.fixture.link_id
+            ):
+                return _ArResult()
+            return _ArResult(
+                [
+                    {
+                        "id": self.fixture.link_id,
+                        "budget_version_id": self.fixture.budget_version_id,
+                        "budget_line_id": self.fixture.budget_line_id,
+                        "cfdi_report_id": self.fixture.cfdi_report_id,
+                        "accounting_poliza_id": self.fixture.source_poliza_id,
+                        "status": "approved",
+                        "unlinked_at": None,
+                        "receptor_rfc": "PBU010101AR1",
+                        "receptor_nombre": "Patrocinador Browser UX",
+                    }
+                ]
+            )
         if "SUM(accepted_amount)" in sql:
             total = (
                 self.fixture.amount
@@ -138,7 +177,9 @@ class _ArFixture:
     bank_movement_id = "91000000-0000-0000-0000-000000000004"
     bank_account_id = "91000000-0000-0000-0000-000000000005"
     match_id = "91000000-0000-0000-0000-000000000006"
-    ar_item_id = "cfdi:UX-CXC-001"
+    source_poliza_id = "91000000-0000-0000-0000-000000000008"
+    link_id = "91000000-0000-0000-0000-000000000009"
+    ar_item_id = "linked:" + link_id
     amount = 12500.0
 
     def reset(self):
@@ -266,7 +307,11 @@ async def _ar_bank_account(*_args, **_kwargs):
 
 
 async def _ar_cxc_account(*_args, **_kwargs):
-    return {"id": AR_FIXTURE.budget_line_id, "codigo": "1050-001"}
+    return {
+        "id": AR_FIXTURE.budget_line_id,
+        "codigo": "1050-001",
+        "receivable_amount": AR_FIXTURE.amount,
+    }
 
 
 async def _ar_insert(_session, *, ar_item, bank_movement, **_kwargs):

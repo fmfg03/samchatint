@@ -2310,8 +2310,7 @@ def register_presupuestos_routes(router) -> None:
         session: AsyncSession = Depends(get_db_session),
         current_empleado=Depends(get_current_empleado),
     ):
-        # Contabilidad (Benjamín y auxiliares) opera el cobro; no necesita
-        # autoridad de aprobación para registrar la fecha bancaria.
+        # Compatibility endpoint: new manual receipts fail closed in the owner.
         _require_budget_access(current_empleado, "line_update")
         try:
             await confirm_cfdi_income_collection(
@@ -2319,8 +2318,10 @@ def register_presupuestos_routes(router) -> None:
                 collection_date=collection_date,
             )
             fallback_url = budget_tournament_detail_url(
-                tournament_key, edition_year=edition_year, budget_view="income",
-                success_msg="Cobranza confirmada y póliza bancaria generada.",
+                tournament_key,
+                edition_year=edition_year,
+                budget_view="income",
+                success_msg="Cobro histórico ya registrado; no se generó una póliza nueva.",
             )
             return RedirectResponse(url=_safe_cfdi_income_return_url(return_to, fallback_url), status_code=303)
         except CFDIIncomeBridgeError as exc:
@@ -2425,7 +2426,7 @@ def register_presupuestos_routes(router) -> None:
                 edition_year=edition_year,
                 budget_view="income",
                 success_msg=(
-                    "El CFDI PSP dejó de contar como ingreso real."
+                    "Vínculo presupuestal retirado. Esta acción no cancela el CFDI ni revierte pólizas o cobros."
                     if unlinked
                     else "El CFDI PSP ya estaba desvinculado."
                 ),

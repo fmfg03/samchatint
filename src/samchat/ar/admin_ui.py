@@ -15,10 +15,12 @@ from .service import (
 
 
 def _money(value: Any) -> str:
+    if value is None:
+        return "N/D"
     try:
         amount = float(value or 0)
     except (TypeError, ValueError):
-        amount = 0.0
+        return "N/D"
     return f"${amount:,.2f}"
 
 
@@ -50,7 +52,7 @@ def _safe_count(value: Any) -> int:
         return 0
 
 
-def _sum_money(rows: list[dict[str, Any]], *keys: str) -> float:
+def _sum_money(rows: list[dict[str, Any]], *keys: str) -> Optional[float]:
     total = 0.0
     for row in rows:
         for key in keys:
@@ -61,6 +63,8 @@ def _sum_money(rows: list[dict[str, Any]], *keys: str) -> float:
                 except (TypeError, ValueError):
                     pass
                 break
+        else:
+            return None
     return total
 
 
@@ -257,8 +261,8 @@ def _operational_rows(rows: list[dict[str, Any]], *, return_to: str = "") -> str
                 _text(item.get("issued_date")),
                 _text(item.get("due_date")),
                 _money(item.get("expected_income_amount")),
-                _money(item.get("issued_amount")),
-                _money(item.get("linked_income_amount")),
+                _money(item.get("invoiced_gross_amount")),
+                _money(item.get("recognized_income_amount")),
                 _money(item.get("collected_amount")),
                 (
                     _money(item.get("balance_amount"))
@@ -268,7 +272,7 @@ def _operational_rows(rows: list[dict[str, Any]], *, return_to: str = "") -> str
                 _status_pill(item.get("operational_status")),
                 (
                     '<a class="button secondary compact" href="'
-                    f'/admin/finanzas/cuentas-por-cobrar/item/'
+                    f"/admin/finanzas/cuentas-por-cobrar/item/"
                     f'{quote(str(item.get("ar_item_id") or ""), safe="")}'
                     f'?{context_query + "&" if context_query else ""}'
                     f'return_to={quote(return_to or "", safe="")}'
@@ -570,6 +574,11 @@ def render_ar_item_detail_html(
     )
     status = item.get("operational_status") or item.get("status")
     collection_status = item.get("collection_status") or "collection_unknown"
+    collection_source = {
+        "accepted_match": "Conciliación aceptada",
+        "direct_record": "Registro directo; conciliación bancaria no acreditada",
+        "conflict": "Conflicto entre vías de cobro",
+    }.get(item.get("collection_source"), "Sin evidencia de origen de cobro")
     balance = (
         _money(item.get("balance_amount"))
         if item.get("balance_amount") is not None
@@ -616,7 +625,7 @@ def render_ar_item_detail_html(
                 <div class="ar-detail-grid">
                     {_detail_metric("UUID", item.get("cfdi_uuid"))}
                     {_detail_metric("Fecha CFDI", item.get("issued_date"))}
-                    {_detail_money("Monto facturado", item.get("issued_amount"))}
+                    {_detail_money("Total facturado bruto", item.get("invoiced_gross_amount"))}
                     {_detail_metric("RFC emisor", item.get("emisor_rfc"))}
                     {_detail_metric("Nombre emisor", item.get("emisor_nombre"))}
                     {_detail_metric("RFC receptor", item.get("payer_rfc"))}
@@ -630,14 +639,15 @@ def render_ar_item_detail_html(
                     {_detail_metric("Fase", item.get("phase"))}
                     {_detail_metric("Concepto/partida", item.get("concept_name"))}
                     {_detail_money("Monto presupuestado", item.get("expected_income_amount"))}
-                    {_detail_money("Monto reconocido", item.get("linked_income_amount"))}
+                    {_detail_money("Ingreso reconocido contable", item.get("recognized_income_amount"))}
                     {_detail_metric("Versión", item.get("budget_version_id"))}
                 </div>
             </div>
             <div class="workspace-card">
                 <div class="workspace-section-title">Cobranza</div>
                 <div class="ar-detail-grid">
-                    {_detail_money("Cobrado comprobado", item.get("collected_amount"))}
+                    {_detail_money("Cobrado registrado", item.get("collected_amount"))}
+                    {_detail_metric("Origen del cobro", collection_source)}
                     {_detail_metric("Fecha cobranza", item.get("collection_date"))}
                     {_detail_metric("Match aceptado", item.get("collection_match_id"))}
                     {_detail_metric("Estado cobranza", collection_status)}
@@ -694,7 +704,7 @@ def _accept_match_form(
         for account in (bank_accounts or [])
     )
     hidden = {
-        "budget_version_id": budget_version_id,
+        "budget_version_id": item.get("budget_version_id") or budget_version_id,
         "ar_item_id": item.get("ar_item_id"),
         "budget_line_id": item.get("budget_line_id"),
         "cfdi_report_id": item.get("cfdi_report_id"),
@@ -792,18 +802,8 @@ def _accepted_match_rows(
     for item in rows:
         match_id = _text(item.get("id"), "")
         reverse_form = (
-            '<span class="ar-muted">sin permiso operativo</span>'
-            if not can_operate_matches
-            else f"""
-            <form method="POST"
-                  action="{escape(action_base)}/matches/{match_id}/reverse"
-                  style="display:grid;gap:6px;min-width:180px;">
-                <input type="hidden" name="return_to" value="{_text(return_to, "")}">
-                <input name="reversal_reason" required
-                       placeholder="Razon de reversion">
-                <button class="button secondary" type="submit">Revertir</button>
-            </form>
-        """
+            '<span class="ar-muted">Reversa explícita pendiente de fecha contable '
+            "y validación de periodo por Finanzas. El original se conserva.</span>"
         )
         rendered.append(
             _row(
@@ -1029,7 +1029,7 @@ def render_ar_read_model_html(
             f"<strong>{_money(summary.get('linked_income_total'))}</strong></div>",
             "<div><span>CFDI PSP no ligado</span>"
             f"<strong>{_money(summary.get('issued_unlinked_total'))}</strong></div>",
-            "<div><span>Cobrado comprobado</span>"
+            "<div><span>Cobrado registrado</span>"
             f"<strong>{_money(summary.get('collected_total'))}</strong></div>",
             "<div><span>Saldo</span>"
             f"<strong>{_money(summary.get('balance_total'))}</strong></div>",
@@ -1069,7 +1069,7 @@ def render_ar_read_model_html(
         search=search,
     )
     filtered_balance = _sum_money(operational_rows, "balance_amount")
-    filtered_invoiced = _sum_money(operational_rows, "issued_amount")
+    filtered_invoiced = _sum_money(operational_rows, "invoiced_gross_amount")
     filtered_collected = _sum_money(operational_rows, "collected_amount")
     filtered_overdue = _sum_money(
         [
@@ -1078,7 +1078,6 @@ def render_ar_read_model_html(
             if str(row.get("operational_status") or "") == "Vencido"
         ],
         "balance_amount",
-        "issued_amount",
     )
     executive_cards = "".join(
         [
@@ -1089,24 +1088,24 @@ def render_ar_read_model_html(
             ),
             _executive_kpi_card(
                 "Facturado",
-                summary.get("invoiced_total")
-                if summary.get("invoiced_total") is not None
-                else (
-                    float(summary.get("linked_income_total") or 0)
-                    + float(summary.get("issued_unlinked_total") or 0)
-                ),
-                "CFDI PSP ligado o pendiente de liga.",
+                summary.get("invoiced_gross_total"),
+                "Total documental, incluidos vínculos pendientes; no es ingreso neto.",
             ),
             _executive_kpi_card(
-                "Cobrado comprobado",
+                "Ingreso reconocido contable",
+                summary.get("recognized_income_total"),
+                "Resultado de las pólizas vinculadas; sin estimación fiscal.",
+            ),
+            _executive_kpi_card(
+                "Cobrado registrado",
                 summary.get("collected_total"),
-                "Sólo matches aceptados cuentan como cobro.",
+                "Recibos aceptados y registros directos identificados; conflictos quedan N/D.",
                 tone="positive",
             ),
             _executive_kpi_card(
                 "Saldo pendiente CxC",
                 summary.get("balance_total"),
-                "Estimado desde facturado menos cobrado comprobado.",
+                "Sólo cuando hay cobertura de saldo; N/D no significa cero.",
                 tone="warning",
             ),
             _executive_kpi_card(
@@ -1179,8 +1178,8 @@ def render_ar_read_model_html(
         f"<th>{_sort_link(label='Fecha CFDI', field='issued_date', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
         f"<th>{_sort_link(label='Vence', field='due_date', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
         f"<th>{_sort_link(label='Presupuestado', field='expected_income_amount', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
-        f"<th>{_sort_link(label='Facturado', field='issued_amount', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
-        f"<th>{_sort_link(label='Reconocido', field='linked_income_amount', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        f"<th>{_sort_link(label='Facturado', field='invoiced_gross_amount', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        f"<th>{_sort_link(label='Reconocido', field='recognized_income_amount', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
         f"<th>{_sort_link(label='Cobrado', field='collected_amount', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
         f"<th>{_sort_link(label='Saldo', field='balance_amount', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
         f"<th>{_sort_link(label='Estado', field='operational_status', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
@@ -1188,6 +1187,33 @@ def render_ar_read_model_html(
         "</tr></thead>"
     )
     accounting_href = _accounting_cxc_href(base_url)
+    coverage = payload.get("source_coverage") or {}
+    coverage_notes = []
+    if coverage.get("period_status") == "missing_budget_year":
+        coverage_notes.append("Falta el año presupuestal: calendario no determinado.")
+    if coverage.get("currency_gap"):
+        coverage_notes.append(
+            "Moneda sin cobertura homogénea: no se suman monedas distintas."
+        )
+    if coverage.get("income_lines_truncated") or coverage.get("candidates_truncated"):
+        coverage_notes.append(
+            "La consulta está limitada; los totales no acreditan cobertura completa."
+        )
+    if coverage.get("gross_amount_gap") or coverage.get("recognized_income_gap"):
+        coverage_notes.append(
+            "Falta importe documental o evidencia de ingreso contable."
+        )
+    if coverage.get("unknown_balance_count"):
+        coverage_notes.append("Hay saldos sin confirmar; el total permanece N/D.")
+    if coverage.get("collection_conflict_count"):
+        coverage_notes.append(
+            "Existe evidencia de cobros en conflicto o fuera de conciliación. Revisar las pólizas antes de operar."
+        )
+    if payload.get("unlinked_income_links"):
+        coverage_notes.append(
+            "Hay vínculos retirados: esto no acredita cancelación fiscal ni reversa contable."
+        )
+    coverage_html = " ".join(escape(note) for note in coverage_notes)
 
     return f"""
         <section class="workspace-card ar-warning" style="margin-bottom:18px;">
@@ -1195,7 +1221,8 @@ def render_ar_read_model_html(
             <div class="workspace-section-subtitle">
                 Esta vista separa ingreso presupuestado, CFDI emitido, ingreso
                 reconocido y cobranza comprobada. Un CFDI vinculado no prueba
-                pago; solo los matches aceptados cuentan como cobro.
+                pago. Los cobros directos registrados no acreditan por sí solos
+                conciliación bancaria. N/D indica falta de evidencia o conflicto.
             </div>
             <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
                 <a class="button secondary" href="{escape(export_url)}">Descargar Excel CxC</a>
@@ -1213,6 +1240,7 @@ def render_ar_read_model_html(
             <div class="ar-executive-grid">
                 {executive_cards}
             </div>
+            <p class="ar-muted">{coverage_html}</p>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">
             <div class="workspace-section-title">Cartera filtrada</div>

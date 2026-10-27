@@ -691,12 +691,12 @@ def _summary_metric_rows(
             "Ingreso presupuestado",
             _safe_float(ar_summary.get("expected_income_total")),
         ],
-        ["Facturado CxC", _safe_float(ar_summary.get("invoiced_total"))],
+        ["Facturado bruto CxC", ar_summary.get("invoiced_gross_total")],
         [
-            "Cobrado comprobado CxC",
-            _safe_float(ar_summary.get("collected_total")),
+            "Cobrado registrado CxC",
+            ar_summary.get("collected_total"),
         ],
-        ["Saldo pendiente CxC", _safe_float(ar_summary.get("balance_total"))],
+        ["Saldo pendiente CxC", ar_summary.get("balance_total")],
     ]
 
 
@@ -803,16 +803,16 @@ def _ar_rows(
     rows.append(
         [
             "Resumen",
-            "Facturado",
-            _safe_float(summary.get("invoiced_total")),
+            "Facturado bruto",
+            summary.get("invoiced_gross_total"),
             "",
         ]
     )
     rows.append(
         [
             "Resumen",
-            "Cobrado comprobado",
-            _safe_float(summary.get("collected_total")),
+            "Cobrado registrado",
+            summary.get("collected_total"),
             "",
         ]
     )
@@ -820,7 +820,7 @@ def _ar_rows(
         [
             "Resumen",
             "Saldo pendiente",
-            _safe_float(summary.get("balance_total")),
+            summary.get("balance_total"),
             "",
         ]
     )
@@ -829,7 +829,7 @@ def _ar_rows(
             [
                 _safe_text(item.get("operational_status")),
                 _safe_text(item.get("payer_name") or item.get("tournament_name")),
-                _safe_float(item.get("balance_amount") or item.get("issued_amount")),
+                item.get("balance_amount"),
                 _safe_text(item.get("ar_item_id")),
             ]
         )
