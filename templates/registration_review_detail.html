@@ -917,6 +917,14 @@
                         <div class="player-photo-frame">
                             {% if player.photo_preview_url %}
                             <img src="{{ player.photo_preview_url }}" alt="Foto detectada de {{ player.name or ('Jugador ' ~ player.index) }}">
+                            {% elif player.photo_preview_status == 'missing' %}
+                            <div class="player-photo-empty">
+                                Sin foto visible en la casilla
+                            </div>
+                            {% elif player.photo_preview_status == 'uncertain' %}
+                            <div class="player-photo-empty">
+                                Fotografía pendiente de verificar
+                            </div>
                             {% else %}
                             <div class="player-photo-empty">
                                 Sin foto detectada
@@ -925,12 +933,18 @@
                         </div>
                         {% if player.photo_preview_url %}
                         <small style="color: #64748b;">
-                            {% if player.photo_preview_mode in ['ctt_explicit', 'ctt_explicit_binding'] %}
+                            {% if player.photo_preview_mode == 'ctt_batch_aligned' %}
+                            Compara esta foto con la casilla del documento.
+                            {% elif player.photo_preview_mode in ['ctt_explicit', 'ctt_explicit_binding'] %}
                             Foto recortada con la caja explícita de su casilla. Se guarda al capturar.
                             {% else %}
                             Foto detectada por OCR. Se guarda al capturar.
                             {% endif %}
                         </small>
+                        {% elif player.photo_preview_status == 'uncertain' %}
+                        <small style="color: #92400e;">No fue posible verificar el recorte. Consulta la página original.</small>
+                        {% elif player.photo_preview_status == 'missing' %}
+                        <small style="color: #64748b;">La casilla parece vacía. Confírmalo en el documento.</small>
                         {% else %}
                         <small style="color: #94a3b8;">No se detectó ni pudo estimarse una foto útil para este jugador.</small>
                         {% endif %}

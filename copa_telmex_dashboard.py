@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import secrets
@@ -205,6 +206,11 @@ from devnous.gastos.models import CFDIReport  # noqa: F401 - register SQLAlchemy
 from devnous.agents.ocr_agent import OCRAgent
 from devnous.agents.ocr_schemas import RegistrationFormExtraction
 from devnous.tournaments.core.local_ocr_runner import LocalOCRRunner
+from devnous.tournaments.core.ctt_batch_photo_alignment import (  # noqa: E402
+    extract_batch_photo,
+    parse_batch_slot,
+    prepare_batch_page,
+)
 from devnous.tournaments.core.ocr_integrity import (
     average_hash_hex,
     compute_sha256_hex,
@@ -2469,13 +2475,48 @@ def _backend_failure_note(raw_payload: Optional[Dict[str, Any]]) -> Optional[str
     return "OCR local no disponible todavía. El servidor no pudo cargar sus modelos: " + " | ".join(issues)
 
 
-def _review_public_path(image_path: str) -> str:
+def _current_review_asset_path(image_path: str) -> Path:
+    """Use a copied immutable review asset from the active release if present."""
     path = Path(image_path)
+    release = photos_dir.parent
+    if not path.is_absolute() or not release.name.startswith("gastos-prod-"):
+        return path
     try:
-        relative = path.relative_to(photos_dir)
+        parts = path.resolve().relative_to(release.parent.resolve()).parts
+        if (
+            len(parts) < 5
+            or not parts[0].startswith("gastos-prod-")
+            or parts[1:3] != ("photos", "review_sessions")
+        ):
+            return path
+        UUID(parts[3])
+        root = photos_dir.resolve()
+        candidate = root.joinpath(*parts[2:]).resolve()
+        candidate.relative_to(root)
+        return candidate if candidate.is_file() else path
+    except (OSError, ValueError):
+        return path
+
+
+def _review_public_path(image_path: str) -> str:
+    path = _current_review_asset_path(image_path)
+    try:
+        relative = path.relative_to(photos_dir.resolve())
         return f"/photos/{relative.as_posix()}"
     except ValueError:
         return image_path
+
+
+def _review_asset_public_url(asset: RegistrationReviewAsset) -> Optional[str]:
+    original = Path(asset.image_path)
+    active = _current_review_asset_path(asset.image_path)
+    if active != original:
+        try:
+            if hashlib.sha256(active.read_bytes()).hexdigest() != asset.sha256:
+                return None
+        except OSError:
+            return None
+    return _review_public_path(asset.image_path)
 
 
 def _storage_relative_path(image_path: str) -> str:
@@ -2502,7 +2543,7 @@ def _session_asset_payload(asset: RegistrationReviewAsset) -> Dict[str, Any]:
         "id": str(asset.id),
         "page_index": asset.page_index,
         "image_path": asset.image_path,
-        "image_url": _review_public_path(asset.image_path),
+        "image_url": _review_asset_public_url(asset),
         "width": asset.width,
         "height": asset.height,
         "sha256": asset.sha256,
@@ -2926,7 +2967,7 @@ def _load_review_asset_images(assets: List[RegistrationReviewAsset]) -> Dict[int
     loaded: Dict[int, Image.Image] = {}
     for asset in assets:
         try:
-            with Image.open(asset.image_path) as source:
+            with Image.open(_current_review_asset_path(asset.image_path)) as source:
                 normalized, _metadata = normalize_ctt_template_image(source)
             loaded[int(asset.page_index)] = normalized.convert("RGB")
         except Exception:
@@ -3014,21 +3055,133 @@ def _resolve_review_photo_region(
     return None, "unavailable"
 
 
+def _batch_photo_players(
+    players: List[Dict[str, Any]], draft: Any
+) -> List[Dict[str, Any]]:
+    """Attach immutable source slots in memory, never to a saved draft."""
+    source = draft.extraction if draft and isinstance(draft.extraction, dict) else {}
+    source_players = source.get("players") or []
+    safe_mutation = getattr(draft, "mutation_type", None) in {
+        "batch_manifest_admitted", "human_field_edit"
+    }
+    refs = [item.get("slot_ref") for item in source_players if isinstance(item, dict)]
+    safe = (
+        safe_mutation and len(source_players) == len(players)
+        and len(refs) == len(players) and all(isinstance(ref, str) for ref in refs)
+        and len(set(refs)) == len(refs)
+    )
+    return [
+        {**player, "_batch_source_slot": refs[idx] if safe else None}
+        for idx, player in enumerate(players)
+    ]
+
+
+def _batch_review_photo_crops(
+    players: List[Dict[str, Any]],
+    assets: List[RegistrationReviewAsset],
+    layout_regions: Dict[str, Any],
+) -> Dict[int, Tuple[Optional[Image.Image], str, int]]:
+    """Resolve exact source slots using hash-verified admitted page images."""
+    pages: Dict[int, Image.Image] = {}
+    grids: Dict[int, Any] = {}
+    seen_pages: set[int] = set()
+    source_pages = layout_regions.get("source_pages")
+    if not isinstance(source_pages, list) or len(source_pages) != 2:
+        return {idx: (None, "uncertain", 0) for idx in range(1, len(players) + 1)}
+    for asset in assets:
+        try:
+            page_index = int(asset.page_index)
+            if page_index in seen_pages:
+                pages.pop(page_index, None)
+                grids[page_index] = None
+                continue
+            seen_pages.add(page_index)
+            if page_index not in (1, 2):
+                continue
+            source_page = source_pages[page_index - 1]
+            if type(source_page) is not int or source_page < 1:
+                continue
+            source_ref = str(asset.source_ocr_run_ref or "")
+            if not re.fullmatch(
+                rf"batch:[0-9a-f]{{64}}:source-page:{source_page}", source_ref
+            ):
+                continue
+            payload = _current_review_asset_path(asset.image_path).read_bytes()
+            if hashlib.sha256(payload).hexdigest() != asset.sha256:
+                continue
+            with Image.open(io.BytesIO(payload)) as source:
+                image = source.convert("RGB")
+            if image.size != (int(asset.width), int(asset.height)):
+                continue
+            pages[page_index] = image
+            grids[page_index] = prepare_batch_page(image, page_index)
+        except Exception:
+            logger.warning("Could not validate a batch source page", exc_info=True)
+            continue
+    results: Dict[int, Tuple[Optional[Image.Image], str, int]] = {}
+    refs = [player.get("_batch_source_slot") for player in players]
+    for idx, player in enumerate(players, 1):
+        ref = player.get("_batch_source_slot")
+        parsed = parse_batch_slot(ref, layout_regions.get("source_pages"))
+        if not parsed or refs.count(ref) != 1:
+            results[idx] = (None, "uncertain", 0)
+            continue
+        page_index, slot = parsed
+        image, grid = pages.get(page_index), grids.get(page_index)
+        if image is None or grid is None:
+            results[idx] = (None, "uncertain", page_index)
+            continue
+        try:
+            crop, status = extract_batch_photo(
+                image, page_index=page_index, slot=slot, prepared=grid
+            )
+        except Exception:
+            logger.warning("Could not validate a batch photo slot", exc_info=True)
+            crop, status = None, "uncertain"
+        results[idx] = (crop, status, page_index)
+    return results
+
+
 def _build_review_photo_artifacts(
     *,
     team_id: Any,
     players_payload: List[Dict[str, Any]],
     assets: List[RegistrationReviewAsset],
     layout_regions: Dict[str, Any],
+    batch_source: bool = False,
 ) -> Dict[int, Dict[str, Any]]:
     photos_dir = Path(__file__).parent / "photos" / "players" / str(team_id)
     photos_dir.mkdir(parents=True, exist_ok=True)
-    loaded_pages = _load_review_asset_images(assets)
+    batch_crops = (
+        _batch_review_photo_crops(players_payload, assets, layout_regions)
+        if batch_source else None
+    )
+    loaded_pages = {} if batch_source else _load_review_asset_images(assets)
     player_page_map = dict((layout_regions or {}).get("player_page_map") or {})
     artifacts: Dict[int, Dict[str, Any]] = {}
     page_player_counters: Dict[int, int] = {}
 
     for idx, player_payload in enumerate(players_payload, 1):
+        if batch_source:
+            crop, status, page_index = batch_crops.get(idx, (None, "uncertain", 0))
+            if status != "photo" or crop is None:
+                continue
+            buffer = io.BytesIO()
+            crop.save(buffer, format="JPEG", quality=90)
+            raw = buffer.getvalue()
+            filename = (
+                f"review_{page_index}_{idx:02d}_"
+                f"{slugify_filename(player_payload.get('name'), fallback='jugador')}_"
+                f"{datetime.utcnow().strftime('%Y%m%dT%H%M%S%f')}.jpg"
+            )
+            filepath = photos_dir / filename
+            filepath.write_bytes(raw)
+            artifacts[idx] = {
+                "photo_path": str(filepath),
+                "photo_sha256": compute_sha256_hex(raw),
+                "photo_ahash": average_hash_hex(crop),
+            }
+            continue
         page_index = int(player_page_map.get(str(idx)) or 1)
         source_image = loaded_pages.get(page_index)
         page_player_counters[page_index] = int(page_player_counters.get(page_index) or 0) + 1
@@ -3080,15 +3233,48 @@ def _build_review_player_photo_previews(
     players_payload: List[Dict[str, Any]],
     assets: List[RegistrationReviewAsset],
     layout_regions: Dict[str, Any],
+    batch_source: bool = False,
 ) -> Dict[int, Dict[str, Any]]:
     previews_dir = review_uploads_dir / str(session_id) / "player_previews"
     previews_dir.mkdir(parents=True, exist_ok=True)
-    loaded_pages = _load_review_asset_images(assets)
+    batch_crops = (
+        _batch_review_photo_crops(players_payload, assets, layout_regions)
+        if batch_source else None
+    )
+    loaded_pages = {} if batch_source else _load_review_asset_images(assets)
     player_page_map = dict((layout_regions or {}).get("player_page_map") or {})
     previews: Dict[int, Dict[str, Any]] = {}
     page_player_counters: Dict[int, int] = {}
 
     for idx, player_payload in enumerate(players_payload, 1):
+        if batch_source:
+            crop, status, _page_index = batch_crops.get(idx, (None, "uncertain", 0))
+            legacy_path = previews_dir / f"player_{idx:02d}.jpg"
+            legacy_path.unlink(missing_ok=True)
+            if status != "photo" or crop is None:
+                previews[idx] = {"preview_status": status}
+                continue
+            buffer = io.BytesIO()
+            crop.save(buffer, format="JPEG", quality=88)
+            preview_bytes = buffer.getvalue()
+            preview_digest = hashlib.sha256(preview_bytes).hexdigest()
+            filepath = previews_dir / f"player_{idx:02d}-{preview_digest}.jpg"
+            temp_path = previews_dir / f".player-{idx:02d}-{uuid4().hex}.tmp"
+            try:
+                temp_path.write_bytes(preview_bytes)
+                os.replace(temp_path, filepath)
+            finally:
+                temp_path.unlink(missing_ok=True)
+            previews[idx] = {
+                "preview_path": str(filepath),
+                "preview_url": (
+                    _review_public_path(str(filepath))
+                    + "?v=" + preview_digest[:16]
+                ),
+                "preview_mode": "ctt_batch_aligned",
+                "preview_status": status,
+            }
+            continue
         page_index = int(player_page_map.get(str(idx)) or 1)
         source_image = loaded_pages.get(page_index)
         page_player_counters[page_index] = int(page_player_counters.get(page_index) or 0) + 1
@@ -4855,7 +5041,11 @@ async def list_registration_review_sessions(request: Request):
                         "player_count": int(validation.get("player_count") or 0),
                         "needs_review": bool(validation.get("needs_review")),
                         "committed_team_id": str(review_session.committed_team_id) if review_session.committed_team_id else None,
-                        "cover_url": _review_public_path(first_asset.image_path) if first_asset else None,
+                        "cover_url": (
+                            _review_asset_public_url(first_asset)
+                            if first_asset
+                            else None
+                        ),
                     }
                 )
 
@@ -5960,11 +6150,16 @@ async def view_registration_review_session(request: Request, session_id: str):
         player_rows_map = {
             int(item.get("index") or 0): item for item in (validation.get("player_rows") or [])
         }
+        batch_photo_source = review_session.source == "batch_admission"
+        display_photo_players = list(extraction.get("players") or [])
+        if batch_photo_source:
+            display_photo_players = _batch_photo_players(display_photo_players, draft)
         photo_previews = _build_review_player_photo_previews(
             session_id=review_session.id,
-            players_payload=list(extraction.get("players") or []),
+            players_payload=display_photo_players,
             assets=list(review_session.assets or []),
             layout_regions=layout_regions,
+            batch_source=batch_photo_source,
         )
         players = []
         for idx, player in enumerate(extraction.get("players") or [], 1):
@@ -5982,6 +6177,9 @@ async def view_registration_review_session(request: Request, session_id: str):
                     "has_photo_region": isinstance(player.get("photo_region"), dict),
                     "photo_preview_url": (photo_previews.get(idx) or {}).get("preview_url"),
                     "photo_preview_mode": (photo_previews.get(idx) or {}).get("preview_mode"),
+                    "photo_preview_status": (photo_previews.get(idx) or {}).get(
+                        "preview_status"
+                    ),
                 }
             )
 
@@ -7363,6 +7561,11 @@ async def commit_registration_review_session(session_id: str, request: Request):
             for player in (extraction.get("players") or [])
             if _player_has_usable_signal(player)
         ]
+        batch_photo_source = review_session.source == "batch_admission"
+        photo_players = list(extraction.get("players") or [])
+        if batch_photo_source:
+            photo_players = _batch_photo_players(photo_players, review_session.draft)
+        photo_players = [p for p in photo_players if _player_has_usable_signal(p)]
         tournament_slug = (review_session.tournament_slug or "").strip() or None
 
         if not tournament_slug:
@@ -7383,9 +7586,10 @@ async def commit_registration_review_session(session_id: str, request: Request):
             layout_regions = review_session.draft.layout_regions if isinstance(review_session.draft.layout_regions, dict) else {}
             photo_artifacts = _build_review_photo_artifacts(
                 team_id=review_session.id,
-                players_payload=players_payload,
+                players_payload=photo_players,
                 assets=list(review_session.assets or []),
                 layout_regions=layout_regions,
+                batch_source=batch_photo_source,
             )
             existing_photo_records = await copa_db.get_player_photo_fingerprints_by_tournament(tournament_slug)
             incident_policy = _build_registration_incident_policy(
@@ -7577,9 +7781,10 @@ async def commit_registration_review_session(session_id: str, request: Request):
         layout_regions = review_session.draft.layout_regions if isinstance(review_session.draft.layout_regions, dict) else {}
         photo_artifacts = _build_review_photo_artifacts(
             team_id=team.id,
-            players_payload=players_payload,
+            players_payload=photo_players,
             assets=list(review_session.assets or []),
             layout_regions=layout_regions,
+            batch_source=batch_photo_source,
         )
 
         created_players = 0
