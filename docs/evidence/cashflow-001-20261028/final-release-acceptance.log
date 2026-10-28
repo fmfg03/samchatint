@@ -1,0 +1,35 @@
+........................................................................ [ 29%]
+........................................................................ [ 59%]
+........................................................................ [ 89%]
+.......................s..                                               [100%]
+=============================== warnings summary ===============================
+../../root/samchat/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1345
+  /root/samchat/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1345: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; anyio
+    self._mark_plugins_for_rewrite(hook, disable_autoload)
+
+src/samchat/assistant/router.py:5246
+  /tmp/cashflow001-reviewed-release/src/samchat/assistant/router.py:5246: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    year: int = Field(default=datetime.utcnow().year, ge=2000, le=2100)
+
+src/samchat/assistant/router.py:5252
+  /tmp/cashflow001-reviewed-release/src/samchat/assistant/router.py:5252: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    year: int = Field(default=datetime.utcnow().year, ge=2000, le=2100)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+_______________ coverage: platform linux, python 3.12.3-final-0 ________________
+
+Name                                            Stmts   Miss  Cover   Missing
+-----------------------------------------------------------------------------
+src/samchat/assistant/finance_read_adapter.py      88      3    97%   228, 274, 399
+src/samchat/cashflow/__init__.py                    3      0   100%
+src/samchat/cashflow/admin_ui.py                  219      0   100%
+src/samchat/cashflow/service.py                   663     73    89%   57, 97-98, 245-246, 261-263, 265, 268, 346, 348, 421, 429, 1052, 1058-1081, 1099-1101, 1106, 1123-1136, 1187, 1197-1209, 1230-1231, 1264-1265, 1333-1334, 1360-1361, 1376, 1397, 1466-1467, 1523-1524, 1564-1565, 1569-1571, 1587, 1598, 1608-1613, 1616, 1631-1633
+src/samchat/executive/template_reports.py         163     18    89%   39-40, 46-47, 80-90, 94, 127-128, 148, 153-154, 339
+-----------------------------------------------------------------------------
+TOTAL                                            1136     94    92%
+Coverage JSON written to file /tmp/cashflow001-coverage.json
+Required test coverage of 85% reached. Total coverage: 91.73%
+=========================== short test summary info ============================
+SKIPPED [1] tests/integration/test_cashflow_sources_postgres.py:247: Explicit multiempresa upstream candidate not present
+241 passed, 1 skipped, 3 warnings in 14.81s

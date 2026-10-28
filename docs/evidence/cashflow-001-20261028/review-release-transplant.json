@@ -1,0 +1,9 @@
+{
+  "base": "f8c9c11b05e3e3be071d4199e97e9e3a55173191",
+  "approved_source_head": "a43ececee059e896ea0de6a5216760fa54bca546",
+  "adapter_json_hunks_only": true,
+  "adapter_other_ast_matches_live": true,
+  "existing_live_adapter_tests_unchanged": true,
+  "runtime_modules_byte_identical": true,
+  "canon_integrity": true
+}

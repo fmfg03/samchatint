@@ -1,7 +1,7 @@
 {
   "base": "f8c9c11b05e3e3be071d4199e97e9e3a55173191",
-  "approved_source_head": "db2084bb9d0e81a518d2622819d008182da5e960",
-  "supersedes": "Prepared465b on800848; current f8c9 accounting fix retained; no earlier preparation was deployed.",
+  "approved_source_head": "40eb9286474de57cce2bd174963006dd85959f99",
+  "supersedes": "unused465b and022389 preparations; includes verified PR review corrections",
   "ast_outside_approved_functions_unchanged": {
     "src/devnous/gastos/routes/admin_routes.py": [
       "admin_finance_cashflow"
@@ -21,6 +21,7 @@
   "runtime_files": [
     "src/devnous/gastos/routes/admin_routes.py",
     "src/devnous/gastos/routes/user_routes.py",
+    "src/samchat/assistant/finance_read_adapter.py",
     "src/samchat/assistant/finance_read_answer.py",
     "src/samchat/cashflow/__init__.py",
     "src/samchat/cashflow/admin_ui.py",
@@ -40,12 +41,12 @@
   "canon": "Canon unchanged; all three hashes verified in order against serving register.",
   "effects": "local release preparation only; no production mutation",
   "validation": {
-    "acceptance_passed": 219,
+    "acceptance_passed": 259,
     "skipped": 1,
     "skip_reason": "future multiempresa candidate not present; no activation",
     "postgresql_acceptance": 3,
     "browser_tests": 2,
-    "coverage_percent": 91.00684261974584,
+    "coverage_percent": 91.72535211267606,
     "preserved_owner_regressions_passed": 234,
     "private_plugin_passed": 135,
     "inventory": "613/578/44; no parse gaps",
@@ -55,7 +56,12 @@
     "runtime_imports": "pass with existing production venv",
     "review": "independent release review plus targeted reviewed UX fix, reproduced exact AST/owner assertions",
     "fresh_accounting_preservation_tests_passed": 20,
-    "prospective_main_merge": "db208+660104 clean; regenerated inventory identical;135 private-plugin tests pass"
+    "prospective_main_merge": "db208+660104 clean; regenerated inventory identical;135 private-plugin tests pass",
+    "production_interpreter_json_boundary": "passed strict JSON withDecimalNaN/Infinity and source unchanged",
+    "review_threads": "three verified findings addressed and resolved after publication at PRa43ececee",
+    "runtime_scope": "8 files; 3cashflowmodules identical to approvedsource,6sharedfunctions plus2adaptercashflowbranches/helper; restcurrentliveAST preserved",
+    "native_json_tests": "both explicit PostgreSQL drivers, real JSONB type, strict JSON both binding paths; runtime unchanged",
+    "source_root_acceptance_passed": 266
   },
   "prior_prepared_base": "80084893936dd2214239f52107150e4f86c1a150",
   "concurrent_serving_delta_preserved": [
@@ -63,5 +69,18 @@
     "src/samchat/assistant/tools.py",
     "tests/integration/test_historical_explicit_manifest_postgres.py",
     "tests/unit/test_assistant_historical_report_coverage.py"
-  ]
+  ],
+  "adapter_scope": {
+    "helper": "_cashflow_json_payload",
+    "intents": [
+      "cashflow.summary",
+      "cashflow.statement"
+    ],
+    "only_json_hunks_applied": true,
+    "all_other_adapter_ast_identical_to_live": true,
+    "finite_wire_contract_preserved": true,
+    "nonfinite_numeric_values": "None",
+    "internal_source_decimal": "unchanged"
+  },
+  "approved_runtime_object": "a43ececee059e896ea0de6a5216760fa54bca546"
 }

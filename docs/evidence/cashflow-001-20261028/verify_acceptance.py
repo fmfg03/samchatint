@@ -20,5 +20,6 @@ raise SystemExit(pytest.main([
  'tests/integration/test_cashflow_sources_postgres.py',
  'tests/browser/test_cashflow_report_browser.py',
  '--cov=samchat.cashflow','--cov=samchat.executive.template_reports',
+ '--cov=samchat.assistant.finance_read_adapter',
  '--cov-report=term-missing','--cov-report=json:/tmp/cashflow001-coverage.json',
 ]))

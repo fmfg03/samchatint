@@ -104,6 +104,56 @@ def _unique(
     return list(result.values())
 
 
+def _cashflow_project_options(sources: dict[str, Any]) -> list[dict[str, str]]:
+    """Keep choices from authorized facts, independently of pending AP/filtering.
+
+    No global catalog is read: parent scope belongs to the source readers. An
+    explicit company identity or server tournament cap may only narrow choices.
+    """
+    cap = sources.get("authorized_tournament_ids")
+    allowed = None if cap is None else {str(value) for value in cap}
+    company = str(sources.get("company_id") or "")
+    rows = [
+        {
+            **row,
+            "project_id": row.get("key")
+            or row.get("project_id")
+            or row.get("tournament_id"),
+            "project_name": row.get("label")
+            or row.get("project_name")
+            or row.get("tournament_name"),
+        }
+        for row in sources.get("project_options") or []
+    ]
+    for lane in ("documents", "bank_rows", "budget_plan"):
+        rows.extend(sources.get(lane) or [])
+    ar = sources.get("ar_payload") or {}
+    for lane in (
+        "expected_income",
+        "issued_linked",
+        "issued_unlinked",
+        "unlinked_income_links",
+    ):
+        rows.extend(ar.get(lane) or [])
+    choices: dict[str, str] = {}
+    for row in rows:
+        if row.get("company_id") and str(row["company_id"]) != company:
+            continue
+        identity = str(row.get("project_id") or row.get("tournament_id") or "").strip()
+        if (
+            not identity
+            or identity == "all"
+            or (allowed is not None and identity not in allowed)
+        ):
+            continue
+        label = row.get("project_name") or row.get("tournament_name")
+        if label and choices.get(identity) in (None, "Proyecto sin nombre"):
+            choices[identity] = str(label)
+        else:
+            choices.setdefault(identity, "Proyecto sin nombre")
+    return [{"key": key, "label": label} for key, label in sorted(choices.items())]
+
+
 def _account_key(value: Any) -> str:
     return hashlib.sha256(str(value or "").encode()).hexdigest()[:20]
 
@@ -135,6 +185,7 @@ def build_cashflow_report(
         raise ValueError("El intervalo de flujo es inválido")
     if grouping not in {"semanal", "mensual", "trimestral", "semestral", "anual"}:
         raise ValueError("Agrupación inválida")
+    project_options = _cashflow_project_options(sources)
     notes = list(sources.get("source_notes") or [])
     status = dict(sources.get("source_status") or {})
     status.setdefault(
@@ -756,18 +807,7 @@ def build_cashflow_report(
             {"key": _account_key(a), "label": _account(a)}
             for a in sorted({str(r.get("cuenta_bancaria") or "") for r in raw_bank})
         ],
-        project_options=[
-            {"key": k, "label": v}
-            for k, v in sorted(
-                {
-                    str(r.get("project_id")): str(
-                        r.get("project_name") or "Proyecto sin nombre"
-                    )
-                    for r in documents
-                    if r.get("project_id")
-                }.items()
-            )
-        ],
+        project_options=project_options,
         details=dict(
             page=page,
             page_size=page_size,
@@ -1048,6 +1088,9 @@ async def load_cashflow_sources(
             )
     allowed_tournaments = (
         None if tournament_ids is None else {str(value) for value in tournament_ids}
+    )
+    result["authorized_tournament_ids"] = (
+        None if allowed_tournaments is None else sorted(allowed_tournaments)
     )
     if allowed_tournaments == set():
         for key in ("bank", "obligations", "ar", "budget"):
@@ -1338,6 +1381,17 @@ async def load_cashflow_sources(
                         limit=5000,
                         ensure_schema=False,
                         **scope,
+                    )
+                    # Project visibility does not depend on a pending request or
+                    # a complete weekly schedule. These lines are owner-scoped.
+                    result["project_options"] = _cashflow_project_options(
+                        {
+                            "company_id": result["company_id"],
+                            "authorized_tournament_ids": result[
+                                "authorized_tournament_ids"
+                            ],
+                            "budget_plan": lines,
+                        }
                     )
                     if len(lines) >= 5000:
                         return [], {"income": False, "expense": False}
