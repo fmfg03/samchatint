@@ -409,6 +409,41 @@ async def test_partial_replacement_never_falls_back_to_withheld_prior_rows(
             assert visible_companies[0]["trial_balance_periods"] == 7
             assert 3 not in visible_companies[0]["policy_months"]
             assert visible_coverage == [{"fiscal_year": 2026, **visible_companies[0]}]
+            from samchat.assistant.tools import (
+                _load_historical_accounting_tables_report,
+            )
+
+            async def report(kind, month=None, **filters):
+                result = await _load_historical_accounting_tables_report(
+                    readonly,
+                    report_type=kind,
+                    year=2026,
+                    company_code="02",
+                    month=month,
+                    **filters,
+                )
+                assert result is not None
+                assert result["coverage"]["import_run_id"] == updated["import_run_id"]
+                return result
+
+            for kind in ("diario", "mayor", "balanza"):
+                withheld = await report(kind, 3)
+                assert withheld["coverage"]["status"] == "withheld"
+                assert withheld["summary"]["debe"] is None
+                assert withheld["rows"] == []
+                assert "Reviewed source discrepancy" in withheld["artifact_markdown"]
+                admitted = await report(kind, 1)
+                assert admitted["rows"] and admitted["summary"]["debe"] == 10
+                empty_filter = await report(kind, 1, q="no-such-account")
+                assert empty_filter["coverage"]["status"] == "no_matching_rows"
+                assert empty_filter["summary"]["debe"] is None
+                annual = await report(kind)
+                assert annual["coverage"]["status"] == "partial"
+                assert 3 not in annual["coverage"]["available_months"]
+                assert "Cobertura parcial" in annual["artifact_markdown"]
+            september = await report("balanza", 9)
+            assert september["coverage"]["status"] == "unavailable"
+            assert september["summary"]["saldo_final"] is None
         assert (
             await service.list_historical_accounting_coverage(session, year_from=2027)
             == []
