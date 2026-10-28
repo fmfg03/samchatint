@@ -34,7 +34,9 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 async def database():
-    url = os.getenv("PAYROLL_AMOUNT_TEST_DATABASE_URL")
+    url = os.getenv("PAYROLL_AMOUNT_TEST_DATABASE_URL") or os.getenv(
+        "TEST_AMEX_DATABASE_URL"
+    )
     if not url:
         pytest.skip("PAYROLL_AMOUNT_TEST_DATABASE_URL must select an isolated Postgres")
     schema = "payroll_test_" + uuid4().hex

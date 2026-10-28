@@ -130,3 +130,21 @@ local no sustituye ese chequeo ni la aceptación de negocio.
 Canon unchanged: recepción gobernada dentro del dominio de nómina, conservando
 fuente, cálculo, póliza, pago y aceptación como etapas separadas. No se editaron
 los tres canons ni sus hashes.
+
+## Promoción autorizada y reconciliación con main
+
+El usuario aprobó el diff local y después autorizó «aprobado hasta deploy»: commit,
+push, PR, merge, migración aditiva necesaria y despliegue, con UAT separada.
+La base local antigua se reconcilió con `origin/main` en `7344b8a5d`; el único
+conflicto fue el import existente de `UniqueConstraint`, preservando los otros imports.
+El inventario privado sí existe en esa base actual: se regeneraron inventario y
+matriz y sus nueve pruebas pasaron, cerrando el pendiente de verificación local.
+La suite focalizada sobre main y con Python del runtime repitió 66 PASS.
+Para CI se usa también la variable explícita de base de prueba ya configurada
+`TEST_AMEX_DATABASE_URL`; nunca hay fallback a una base operativa. El escaneo
+XML reutiliza el parser de openpyxl, igual que el lector del workbook.
+
+La promoción productiva se prepara sobre la release activa `ab29ccc64`, con
+únicamente el cambio de nómina y su inventario. Esto conserva las demás
+diferencias financieras de main fuera de la release autorizada. El SHA del
+candidato, respaldo, migración y verificación se registran en el recibo de release.

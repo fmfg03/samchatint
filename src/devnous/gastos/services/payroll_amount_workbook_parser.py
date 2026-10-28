@@ -11,9 +11,9 @@ import zipfile
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
-from xml.etree.ElementTree import iterparse
 
 from openpyxl import load_workbook
+from openpyxl.xml.functions import iterparse
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_XML_BYTES = 100 * 1024 * 1024
