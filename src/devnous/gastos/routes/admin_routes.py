@@ -7824,6 +7824,14 @@ async def admin_finance_cashflow(
         + cashflow_admin_styles()
         + '</style></head><body><main class="workspace-shell cashflow-shell">'
         + render_admin_navigation(current_empleado, "cashflow")
+        + _admin_breadcrumb_html(
+            [
+                ("Centro Ejecutivo", "/admin/ejecutivo"),
+                ("Flujo de efectivo", None),
+            ]
+        )
+        + '<p><a class="button secondary" href="/admin/ejecutivo">'
+        + "Centro Ejecutivo</a></p>"
         + render_cashflow_filters(payload, str(request.url.path))
         + render_cashflow_planning_html(payload)
         + "</main></body></html>"

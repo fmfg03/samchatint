@@ -98,6 +98,8 @@ def test_finance_view_and_export_preserve_monthly_horizon(client):
     expected = loader.await_args.kwargs
     assert response.status_code == 200
     assert "horizon_months=3" in response.text
+    assert 'href="/admin/ejecutivo"' in response.text
+    assert "Centro Ejecutivo</a>" in response.text
     excel = http.get("/admin/contabilidad/cash-flow/export.xlsx" + query)
     assert excel.status_code == 200
     assert expected == loader.await_args.kwargs

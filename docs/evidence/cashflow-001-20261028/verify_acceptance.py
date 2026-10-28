@@ -5,6 +5,8 @@ raise SystemExit(pytest.main([
  'tests/unit/test_cashflow_planning_read_model.py',
  'tests/unit/test_cashflow_admin_ui.py',
  'tests/unit/test_cashflow_admin_route_contract.py',
+ 'tests/unit/gastos/test_executive_navigation_contract.py',
+ 'tests/unit/gastos/test_table_usability_contract.py',
  'tests/unit/test_cashflow_document_status_dedup.py',
  'tests/unit/test_cashflow_report_ui.py',
  'tests/unit/test_cashflow_route_equivalence.py',

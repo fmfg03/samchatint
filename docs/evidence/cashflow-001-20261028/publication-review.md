@@ -18,3 +18,7 @@ Canon unchanged: existing bank-real/forecast separation and canonical authority 
 Read-only independent validator reviewed the integrated seven-file runtime diff versus main b404e9849, approved handlers AST scope, AR receipt/calendar contracts, canonical weekly reconciliation and scope/currency invalidation. Critical findings: none. Important findings: none. Minor findings requiring changes: none. Reproduced account-scope regression corrected and tested. Final inventory613/578/44, no parse gaps; full private-plugin rerun135passed, zero errors. Acceptance206passed,90.32%; AR/Direction165passed; weekly cashflow PostgreSQL6passed.
 
 Final Status: CLEAN_WITH_NOTES. Notes remain legacy AR/bank opening evidence, inherited repository type/lint debt and authenticated Finance UAT; these are explicit and do not block the authorized technical publication.
+
+## Full-suite UX contracts
+
+CI found two task-caused presentation regressions after6579unitpasses: executive-center navigation and shared table shell. Both corrected using existing helper/class. Static contract now checks all four shared wrappers and accessible regions; HTTP test verifies actual backlink. Independent read-only validation found no remaining findings or test weakening; AST outside approved admin handler unchanged.226acceptancepass,91.01%;135private-pluginpass. Full GitHub rerun required.

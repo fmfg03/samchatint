@@ -4942,7 +4942,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -5034,7 +5034,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -5118,7 +5118,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -5203,7 +5203,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -5290,7 +5290,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -5375,7 +5375,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -5460,7 +5460,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -5561,7 +5561,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -5654,7 +5654,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -5758,7 +5758,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -5852,7 +5852,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -5938,7 +5938,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -6023,7 +6023,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -6103,7 +6103,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -6192,7 +6192,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -6280,7 +6280,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -6367,7 +6367,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -6457,7 +6457,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -6543,7 +6543,7 @@
       "mount_chain": [
         {
           "prefix": "",
-          "evidence": "src/devnous/gastos/routes/admin_routes.py:27912",
+          "evidence": "src/devnous/gastos/routes/admin_routes.py:27920",
           "status": "registration_function_static; runtime execution unverified"
         }
       ],
@@ -6719,7 +6719,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 2234,
       "handler": "admin_health_live",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/health/live"
@@ -6780,7 +6780,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 2253,
       "handler": "admin_health",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/health"
@@ -6843,7 +6843,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 2370,
       "handler": "admin_health_history",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/health/history"
@@ -6907,7 +6907,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 3443,
       "handler": "admin_dashboard",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/gastos"
@@ -6988,7 +6988,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 3573,
       "handler": "admin_executive_center",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/ejecutivo"
@@ -7051,7 +7051,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 3731,
       "handler": "admin_executive_export_xlsx",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/ejecutivo/export.xlsx"
@@ -7128,7 +7128,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 3879,
       "handler": "admin_executive_alerts",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/ejecutivo/alertas"
@@ -7198,7 +7198,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 4047,
       "handler": "finance_training_page",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/gastos/finance-training"
@@ -7288,7 +7288,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 4162,
       "handler": "finance_training_generate",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/gastos/finance-training/generate"
@@ -7385,7 +7385,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 4220,
       "handler": "finance_training_cleanup",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/gastos/finance-training/cleanup"
@@ -7480,7 +7480,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 4267,
       "handler": "finance_training_reset",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/gastos/finance-training/reset"
@@ -7575,7 +7575,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 4312,
       "handler": "finance_training_cfdi_csv_download",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/gastos/finance-training/cfdi-csv"
@@ -7666,7 +7666,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 4367,
       "handler": "admin_expenses",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/gastos/expenses"
@@ -7774,7 +7774,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 5022,
       "handler": "admin_invoices",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/gastos/invoices"
@@ -7872,7 +7872,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 5282,
       "handler": "export_expenses",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/gastos/expenses/export"
@@ -7973,7 +7973,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 5519,
       "handler": "export_invoices",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/gastos/invoices/export"
@@ -8069,7 +8069,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 6102,
       "handler": "admin_sports_platform",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/sports"
@@ -8139,7 +8139,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 6610,
       "handler": "admin_sports_director_general_entity_dossier",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/sports/expediente-entidades"
@@ -8208,7 +8208,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 6853,
       "handler": "admin_contabilidad_deudores",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/deudores"
@@ -8293,7 +8293,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 6993,
       "handler": "admin_finance_platform",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas"
@@ -8375,7 +8375,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 7423,
       "handler": "admin_sam_inbox",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/sam-inbox"
@@ -8449,7 +8449,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 7721,
       "handler": "admin_runtime_artifacts",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/artifacts"
@@ -8514,7 +8514,7 @@
       "source": "src/devnous/gastos/routes/admin_routes.py",
       "line": 7771,
       "handler": "admin_finance_cashflow",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/cashflow"
@@ -8603,11 +8603,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "2d9cf92c5aaa",
+      "id": "cbd09b6537f8",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 7835,
+      "line": 7843,
       "handler": "admin_finance_accounts_receivable",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/cuentas-por-cobrar"
@@ -8666,7 +8666,7 @@
         "build_ar_read_model"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_accounts_receivable",
-      "proposed_tool": "receivables_admin_finance_accounts_receivable_get_2d9cf9",
+      "proposed_tool": "receivables_admin_finance_accounts_receivable_get_cbd09b",
       "scope_proposal": "receivables:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -8698,11 +8698,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "fd34d27145eb",
+      "id": "6026b3ca82c9",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 8194,
+      "line": 8202,
       "handler": "admin_finance_ar_cfdi_link",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/finanzas/cuentas-por-cobrar/cfdi-link"
@@ -8756,7 +8756,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_ar_cfdi_link",
-      "proposed_tool": "receivables_admin_finance_ar_cfdi_link_post_fd34d2",
+      "proposed_tool": "receivables_admin_finance_ar_cfdi_link_post_6026b3",
       "scope_proposal": "receivables:write; never grants business authority",
       "object_parameters": [
         "cfdi_report_id",
@@ -8783,11 +8783,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ea771e66b609",
+      "id": "2642bb25ebfe",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 8231,
+      "line": 8239,
       "handler": "admin_finance_accounts_receivable_item_detail",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/cuentas-por-cobrar/item/{ar_item_id:path}"
@@ -8845,7 +8845,7 @@
         "build_ar_read_model"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_accounts_receivable_item_detail",
-      "proposed_tool": "receivables_admin_finance_accounts_receivable_item_detai_ea771e",
+      "proposed_tool": "receivables_admin_finance_accounts_receivable_item_detai_2642bb",
       "scope_proposal": "receivables:read; never grants business authority",
       "object_parameters": [
         "ar_item_id",
@@ -8871,11 +8871,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "816d3ada34f0",
+      "id": "cf97b046a090",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 8360,
+      "line": 8368,
       "handler": "admin_finance_ar_match_accept",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/finanzas/cuentas-por-cobrar/matches/accept"
@@ -8933,7 +8933,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_ar_match_accept",
-      "proposed_tool": "receivables_admin_finance_ar_match_accept_post_816d3a",
+      "proposed_tool": "receivables_admin_finance_ar_match_accept_post_cf97b0",
       "scope_proposal": "receivables:write; never grants business authority",
       "object_parameters": [
         "budget_version_id",
@@ -8965,11 +8965,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "6a385235c551",
+      "id": "e4ef3c35d975",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 8411,
+      "line": 8419,
       "handler": "admin_finance_ar_match_reverse",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/finanzas/cuentas-por-cobrar/matches/{match_id}/reverse"
@@ -9027,7 +9027,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_ar_match_reverse",
-      "proposed_tool": "receivables_admin_finance_ar_match_reverse_post_6a3852",
+      "proposed_tool": "receivables_admin_finance_ar_match_reverse_post_e4ef3c",
       "scope_proposal": "receivables:write; never grants business authority",
       "object_parameters": [
         "match_id",
@@ -9051,11 +9051,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "1a59dcea6938",
+      "id": "958c3ab5bda2",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 8443,
+      "line": 8451,
       "handler": "admin_finance_accounts_receivable_export_xlsx",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/cuentas-por-cobrar/export.xlsx"
@@ -9115,7 +9115,7 @@
         "build_ar_read_model"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_accounts_receivable_export_xlsx",
-      "proposed_tool": "receivables_admin_finance_accounts_receivable_export_xls_1a59dc",
+      "proposed_tool": "receivables_admin_finance_accounts_receivable_export_xls_958c3a",
       "scope_proposal": "receivables:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -9143,11 +9143,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "30285ed030e9",
+      "id": "b5f1f11cb203",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 8762,
+      "line": 8770,
       "handler": "admin_finance_accounts_receivable_prepolizas_coi_xlsx",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/cuentas-por-cobrar/prepolizas-coi.xlsx"
@@ -9204,7 +9204,7 @@
         "build_ar_read_model"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_accounts_receivable_prepolizas_coi_xlsx",
-      "proposed_tool": "receivables_admin_finance_accounts_receivable_prepolizas_30285e",
+      "proposed_tool": "receivables_admin_finance_accounts_receivable_prepolizas_b5f1f1",
       "scope_proposal": "receivables:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -9232,11 +9232,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "05057244ded1",
+      "id": "3144e91e3164",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 8846,
+      "line": 8854,
       "handler": "admin_finance_platform_export_xlsx",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/export.xlsx"
@@ -9293,7 +9293,7 @@
         "build_finance_source_snapshot"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_platform_export_xlsx",
-      "proposed_tool": "finance_admin_finance_platform_export_xlsx_get_050572",
+      "proposed_tool": "finance_admin_finance_platform_export_xlsx_get_3144e9",
       "scope_proposal": "finance:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -9313,11 +9313,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "5378a610ff65",
+      "id": "de7a28454c2f",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 8883,
+      "line": 8891,
       "handler": "admin_no_deductibles_control",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/no-deducibles"
@@ -9373,7 +9373,7 @@
         "build_no_deductibles_source"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_no_deductibles_control",
-      "proposed_tool": "finance_admin_no_deductibles_control_get_5378a6",
+      "proposed_tool": "finance_admin_no_deductibles_control_get_de7a28",
       "scope_proposal": "finance:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -9396,11 +9396,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d6bb82552a85",
+      "id": "67a96e9965c2",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 8935,
+      "line": 8943,
       "handler": "admin_no_deductibles_export_xlsx",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/no-deducibles/export.xlsx"
@@ -9456,7 +9456,7 @@
         "build_no_deductibles_source"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_no_deductibles_export_xlsx",
-      "proposed_tool": "finance_admin_no_deductibles_export_xlsx_get_d6bb82",
+      "proposed_tool": "finance_admin_no_deductibles_export_xlsx_get_67a96e",
       "scope_proposal": "finance:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -9479,11 +9479,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "622d4cf6844c",
+      "id": "3b58bf116282",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 9286,
+      "line": 9294,
       "handler": "admin_finance_coi_batch_consolidated_xlsx",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/coi-lote-consolidado.xlsx"
@@ -9540,7 +9540,7 @@
         "_build_finance_coi_batch_expenses"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_coi_batch_consolidated_xlsx",
-      "proposed_tool": "accounting_admin_finance_coi_batch_consolidated_xlsx_get_622d4c",
+      "proposed_tool": "accounting_admin_finance_coi_batch_consolidated_xlsx_get_3b58bf",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -9560,11 +9560,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ec3ddd5d1105",
+      "id": "7de49a6ebda3",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 9351,
+      "line": 9359,
       "handler": "admin_finance_coi_batch_xlsx",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/coi-lote.zip"
@@ -9621,7 +9621,7 @@
         "_build_finance_coi_batch_expenses"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_coi_batch_xlsx",
-      "proposed_tool": "accounting_admin_finance_coi_batch_xlsx_get_ec3ddd",
+      "proposed_tool": "accounting_admin_finance_coi_batch_xlsx_get_7de49a",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -9641,11 +9641,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "5b16d9ecccd4",
+      "id": "0ceae747c18a",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 9351,
+      "line": 9359,
       "handler": "admin_finance_coi_batch_xlsx",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/coi-lote.xlsx"
@@ -9702,7 +9702,7 @@
         "_build_finance_coi_batch_expenses"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_coi_batch_xlsx",
-      "proposed_tool": "accounting_admin_finance_coi_batch_xlsx_get_5b16d9",
+      "proposed_tool": "accounting_admin_finance_coi_batch_xlsx_get_0ceae7",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -9722,11 +9722,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e5df92072d02",
+      "id": "74762929eebe",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 10127,
+      "line": 10135,
       "handler": "admin_finance_payment_run",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/payment-run"
@@ -9782,7 +9782,7 @@
         "approved_rows.extend"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_payment_run",
-      "proposed_tool": "payments_admin_finance_payment_run_get_e5df92",
+      "proposed_tool": "payments_admin_finance_payment_run_get_747629",
       "scope_proposal": "payments:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -9805,11 +9805,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "5a3f8a98d47e",
+      "id": "cd3719721ba0",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 10599,
+      "line": 10607,
       "handler": "admin_finance_payment_history",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/payment-history"
@@ -9863,7 +9863,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_payment_history",
-      "proposed_tool": "payments_admin_finance_payment_history_get_5a3f8a",
+      "proposed_tool": "payments_admin_finance_payment_history_get_cd3719",
       "scope_proposal": "payments:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -9881,11 +9881,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ef0ae07fa8df",
+      "id": "aab926035d85",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 10643,
+      "line": 10651,
       "handler": "admin_finance_payment_run_update_fecha_pago",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/finanzas/payment-run/documentos/{documento_id}/fecha-pago"
@@ -9939,7 +9939,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_payment_run_update_fecha_pago",
-      "proposed_tool": "payments_admin_finance_payment_run_update_fecha_pago_pos_ef0ae0",
+      "proposed_tool": "payments_admin_finance_payment_run_update_fecha_pago_pos_aab926",
       "scope_proposal": "payments:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -9962,11 +9962,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "eaf8c8009260",
+      "id": "9f970f4c4dff",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 10669,
+      "line": 10677,
       "handler": "admin_finance_payment_run_close",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/finanzas/payment-run/closures"
@@ -10020,7 +10020,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_payment_run_close",
-      "proposed_tool": "payments_admin_finance_payment_run_close_post_eaf8c8",
+      "proposed_tool": "payments_admin_finance_payment_run_close_post_9f970f",
       "scope_proposal": "payments:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -10044,11 +10044,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "dd84841a959a",
+      "id": "f02b4272a972",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 10701,
+      "line": 10709,
       "handler": "admin_finance_payment_run_upload_payment_proof",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/finanzas/payment-run/documentos/{documento_id}/comprobante-pago"
@@ -10105,7 +10105,7 @@
         "validate_solicitud_terceros_attachment"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_payment_run_upload_payment_proof",
-      "proposed_tool": "payments_admin_finance_payment_run_upload_payment_proof__dd8484",
+      "proposed_tool": "payments_admin_finance_payment_run_upload_payment_proof__f02b42",
       "scope_proposal": "payments:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -10130,11 +10130,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ff77d923e4d9",
+      "id": "17ac7e514938",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 10859,
+      "line": 10867,
       "handler": "admin_payment_run_replace_document_proof",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/finanzas/payment-run/documento/{documento_id}/sustituir-comprobante"
@@ -10192,7 +10192,7 @@
         "validate_solicitud_terceros_attachment"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_payment_run_replace_document_proof",
-      "proposed_tool": "payments_admin_payment_run_replace_document_proof_post_ff77d9",
+      "proposed_tool": "payments_admin_payment_run_replace_document_proof_post_17ac7e",
       "scope_proposal": "payments:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -10218,11 +10218,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "b26092908241",
+      "id": "d145fb588c32",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 10943,
+      "line": 10951,
       "handler": "admin_payment_run_replace_loan_proof",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/finanzas/payment-run/prestamo/{prestamo_id}/sustituir-comprobante"
@@ -10280,7 +10280,7 @@
         "validate_solicitud_terceros_attachment"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_payment_run_replace_loan_proof",
-      "proposed_tool": "payments_admin_payment_run_replace_loan_proof_post_b26092",
+      "proposed_tool": "payments_admin_payment_run_replace_loan_proof_post_d145fb",
       "scope_proposal": "payments:write; never grants business authority",
       "object_parameters": [
         "prestamo_id",
@@ -10305,11 +10305,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e9d3ea151c52",
+      "id": "11cbee4c5c22",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 11002,
+      "line": 11010,
       "handler": "admin_payment_run_download_document_proof",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/payment-run/documento/{documento_id}/comprobante/{adjunto_id}"
@@ -10363,7 +10363,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_payment_run_download_document_proof",
-      "proposed_tool": "payments_admin_payment_run_download_document_proof_get_e9d3ea",
+      "proposed_tool": "payments_admin_payment_run_download_document_proof_get_11cbee",
       "scope_proposal": "payments:read; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -10383,11 +10383,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "7f1a79fc5d48",
+      "id": "9b4bf9935227",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 11036,
+      "line": 11044,
       "handler": "admin_payment_run_download_loan_proof",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/payment-run/prestamo/{prestamo_id}/comprobante/{version}"
@@ -10441,7 +10441,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_payment_run_download_loan_proof",
-      "proposed_tool": "payments_admin_payment_run_download_loan_proof_get_7f1a79",
+      "proposed_tool": "payments_admin_payment_run_download_loan_proof_get_9b4bf9",
       "scope_proposal": "payments:read; never grants business authority",
       "object_parameters": [
         "prestamo_id",
@@ -10461,11 +10461,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "65d15a926c81",
+      "id": "48887d7393ca",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 11073,
+      "line": 11081,
       "handler": "admin_finance_payment_run_review_payment_proof",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/finanzas/payment-run/documentos/{documento_id}/comprobante-pago/revision"
@@ -10522,7 +10522,7 @@
         "validate_solicitud_terceros_attachment"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_payment_run_review_payment_proof",
-      "proposed_tool": "payments_admin_finance_payment_run_review_payment_proof__65d15a",
+      "proposed_tool": "payments_admin_finance_payment_run_review_payment_proof__48887d",
       "scope_proposal": "payments:write; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -10545,11 +10545,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "980d4e7dc5db",
+      "id": "af7d704ba9f5",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 11138,
+      "line": 11146,
       "handler": "admin_finance_payment_run_upload_payment_proofs_bulk",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/finanzas/payment-run/comprobantes-pago/lote"
@@ -10608,7 +10608,7 @@
         "validate_solicitud_terceros_attachment"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_payment_run_upload_payment_proofs_bulk",
-      "proposed_tool": "payments_admin_finance_payment_run_upload_payment_proofs_980d4e",
+      "proposed_tool": "payments_admin_finance_payment_run_upload_payment_proofs_af7d70",
       "scope_proposal": "payments:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -10635,11 +10635,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "5c0479b2ba01",
+      "id": "5ec782c2915d",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 11398,
+      "line": 11406,
       "handler": "admin_finance_payment_run_closure_order_export",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/payment-run/closures/{closure_id}/orden-pago.xlsx"
@@ -10693,7 +10693,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_payment_run_closure_order_export",
-      "proposed_tool": "payments_admin_finance_payment_run_closure_order_export__5c0479",
+      "proposed_tool": "payments_admin_finance_payment_run_closure_order_export__5ec782",
       "scope_proposal": "payments:read; never grants business authority",
       "object_parameters": [
         "closure_id",
@@ -10712,11 +10712,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "811b6bc19808",
+      "id": "a4bbf440556d",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 11427,
+      "line": 11435,
       "handler": "admin_finance_payment_run_closure_detail",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/finanzas/payment-run/closures/{closure_id}"
@@ -10770,7 +10770,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_payment_run_closure_detail",
-      "proposed_tool": "payments_admin_finance_payment_run_closure_detail_get_811b6b",
+      "proposed_tool": "payments_admin_finance_payment_run_closure_detail_get_a4bbf4",
       "scope_proposal": "payments:read; never grants business authority",
       "object_parameters": [
         "closure_id",
@@ -10789,11 +10789,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "5f83fe17016a",
+      "id": "b2c8f25c3c7a",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 11510,
+      "line": 11518,
       "handler": "admin_finance_payment_run_pay",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/finanzas/payment-run/pay"
@@ -10847,7 +10847,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_payment_run_pay",
-      "proposed_tool": "payments_admin_finance_payment_run_pay_post_5f83fe",
+      "proposed_tool": "payments_admin_finance_payment_run_pay_post_b2c8f2",
       "scope_proposal": "payments:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -10871,11 +10871,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "89ed4a337b61",
+      "id": "aacc774abb48",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 11532,
+      "line": 11540,
       "handler": "admin_finance_classify_coi_pending",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/finanzas/coi-pendientes/clasificar"
@@ -10931,7 +10931,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_classify_coi_pending",
-      "proposed_tool": "accounting_admin_finance_classify_coi_pending_post_89ed4a",
+      "proposed_tool": "accounting_admin_finance_classify_coi_pending_post_aacc77",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -10952,11 +10952,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e61251309cc1",
+      "id": "40f99a96cdcd",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 11674,
+      "line": 11682,
       "handler": "admin_finance_link_diot_blockers_cfdi",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/finanzas/diot-blockers/link-cfdi"
@@ -11012,7 +11012,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_finance_link_diot_blockers_cfdi",
-      "proposed_tool": "accounting_admin_finance_link_diot_blockers_cfdi_post_e61251",
+      "proposed_tool": "accounting_admin_finance_link_diot_blockers_cfdi_post_40f99a",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -11033,11 +11033,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "a846841c5676",
+      "id": "9c13fa19f6f2",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 12090,
+      "line": 12098,
       "handler": "admin_soul_wizard",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/sports/soul-wizard"
@@ -11078,7 +11078,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_soul_wizard",
-      "proposed_tool": "operations_admin_soul_wizard_get_a84684",
+      "proposed_tool": "operations_admin_soul_wizard_get_9c13fa",
       "scope_proposal": "operations:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -11096,11 +11096,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "4363a66c5391",
+      "id": "95b5f77950fb",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 12104,
+      "line": 12112,
       "handler": "admin_soul_wizard_review",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/sports/soul-wizard"
@@ -11143,7 +11143,7 @@
         "build_soul_wizard_payload_from_form"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_soul_wizard_review",
-      "proposed_tool": "operations_admin_soul_wizard_review_post_4363a6",
+      "proposed_tool": "operations_admin_soul_wizard_review_post_95b5f7",
       "scope_proposal": "operations:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -11165,11 +11165,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "0246e2e7726c",
+      "id": "86772bece35a",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 12123,
+      "line": 12131,
       "handler": "admin_tournaments",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/torneos"
@@ -11225,7 +11225,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_tournaments",
-      "proposed_tool": "operations_admin_tournaments_get_0246e2",
+      "proposed_tool": "operations_admin_tournaments_get_86772b",
       "scope_proposal": "operations:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -11243,11 +11243,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "55767e0ee3a3",
+      "id": "4ec51a14669a",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 12561,
+      "line": 12569,
       "handler": "admin_tournaments_domain_alignment",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/torneos/domain-alignment"
@@ -11303,7 +11303,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_tournaments_domain_alignment",
-      "proposed_tool": "operations_admin_tournaments_domain_alignment_get_55767e",
+      "proposed_tool": "operations_admin_tournaments_domain_alignment_get_4ec51a",
       "scope_proposal": "operations:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -11321,11 +11321,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "60e9376ca759",
+      "id": "fc083e13d6e2",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 12574,
+      "line": 12582,
       "handler": "admin_tournaments_domain_alignment_run",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/torneos/domain-alignment/run"
@@ -11382,7 +11382,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_tournaments_domain_alignment_run",
-      "proposed_tool": "operations_admin_tournaments_domain_alignment_run_post_60e937",
+      "proposed_tool": "operations_admin_tournaments_domain_alignment_run_post_fc083e",
       "scope_proposal": "operations:write; never grants business authority",
       "object_parameters": [
         "mode",
@@ -11408,11 +11408,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d7cacb59f02a",
+      "id": "aad7bd39f20b",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 12698,
+      "line": 12706,
       "handler": "admin_tournaments_domain_alignment_audit",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/torneos/domain-alignment/audit"
@@ -11469,7 +11469,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_tournaments_domain_alignment_audit",
-      "proposed_tool": "operations_admin_tournaments_domain_alignment_audit_post_d7cacb",
+      "proposed_tool": "operations_admin_tournaments_domain_alignment_audit_post_aad7bd",
       "scope_proposal": "operations:write; never grants business authority",
       "object_parameters": [
         "scope",
@@ -11494,11 +11494,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "1a96c743bbfa",
+      "id": "1fe4e6a1d7c3",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 12815,
+      "line": 12823,
       "handler": "create_tournament",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/torneos/create"
@@ -11556,7 +11556,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:create_tournament",
-      "proposed_tool": "operations_create_tournament_post_1a96c7",
+      "proposed_tool": "operations_create_tournament_post_1fe4e6",
       "scope_proposal": "operations:write; never grants business authority",
       "object_parameters": [
         "name",
@@ -11585,11 +11585,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "448a6320d425",
+      "id": "b97930c0ed50",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 12880,
+      "line": 12888,
       "handler": "create_tournament_from_operations",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/torneos/create/from-torneo"
@@ -11647,7 +11647,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:create_tournament_from_operations",
-      "proposed_tool": "operations_create_tournament_from_operations_post_448a63",
+      "proposed_tool": "operations_create_tournament_from_operations_post_b97930",
       "scope_proposal": "operations:write; never grants business authority",
       "object_parameters": [
         "linked_operations_tournament_id",
@@ -11672,11 +11672,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "cfb0c1dc2021",
+      "id": "b2ab5b09a0f0",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 12965,
+      "line": 12973,
       "handler": "link_tournament_to_operations",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/torneos/link/{tournament_id}"
@@ -11737,7 +11737,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:link_tournament_to_operations",
-      "proposed_tool": "operations_link_tournament_to_operations_post_cfb0c1",
+      "proposed_tool": "operations_link_tournament_to_operations_post_b2ab5b",
       "scope_proposal": "operations:write; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -11761,11 +11761,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "f63cca32fa42",
+      "id": "3b13fc724e9e",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 13030,
+      "line": 13038,
       "handler": "edit_tournament_form",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/torneos/edit/{tournament_id}"
@@ -11824,7 +11824,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:edit_tournament_form",
-      "proposed_tool": "operations_edit_tournament_form_get_f63cca",
+      "proposed_tool": "operations_edit_tournament_form_get_3b13fc",
       "scope_proposal": "operations:read; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -11843,11 +11843,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "2da61bdf7940",
+      "id": "1fffb56f1273",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 13206,
+      "line": 13214,
       "handler": "update_tournament",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/torneos/update/{tournament_id}"
@@ -11910,7 +11910,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:update_tournament",
-      "proposed_tool": "operations_update_tournament_post_2da61b",
+      "proposed_tool": "operations_update_tournament_post_1fffb5",
       "scope_proposal": "operations:write; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -11939,11 +11939,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e3243504b986",
+      "id": "add92a7bae1a",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 13318,
+      "line": 13326,
       "handler": "toggle_tournament",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/torneos/toggle/{tournament_id}"
@@ -12004,7 +12004,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:toggle_tournament",
-      "proposed_tool": "operations_toggle_tournament_post_e32435",
+      "proposed_tool": "operations_toggle_tournament_post_add92a",
       "scope_proposal": "operations:write; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -12027,11 +12027,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "96f2340c176e",
+      "id": "3cb4a0b07caa",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 13356,
+      "line": 13364,
       "handler": "delete_tournament",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/torneos/delete/{tournament_id}"
@@ -12092,7 +12092,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:delete_tournament",
-      "proposed_tool": "operations_delete_tournament_post_96f234",
+      "proposed_tool": "operations_delete_tournament_post_3cb4a0",
       "scope_proposal": "operations:write; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -12115,11 +12115,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "20530cefb06f",
+      "id": "068378dfd7f6",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 13394,
+      "line": 13402,
       "handler": "get_tournaments_api",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/api/torneos"
@@ -12147,7 +12147,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:get_tournaments_api",
-      "proposed_tool": "operations_get_tournaments_api_get_20530c",
+      "proposed_tool": "operations_get_tournaments_api_get_068378",
       "scope_proposal": "operations:read; never grants business authority",
       "object_parameters": [
         "active_only"
@@ -12165,11 +12165,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "f3544daefa20",
+      "id": "39da952e28bb",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 13413,
+      "line": 13421,
       "handler": "get_tournament_etapas_api",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/api/torneos/{tournament_id}/etapas"
@@ -12198,7 +12198,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:get_tournament_etapas_api",
-      "proposed_tool": "operations_get_tournament_etapas_api_get_f3544d",
+      "proposed_tool": "operations_get_tournament_etapas_api_get_39da95",
       "scope_proposal": "operations:read; never grants business authority",
       "object_parameters": [
         "tournament_id"
@@ -12216,11 +12216,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "a50ece363977",
+      "id": "6379213cb14a",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 13438,
+      "line": 13446,
       "handler": "get_tournament_partidas_presupuestales_api",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/api/torneos/{tournament_id}/partidas-presupuestales"
@@ -12248,7 +12248,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:get_tournament_partidas_presupuestales_api",
-      "proposed_tool": "operations_get_tournament_partidas_presupuestales_api_ge_a50ece",
+      "proposed_tool": "operations_get_tournament_partidas_presupuestales_api_ge_637921",
       "scope_proposal": "operations:read; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -12267,11 +12267,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "06bcfff8ded3",
+      "id": "99f7bd10cac5",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 13501,
+      "line": 13509,
       "handler": "admin_rfc",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/rfc"
@@ -12327,7 +12327,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_rfc",
-      "proposed_tool": "documents_and_other_admin_rfc_get_06bcff",
+      "proposed_tool": "documents_and_other_admin_rfc_get_99f7bd",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -12345,11 +12345,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e02c65b08557",
+      "id": "2b981a00dc8c",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 13863,
+      "line": 13871,
       "handler": "create_rfc",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/rfc/create"
@@ -12407,7 +12407,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:create_rfc",
-      "proposed_tool": "documents_and_other_create_rfc_post_e02c65",
+      "proposed_tool": "documents_and_other_create_rfc_post_2b981a",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "name",
@@ -12444,11 +12444,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "b7ed498be01b",
+      "id": "cae161092ebe",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 13940,
+      "line": 13948,
       "handler": "edit_rfc_form",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/rfc/edit/{rfc_id}"
@@ -12504,7 +12504,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:edit_rfc_form",
-      "proposed_tool": "documents_and_other_edit_rfc_form_get_b7ed49",
+      "proposed_tool": "documents_and_other_edit_rfc_form_get_cae161",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "rfc_id",
@@ -12523,11 +12523,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d75b0ecd7e5c",
+      "id": "650aba197ba6",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 14066,
+      "line": 14074,
       "handler": "update_rfc",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/rfc/update/{rfc_id}"
@@ -12585,7 +12585,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:update_rfc",
-      "proposed_tool": "documents_and_other_update_rfc_post_d75b0e",
+      "proposed_tool": "documents_and_other_update_rfc_post_650aba",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "rfc_id",
@@ -12623,11 +12623,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d51cd3e92de0",
+      "id": "57182dcc692b",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 14138,
+      "line": 14146,
       "handler": "toggle_rfc",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/rfc/toggle/{rfc_id}"
@@ -12685,7 +12685,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:toggle_rfc",
-      "proposed_tool": "documents_and_other_toggle_rfc_post_d51cd3",
+      "proposed_tool": "documents_and_other_toggle_rfc_post_57182d",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "rfc_id",
@@ -12707,11 +12707,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ad385fb15e82",
+      "id": "e8783931d1af",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 14171,
+      "line": 14179,
       "handler": "delete_rfc",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/rfc/delete/{rfc_id}"
@@ -12769,7 +12769,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:delete_rfc",
-      "proposed_tool": "documents_and_other_delete_rfc_post_ad385f",
+      "proposed_tool": "documents_and_other_delete_rfc_post_e87839",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "rfc_id",
@@ -12791,11 +12791,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "3d957ab0e69c",
+      "id": "5757d5244f2c",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 14204,
+      "line": 14212,
       "handler": "get_rfc_api",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/api/rfc"
@@ -12823,7 +12823,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:get_rfc_api",
-      "proposed_tool": "documents_and_other_get_rfc_api_get_3d957a",
+      "proposed_tool": "documents_and_other_get_rfc_api_get_5757d5",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "active_only"
@@ -12841,11 +12841,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "49a431a448d0",
+      "id": "a5b96117c666",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 14227,
+      "line": 14235,
       "handler": "admin_empleados",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/empleados"
@@ -12902,7 +12902,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_empleados",
-      "proposed_tool": "identity_admin_empleados_get_49a431",
+      "proposed_tool": "identity_admin_empleados_get_a5b961",
       "scope_proposal": "identity:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -12922,11 +12922,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "5cbca20ebc41",
+      "id": "feaf4a92a243",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 14643,
+      "line": 14651,
       "handler": "admin_customer_success_usage",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/customer-success/uso"
@@ -12981,7 +12981,7 @@
         "build_customer_success_usage_report"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_customer_success_usage",
-      "proposed_tool": "documents_and_other_admin_customer_success_usage_get_5cbca2",
+      "proposed_tool": "documents_and_other_admin_customer_success_usage_get_feaf4a",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -13004,11 +13004,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e641f393b9d5",
+      "id": "029abc6cb6a6",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 15223,
+      "line": 15231,
       "handler": "admin_customer_success_usage_export",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/customer-success/uso/export"
@@ -13063,7 +13063,7 @@
         "build_customer_success_usage_report"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_customer_success_usage_export",
-      "proposed_tool": "documents_and_other_admin_customer_success_usage_export__e641f3",
+      "proposed_tool": "documents_and_other_admin_customer_success_usage_export__029abc",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -13087,11 +13087,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "22133c640052",
+      "id": "ff761b7afa04",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 15261,
+      "line": 15269,
       "handler": "admin_customer_success_audit_log",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/customer-success/bitacora"
@@ -13146,7 +13146,7 @@
         "build_customer_success_audit_report"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_customer_success_audit_log",
-      "proposed_tool": "documents_and_other_admin_customer_success_audit_log_get_22133c",
+      "proposed_tool": "documents_and_other_admin_customer_success_audit_log_get_ff761b",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -13172,11 +13172,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "2d6b3091d7c0",
+      "id": "8e25c0d5b4a5",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 15525,
+      "line": 15533,
       "handler": "admin_perfiles",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/perfiles"
@@ -13247,7 +13247,7 @@
         "_build_effective_profile_preview"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_perfiles",
-      "proposed_tool": "identity_admin_perfiles_get_2d6b30",
+      "proposed_tool": "identity_admin_perfiles_get_8e25c0",
       "scope_proposal": "identity:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -13269,11 +13269,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "66bd67d792d2",
+      "id": "352c50d5b6c8",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 16141,
+      "line": 16149,
       "handler": "admin_perfiles_create",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/perfiles/create"
@@ -13339,7 +13339,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_perfiles_create",
-      "proposed_tool": "identity_admin_perfiles_create_post_66bd67",
+      "proposed_tool": "identity_admin_perfiles_create_post_352c50",
       "scope_proposal": "identity:write; never grants business authority",
       "object_parameters": [
         "profile_key",
@@ -13367,11 +13367,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "fbb8f834fd8f",
+      "id": "ba38e25d9f92",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 16233,
+      "line": 16241,
       "handler": "admin_perfiles_update",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/perfiles/update/{profile_id}"
@@ -13437,7 +13437,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_perfiles_update",
-      "proposed_tool": "identity_admin_perfiles_update_post_fbb8f8",
+      "proposed_tool": "identity_admin_perfiles_update_post_ba38e2",
       "scope_proposal": "identity:write; never grants business authority",
       "object_parameters": [
         "profile_id",
@@ -13465,11 +13465,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "819f877dc7eb",
+      "id": "1bac4a608ba9",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 16340,
+      "line": 16348,
       "handler": "admin_perfiles_assign",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/perfiles/assign"
@@ -13529,7 +13529,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_perfiles_assign",
-      "proposed_tool": "identity_admin_perfiles_assign_post_819f87",
+      "proposed_tool": "identity_admin_perfiles_assign_post_1bac4a",
       "scope_proposal": "identity:write; never grants business authority",
       "object_parameters": [
         "empleado_id",
@@ -13554,11 +13554,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "f52030020257",
+      "id": "8b3107bf31a7",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 16428,
+      "line": 16436,
       "handler": "admin_perfiles_unassign",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/perfiles/unassign/{assignment_id}"
@@ -13618,7 +13618,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_perfiles_unassign",
-      "proposed_tool": "identity_admin_perfiles_unassign_post_f52030",
+      "proposed_tool": "identity_admin_perfiles_unassign_post_8b3107",
       "scope_proposal": "identity:write; never grants business authority",
       "object_parameters": [
         "assignment_id",
@@ -13640,11 +13640,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "8d7146c1490c",
+      "id": "485a5a8c6276",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 16480,
+      "line": 16488,
       "handler": "admin_presupuestos_legacy",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/presupuestos-legacy"
@@ -13699,7 +13699,7 @@
         "render_commitment_expense_cell"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_presupuestos_legacy",
-      "proposed_tool": "budgets_admin_presupuestos_legacy_get_8d7146",
+      "proposed_tool": "budgets_admin_presupuestos_legacy_get_485a5a",
       "scope_proposal": "budgets:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -13728,11 +13728,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "b27b17b90d02",
+      "id": "b441df4ed3ed",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 18063,
+      "line": 18071,
       "handler": "admin_presupuestos_import_default",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/import-default"
@@ -13791,7 +13791,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_presupuestos_import_default",
-      "proposed_tool": "budgets_admin_presupuestos_import_default_post_b27b17",
+      "proposed_tool": "budgets_admin_presupuestos_import_default_post_b441df",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -13812,11 +13812,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "cfc0ceb2dd46",
+      "id": "4cbffec797d3",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 18100,
+      "line": 18108,
       "handler": "admin_presupuestos_bulk_save_concepts",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/conceptos/bulk-save"
@@ -13875,7 +13875,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_presupuestos_bulk_save_concepts",
-      "proposed_tool": "budgets_admin_presupuestos_bulk_save_concepts_post_cfc0ce",
+      "proposed_tool": "budgets_admin_presupuestos_bulk_save_concepts_post_4cbffe",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "concept_ids",
@@ -13906,11 +13906,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "10fb9a159441",
+      "id": "082187d528ca",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 18217,
+      "line": 18225,
       "handler": "admin_presupuestos_hide_concept",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/conceptos/{concept_id}/hide"
@@ -13969,7 +13969,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_presupuestos_hide_concept",
-      "proposed_tool": "budgets_admin_presupuestos_hide_concept_post_10fb9a",
+      "proposed_tool": "budgets_admin_presupuestos_hide_concept_post_082187",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "concept_id",
@@ -13998,11 +13998,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "f07c75d80644",
+      "id": "49768fa0d1ba",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 18280,
+      "line": 18288,
       "handler": "admin_presupuestos_export_concepts_xlsx",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/presupuestos/conceptos/export.xlsx"
@@ -14062,7 +14062,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_presupuestos_export_concepts_xlsx",
-      "proposed_tool": "budgets_admin_presupuestos_export_concepts_xlsx_get_f07c75",
+      "proposed_tool": "budgets_admin_presupuestos_export_concepts_xlsx_get_49768f",
       "scope_proposal": "budgets:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -14080,11 +14080,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "75d74dd7a607",
+      "id": "fc986692e108",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 18303,
+      "line": 18311,
       "handler": "admin_presupuestos_import_concepts",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/conceptos/import"
@@ -14143,7 +14143,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_presupuestos_import_concepts",
-      "proposed_tool": "budgets_admin_presupuestos_import_concepts_post_75d74d",
+      "proposed_tool": "budgets_admin_presupuestos_import_concepts_post_fc9866",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "archivo_catalogo",
@@ -14167,11 +14167,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "01b3851cca52",
+      "id": "c2b1770b6bbf",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 18368,
+      "line": 18376,
       "handler": "admin_presupuestos_import_lines",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/presupuestos/versiones/{version_id}/lineas/import"
@@ -14230,7 +14230,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_presupuestos_import_lines",
-      "proposed_tool": "budgets_admin_presupuestos_import_lines_post_01b385",
+      "proposed_tool": "budgets_admin_presupuestos_import_lines_post_c2b177",
       "scope_proposal": "budgets:write; never grants business authority",
       "object_parameters": [
         "version_id",
@@ -14253,11 +14253,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "de74d758eda2",
+      "id": "fb4ad3e8f7ec",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 18464,
+      "line": 18472,
       "handler": "create_empleado",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/empleados/create"
@@ -14316,7 +14316,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:create_empleado",
-      "proposed_tool": "identity_create_empleado_post_de74d7",
+      "proposed_tool": "identity_create_empleado_post_fb4ad3",
       "scope_proposal": "identity:write; never grants business authority",
       "object_parameters": [
         "nombre",
@@ -14343,11 +14343,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "de9a3d35ee74",
+      "id": "ac740876e2e0",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 18605,
+      "line": 18613,
       "handler": "edit_empleado_form",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/empleados/edit/{empleado_id}"
@@ -14404,7 +14404,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:edit_empleado_form",
-      "proposed_tool": "identity_edit_empleado_form_get_de9a3d",
+      "proposed_tool": "identity_edit_empleado_form_get_ac7408",
       "scope_proposal": "identity:read; never grants business authority",
       "object_parameters": [
         "empleado_id",
@@ -14423,11 +14423,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ce832b4d2ffc",
+      "id": "945039cc03f4",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 18783,
+      "line": 18791,
       "handler": "update_empleado",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/empleados/update/{empleado_id}"
@@ -14486,7 +14486,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:update_empleado",
-      "proposed_tool": "identity_update_empleado_post_ce832b",
+      "proposed_tool": "identity_update_empleado_post_945039",
       "scope_proposal": "identity:write; never grants business authority",
       "object_parameters": [
         "empleado_id",
@@ -14508,11 +14508,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d046a0d9a007",
+      "id": "9e9f978dcb9d",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 18937,
+      "line": 18945,
       "handler": "password_form",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/empleados/{empleado_id}/password"
@@ -14569,7 +14569,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:password_form",
-      "proposed_tool": "identity_password_form_get_d046a0",
+      "proposed_tool": "identity_password_form_get_9e9f97",
       "scope_proposal": "identity:read; never grants business authority",
       "object_parameters": [
         "empleado_id",
@@ -14589,11 +14589,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "9f5a5814bbc0",
+      "id": "d84f446cfbba",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 19103,
+      "line": 19111,
       "handler": "update_password",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/empleados/{empleado_id}/password"
@@ -14652,7 +14652,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:update_password",
-      "proposed_tool": "identity_update_password_post_9f5a58",
+      "proposed_tool": "identity_update_password_post_d84f44",
       "scope_proposal": "identity:write; never grants business authority",
       "object_parameters": [
         "empleado_id",
@@ -14676,11 +14676,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e74047e24bce",
+      "id": "24d8f8d932a2",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 19254,
+      "line": 19262,
       "handler": "export_cuentas_contables_csv",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/cuentas-contables/export.csv"
@@ -14736,7 +14736,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:export_cuentas_contables_csv",
-      "proposed_tool": "accounting_export_cuentas_contables_csv_get_e74047",
+      "proposed_tool": "accounting_export_cuentas_contables_csv_get_24d8f8",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -14754,11 +14754,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "627dee2c9d7b",
+      "id": "6c7484094a05",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 19272,
+      "line": 19280,
       "handler": "admin_cuentas_contables",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/cuentas-contables"
@@ -14816,7 +14816,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_cuentas_contables",
-      "proposed_tool": "accounting_admin_cuentas_contables_get_627dee",
+      "proposed_tool": "accounting_admin_cuentas_contables_get_6c7484",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "bi_year",
@@ -14836,11 +14836,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "631b5e0a3f8f",
+      "id": "770dc19f7f55",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 19604,
+      "line": 19612,
       "handler": "create_cuenta_contable",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/cuentas-contables/create"
@@ -14898,7 +14898,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:create_cuenta_contable",
-      "proposed_tool": "accounting_create_cuenta_contable_post_631b5e",
+      "proposed_tool": "accounting_create_cuenta_contable_post_770dc1",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "codigo",
@@ -14923,11 +14923,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "0735e1e934aa",
+      "id": "846ac5376744",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 19675,
+      "line": 19683,
       "handler": "edit_cuenta_contable_form",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/cuentas-contables/edit/{cuenta_id}"
@@ -14983,7 +14983,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:edit_cuenta_contable_form",
-      "proposed_tool": "accounting_edit_cuenta_contable_form_get_0735e1",
+      "proposed_tool": "accounting_edit_cuenta_contable_form_get_846ac5",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -15003,11 +15003,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "709692cd471c",
+      "id": "89f4ed9cfbaf",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 19779,
+      "line": 19787,
       "handler": "update_cuenta_contable",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/cuentas-contables/update/{cuenta_id}"
@@ -15065,7 +15065,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:update_cuenta_contable",
-      "proposed_tool": "accounting_update_cuenta_contable_post_709692",
+      "proposed_tool": "accounting_update_cuenta_contable_post_89f4ed",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "cuenta_id",
@@ -15091,11 +15091,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "daa74ef19eb3",
+      "id": "238e331331a4",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 19864,
+      "line": 19872,
       "handler": "carga_masiva_coi_form",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/coi/carga-masiva"
@@ -15153,7 +15153,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:carga_masiva_coi_form",
-      "proposed_tool": "accounting_carga_masiva_coi_form_get_daa74e",
+      "proposed_tool": "accounting_carga_masiva_coi_form_get_238e33",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -15171,11 +15171,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e60bc47858a1",
+      "id": "8878a3be5ea8",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 19971,
+      "line": 19979,
       "handler": "carga_masiva_coi_post",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/coi/carga-masiva"
@@ -15233,7 +15233,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:carga_masiva_coi_post",
-      "proposed_tool": "accounting_carga_masiva_coi_post_post_e60bc4",
+      "proposed_tool": "accounting_carga_masiva_coi_post_post_8878a3",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -15256,11 +15256,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "88a29d58a028",
+      "id": "db8af5a965a6",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 20035,
+      "line": 20043,
       "handler": "carga_masiva_auxiliar_form",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/auxiliar/carga-masiva"
@@ -15318,7 +15318,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:carga_masiva_auxiliar_form",
-      "proposed_tool": "accounting_carga_masiva_auxiliar_form_get_88a29d",
+      "proposed_tool": "accounting_carga_masiva_auxiliar_form_get_db8af5",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -15336,11 +15336,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "84bc4c9945e8",
+      "id": "a02459a91c48",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 20141,
+      "line": 20149,
       "handler": "carga_masiva_auxiliar_post",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/auxiliar/carga-masiva"
@@ -15398,7 +15398,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:carga_masiva_auxiliar_post",
-      "proposed_tool": "accounting_carga_masiva_auxiliar_post_post_84bc4c",
+      "proposed_tool": "accounting_carga_masiva_auxiliar_post_post_a02459",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -15421,11 +15421,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "80ef818c41ac",
+      "id": "734317e6d535",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 20204,
+      "line": 20212,
       "handler": "carga_masiva_banco_form",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/contabilidad/banco/carga-masiva"
@@ -15483,7 +15483,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:carga_masiva_banco_form",
-      "proposed_tool": "accounting_carga_masiva_banco_form_get_80ef81",
+      "proposed_tool": "accounting_carga_masiva_banco_form_get_734317",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -15501,11 +15501,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d8e3b32de39d",
+      "id": "aed4fd8662b3",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 20355,
+      "line": 20363,
       "handler": "carga_masiva_banco_post",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/banco/carga-masiva"
@@ -15563,7 +15563,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:carga_masiva_banco_post",
-      "proposed_tool": "accounting_carga_masiva_banco_post_post_d8e3b3",
+      "proposed_tool": "accounting_carga_masiva_banco_post_post_aed4fd",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -15586,11 +15586,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "f1cc176ca48b",
+      "id": "772e9f15bb9f",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 20415,
+      "line": 20423,
       "handler": "carga_masiva_runa_nomina_form",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/nomina/runa/carga-masiva"
@@ -15648,7 +15648,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:carga_masiva_runa_nomina_form",
-      "proposed_tool": "accounting_carga_masiva_runa_nomina_form_get_f1cc17",
+      "proposed_tool": "accounting_carga_masiva_runa_nomina_form_get_772e9f",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -15666,11 +15666,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "759e7ca3be5f",
+      "id": "d2d4e2a70333",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 20521,
+      "line": 20529,
       "handler": "carga_masiva_runa_nomina_post",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/nomina/runa/carga-masiva"
@@ -15728,7 +15728,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:carga_masiva_runa_nomina_post",
-      "proposed_tool": "accounting_carga_masiva_runa_nomina_post_post_759e7c",
+      "proposed_tool": "accounting_carga_masiva_runa_nomina_post_post_d2d4e2",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -15751,11 +15751,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "cc699d51c0a4",
+      "id": "6cdd5dc4fa99",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 20586,
+      "line": 20594,
       "handler": "seed_expense_matches_from_bank_post",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/contabilidad/banco/seed-expense-matches"
@@ -15813,7 +15813,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:seed_expense_matches_from_bank_post",
-      "proposed_tool": "accounting_seed_expense_matches_from_bank_post_post_cc699d",
+      "proposed_tool": "accounting_seed_expense_matches_from_bank_post_post_6cdd5d",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -15842,11 +15842,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "c9b8e6fbc3b6",
+      "id": "14d2e9c0f33a",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 20691,
+      "line": 20699,
       "handler": "carga_masiva_cuentas_contables_form",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/cuentas-contables/carga-masiva"
@@ -15902,7 +15902,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:carga_masiva_cuentas_contables_form",
-      "proposed_tool": "accounting_carga_masiva_cuentas_contables_form_get_c9b8e6",
+      "proposed_tool": "accounting_carga_masiva_cuentas_contables_form_get_14d2e9",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -15920,11 +15920,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "50257d3aae1e",
+      "id": "2098d7a1f296",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 20921,
+      "line": 20929,
       "handler": "carga_masiva_cuentas_contables_post",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/cuentas-contables/carga-masiva"
@@ -15982,7 +15982,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:carga_masiva_cuentas_contables_post",
-      "proposed_tool": "accounting_carga_masiva_cuentas_contables_post_post_50257d",
+      "proposed_tool": "accounting_carga_masiva_cuentas_contables_post_post_2098d7",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -16004,11 +16004,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "b2f72a684f22",
+      "id": "e2ea5009a12f",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 21020,
+      "line": 21028,
       "handler": "admin_centros_costo",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/centros-costo"
@@ -16064,7 +16064,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_centros_costo",
-      "proposed_tool": "documents_and_other_admin_centros_costo_get_b2f72a",
+      "proposed_tool": "documents_and_other_admin_centros_costo_get_e2ea50",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -16082,11 +16082,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e8eb56d80cb1",
+      "id": "1628a9aa63f5",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 21248,
+      "line": 21256,
       "handler": "create_centro_costo",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/centros-costo/create"
@@ -16144,7 +16144,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:create_centro_costo",
-      "proposed_tool": "documents_and_other_create_centro_costo_post_e8eb56",
+      "proposed_tool": "documents_and_other_create_centro_costo_post_1628a9",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "codigo",
@@ -16166,11 +16166,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "4cc066229764",
+      "id": "8d2413366911",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 21295,
+      "line": 21303,
       "handler": "edit_centro_costo_form",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/centros-costo/edit/{centro_id}"
@@ -16226,7 +16226,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:edit_centro_costo_form",
-      "proposed_tool": "documents_and_other_edit_centro_costo_form_get_4cc066",
+      "proposed_tool": "documents_and_other_edit_centro_costo_form_get_8d2413",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "centro_id"
@@ -16244,11 +16244,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "acad4756ba71",
+      "id": "2b6417b703f5",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 21365,
+      "line": 21373,
       "handler": "update_centro_costo",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/centros-costo/update/{centro_id}"
@@ -16306,7 +16306,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:update_centro_costo",
-      "proposed_tool": "documents_and_other_update_centro_costo_post_acad47",
+      "proposed_tool": "documents_and_other_update_centro_costo_post_2b6417",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "centro_id",
@@ -16329,11 +16329,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "9981c4667c18",
+      "id": "4802f7c25559",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 21429,
+      "line": 21437,
       "handler": "admin_proveedores_clientes",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/proveedores-clientes"
@@ -16388,7 +16388,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_proveedores_clientes",
-      "proposed_tool": "documents_and_other_admin_proveedores_clientes_get_9981c4",
+      "proposed_tool": "documents_and_other_admin_proveedores_clientes_get_4802f7",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -16411,11 +16411,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "0054024c6efd",
+      "id": "22641dfdec74",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 21972,
+      "line": 21980,
       "handler": "create_proveedor_cliente",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/proveedores-clientes/create"
@@ -16472,7 +16472,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:create_proveedor_cliente",
-      "proposed_tool": "documents_and_other_create_proveedor_cliente_post_005402",
+      "proposed_tool": "documents_and_other_create_proveedor_cliente_post_22641d",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "tipo",
@@ -16501,11 +16501,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "266a4868caec",
+      "id": "54f9c42bdbf4",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 22133,
+      "line": 22141,
       "handler": "update_proveedor_cliente_estado",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/proveedores-clientes/{proveedor_id}/estado"
@@ -16562,7 +16562,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:update_proveedor_cliente_estado",
-      "proposed_tool": "documents_and_other_update_proveedor_cliente_estado_post_266a48",
+      "proposed_tool": "documents_and_other_update_proveedor_cliente_estado_post_54f9c4",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "proveedor_id",
@@ -16585,11 +16585,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "c080cfd52346",
+      "id": "beda0bdb11df",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 22167,
+      "line": 22175,
       "handler": "edit_proveedor_cliente_form",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/proveedores-clientes/edit/{proveedor_id}"
@@ -16644,7 +16644,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:edit_proveedor_cliente_form",
-      "proposed_tool": "documents_and_other_edit_proveedor_cliente_form_get_c080cf",
+      "proposed_tool": "documents_and_other_edit_proveedor_cliente_form_get_beda0b",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "proveedor_id",
@@ -16663,11 +16663,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "cf2bfb035a6e",
+      "id": "da05f161882b",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 22416,
+      "line": 22424,
       "handler": "update_proveedor_cliente",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/proveedores-clientes/update/{proveedor_id}"
@@ -16724,7 +16724,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:update_proveedor_cliente",
-      "proposed_tool": "documents_and_other_update_proveedor_cliente_post_cf2bfb",
+      "proposed_tool": "documents_and_other_update_proveedor_cliente_post_da05f1",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "proveedor_id",
@@ -16754,11 +16754,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "3c9995b3ee2e",
+      "id": "37dddc82adcf",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 22590,
+      "line": 22598,
       "handler": "carga_masiva_proveedores_clientes_form",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/proveedores-clientes/carga-masiva"
@@ -16813,7 +16813,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:carga_masiva_proveedores_clientes_form",
-      "proposed_tool": "documents_and_other_carga_masiva_proveedores_clientes_fo_3c9995",
+      "proposed_tool": "documents_and_other_carga_masiva_proveedores_clientes_fo_37dddc",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -16831,11 +16831,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d8ade2ebac8e",
+      "id": "a5bb00ba379d",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 22880,
+      "line": 22888,
       "handler": "descargar_plantilla_proveedores_clientes",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/proveedores-clientes/plantilla.csv"
@@ -16890,7 +16890,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:descargar_plantilla_proveedores_clientes",
-      "proposed_tool": "documents_and_other_descargar_plantilla_proveedores_clie_d8ade2",
+      "proposed_tool": "documents_and_other_descargar_plantilla_proveedores_clie_a5bb00",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -16908,11 +16908,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "a9d13754ce2f",
+      "id": "9324589ddfcd",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 22952,
+      "line": 22960,
       "handler": "carga_masiva_proveedores_clientes_post",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/proveedores-clientes/carga-masiva"
@@ -16969,7 +16969,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:carga_masiva_proveedores_clientes_post",
-      "proposed_tool": "documents_and_other_carga_masiva_proveedores_clientes_po_a9d137",
+      "proposed_tool": "documents_and_other_carga_masiva_proveedores_clientes_po_932458",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -16991,11 +16991,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "cfb05eed194b",
+      "id": "471ec043711f",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 23092,
+      "line": 23100,
       "handler": "carga_masiva_cfdis_form",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/gastos/cfdis/carga-masiva"
@@ -17063,7 +17063,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:carga_masiva_cfdis_form",
-      "proposed_tool": "accounting_carga_masiva_cfdis_form_get_cfb05e",
+      "proposed_tool": "accounting_carga_masiva_cfdis_form_get_471ec0",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -17081,11 +17081,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "603751b41d43",
+      "id": "33ab27e8bc29",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 23267,
+      "line": 23275,
       "handler": "carga_masiva_cfdis_post",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/gastos/cfdis/carga-masiva"
@@ -17155,7 +17155,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:carga_masiva_cfdis_post",
-      "proposed_tool": "accounting_carga_masiva_cfdis_post_post_603751",
+      "proposed_tool": "accounting_carga_masiva_cfdis_post_post_33ab27",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -17177,11 +17177,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "0a329c059807",
+      "id": "1bfe9ee0c6c7",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 24152,
+      "line": 24160,
       "handler": "admin_sat_dashboard",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/gastos/sat"
@@ -17254,7 +17254,7 @@
         "sync_service.get_sync_states"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_sat_dashboard",
-      "proposed_tool": "accounting_admin_sat_dashboard_get_0a329c",
+      "proposed_tool": "accounting_admin_sat_dashboard_get_1bfe9e",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -17272,11 +17272,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "cf30eb880798",
+      "id": "71e19b351ad8",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 24626,
+      "line": 24634,
       "handler": "admin_sat_scheduled_sync",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/gastos/sat/sync"
@@ -17345,7 +17345,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_sat_scheduled_sync",
-      "proposed_tool": "accounting_admin_sat_scheduled_sync_post_cf30eb",
+      "proposed_tool": "accounting_admin_sat_scheduled_sync_post_71e19b",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "mode",
@@ -17367,11 +17367,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "f45f24ca7c82",
+      "id": "e67450972d6e",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 24661,
+      "line": 24669,
       "handler": "admin_sat_job_status_page",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/gastos/sat/jobs/{run_id}"
@@ -17440,7 +17440,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_sat_job_status_page",
-      "proposed_tool": "accounting_admin_sat_job_status_page_get_f45f24",
+      "proposed_tool": "accounting_admin_sat_job_status_page_get_e67450",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "run_id",
@@ -17459,11 +17459,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "b850c3f2ee1e",
+      "id": "39745dce3bb2",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 24839,
+      "line": 24847,
       "handler": "admin_sat_job_status_json",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/gastos/sat/jobs/{run_id}/status"
@@ -17532,7 +17532,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_sat_job_status_json",
-      "proposed_tool": "accounting_admin_sat_job_status_json_get_b850c3",
+      "proposed_tool": "accounting_admin_sat_job_status_json_get_39745d",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "run_id",
@@ -17551,11 +17551,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ed97afb0962f",
+      "id": "7edaa03a58f1",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 24866,
+      "line": 24874,
       "handler": "admin_sat_upload_credentials",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/gastos/sat/credentials"
@@ -17624,7 +17624,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_sat_upload_credentials",
-      "proposed_tool": "accounting_admin_sat_upload_credentials_post_ed97af",
+      "proposed_tool": "accounting_admin_sat_upload_credentials_post_7edaa0",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "rfc",
@@ -17649,11 +17649,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "107ccfc8cb5d",
+      "id": "46f7fe87356b",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 24947,
+      "line": 24955,
       "handler": "admin_sat_cfdi_status",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/gastos/sat/cfdi-status"
@@ -17722,7 +17722,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_sat_cfdi_status",
-      "proposed_tool": "accounting_admin_sat_cfdi_status_post_107ccf",
+      "proposed_tool": "accounting_admin_sat_cfdi_status_post_46f7fe",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "cfdi_uuid",
@@ -17747,11 +17747,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "89f1a2ce7f0e",
+      "id": "954bb9cafa04",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 24988,
+      "line": 24996,
       "handler": "admin_sat_saved_cfdi_status",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/gastos/sat/cfdi/{cfdi_id}/status"
@@ -17820,7 +17820,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_sat_saved_cfdi_status",
-      "proposed_tool": "accounting_admin_sat_saved_cfdi_status_post_89f1a2",
+      "proposed_tool": "accounting_admin_sat_saved_cfdi_status_post_954bb9",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "cfdi_id",
@@ -17842,11 +17842,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "fe84b2f77db6",
+      "id": "b2dc23ab4bb0",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 25032,
+      "line": 25040,
       "handler": "admin_sat_validate_selected_cfdis",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/gastos/sat/matching/validate-selected"
@@ -17915,7 +17915,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_sat_validate_selected_cfdis",
-      "proposed_tool": "accounting_admin_sat_validate_selected_cfdis_post_fe84b2",
+      "proposed_tool": "accounting_admin_sat_validate_selected_cfdis_post_b2dc23",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "cfdi_ids",
@@ -17937,11 +17937,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ec3e97607b68",
+      "id": "ebd967abb2e0",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 25083,
+      "line": 25091,
       "handler": "admin_sat_create_request",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/gastos/sat/request"
@@ -18010,7 +18010,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_sat_create_request",
-      "proposed_tool": "accounting_admin_sat_create_request_post_ec3e97",
+      "proposed_tool": "accounting_admin_sat_create_request_post_ebd967",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "fecha_inicial",
@@ -18036,11 +18036,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "3867fdf24552",
+      "id": "8dd7e5d20101",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 25155,
+      "line": 25163,
       "handler": "admin_sat_check_request",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/gastos/sat/check"
@@ -18109,7 +18109,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_sat_check_request",
-      "proposed_tool": "accounting_admin_sat_check_request_post_3867fd",
+      "proposed_tool": "accounting_admin_sat_check_request_post_8dd7e5",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "solicitud_id",
@@ -18132,11 +18132,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "f4a7e71b8e13",
+      "id": "f750aae0befc",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 25208,
+      "line": 25216,
       "handler": "admin_sat_process_request",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/gastos/sat/process"
@@ -18205,7 +18205,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:admin_sat_process_request",
-      "proposed_tool": "accounting_admin_sat_process_request_post_f4a7e7",
+      "proposed_tool": "accounting_admin_sat_process_request_post_f750aa",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "solicitud_id",
@@ -18228,11 +18228,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "9da08652bf95",
+      "id": "5aa0a8124d8d",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 25257,
+      "line": 25265,
       "handler": "assign_cfdi_operational_project",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/gastos/cfdis/{cfdi_id}/project-assignment"
@@ -18294,7 +18294,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:assign_cfdi_operational_project",
-      "proposed_tool": "accounting_assign_cfdi_operational_project_post_9da086",
+      "proposed_tool": "accounting_assign_cfdi_operational_project_post_5aa0a8",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "cfdi_id",
@@ -18319,11 +18319,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "7c540603b6a2",
+      "id": "8590ca4a479a",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 25349,
+      "line": 25357,
       "handler": "cfdi_matching_control_room",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/gastos/cfdis/matching"
@@ -18392,7 +18392,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:cfdi_matching_control_room",
-      "proposed_tool": "accounting_cfdi_matching_control_room_get_7c5406",
+      "proposed_tool": "accounting_cfdi_matching_control_room_get_8590ca",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -18413,11 +18413,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "60ff54451630",
+      "id": "3f4369093235",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 25931,
+      "line": 25939,
       "handler": "gastos_sin_cuenta_contable",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "GET",
       "paths": [
         "/admin/gastos/sin-cuenta-contable"
@@ -18491,7 +18491,7 @@
         "safe_build_cleanup_preview"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:gastos_sin_cuenta_contable",
-      "proposed_tool": "accounting_gastos_sin_cuenta_contable_get_60ff54",
+      "proposed_tool": "accounting_gastos_sin_cuenta_contable_get_3f4369",
       "scope_proposal": "accounting:read; never grants business authority",
       "object_parameters": [
         "period",
@@ -18517,11 +18517,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "ebd6e5693ab0",
+      "id": "0140f9064ec7",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 27637,
+      "line": 27645,
       "handler": "cleanup_contable_gasto",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/gastos/{gasto_id}/cleanup-contable"
@@ -18575,7 +18575,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:cleanup_contable_gasto",
-      "proposed_tool": "accounting_cleanup_contable_gasto_post_ebd6e5",
+      "proposed_tool": "accounting_cleanup_contable_gasto_post_0140f9",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "gasto_id",
@@ -18606,11 +18606,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "c48e62fcc90f",
+      "id": "df03cf4dddbf",
       "source": "src/devnous/gastos/routes/admin_routes.py",
-      "line": 27711,
+      "line": 27719,
       "handler": "asignar_cuenta_contable",
-      "source_sha256": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+      "source_sha256": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
       "method": "POST",
       "paths": [
         "/admin/gastos/{gasto_id}/asignar-cuenta-contable"
@@ -18666,7 +18666,7 @@
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/admin_routes.py:asignar_cuenta_contable",
-      "proposed_tool": "accounting_asignar_cuenta_contable_post_c48e62",
+      "proposed_tool": "accounting_asignar_cuenta_contable_post_df03cf",
       "scope_proposal": "accounting:write; never grants business authority",
       "object_parameters": [
         "gasto_id",

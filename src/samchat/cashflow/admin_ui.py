@@ -177,7 +177,7 @@ def _report_table(payload: dict[str, Any], currency: str, summary: dict) -> str:
             cells.append(f'<td class="cashflow-number">{value}</td>')
         body.append(f'<tr><th scope="row">{escape(label)}</th>{"".join(cells)}</tr>')
     return (
-        '<div class="cashflow-table-shell" role="region" tabindex="0" '
+        '<div class="table-shell cashflow-table-shell" role="region" tabindex="0" '
         f'aria-label="Flujo real en {_text(_currency_label(currency))}">'
         '<table class="cashflow-table"><caption>'
         f"Flujo de efectivo · {_text(_currency_label(currency))} · pesos</caption>"
@@ -232,7 +232,7 @@ def _movement_table(rows: list[dict[str, Any]]) -> str:
         body.append("<tr>" + "".join(f"<td>{value}</td>" for value in values) + "</tr>")
     empty = '<tr><td colspan="11">Sin movimientos en esta selección.</td></tr>'
     return (
-        '<div class="cashflow-table-shell" role="region" tabindex="0" '
+        '<div class="table-shell cashflow-table-shell" role="region" tabindex="0" '
         'aria-label="Detalle de movimientos"><table class="cashflow-table">'
         "<caption>Movimientos que explican las cifras</caption><thead><tr>"
         + "".join(f'<th scope="col">{label}</th>' for label in headers)
@@ -268,7 +268,7 @@ def _pending_table(rows: list[dict[str, Any]], *, receivables: bool = False) -> 
         body.append("<tr>" + "".join(f"<td>{value}</td>" for value in values) + "</tr>")
     caption = "Cobros pendientes" if receivables else "Obligaciones y solicitudes"
     return (
-        '<div class="cashflow-table-shell" role="region" tabindex="0" '
+        '<div class="table-shell cashflow-table-shell" role="region" tabindex="0" '
         f'aria-label="{caption}"><table class="cashflow-table">'
         f"<caption>{caption}</caption><thead><tr>"
         + "".join(f'<th scope="col">{label}</th>' for label in headers)
@@ -375,7 +375,7 @@ def render_cashflow_planning_html(payload: dict[str, Any]) -> str:
         for row in payload.get("party_groups") or []
     )
     parties = (
-        '<div class="cashflow-table-shell"><table class="cashflow-table">'
+        '<div class="table-shell cashflow-table-shell"><table class="cashflow-table">'
         "<caption>Orígenes y destinos por contraparte</caption><thead><tr>"
         '<th scope="col">Movimiento</th><th scope="col">Contraparte</th>'
         '<th scope="col">Moneda</th><th scope="col">Importe</th>'
