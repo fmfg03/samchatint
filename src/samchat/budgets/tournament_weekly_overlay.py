@@ -698,8 +698,9 @@ async def effective_plans_for_lines(
 
     Consumers must explicitly render `conflicts` as unavailable, including
     zero-budget rows with a preserved expected-income-only plan. Historical
-    versions keep their original schedule. Raw guards and writers must continue
-    using the canonical unmodified `list_monthly_plan_for_lines` reader.
+    versions keep their original schedule. Writers keep using the canonical raw
+    `list_monthly_plan_for_lines` reader. Approval explicitly validates these
+    effective plans and must reject every returned conflict.
     """
     version_id = _uuid(version_id)
     result = {

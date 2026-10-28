@@ -1453,3 +1453,71 @@ async def test_canonical_distribution_clone_requires_real_lineage(
             assert not conflicts
             assert plans[target[0]][40]["budget_expense_amount"] == 584640.0
             assert plans[target[1]][40]["budget_expense_amount"] == 0.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tamper", [None, "amount", "account", "root"])
+async def test_reapproval_validates_current_overlay_over_zero_legacy(database, tamper):
+    async with AsyncSession(database) as session:
+        await session.execute(
+            text(
+                "UPDATE budget_line_monthly_plan SET budget_expense_amount=0 WHERE budget_line_id=CAST(:id AS uuid)"
+            ),
+            {"id": LIGA_COST},
+        )
+        await apply(session, await preview(session))
+        await session.commit()
+        await service.transition_budget_version(
+            session,
+            version_id=VERSION,
+            new_status="reforecast",
+            actor_empleado_id=ACTOR,
+            ensure_schema=False,
+        )
+        if tamper == "amount":
+            await session.execute(
+                text(
+                    "UPDATE budget_lines SET budget_amount=budget_amount+1 WHERE id=CAST(:id AS uuid)"
+                ),
+                {"id": LIGA_COST},
+            )
+        elif tamper == "account":
+            await session.execute(
+                text(
+                    "UPDATE budget_lines SET account_code_final='unexpected' WHERE id=CAST(:id AS uuid)"
+                ),
+                {"id": LIGA_COST},
+            )
+        elif tamper == "root":
+            await session.execute(
+                text(
+                    "INSERT INTO budget_versions(id,edition_year,version_name,status,source) VALUES ('10000000-0000-4000-8000-000000000999',2025,'Unrelated','closed','ui_manual')"
+                )
+            )
+            await session.execute(
+                text(
+                    "UPDATE budget_tournament_weekly_revisions SET financial_root_version_id=CAST(:id AS uuid) WHERE tournament_id=CAST(:tid AS uuid)"
+                ),
+                {"id": "10000000-0000-4000-8000-000000000999", "tid": LIGA},
+            )
+        if tamper:
+            with pytest.raises(ValueError, match="conflictos"):
+                await service.transition_budget_version(
+                    session,
+                    version_id=VERSION,
+                    new_status="approved",
+                    actor_empleado_id=ACTOR,
+                    ensure_schema=False,
+                )
+        else:
+            await service.transition_budget_version(
+                session,
+                version_id=VERSION,
+                new_status="approved",
+                actor_empleado_id=ACTOR,
+                ensure_schema=False,
+            )
+            raw = await service.list_monthly_plan_for_lines(
+                session, line_ids=[LIGA_COST], ensure_schema=False
+            )
+            assert all(v["budget_expense_amount"] == 0 for v in raw[LIGA_COST].values())
