@@ -192,9 +192,38 @@ def _parse_sheets(wb, cached, contents: bytes) -> ParsedPayrollAmounts:
 
         code = value("CLAVE")
         name = value("NOMBRE DEL EMPLEADO")
+        if isinstance(code, str):
+            code = code.strip()
+        if isinstance(name, str):
+            name = name.strip()
         if code in (None, "") and name in (None, ""):
+            data_headings = [heading for _, heading, _, _ in COMPONENTS] + [
+                "DIAS PAG.",
+                "S.DIARIO",
+                "TOTAL PERCEP.",
+                "TOTAL DEDUCC.",
+            ]
+            unidentified_data = False
+            for heading in data_headings:
+                raw = value(heading)
+                if source[columns[heading]].data_type == "f" and raw in (None, ""):
+                    unidentified_data = True
+                elif raw not in (None, ""):
+                    try:
+                        amount = Decimal(str(raw))
+                        unidentified_data |= not amount.is_finite() or amount != 0
+                    except InvalidOperation:
+                        unidentified_data = True
+            if unidentified_data:
+                parsed.errors.append(f"Fila {row_no}: identificación incompleta.")
             continue
-        if code in (None, "") and normalized(name).startswith("TOTAL"):
+        if code in (None, "") and normalized(name) in {
+            "TOTAL",
+            "TOTALES",
+            "TOTAL GENERAL",
+            "TOTAL NOMINA",
+            "TOTAL DE NOMINA",
+        }:
             continue
         if code in (None, "") or name in (None, ""):
             parsed.errors.append(f"Fila {row_no}: identificación incompleta.")
@@ -214,6 +243,7 @@ def _parse_sheets(wb, cached, contents: bytes) -> ParsedPayrollAmounts:
             "employee_code": code,
             "source_name": str(name).strip(),
             "components": [],
+            "source_formulas": {},
         }
         row_errors = len(parsed.errors)
         for key, heading, account, side in COMPONENTS:
@@ -243,6 +273,11 @@ def _parse_sheets(wb, cached, contents: bytes) -> ParsedPayrollAmounts:
             ("deductions_total", "TOTAL DEDUCC.", False, 2),
         ):
             try:
+                is_formula = source[columns[heading]].data_type == "f"
+                formula_found |= is_formula
+                record["source_formulas"][key] = is_formula
+                if is_formula and value(heading) in (None, ""):
+                    raise ValueError("fórmula sin resultado almacenado")
                 record[key] = _number(
                     value(heading),
                     optional=optional,
