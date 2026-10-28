@@ -258,3 +258,43 @@ async def test_upload_reads_at_most_the_approved_size():
     parsed = await _read_payroll_amount_upload(upload)
     assert not parsed.errors
     upload.read.assert_awaited_once_with(parser.MAX_FILE_BYTES + 1)
+
+
+def test_unidentified_row_with_amounts_blocks_the_entire_batch():
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(workbook_bytes(count=2)))
+    ws = wb["N"]
+    ws["A8"] = None
+    ws["B8"] = None
+    ws["F8"] = 250
+    ws["R8"] = 250
+    ws["AA8"] = 250
+    out = io.BytesIO()
+    wb.save(out)
+    parsed = parser.parse_payroll_amount_workbook("n.xlsx", out.getvalue())
+    assert any("Fila 8: identificación incompleta" in error for error in parsed.errors)
+    assert parsed.rows[0]["gross_total"] == "100.00"
+
+
+def test_optional_daily_salary_formula_without_cache_is_not_a_blank():
+    parsed = parser.parse_payroll_amount_workbook(
+        "n.xlsx", workbook_bytes({"S.DIARIO": "=100/15"})
+    )
+    assert any(
+        "S.DIARIO" in error and "fórmula sin resultado" in error
+        for error in parsed.errors
+    )
+
+
+def test_explicit_summary_row_is_not_an_unidentified_employee():
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(workbook_bytes(count=2)))
+    wb["N"]["A8"] = None
+    wb["N"]["B8"] = "TOTAL"
+    out = io.BytesIO()
+    wb.save(out)
+    parsed = parser.parse_payroll_amount_workbook("n.xlsx", out.getvalue())
+    assert not parsed.errors
+    assert len(parsed.rows) == 1

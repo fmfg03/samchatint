@@ -150,3 +150,23 @@ La promoción productiva se prepara sobre la release activa `ab29ccc64`, con
 únicamente el cambio de nómina y su inventario. Esto conserva las demás
 diferencias financieras de main fuera de la release autorizada. El SHA del
 candidato, respaldo, migración y verificación se registran en el recibo de release.
+
+## Correcciones verificadas de la revisión del PR #511
+
+La revisión automática detectó tres defectos dentro del contrato aprobado. Se
+reprodujeron primero mediante tres pruebas fallidas y después se corrigieron:
+
+- Las dos tablas nuevas se excluyen de `runtime_managed_tables` mediante el
+  propietario existente `src/devnous/gastos/amex_schema_policy.py`. Este archivo
+  adicional es necesario para cumplir la migración exclusiva del propietario;
+  no se cambia ninguna otra tabla, permiso o regla de negocio.
+- Una fila sin clave ni nombre que conserve importes o una fórmula sin resultado
+  genera error bloqueante. Sólo se omiten filas realmente vacías/cero y rótulos
+  explícitos de totales.
+- El salario diario realmente vacío sigue permitido; una fórmula sin caché es
+  error y no se convierte en un vacío. Se conserva su presencia en la fuente.
+
+Resultado local posterior: **93 pruebas aprobadas**, incluyendo las regresiones
+de los tres hallazgos y la suite existente del límite de DDL de AMEX. Los checks
+del PR se repiten sobre el nuevo head; los resultados del head anterior no se
+usan para autorizar la promoción. El primer candidato preparado no se desplegó.

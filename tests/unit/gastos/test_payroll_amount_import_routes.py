@@ -290,3 +290,13 @@ def test_missing_signing_configuration_fails_closed(monkeypatch):
 
 def test_payroll_navigation_exposes_amount_intake():
     assert "/admin/nomina/carga-importes" in routes._payroll_subnav("carga-importes")
+
+
+def test_payroll_import_tables_never_enter_runtime_startup_ddl():
+    from devnous.gastos.amex_schema_policy import runtime_managed_tables
+    from devnous.gastos.models import Base, PayrollAmountImport, PayrollAmountImportLine
+
+    managed = {table.name for table in runtime_managed_tables(Base.metadata)}
+    assert PayrollAmountImport.__tablename__ not in managed
+    assert PayrollAmountImportLine.__tablename__ not in managed
+    assert "documentos" in managed

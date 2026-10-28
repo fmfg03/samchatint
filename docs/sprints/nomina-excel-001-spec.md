@@ -214,3 +214,10 @@ El HEAD base `d548d148f7521988587d6498b5461901c21a2ee3` no contiene
 `scripts/private_plugin/inventory.py`, un inventario de rutas ni su suite/matriz.
 No se incorporan desde otra rama: ese chequeo queda pendiente por falta del
 artefacto/herramienta, no como evidencia de validación satisfactoria.
+
+Corrección de conformidad durante la revisión del PR: añadir exclusivamente las
+dos tablas de recepción a la exclusión de DDL de arranque en
+`src/devnous/gastos/amex_schema_policy.py`, reutilizando el patrón existente.
+Es una dependencia necesaria del contrato de migración owner-run ya aprobado,
+sin nueva arquitectura, reglas salariales ni autorización de efectos. Se prueban
+también filas sin identidad con importes y fórmulas sin caché en salario diario.
