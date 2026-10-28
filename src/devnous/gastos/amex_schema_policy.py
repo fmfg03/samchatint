@@ -1,4 +1,4 @@
-"""Keep owner-installed AMEX accounting schema outside runtime startup DDL."""
+"""Keep owner-installed accounting and payroll schema outside startup DDL."""
 
 import re
 from typing import Any
@@ -61,16 +61,21 @@ AMEX_DIRECT_OWNER_MIGRATION_TABLES = frozenset(
     }
 )
 
+PAYROLL_OWNER_MIGRATION_TABLES = frozenset(
+    {"payroll_amount_imports", "payroll_amount_import_lines"}
+)
+
 OWNER_MIGRATION_TABLES = (
     AMEX_OWNER_MIGRATION_TABLES
     | CTT_OWNER_MIGRATION_TABLES
     | AMEX_STATEMENT_OWNER_MIGRATION_TABLES
     | AMEX_DIRECT_OWNER_MIGRATION_TABLES
+    | PAYROLL_OWNER_MIGRATION_TABLES
 )
 
 
 def runtime_managed_tables(metadata: MetaData) -> list[Table]:
-    """Preserve existing startup management while excluding owner-run AMEX DDL."""
+    """Preserve existing startup management while excluding owner-run DDL."""
     return [
         table
         for table in metadata.sorted_tables
