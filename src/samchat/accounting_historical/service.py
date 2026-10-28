@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import json
+import re
 import subprocess
 import tempfile
 import uuid
 from collections import defaultdict
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Optional
 
@@ -609,6 +612,383 @@ def _load_coi_accounting_source(
     return trial_balance_rows, policy_header_rows, policy_line_rows, source_files
 
 
+def _load_explicit_historical_manifest(
+    *, fiscal_year: int, source_path: str, company_code: str, company_label: str
+) -> tuple[dict, list[dict], list[dict], list[dict], list[dict]]:
+    """Read one fully hashed, identity-scoped accounting bundle without database effects."""
+    manifest_path = Path(source_path).resolve(strict=True)
+    manifest_bytes = manifest_path.read_bytes()
+    document = json.loads(manifest_bytes)
+    if (
+        document.get("schema_version") != "samchat.historical.explicit.v1"
+        or document.get("fiscal_year") != fiscal_year
+        or document.get("company_code") != company_code
+        or document.get("company_label") != company_label
+        or _normalize_company_code(company_code) != company_code
+    ):
+        raise ValueError("Explicit accounting manifest identity/year mismatch")
+    if fiscal_year != 2026:
+        raise ValueError("This explicit source contract is approved only for 2026")
+    identities = {"01": "PSP1705058S4", "02": "PMD0608162M2", "GOAT": "GDM210323RIA"}
+    if identities.get(company_code) != company_label:
+        raise ValueError("Explicit accounting company identity is not approved")
+    derived = document.get("derived")
+    families = {
+        "trial_balance": "balanza",
+        "policy_headers": "poliza_header",
+        "policy_lines": "poliza_line",
+    }
+    if not isinstance(derived, dict) or set(derived) != set(families):
+        raise ValueError("A complete balance/header/line bundle is required")
+    originals = document.get("originals")
+    if not isinstance(originals, list) or len(originals) < 2:
+        raise ValueError("Original balance and policy sources are required")
+    files, paths, datasets = [], {}, {}
+
+    def read_entry(entry: dict, family: str, *, original: bool = False) -> bytes:
+        if not isinstance(entry, dict) or not re.fullmatch(
+            r"[0-9a-f]{64}", str(entry.get("sha256", ""))
+        ):
+            raise ValueError("Every source requires an exact SHA-256")
+        path = Path(entry.get("path", ""))
+        if not path.is_absolute():
+            path = manifest_path.parent / path
+        path = path.resolve(strict=True)
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != entry["sha256"]:
+            raise ValueError("Accounting source hash changed")
+        files.append(
+            {
+                "source_family": family,
+                "source_format": path.suffix.lstrip("."),
+                "source_filename": path.name,
+                "source_path": str(path),
+                "source_sha256": entry["sha256"],
+                "company_code": company_code,
+                "company_label": company_label,
+                "validation_status": "OK",
+                "source_scope": "canonical",
+                "metadata": {"original_source": original},
+            }
+        )
+        paths[family] = str(path)
+        return raw
+
+    seen_families = set(families.values()) | {"explicit_manifest"}
+    for entry in originals:
+        family = entry.get("source_family") if isinstance(entry, dict) else None
+        if (
+            not isinstance(family, str)
+            or not re.fullmatch(r"original_[a-z_]{1,35}", family)
+            or family in seen_families
+        ):
+            raise ValueError("Original source families must be unique and explicit")
+        seen_families.add(family)
+        read_entry(entry, family, original=True)
+    if not {"original_trial_balance", "original_policy_lines"}.issubset(seen_families):
+        raise ValueError(
+            "Both original balance and policy source families are required"
+        )
+    if "validation_report" in document:
+        read_entry(document["validation_report"], "normalization_report")
+    withheld = document.get("withheld_months", [])
+    if not isinstance(withheld, list):
+        raise ValueError("Withheld months must be an explicit list")
+    withheld_by_month = {}
+    for item in withheld:
+        if not isinstance(item, dict):
+            raise ValueError("Each withheld month requires a reason and evidence")
+        month = item.get("month_num")
+        if type(month) is not int or not 1 <= month <= 9 or month in withheld_by_month:
+            raise ValueError("Duplicate or invalid withheld month")
+        if not isinstance(item.get("reason"), str) or not item["reason"].strip():
+            raise ValueError("Each withheld month requires an explicit reason")
+        withheld_by_month[month] = item
+    expected_coverage = {
+        "trial_balance": sorted(set(range(1, 9)) - set(withheld_by_month)),
+        "policy_headers": sorted(set(range(1, 10)) - set(withheld_by_month)),
+        "policy_lines": sorted(set(range(1, 10)) - set(withheld_by_month)),
+    }
+    if not all(expected_coverage.values()):
+        raise ValueError("Withholding cannot remove every accounting period")
+    if (
+        "expected_coverage" in document
+        and document["expected_coverage"] != expected_coverage
+    ):
+        raise ValueError("Declared coverage contradicts complete withheld-period scope")
+    reference = document.get("full_validation_report")
+    if withheld and reference is None:
+        raise ValueError("Withheld months require full-source evidence")
+    if reference is not None:
+        raw_report = read_entry(reference, "quarantine_evidence")
+        report = json.loads(raw_report)
+        if report.get("identity") != {
+            "fiscal_year": fiscal_year,
+            "company_code": company_code,
+            "company_label": company_label,
+        }:
+            raise ValueError("Withheld evidence belongs to another company/year")
+        reference_path = Path(paths["quarantine_evidence"])
+        for item in withheld:
+            evidence = item.get("evidence")
+            if (
+                not isinstance(evidence, dict)
+                or evidence.get("sha256") != reference["sha256"]
+            ):
+                raise ValueError(
+                    "Each withheld month requires pinned full-source evidence"
+                )
+            candidate = Path(evidence.get("path", ""))
+            if not candidate.is_absolute():
+                candidate = manifest_path.parent / candidate
+            if candidate.resolve(strict=True) != reference_path:
+                raise ValueError(
+                    "Withheld month evidence does not match the full report"
+                )
+    for kind, family in families.items():
+        raw = read_entry(derived[kind], family)
+        datasets[kind] = list(csv.DictReader(io.StringIO(raw.decode("utf-8-sig"))))
+        if not datasets[kind]:
+            raise ValueError("Explicit accounting source must not be empty")
+        for row in datasets[kind]:
+            if (
+                str(row.get("fiscal_year")) != str(fiscal_year)
+                or row.get("company_code") != company_code
+                or row.get("company_label") != company_label
+            ):
+                raise ValueError("Mixed company/year in normalized accounting source")
+            try:
+                month = int(row["month_num"])
+            except (KeyError, TypeError, ValueError):
+                raise ValueError("Invalid accounting month") from None
+            if not 1 <= month <= 12:
+                raise ValueError("Invalid accounting month")
+            if month in withheld_by_month:
+                raise ValueError(
+                    "Excluded accounting month still has admitted source rows"
+                )
+
+    def money(value: Any, *, nonnegative: bool = False) -> Decimal:
+        try:
+            number = Decimal(str(value))
+            if (
+                not number.is_finite()
+                or number != number.quantize(Decimal(".01"))
+                or (nonnegative and number < 0)
+            ):
+                raise ValueError(
+                    "Accounting money must be finite, at cents and nonnegative where required"
+                )
+            return number
+        except (InvalidOperation, TypeError):
+            raise ValueError("Invalid accounting amount") from None
+
+    balances, headers, lines = (datasets[k] for k in families)
+    if {int(r["month_num"]) for r in balances} != set(
+        expected_coverage["trial_balance"]
+    ):
+        raise ValueError(
+            "Expected actual January-August balances, no invented September"
+        )
+    if {int(r["month_num"]) for r in lines} != set(expected_coverage["policy_lines"]):
+        raise ValueError("Expected complete January-September policy lines")
+    balance_keys = set()
+    for row in balances:
+        key = (int(row["month_num"]), row.get("account_code"))
+        if (
+            not re.fullmatch(r"\d{4}-\d{3}-\d{3}", str(row.get("account_code", "")))
+            or key in balance_keys
+        ):
+            raise ValueError("Duplicate or missing balance account/month")
+        balance_keys.add(key)
+        for field in ("saldo_inicial", "cargos", "abonos", "saldo_final"):
+            money(row.get(field))
+        if row.get("is_detail") not in {"True", "False", "true", "false", "1", "0"}:
+            raise ValueError("Explicit balance detail level is required")
+    by_policy = {}
+    for row in headers:
+        key = row.get("policy_id")
+        day = _parse_date(row.get("policy_date"))
+        if (
+            not key
+            or key in by_policy
+            or not day
+            or day.year != fiscal_year
+            or day.month != int(row["month_num"])
+        ):
+            raise ValueError("Duplicate or invalid dated policy header")
+        if not row.get("policy_type") or not row.get("policy_number"):
+            raise ValueError("Policy type and number are required")
+        expected_id = f"{fiscal_year}-{int(row['month_num']):02d}:{row['policy_type']}:{row['policy_number']}"
+        if key != expected_id:
+            raise ValueError(
+                "Policy identity must include exact year/month/type/number"
+            )
+        by_policy[key] = row
+    grouped = defaultdict(list)
+    row_numbers = set()
+    for row in lines:
+        header = by_policy.get(row.get("policy_id"))
+        if header is None or int(header["month_num"]) != int(row["month_num"]):
+            raise ValueError("Orphan or cross-period policy line")
+        try:
+            number = int(row["row_number"])
+        except (KeyError, TypeError, ValueError):
+            raise ValueError("Policy line source row is required") from None
+        if (
+            number <= 0
+            or number in row_numbers
+            or not re.fullmatch(r"\d{4}-\d{3}-\d{3}", str(row.get("account_code", "")))
+        ):
+            raise ValueError("Duplicate or invalid source row/account")
+        row_numbers.add(number)
+        money(row.get("debe"), nonnegative=True)
+        money(row.get("haber"), nonnegative=True)
+        grouped[row["policy_id"]].append(row)
+    incidents = []
+    for key, header in by_policy.items():
+        members = grouped[key]
+        debit = sum((money(r["debe"]) for r in members), Decimal(0))
+        credit = sum((money(r["haber"]) for r in members), Decimal(0))
+        if not members or int(header.get("line_count", 0)) != len(members):
+            raise ValueError("Policy line count mismatch")
+        if debit != money(header.get("total_debe")) or credit != money(
+            header.get("total_haber")
+        ):
+            raise ValueError("Policy header and source lines disagree")
+        difference = debit - credit
+        if abs(difference) > Decimal(".01"):
+            raise ValueError("Unbalanced policy exceeds one-cent source tolerance")
+        if difference:
+            incidents.append({"policy_id": key, "difference": str(difference)})
+            header["_explicit_rounding_difference"] = str(difference)
+    balances_by_month = defaultdict(dict)
+    for row in balances:
+        balances_by_month[int(row["month_num"])][row["account_code"]] = row
+    line_totals = defaultdict(lambda: [Decimal(0), Decimal(0)])
+    for row in lines:
+        total = line_totals[(int(row["month_num"]), row["account_code"])]
+        total[0] += money(row["debe"])
+        total[1] += money(row["haber"])
+    reconciliation_issues, cent_differences = [], []
+    for month, accounts in sorted(balances_by_month.items()):
+        nonleaf = set()
+        for code in accounts:
+            first, middle, last = code.split("-")
+            for parent in (f"{first}-000-000", f"{first}-{middle}-000"):
+                if parent != code and parent in accounts:
+                    nonleaf.add(parent)
+        for code, row in accounts.items():
+            leaf = code not in nonleaf
+            if _safe_bool(row["is_detail"]) != leaf:
+                raise ValueError(
+                    "Normalized balance leafness contradicts account hierarchy"
+                )
+            if not leaf:
+                if any(line_totals[(month, code)]):
+                    reconciliation_issues.append(
+                        {
+                            "period": f"{fiscal_year}-{month:02d}",
+                            "account_code": code,
+                            "reason": "Policy posts directly to an aggregate balance account",
+                        }
+                    )
+                continue
+            debit, credit = line_totals[(month, code)]
+            difference = {
+                "period": f"{fiscal_year}-{month:02d}",
+                "account_code": code,
+                "balance_debits": str(money(row["cargos"])),
+                "policy_debits": str(debit),
+                "balance_credits": str(money(row["abonos"])),
+                "policy_credits": str(credit),
+                "debit_difference": str(debit - money(row["cargos"])),
+                "credit_difference": str(credit - money(row["abonos"])),
+            }
+            maximum = max(
+                abs(debit - money(row["cargos"])), abs(credit - money(row["abonos"]))
+            )
+            if maximum > Decimal(".01"):
+                reconciliation_issues.append(difference)
+            elif maximum:
+                cent_differences.append(difference)
+        for candidate_month, code in line_totals:
+            if candidate_month == month and code not in accounts:
+                reconciliation_issues.append(
+                    {
+                        "period": f"{fiscal_year}-{month:02d}",
+                        "account_code": code,
+                        "reason": "Policy account missing from balance source",
+                    }
+                )
+    validation = {
+        "balance_months": expected_coverage["trial_balance"],
+        "policy_months": expected_coverage["policy_lines"],
+        "withheld_months": [withheld_by_month[m] for m in sorted(withheld_by_month)],
+        "coverage_status": (
+            "partial_withheld_periods"
+            if withheld
+            else "complete_for_declared_source_families"
+        ),
+        "september_balance_available": False,
+        "rounding_incidents": incidents,
+        "raw_precision_preserved_in_original_sources": True,
+        "material_reconciliation_issues": reconciliation_issues,
+        "cent_reconciliation_differences": cent_differences,
+        "reconciliation_status": (
+            "review_required"
+            if reconciliation_issues
+            else "reconciled_with_disclosed_precision"
+        ),
+    }
+    files.append(
+        {
+            "source_family": "explicit_manifest",
+            "source_format": "json",
+            "source_filename": manifest_path.name,
+            "source_path": str(manifest_path),
+            "source_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "company_code": company_code,
+            "company_label": company_label,
+            "validation_status": "OK",
+            "source_scope": "canonical",
+            "metadata": validation,
+        }
+    )
+    paths["explicit_manifest"] = str(manifest_path)
+    if reconciliation_issues:
+        for source in files:
+            if source["source_family"] in set(families.values()) | {
+                "explicit_manifest"
+            }:
+                source["validation_status"] = "REVIEW_REQUIRED"
+    return paths, balances, headers, lines, files
+
+async def _require_explicit_historical_schema(session: AsyncSession) -> None:
+    """Verify the already-provisioned owner schema; this function performs no DDL."""
+    tables = {
+        "accounting_import_runs",
+        "historical_accounting_source_files",
+        "historical_trial_balance_rows",
+        "historical_policy_headers",
+        "historical_policy_lines",
+    }
+    rows = (
+        (
+            await session.execute(
+                text(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name=ANY(CAST(:names AS text[]))"
+                ),
+                {"names": sorted(tables)},
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if set(rows) != tables:
+        raise ValueError("Historical accounting owner migration is required")
+
+
 def _load_historical_source_dataset(
     *,
     fiscal_year: int,
@@ -616,11 +996,26 @@ def _load_historical_source_dataset(
     source_path: Optional[str] = None,
     company_code: str = "01",
     company_label: Optional[str] = None,
-) -> tuple[dict[str, str], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[
+    dict[str, str],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
     normalized_company_code = _normalize_company_code(company_code)
     normalized_company_label = _safe_str(company_label) or _default_company_label(
         normalized_company_code
     )
+    if source_kind == "normalized_manifest":
+        if not source_path:
+            raise ValueError("Explicit manifest path is required")
+        return _load_explicit_historical_manifest(
+            fiscal_year=fiscal_year,
+            source_path=source_path,
+            company_code=normalized_company_code,
+            company_label=normalized_company_label,
+        )
     if source_kind == "csv":
         if fiscal_year not in SUPPORTED_HISTORICAL_MANIFESTS:
             raise ValueError(
@@ -628,7 +1023,8 @@ def _load_historical_source_dataset(
                 f"{sorted(SUPPORTED_HISTORICAL_MANIFESTS.keys())}"
             )
         manifest = {
-            key: Path(value) for key, value in SUPPORTED_HISTORICAL_MANIFESTS[fiscal_year].items()
+            key: Path(value)
+            for key, value in SUPPORTED_HISTORICAL_MANIFESTS[fiscal_year].items()
         }
         for key, path in manifest.items():
             if not path.exists():
@@ -638,7 +1034,9 @@ def _load_historical_source_dataset(
             policy_header_rows = _load_csv_rows(manifest["policy_headers"])
             policy_line_rows = _load_csv_rows(manifest["policy_lines"])
         else:
-            trial_balance_rows = _load_balance_only_trial_balance_rows(manifest["trial_balance"])
+            trial_balance_rows = _load_balance_only_trial_balance_rows(
+                manifest["trial_balance"]
+            )
             policy_header_rows = []
             policy_line_rows = []
         source_files = [
@@ -1429,73 +1827,111 @@ async def ensure_historical_accounting_schema(session: AsyncSession) -> None:
     await session.commit()
 
 
-async def list_historical_accounting_companies(
-    session: AsyncSession,
-    *,
-    fiscal_year: int,
+async def _selected_historical_accounting_inventory(
+    session: AsyncSession, *, filters: list[str], params: dict[str, Any]
 ) -> list[dict[str, Any]]:
+    """Current coverage is one complete selected run per company/year, never a union."""
     result = await session.execute(
         text(
-            """
-            SELECT
-              hs.company_code,
-              MAX(hs.company_label) AS company_label,
-              COUNT(*) AS source_files,
-              (
-                SELECT COUNT(DISTINCT tb.period_key)
-                FROM historical_trial_balance_rows tb
-                WHERE tb.fiscal_year = :fiscal_year
-                  AND tb.company_code = hs.company_code
-              ) AS trial_balance_periods,
-              (
-                SELECT COUNT(DISTINCT ph.period_key)
-                FROM historical_policy_headers ph
-                WHERE ph.fiscal_year = :fiscal_year
-                  AND ph.company_code = hs.company_code
-              ) AS policy_periods,
-              (
-                SELECT COUNT(*)
-                FROM historical_policy_headers ph
-                WHERE ph.fiscal_year = :fiscal_year
-                  AND ph.company_code = hs.company_code
-              ) AS policy_headers,
-              (
-                SELECT COUNT(*)
-                FROM historical_policy_lines pl
-                WHERE pl.fiscal_year = :fiscal_year
-                  AND pl.company_code = hs.company_code
-              ) AS policy_lines
-            FROM historical_accounting_source_files hs
-            WHERE hs.fiscal_year = :fiscal_year
-              AND hs.company_code IS NOT NULL
-            GROUP BY hs.company_code
-            ORDER BY hs.company_code
+            f"""
+            SELECT current_run.fiscal_year, current_run.company_code,
+              current_run.company_label, current_run.source_files,
+              (SELECT COUNT(DISTINCT tb.period_key)
+               FROM historical_trial_balance_rows tb
+               WHERE tb.import_run_id=current_run.id
+                 AND tb.fiscal_year=current_run.fiscal_year
+                 AND tb.company_code=current_run.company_code) AS trial_balance_periods,
+              (SELECT COUNT(DISTINCT ph.period_key)
+               FROM historical_policy_headers ph
+               WHERE ph.import_run_id=current_run.id
+                 AND ph.fiscal_year=current_run.fiscal_year
+                 AND ph.company_code=current_run.company_code) AS policy_periods,
+              (SELECT COUNT(*) FROM historical_policy_headers ph
+               WHERE ph.import_run_id=current_run.id
+                 AND ph.fiscal_year=current_run.fiscal_year
+                 AND ph.company_code=current_run.company_code) AS policy_headers,
+              (SELECT COUNT(*) FROM historical_policy_lines pl
+               WHERE pl.import_run_id=current_run.id
+                 AND pl.fiscal_year=current_run.fiscal_year
+                 AND pl.company_code=current_run.company_code) AS policy_lines,
+              (SELECT ARRAY_AGG(DISTINCT tb.fiscal_month ORDER BY tb.fiscal_month)
+               FROM historical_trial_balance_rows tb
+               WHERE tb.import_run_id=current_run.id
+                 AND tb.fiscal_year=current_run.fiscal_year
+                 AND tb.company_code=current_run.company_code) AS trial_balance_months,
+              (SELECT ARRAY_AGG(DISTINCT ph.fiscal_month ORDER BY ph.fiscal_month)
+               FROM historical_policy_headers ph
+               WHERE ph.import_run_id=current_run.id
+                 AND ph.fiscal_year=current_run.fiscal_year
+                 AND ph.company_code=current_run.company_code) AS policy_months,
+              COALESCE((SELECT sf.metadata->'withheld_months'
+                        FROM historical_accounting_source_files sf
+                        WHERE sf.import_run_id=current_run.id
+                          AND sf.fiscal_year=current_run.fiscal_year
+                          AND sf.company_code=current_run.company_code
+                          AND sf.source_family='explicit_manifest'
+                        LIMIT 1), '[]'::jsonb) AS withheld_months
+            FROM (
+              SELECT DISTINCT ON (hs.fiscal_year, hs.company_code)
+                hs.fiscal_year, hs.company_code, air.id,
+                MAX(hs.company_label) AS company_label, COUNT(*) AS source_files
+              FROM historical_accounting_source_files hs
+              JOIN accounting_import_runs air ON air.id=hs.import_run_id
+              WHERE air.source_type='historical_accounting'
+                AND air.mode='apply' AND air.status='completed'
+                AND hs.company_code IS NOT NULL
+                AND {' AND '.join(filters)}
+              GROUP BY hs.fiscal_year, hs.company_code, air.id,
+                       air.finished_at, air.started_at
+              ORDER BY hs.fiscal_year, hs.company_code,
+                       air.finished_at DESC NULLS LAST,
+                       air.started_at DESC NULLS LAST
+            ) current_run
+            ORDER BY current_run.fiscal_year DESC, current_run.company_code
             """
         ),
-        {"fiscal_year": fiscal_year},
+        params,
     )
-    companies: list[dict[str, Any]] = []
+    rows = []
     for row in result:
-        trial_balance_periods = int(row.trial_balance_periods or 0)
         policy_periods = int(row.policy_periods or 0)
-        companies.append(
+        rows.append(
             {
+                "fiscal_year": int(row.fiscal_year),
                 "company_code": _normalize_company_code(row.company_code),
                 "company_label": _safe_str(row.company_label)
                 or _default_company_label(row.company_code),
                 "source_files": int(row.source_files or 0),
-                "trial_balance_periods": trial_balance_periods,
+                "trial_balance_periods": int(row.trial_balance_periods or 0),
                 "policy_periods": policy_periods,
                 "policy_headers": int(row.policy_headers or 0),
                 "policy_lines": int(row.policy_lines or 0),
+                "trial_balance_months": list(row.trial_balance_months or []),
+                "policy_months": list(row.policy_months or []),
+                "withheld_months": row.withheld_months or [],
                 "coverage_status": (
                     "full_year"
                     if policy_periods >= 12
-                    else ("partial_year" if policy_periods > 0 else "balance_only")
+                    else ("partial_year" if policy_periods else "balance_only")
                 ),
             }
         )
-    return companies
+    return rows
+
+
+async def list_historical_accounting_companies(
+    session: AsyncSession, *, fiscal_year: int
+) -> list[dict[str, Any]]:
+    """List only selected applied-source coverage for the requested year."""
+    rows = await _selected_historical_accounting_inventory(
+        session,
+        filters=["hs.fiscal_year = :fiscal_year"],
+        params={"fiscal_year": fiscal_year},
+    )
+    return [
+        {key: value for key, value in row.items() if key != "fiscal_year"}
+        for row in rows
+    ]
 
 
 async def list_historical_accounting_coverage(
@@ -1504,7 +1940,8 @@ async def list_historical_accounting_coverage(
     year_from: Optional[int] = None,
     year_to: Optional[int] = None,
 ) -> list[dict[str, Any]]:
-    filters = ["hs.company_code IS NOT NULL"]
+    """Current cross-year inventory preserves gaps in each selected run."""
+    filters = ["TRUE"]
     params: dict[str, Any] = {}
     if year_from is not None:
         filters.append("hs.fiscal_year >= :year_from")
@@ -1512,71 +1949,9 @@ async def list_historical_accounting_coverage(
     if year_to is not None:
         filters.append("hs.fiscal_year <= :year_to")
         params["year_to"] = int(year_to)
-
-    result = await session.execute(
-        text(
-            f"""
-            SELECT
-              hs.fiscal_year,
-              hs.company_code,
-              MAX(hs.company_label) AS company_label,
-              COUNT(*) AS source_files,
-              (
-                SELECT COUNT(DISTINCT tb.period_key)
-                FROM historical_trial_balance_rows tb
-                WHERE tb.fiscal_year = hs.fiscal_year
-                  AND tb.company_code = hs.company_code
-              ) AS trial_balance_periods,
-              (
-                SELECT COUNT(DISTINCT ph.period_key)
-                FROM historical_policy_headers ph
-                WHERE ph.fiscal_year = hs.fiscal_year
-                  AND ph.company_code = hs.company_code
-              ) AS policy_periods,
-              (
-                SELECT COUNT(*)
-                FROM historical_policy_headers ph
-                WHERE ph.fiscal_year = hs.fiscal_year
-                  AND ph.company_code = hs.company_code
-              ) AS policy_headers,
-              (
-                SELECT COUNT(*)
-                FROM historical_policy_lines pl
-                WHERE pl.fiscal_year = hs.fiscal_year
-                  AND pl.company_code = hs.company_code
-              ) AS policy_lines
-            FROM historical_accounting_source_files hs
-            WHERE {' AND '.join(filters)}
-            GROUP BY hs.fiscal_year, hs.company_code
-            ORDER BY hs.fiscal_year DESC, hs.company_code
-            """
-        ),
-        params,
+    return await _selected_historical_accounting_inventory(
+        session, filters=filters, params=params
     )
-    rows: list[dict[str, Any]] = []
-    for row in result:
-        trial_balance_periods = int(row.trial_balance_periods or 0)
-        policy_periods = int(row.policy_periods or 0)
-        rows.append(
-            {
-                "fiscal_year": int(row.fiscal_year or 0),
-                "company_code": _normalize_company_code(row.company_code),
-                "company_label": _safe_str(row.company_label)
-                or _default_company_label(row.company_code),
-                "source_files": int(row.source_files or 0),
-                "trial_balance_periods": trial_balance_periods,
-                "policy_periods": policy_periods,
-                "policy_headers": int(row.policy_headers or 0),
-                "policy_lines": int(row.policy_lines or 0),
-                "coverage_status": (
-                    "full_year"
-                    if policy_periods >= 12
-                    else ("partial_year" if policy_periods > 0 else "balance_only")
-                ),
-            }
-        )
-    return rows
-
 
 async def build_historical_accounting_comparison(
     session: AsyncSession,
@@ -1638,13 +2013,20 @@ async def import_historical_accounting_pilot(
     source_path: Optional[str] = None,
     company_code: str = "01",
     company_label: Optional[str] = None,
+    ensure_schema: bool = True,
 ) -> dict[str, Any]:
     normalized_company_code = _normalize_company_code(company_code)
     normalized_company_label = _safe_str(company_label) or _default_company_label(
         normalized_company_code
     )
-    await ensure_historical_accounting_schema(session)
-    if not apply_changes and hasattr(session, "execute"):
+    explicit = source_kind == "normalized_manifest"
+    if explicit:
+        if ensure_schema:
+            raise ValueError("Explicit imports require ensure_schema=False")
+        await _require_explicit_historical_schema(session)
+    elif ensure_schema:
+        await ensure_historical_accounting_schema(session)
+    if not explicit and not apply_changes and hasattr(session, "execute"):
         persisted_snapshot = await load_historical_accounting_snapshot(
             session,
             fiscal_year=fiscal_year,
@@ -1663,8 +2045,12 @@ async def import_historical_accounting_pilot(
         )
     )
     if source_files:
-        normalized_company_code = _normalize_company_code(source_files[0].get("company_code"))
-        normalized_company_label = _safe_str(source_files[0].get("company_label")) or normalized_company_label
+        normalized_company_code = _normalize_company_code(
+            source_files[0].get("company_code")
+        )
+        normalized_company_label = (
+            _safe_str(source_files[0].get("company_label")) or normalized_company_label
+        )
     source_bundle_sha256 = _source_files_sha256(source_files)
     reconciliation = _build_reconciliation_summary(
         fiscal_year=fiscal_year,
@@ -1688,8 +2074,25 @@ async def import_historical_accounting_pilot(
         "reconciliation": reconciliation,
     }
 
+    if explicit:
+        summary["source_validation"] = next(
+            item["metadata"]
+            for item in source_files
+            if item["source_family"] == "explicit_manifest"
+        )
     if not apply_changes:
         return {"ok": True, "created": False, "summary": summary}
+    if explicit:
+        if summary["source_validation"]["material_reconciliation_issues"]:
+            raise ValueError(
+                "Accounting balance/policy reconciliation requires review before apply"
+            )
+        if not started_by_empleado_id:
+            raise ValueError("Explicit accounting apply requires an audited actor")
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:scope,0))"),
+            {"scope": f"historical-accounting:{fiscal_year}:{normalized_company_code}"},
+        )
 
     existing_import_run_id = await _find_existing_import_run_id(
         session,
@@ -1698,6 +2101,12 @@ async def import_historical_accounting_pilot(
         company_code=normalized_company_code,
     )
     if existing_import_run_id:
+        if explicit:
+            selected = await _find_latest_applied_import_run(
+                session, fiscal_year=fiscal_year, company_code=normalized_company_code
+            )
+            if not selected or selected["id"] != existing_import_run_id:
+                raise ValueError("Previously imported source is superseded; review a new replacement")
         persisted_snapshot = await load_historical_accounting_snapshot(
             session,
             fiscal_year=fiscal_year,
@@ -1705,7 +2114,15 @@ async def import_historical_accounting_pilot(
             company_code=normalized_company_code,
         )
         return {
-            **(persisted_snapshot or {"ok": True, "created": False, "import_run_id": existing_import_run_id, "summary": summary}),
+            **(
+                persisted_snapshot
+                or {
+                    "ok": True,
+                    "created": False,
+                    "import_run_id": existing_import_run_id,
+                    "summary": summary,
+                }
+            ),
             "skipped": True,
             "reason": "already_imported",
         }
@@ -1763,7 +2180,8 @@ async def import_historical_accounting_pilot(
                 "source_path": item["source_path"],
                 "source_sha256": item["source_sha256"],
                 "company_code": _normalize_company_code(item.get("company_code")),
-                "company_label": _safe_str(item.get("company_label")) or normalized_company_label,
+                "company_label": _safe_str(item.get("company_label"))
+                or normalized_company_label,
                 "validation_status": item["validation_status"],
                 "source_scope": item["source_scope"],
                 "metadata": json.dumps(item["metadata"], ensure_ascii=False),
@@ -1816,6 +2234,8 @@ async def import_historical_accounting_pilot(
         month_num = _safe_int(row.get("month_num"))
         policy_id = _safe_str(row.get("policy_id"))
         quality_flags = _build_policy_quality_flags(row)
+        if explicit and row.get("_explicit_rounding_difference"):
+            quality_flags.append("source_rounding_difference_one_cent")
         header_id = str(uuid.uuid4())
         header_id_by_policy[policy_id] = header_id
         total_debits = _safe_decimal(row.get("total_debe"))
@@ -1858,7 +2278,11 @@ async def import_historical_accounting_pilot(
                 "total_credits": total_credits,
                 "summary_debits": _safe_decimal(row.get("summary_debe")),
                 "summary_credits": _safe_decimal(row.get("summary_haber")),
-                "is_balanced": abs(total_debits - total_credits) <= 0.01,
+                "is_balanced": (
+                    (not row.get("_explicit_rounding_difference"))
+                    if explicit
+                    else abs(total_debits - total_credits) <= 0.01
+                ),
                 "has_summary": _safe_bool(row.get("has_summary")),
                 "quality_flags": json.dumps(quality_flags, ensure_ascii=False),
             },
