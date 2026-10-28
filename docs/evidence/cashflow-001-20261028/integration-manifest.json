@@ -1,0 +1,180 @@
+{
+  "base": "0f47e7b8cde0dc1959bb89f2f161d2341e99180b",
+  "root_checkout_preserved": "d548d148f7521988587d6498b5461901c21a2ee3",
+  "spec": "docs/sprints/cashflow-001-consistencia-y-reporte-spec.md",
+  "approved_spec": true,
+  "route_ast_scope": "only_cashflow_handlers",
+  "runtime_changes": false,
+  "company_owner_reuse": "test-only import overlay; no owner copied",
+  "effective_consumer_registered_before_edit": {
+    "file": "src/samchat/executive/template_reports.py",
+    "symbol": "build_cashflow_statement_report",
+    "caller": "src/samchat/assistant/finance_read_adapter.py:cashflow.statement",
+    "reason": "T04 compatibility: preserve unknowns, bank-only actuals, year/currency identity, stocks"
+  },
+  "direction_contract_preserved": {
+    "file": "src/samchat/client_executive/report_layouts.py",
+    "reason": "Source requires accredited opening and category crosswalk; remains N/D without these facts, no fabricated table mapping"
+  },
+  "canon": "Canon unchanged: bank-real vs forecast separation and authority unchanged",
+  "effective_answer_consumer_registered_before_edit": {
+    "file": "src/samchat/assistant/finance_read_answer.py",
+    "symbols": [
+      "_render_cashflow_summary",
+      "_render_template_report"
+    ],
+    "reason": "Display period variation rather than available bank balance; statement closing is sourced, not invented"
+  },
+  "initial_base": "ab29ccc64",
+  "concurrent_base_reconciliation": {
+    "from": "ab29ccc64",
+    "to": "0f47e7b8cde0dc1959bb89f2f161d2341e99180b",
+    "preserved_changes": [
+      "docs/ops/copa-budget-transition-no-schema-20261028.md",
+      "src/samchat/budgets/service.py",
+      "src/samchat/budgets/tournament_weekly_overlay.py",
+      "tests/integration/test_tournament_weekly_overlay_postgres.py",
+      "tests/unit/test_budget_transition_no_schema.py"
+    ],
+    "overlap_with_cashflow_files": false,
+    "acceptance_rerun_after_base_change": true
+  },
+  "ast_scope_checks": {
+    "src/devnous/gastos/routes/user_routes.py": true,
+    "src/devnous/gastos/routes/admin_routes.py": true,
+    "src/samchat/executive/template_reports.py": true,
+    "src/samchat/assistant/finance_read_answer.py": true
+  },
+  "coverage": {
+    "covered_lines": 884,
+    "num_statements": 975,
+    "percent_covered": 90.66666666666667,
+    "percent_covered_display": "91",
+    "missing_lines": 91,
+    "excluded_lines": 14,
+    "percent_statements_covered": 90.66666666666667,
+    "percent_statements_covered_display": "91"
+  },
+  "acceptance": {
+    "passed": 172,
+    "postgresql_tests": 4,
+    "browser_tests": 2,
+    "data": "synthetic only",
+    "runtime_import_order": "import devnous.gastos before pytest (existing package cycle)"
+  },
+  "changed_files": [
+    "docs/private-plugin/route-inventory.json",
+    "docs/private-plugin/route-matrix.csv",
+    "docs/sprints/cashflow-001-consistencia-y-reporte-spec.md",
+    "src/devnous/gastos/routes/admin_routes.py",
+    "src/devnous/gastos/routes/user_routes.py",
+    "src/samchat/assistant/finance_read_answer.py",
+    "src/samchat/cashflow/__init__.py",
+    "src/samchat/cashflow/admin_ui.py",
+    "src/samchat/cashflow/service.py",
+    "src/samchat/executive/template_reports.py",
+    "tests/browser/test_cashflow_report_browser.py",
+    "tests/integration/test_cashflow_sources_postgres.py",
+    "tests/unit/test_assistant_finance_read_answer.py",
+    "tests/unit/test_cashflow_admin_route_contract.py",
+    "tests/unit/test_cashflow_admin_ui.py",
+    "tests/unit/test_cashflow_document_status_dedup.py",
+    "tests/unit/test_cashflow_planning_read_model.py",
+    "tests/unit/test_cashflow_report_ui.py",
+    "tests/unit/test_cashflow_route_equivalence.py",
+    "tests/unit/test_cashflow_source_loading.py",
+    "tests/unit/test_cashflow_statement_consistency.py",
+    "tests/unit/test_executive_template_reports.py",
+    "tests/unit/test_weekly_overlay_null_display.py"
+  ],
+  "runtime_sha256": {
+    "src/devnous/gastos/routes/admin_routes.py": "fba8eb8cd960d29c013b8be8fe4326809a1b2b22a49000552b9a5cb71434c227",
+    "src/devnous/gastos/routes/user_routes.py": "38b3a28e8125cfa545adc374220064af33ba347163da253bf5bcf9b1becd42ad",
+    "src/samchat/assistant/finance_read_answer.py": "6d2178bbd1c4ab0a38d68fc9a0186c343bfe76e4bb351efcab7560ce296fd90b",
+    "src/samchat/cashflow/__init__.py": "c44bef0a1c909a0bb8f9a0417e900c32444d5a7b5e808fdb767c1de93c062a81",
+    "src/samchat/cashflow/admin_ui.py": "aa21f0125146d9529b55f9c893fb154e852f577076f228e6f3357fbe35d8a21b",
+    "src/samchat/cashflow/service.py": "c1b8b4aa6c12b4f8a027afad6183ef043d29a19560ad1458f1fd337de5654aab",
+    "src/samchat/executive/template_reports.py": "708f4a4afbb6198bed2b09ba23821dfdc7de35971651112bd630ea75d4c7724c"
+  },
+  "canon_sha256": {
+    "SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md": "4f369621a03290d320c9b9efbd5f16683bcfb6e50d99bc5bae1e3d8e7d45345e",
+    "SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md": "543dc342e52e0525015e0720904411beab38ac8dc9ed8d4c011acaa13b838225",
+    "SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md": "2c55cc807c464d5462bca3e9d092fcefe6f5f2f66f4498231d72a7b57d795985"
+  },
+  "test_only_upstream_owner_hashes": {
+    "src/samchat/finance_platform/service.py": "11433dd0a9f9bb49830260bac545f33723dae6582cadc82aeaa0e1ef4a2b2e6f",
+    "src/samchat/ar/service.py": "71f908af257b33d0d2ad50ad60f5970b1db2b6b900f6d01dc3e7d3d07d2c8293",
+    "src/samchat/budgets/service.py": "f30b17ed41d6d03f1d65fad115c61082883cd6c38f669c6d0c5f6cf16a1764ff",
+    "src/devnous/gastos/services/company_scope_service.py": "9607c361c423b7e6806ca94d8964bd6c39dbad0206d0f79a5fccef24106a811e"
+  },
+  "effects": {
+    "financial_writes": false,
+    "schema_changes": false,
+    "commit": false,
+    "push": false,
+    "PR": false,
+    "merge": false,
+    "deploy": false
+  },
+  "required_private_plugin": {
+    "inventory": "9 inventory tests included and passed in the full offline suite; 609routes/574live-static/44canonicalactions/no parse gaps",
+    "full_offline_suite": "135 passed, zero errors with isolated MCP1.29.0",
+    "classification": "SDK compatibility blocker closed by expressly authorized temporary installation; shared MCP2.3.0 preserved"
+  },
+  "temporary_postgresql": "dedicated cluster stopped after installed-tools acceptance rerun",
+  "tool_versions": {
+    "mcp": "2.3.0",
+    "black": "26.10.1",
+    "isort": "9.0.2",
+    "mypy": "2.4.0"
+  },
+  "quality_recheck": {
+    "format": "Black/isort pass on scoped files/functions",
+    "types": "Local cashflow plus scoped statement builder pass with --follow-imports=skip --ignore-missing-imports; 5 external metadata gaps without exclusion",
+    "whole_affected_modules": "143 diagnostics, 0 inside changed functions; HEAD baseline185; includes relocated existing openpyxl.styles metadata diagnostic",
+    "pip_check": "No broken requirements found",
+    "acceptance": "172 passed, 4 isolated PG tests, 2 browser tests",
+    "source_level_suppressions_added": false,
+    "new_dependencies_installed_by_this_task": "Only expressly authorized temporary MCP1.29.0 and required httpx-sse0.4.3; no shared or production dependencies changed"
+  },
+  "temporary_sdk": {
+    "user_authorization": "autorizo",
+    "target": "/tmp/cashflow001-mcp129",
+    "mcp_version": "1.29.0",
+    "mcp_module": "/tmp/cashflow001-mcp129/mcp/__init__.py",
+    "extra_temporary_dependency": {
+      "httpx-sse": "0.4.3"
+    },
+    "resolved_active_requirements": {
+      "anyio": "4.14.2",
+      "httpx-sse": "0.4.3",
+      "httpx": "0.28.1",
+      "jsonschema": "4.26.0",
+      "pydantic-settings": "2.15.0",
+      "pydantic": "2.13.4",
+      "pyjwt": "2.13.0",
+      "python-multipart": "0.0.32",
+      "sse-starlette": "3.6.0",
+      "starlette": "1.6.0",
+      "typing-extensions": "4.16.0",
+      "typing-inspection": "0.4.4",
+      "uvicorn": "0.52.4"
+    },
+    "shared_environment_mcp": "2.3.0, independently checked without PYTHONPATH override",
+    "commands": [
+      "/root/samchat/.venv/bin/python -m pip install --no-cache-dir --no-deps --target /tmp/cashflow001-mcp129 mcp==1.29.0",
+      "/root/samchat/.venv/bin/python -m pip install --no-cache-dir --no-deps --target /tmp/cashflow001-mcp129 httpx-sse>=0.4",
+      "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/tmp/cashflow001-mcp129:src /root/samchat/.venv/bin/python scripts/private_plugin/run_offline_tests.py"
+    ],
+    "result": {
+      "tests": 135,
+      "errors": 0,
+      "failures": 0,
+      "exit_code": 0
+    },
+    "shared_packages_changed": false,
+    "runtime_code_changed": false,
+    "production_changed": false,
+    "log_sha256": "6206fb120b10caef2e59e94ad61cc7c93059c89f2dba24d19b0d19c22e559c18"
+  }
+}

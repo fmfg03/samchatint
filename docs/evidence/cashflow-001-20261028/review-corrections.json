@@ -1,0 +1,64 @@
+{
+  "base_before_corrections": "0710dcc41892de9f56054708536f4ed32481cd44",
+  "findings": [
+    {
+      "id": "PRRT_kwDORuojeM6xQ6tb",
+      "finding": "edition_year dropped by form",
+      "fix": "independent budget edition field and actual HTTP form resubmission across2025/2026"
+    },
+    {
+      "id": "PRRT_kwDORuojeM6xQ6tm",
+      "finding": "Decimal/NaN/Infinity incompatible with provider and JSONB",
+      "fix": "cashflow-only assistant boundary encoder; finite default encoding retained; nonfinite numeric values null; source DTO untouched"
+    },
+    {
+      "id": "PRRT_kwDORuojeM6xQ6tw",
+      "finding": "project choices depended on pending AP",
+      "fix": "authorized source identities inclAR/unscheduled budgetlines before display filters; server cap/company guards; no global catalog"
+    }
+  ],
+  "disposition": "implemented and independently verified; publish then resolve GitHub threads",
+  "acceptance": {
+    "passed": 248,
+    "postgresql": 4,
+    "browser": 2,
+    "coverage": {
+      "covered_lines": 1058,
+      "num_statements": 1154,
+      "percent_covered": 91.68110918544194,
+      "percent_covered_display": "92",
+      "missing_lines": 96,
+      "excluded_lines": 0,
+      "percent_statements_covered": 91.68110918544194,
+      "percent_statements_covered_display": "92"
+    }
+  },
+  "private_plugin_passed": 135,
+  "inventory": "613/578/44 no parse gaps",
+  "typed_scope": "cashflow3modules +finance_read_adapter pass; inherited global lint/types not claimed clean",
+  "source_files": [
+    "src/devnous/gastos/routes/admin_routes.py",
+    "src/devnous/gastos/routes/user_routes.py",
+    "src/samchat/assistant/finance_read_adapter.py",
+    "src/samchat/assistant/finance_read_answer.py",
+    "src/samchat/cashflow/__init__.py",
+    "src/samchat/cashflow/admin_ui.py",
+    "src/samchat/cashflow/service.py",
+    "src/samchat/executive/template_reports.py"
+  ],
+  "runtime_sha256": {
+    "src/devnous/gastos/routes/admin_routes.py": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
+    "src/devnous/gastos/routes/user_routes.py": "6951dcb08c4abd47b01946d9799d2e14cb7557658e2cbd3ef3593020ae30fcde",
+    "src/samchat/assistant/finance_read_adapter.py": "0d45bd74c15b3e750e832f95bf29eaedfde8a4a3881b27473990ad4fbe019457",
+    "src/samchat/assistant/finance_read_answer.py": "91cd56c5ea646008c25da9031e6829695e404fc8eaca2214d5496e81da1ed015",
+    "src/samchat/cashflow/__init__.py": "c44bef0a1c909a0bb8f9a0417e900c32444d5a7b5e808fdb767c1de93c062a81",
+    "src/samchat/cashflow/admin_ui.py": "68f68c9f07ee729ec3674399b76bd13acf7b5ee31a9d08e51cffe170b3fbef23",
+    "src/samchat/cashflow/service.py": "b2f982c7f4909b697836626ddbb14ffc87f8bc04fbac021e463d05ab543aeec3",
+    "src/samchat/executive/template_reports.py": "481de5d65f09fc8c0dc471d96742a7f224181d9c94508bc139da415349514c83"
+  },
+  "review": "independent reviewer reexecuted source-shaped nonfinite repro; no critical/important/minor findings left",
+  "scope": "AC07/AC10/T04 compatibility: previously registered effective adapter consumer; no financial owner, permission, schema, dependency or arithmetic change",
+  "canon": "Canon unchanged",
+  "next_required": "Full CI must rerun on published head; existing0710checks do not validate new diff",
+  "release_rule": "refresh cashflow3modules and only cashflow JSON adapter hunks onto currentf8c9; preserve other adapter AR/budget branches"
+}

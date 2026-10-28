@@ -128,7 +128,8 @@ def test_admin_fragments_adopt_shared_table_shell():
     artifact = _source(ARTIFACT_UI)
     cashflow = _source(CASHFLOW_UI)
     assert artifact.count('<div class="table-shell"><table class="artifact-table">') == 4
-    assert '<div class="table-shell"><table class="cashflow-table">' in cashflow
+    assert cashflow.count('class="table-shell cashflow-table-shell"') == 4
+    assert 'role="region" tabindex="0"' in cashflow
 
 
 def test_finance_command_center_tables_adopt_shared_table_shell():

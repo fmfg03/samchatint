@@ -7769,164 +7769,73 @@ async def admin_runtime_artifacts(
 
 @router.get("/admin/finanzas/cashflow", response_class=HTMLResponse)
 async def admin_finance_cashflow(
+    request: Request,
     current_empleado: Empleado = require_admin_finanzas(),
     session: AsyncSession = Depends(get_db_session),
-    edition_year: Optional[int] = Query(None),
+    edition_year: Optional[int] = Query(None, ge=2000, le=2100),
     budget_version_id: Optional[str] = Query(None),
-    year: Optional[int] = Query(None),
-    month: Optional[int] = Query(None),
-    horizon_months: int = Query(3),
-    limit: int = Query(500),
+    year: Optional[int] = Query(None, ge=2000, le=2100),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    horizon_months: int = Query(3, ge=1, le=24),
+    limit: int = Query(50, ge=1, le=100),
+    currency: str = Query("all"),
+    cuenta_bancaria: str = Query("all"),
+    proyecto_scope: str = Query("all"),
+    periodo: str = Query("mensual"),
+    dias_credito: int = Query(30, ge=0, le=365),
+    page: int = Query(1, ge=1),
+    detail_currency: Optional[str] = Query(None),
+    detail_period: Optional[str] = Query(None),
+    detail_direction: Optional[str] = Query(None),
 ) -> HTMLResponse:
-    """Executive cashflow planning view."""
+    """Executive cashflow with the same financial facts as the operational report."""
     from samchat.cashflow import (
-        build_cashflow_planning_read_model,
+        build_cashflow_request_payload,
         cashflow_admin_styles,
+        render_cashflow_filters,
         render_cashflow_planning_html,
     )
 
-    all_versions = await list_budget_versions(session)
-    resolved_year = edition_year
-    if resolved_year is None:
-        resolved_year = (
-            int(all_versions[0]["edition_year"])
-            if all_versions
-            else date.today().year
-        )
-
-    versions = await list_budget_versions(session, edition_year=resolved_year)
-    selected_version = None
-    if budget_version_id:
-        selected_version = next(
-            (item for item in versions if item["id"] == budget_version_id),
-            None,
-        )
-    if selected_version is None:
-        selected_version = await resolve_definitive_budget_version(
-            session,
-            edition_year=resolved_year,
-        )
-
-    def _cashflow_version_option(item: dict[str, Any]) -> str:
-        item_id = str(item.get("id") or "")
-        selected_id = str(selected_version.get("id") or "") if selected_version else ""
-        selected_attr = " selected" if item_id == selected_id else ""
-        label = escape(str(item.get("version_name") or item_id or "-"))
-        status = escape(str(item.get("status") or "-"))
-        return (
-            f'<option value="{escape(item_id)}"{selected_attr}>'
-            f"{label} · {status}</option>"
-        )
-
-    version_options = "".join(_cashflow_version_option(item) for item in versions)
-    year_values = sorted(
-        {
-            int(item["edition_year"])
-            for item in all_versions
-            if item.get("edition_year")
-        },
-        reverse=True,
-    )
-    if not year_values:
-        year_values = [resolved_year]
-    year_options = "".join(
-        (
-            f'<option value="{year_value}"'
-            f'{" selected" if year_value == resolved_year else ""}>'
-            f"{year_value}</option>"
-        )
-        for year_value in year_values
-    )
-
-    selected_budget_version_id = (
-        str(selected_version["id"]) if selected_version else None
-    )
-    payload = await build_cashflow_planning_read_model(
+    payload = await build_cashflow_request_payload(
+        request,
+        current_empleado,
         session,
-        budget_version_id=selected_budget_version_id,
-        edition_year=resolved_year,
-        year=year,
+        year=year or edition_year,
         month=month,
+        edition_year=edition_year,
+        budget_version_id=budget_version_id,
         horizon_months=horizon_months,
         limit=limit,
+        currency=currency,
+        grouping=periodo,
+        credit_days=dias_credito,
+        account=cuenta_bancaria,
+        project=proyecto_scope,
+        page=page,
+        detail_currency=detail_currency,
+        detail_period=detail_period,
+        detail_direction=detail_direction,
     )
-
-    version_select = version_options or '<option value="">Sin versiones</option>'
-    form_html = (
-        '<form method="GET" action="/admin/finanzas/cashflow" '
-        'style="display:grid;grid-template-columns:repeat(auto-fit,'
-        'minmax(180px,1fr));gap:12px;align-items:end;">'
-        f'<div><label>Año presupuesto</label><select name="edition_year">'
-        f"{year_options}</select></div>"
-        f'<div><label>Version</label><select name="budget_version_id">'
-        f"{version_select}</select></div>"
-        f'<div><label>Año cashflow</label><input name="year" type="number" '
-        f'min="2020" max="2100" value="{escape(str(year or ""))}" '
-        'placeholder="opcional"></div>'
-        f'<div><label>Mes</label><input name="month" type="number" '
-        f'min="1" max="12" value="{escape(str(month or ""))}" '
-        'placeholder="opcional"></div>'
-        f'<div><label>Horizonte</label><input name="horizon_months" '
-        f'type="number" min="1" max="24" value="{int(horizon_months or 3)}">'
-        "</div>"
-        f'<div><label>Limite</label><input name="limit" type="number" '
-        f'min="1" max="5000" value="{int(limit or 500)}"></div>'
-        '<div><button class="button" type="submit">Actualizar flujo</button></div>'
-        "</form>"
+    html = (
+        '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        "<title>Flujo de efectivo ejecutivo — SamChat</title><style>"
+        + _admin_workspace_styles("1380px", layout="data")
+        + cashflow_admin_styles()
+        + '</style></head><body><main class="workspace-shell cashflow-shell">'
+        + render_admin_navigation(current_empleado, "cashflow")
+        + _admin_breadcrumb_html(
+            [
+                ("Centro Ejecutivo", "/admin/ejecutivo"),
+                ("Flujo de efectivo", None),
+            ]
+        )
+        + '<p><a class="button secondary" href="/admin/ejecutivo">'
+        + "Centro Ejecutivo</a></p>"
+        + render_cashflow_filters(payload, str(request.url.path))
+        + render_cashflow_planning_html(payload)
+        + "</main></body></html>"
     )
-    nav_html = render_admin_navigation(
-        current_empleado,
-        "cashflow",
-        subtitle="Flujo de efectivo con caja, obligaciones, cobranza y proyección.",
-    )
-    breadcrumb_html = _admin_breadcrumb_html(
-        [
-            ("Centro Ejecutivo", "/admin/ejecutivo"),
-            ("Flujo de efectivo", None),
-        ]
-    )
-    hero_html = _render_admin_workspace_hero(
-        eyebrow="Finanzas ejecutivas",
-        title="Flujo de efectivo ejecutivo",
-        description=(
-            "Vista que separa caja real, pagos aprobados pendientes, plan "
-            "presupuestal, facturación reconocida, cobranza confirmada y "
-            "proyección neta."
-        ),
-        actions_html=(
-            '<a class="button secondary" href="/admin/ejecutivo">'
-            "Centro Ejecutivo</a>"
-            + form_html
-        ),
-        side_html=(
-            '<div class="eyebrow">Regla de cobranza</div>'
-            '<div style="font-size:1.05rem;font-weight:900;color:#0f172a;">'
-            "Sólo cobranza confirmada cuenta como entrada real</div>"
-            '<div style="margin-top:8px;color:#64748b;">'
-            "Los posibles vínculos pendientes permanecen separados hasta "
-            "conciliación.</div>"
-        ),
-    )
-
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Cashflow - Samchat</title>
-        <style>{_admin_workspace_styles("1380px", layout="data")}{cashflow_admin_styles()}</style>
-    </head>
-    <body>
-        <div class="workspace-shell">
-            {nav_html}
-            {breadcrumb_html}
-            {hero_html}
-            {render_cashflow_planning_html(payload)}
-        </div>
-    </body>
-    </html>
-    """
     return HTMLResponse(content=html)
 
 

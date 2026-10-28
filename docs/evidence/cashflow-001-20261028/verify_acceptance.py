@@ -1,0 +1,25 @@
+import devnous.gastos
+import pytest
+raise SystemExit(pytest.main([
+ '-q','-p','no:cacheprovider',
+ 'tests/unit/test_cashflow_planning_read_model.py',
+ 'tests/unit/test_cashflow_admin_ui.py',
+ 'tests/unit/test_cashflow_admin_route_contract.py',
+ 'tests/unit/gastos/test_executive_navigation_contract.py',
+ 'tests/unit/gastos/test_table_usability_contract.py',
+ 'tests/unit/test_cashflow_document_status_dedup.py',
+ 'tests/unit/test_cashflow_report_ui.py',
+ 'tests/unit/test_cashflow_route_equivalence.py',
+ 'tests/unit/test_cashflow_source_loading.py',
+ 'tests/unit/test_cashflow_statement_consistency.py',
+ 'tests/unit/test_executive_template_reports.py',
+ 'tests/unit/test_weekly_overlay_null_display.py',
+ 'tests/unit/test_assistant_finance_read_adapter.py',
+ 'tests/unit/test_assistant_finance_read_answer.py',
+ 'tests/unit/test_assistant_finance_read_tool_wiring.py',
+ 'tests/integration/test_cashflow_sources_postgres.py',
+ 'tests/browser/test_cashflow_report_browser.py',
+ '--cov=samchat.cashflow','--cov=samchat.executive.template_reports',
+ '--cov=samchat.assistant.finance_read_adapter',
+ '--cov-report=term-missing','--cov-report=json:/tmp/cashflow001-coverage.json',
+]))

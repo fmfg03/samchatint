@@ -1,0 +1,23 @@
+{
+  "baseline_diagnostics": 185,
+  "current_diagnostics": 143,
+  "changed_function_diagnostics": [],
+  "unmatched_against_HEAD": [
+    [
+      "src/devnous/gastos/routes/user_routes.py",
+      "contabilidad_tesoreria_matches_export_xlsx",
+      "Library stubs not installed for \"openpyxl.styles\"  [import-untyped]"
+    ]
+  ],
+  "displaced_external_metadata": [
+    {
+      "diagnostic": [
+        "src/devnous/gastos/routes/user_routes.py",
+        "contabilidad_tesoreria_matches_export_xlsx",
+        "Library stubs not installed for \"openpyxl.styles\"  [import-untyped]"
+      ],
+      "reason": "Missing openpyxl.styles stubs already reported at the removed legacy cashflow export; same library diagnostic now appears at first unchanged Treasury import."
+    }
+  ],
+  "new_code_diagnostics": []
+}

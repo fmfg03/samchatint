@@ -95,100 +95,210 @@ def build_cashflow_statement_report(
     opening_balance: float | None = None,
     scale: float = 1000.0,
 ) -> dict[str, Any]:
-    """Build a CashFlow.xlsx-like report from the cashflow read model."""
+    """Preserve annual report shape without combining cash, forecasts or currencies.
 
+    Only balances already projected by the source model are accepted. The legacy
+    opening argument supplies no account, currency or coverage evidence by itself.
+    """
+    from decimal import Decimal, InvalidOperation
+
+    def number(value):
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            parsed = Decimal(str(value))
+            return parsed if parsed.is_finite() else None
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+
+    factor = number(scale)
+    if factor is None or factor <= 0:
+        raise ValueError("Cashflow scale must be finite and positive")
     payload = cashflow_payload if isinstance(cashflow_payload, dict) else {}
-    period = payload.get("period") if isinstance(payload.get("period"), dict) else {}
+    raw_period = payload.get("period")
+    period: dict[str, Any] = raw_period if isinstance(raw_period, dict) else {}
     year = _safe_int(as_of_year or period.get("year")) or None
     month = _safe_int(as_of_month or period.get("month")) or None
-    buckets = [
-        bucket
-        for bucket in payload.get("monthly_buckets") or []
-        if isinstance(bucket, dict)
-    ]
-    source_notes = list(payload.get("source_notes") or [])
-    if opening_balance is None:
-        opening_balance = 0.0
-        source_notes.append(
-            "missing_opening_bank_balance; saldo inicial mostrado como 0 hasta "
-            "conectar saldo bancario de corte"
+    notes = list(payload.get("source_notes") or [])
+    notes.append(
+        "bank_balance_evidence_required: apertura y cierre sólo se muestran con "
+        "evidencia del modelo bancario; nunca se sustituye un faltante por cero."
+    )
+    if opening_balance is not None:
+        notes.append("opening_balance_argument_not_evidence: importe aislado omitido.")
+    candidates = []
+    for bucket in payload.get("monthly_buckets") or []:
+        if not isinstance(bucket, dict):
+            continue
+        key = str(bucket.get("key") or "")
+        bucket_year = _safe_int(bucket.get("year"))
+        bucket_month = _safe_int(bucket.get("month"))
+        if not bucket_year and len(key) >= 7 and key[4:5] == "-":
+            bucket_year = _safe_int(key[:4])
+            bucket_month = _safe_int(key[5:7])
+        if bucket_year != year or not 1 <= bucket_month <= 12:
+            notes.append(
+                "annual_statement_period_excluded: período fuera del año "
+                "solicitado o sin año-mes acreditado."
+            )
+            continue
+        code = str(bucket.get("currency") or "").strip().upper()
+        if len(code) != 3 or not code.isalpha():
+            code = "SIN_MONEDA"
+        candidates.append((bucket_month, code, bucket))
+    if not any(
+        number(bucket.get("opening_balance")) is not None for _, _, bucket in candidates
+    ):
+        notes.append("missing_opening_bank_balance: apertura no acreditada.")
+    selected = str(payload.get("currency") or "all").strip().upper()
+    currencies = sorted({code for _, code, _ in candidates})
+    if selected != "ALL" and len(selected) == 3 and selected.isalpha():
+        currencies = [selected]
+    if not currencies:
+        currencies = ["SIN_MONEDA"]
+    fields = (
+        "opening_balance",
+        "actual_cash_in",
+        "collected_income",
+        "expected_uncollected_income",
+        "actual_cash_out",
+        "approved_obligations",
+        "closing_balance",
+    )
+
+    def report_for(currency):
+        values: dict[str, list[Decimal | None]] = {
+            field: [None] * 12 for field in fields
+        }
+        seen = set()
+        duplicate = set()
+        source_notes = list(notes)
+        for bucket_month, code, bucket in candidates:
+            if code != currency or currency == "SIN_MONEDA":
+                continue
+            index = bucket_month - 1
+            if index in seen:
+                duplicate.add(index)
+                continue
+            seen.add(index)
+            for field in fields:
+                amount = number(bucket.get(field))
+                values[field][index] = amount / factor if amount is not None else None
+        if duplicate:
+            source_notes.append(
+                "annual_statement_duplicate_period: períodos repetidos no se "
+                "sobrescriben ni se agregan sin cobertura acreditada."
+            )
+            for field in fields:
+                for index in duplicate:
+                    values[field][index] = None
+        if len(seen) != 12:
+            source_notes.append(
+                "annual_statement_partial_coverage: meses no acreditados y "
+                "totales anuales incompletos permanecen N/D."
+            )
+        if currency in {None, "SIN_MONEDA"}:
+            source_notes.append(
+                "annual_statement_currency_unavailable: seleccione una moneda "
+                "acreditada; no se combinan importes de monedas diferentes."
+            )
+
+        def row(label, field, note="", stock=None):
+            months = values[field]
+            total = (
+                None
+                if any(value is None for value in months)
+                else sum((value for value in months if value is not None), Decimal("0"))
+            )
+            if stock:
+                positions = sorted(seen)
+                index = (
+                    (positions[0] if stock == "opening" else positions[-1])
+                    if positions
+                    else None
+                )
+                total = months[index] if index is not None else None
+            return {
+                "segment": label,
+                "months": list(months),
+                "total": total,
+                "note": note,
+            }
+
+        rows = [
+            row(
+                "SALDO INICIAL:",
+                "opening_balance",
+                "Saldo de apertura acreditado; total = primer corte, no suma.",
+                stock="opening",
+            ),
+            row("Origen", "actual_cash_in", "Únicamente entradas bancarias reales."),
+            row("Ingresos reales", "actual_cash_in"),
+            row(
+                "Cobranza comprobada",
+                "collected_income",
+                "Evidencia explicativa; no se suma al origen bancario.",
+            ),
+            row(
+                "Ingreso esperado no cobrado",
+                "expected_uncollected_income",
+                "Proyección separada del efectivo real.",
+            ),
+            row(
+                "Aplicaciones",
+                "actual_cash_out",
+                "Únicamente salidas bancarias reales.",
+            ),
+            row("Salidas reales", "actual_cash_out"),
+            row(
+                "Obligaciones aprobadas",
+                "approved_obligations",
+                "Compromisos separados; no son salidas bancarias realizadas.",
+            ),
+            row(
+                "SALDO FINAL:",
+                "closing_balance",
+                "Saldo de cierre acreditado; total = último corte, no suma.",
+                stock="closing",
+            ),
+        ]
+        currency_label = currency if currency not in {None, "SIN_MONEDA"} else "N/D"
+        unit = (
+            f"miles de {currency_label}"
+            if factor == 1000
+            else (f"{currency_label}; factor de escala {factor}")
         )
-    opening_scaled = _safe_float(opening_balance / scale)
+        return {
+            "ok": True,
+            "read_only": True,
+            "report_type": "cashflow_statement",
+            "title": "Flujo de Efectivo",
+            "subtitle": f"{_period_label(year, month)} (cifras en {unit})",
+            "period": {
+                "year": year,
+                "month": month,
+                "horizon_months": period.get("horizon_months"),
+            },
+            "currency": currency,
+            "currency_scale": f"thousands_{currency.lower()}" if currency else None,
+            "columns": ["Segmento", *MONTH_LABELS_ES, "Total"],
+            "rows": rows,
+            "summary": {
+                "saldo_inicial": rows[0]["total"],
+                "origen_total": rows[1]["total"],
+                "aplicaciones_total": rows[5]["total"],
+                "saldo_final": rows[-1]["total"],
+            },
+            "source_notes": list(dict.fromkeys(source_notes)),
+            "safety_labels": [*REPORT_SAFETY_LABELS, "forecast_is_derived"],
+        }
 
-    ingresos = _month_values_from_buckets(
-        buckets, field="actual_cash_in", scale=scale
+    reports = {currency: report_for(currency) for currency in currencies}
+    result = (
+        dict(next(iter(reports.values()))) if len(reports) == 1 else report_for(None)
     )
-    cobranza = _month_values_from_buckets(
-        buckets, field="collected_income", scale=scale, preserve_unknown=True
-    )
-    ingreso_esperado = _month_values_from_buckets(
-        buckets, field="expected_uncollected_income", scale=scale, preserve_unknown=True
-    )
-    salidas = _month_values_from_buckets(
-        buckets, field="actual_cash_out", scale=scale
-    )
-    obligaciones = _month_values_from_buckets(
-        buckets, field="approved_obligations", scale=scale
-    )
-    aplicaciones = [
-        _safe_float(salidas[idx] + obligaciones[idx]) for idx in range(12)
-    ]
-
-    origins = [
-        None if cobranza[i] is None else _safe_float(ingresos[i] + cobranza[i])
-        for i in range(12)
-    ]
-    saldo_inicial: list[float | None] = []
-    saldo_final: list[float | None] = []
-    running = opening_scaled
-    for idx in range(12):
-        saldo_inicial.append(running)
-        running = (
-            None
-            if running is None or origins[idx] is None
-            else _safe_float(running + origins[idx] - aplicaciones[idx])
-        )
-        saldo_final.append(running)
-
-    rows = [
-        _row("SALDO INICIAL:", saldo_inicial, "Saldo inicial bancario de corte."),
-        _row("Origen", origins),
-        _row("Ingresos reales", ingresos),
-        _row("Cobranza comprobada", cobranza),
-        _row(
-            "Ingreso esperado no cobrado",
-            ingreso_esperado,
-            "Forecast derivado; no es cobranza probada.",
-        ),
-        _row("Aplicaciones", aplicaciones),
-        _row("Salidas reales", salidas),
-        _row("Obligaciones aprobadas", obligaciones),
-        _row("SALDO FINAL:", saldo_final, "Saldo final derivado del reporte."),
-    ]
-
-    return {
-        "ok": True,
-        "read_only": True,
-        "report_type": "cashflow_statement",
-        "title": "Flujo de Efectivo",
-        "subtitle": f"{_period_label(year, month)} (cifras en miles de pesos)",
-        "period": {
-            "year": year,
-            "month": month,
-            "horizon_months": period.get("horizon_months"),
-        },
-        "currency_scale": "thousands_mxn",
-        "columns": ["Segmento", *MONTH_LABELS_ES, "Total"],
-        "rows": rows,
-        "summary": {
-            "saldo_inicial": opening_scaled,
-            "origen_total": rows[1]["total"],
-            "aplicaciones_total": rows[5]["total"],
-            "saldo_final": saldo_final[-1] if saldo_final else opening_scaled,
-        },
-        "source_notes": source_notes,
-        "safety_labels": [*REPORT_SAFETY_LABELS, "forecast_is_derived"],
-    }
+    result["currency_reports"] = reports
+    return result
 
 
 def _monthly_amount(item: dict[str, Any], *keys: str) -> float:

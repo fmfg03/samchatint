@@ -247,55 +247,97 @@ async def test_missing_year_does_not_read_current_year_invoices(sources):
 
 
 def test_cashflow_preserves_receipt_periods_across_year_boundary():
-    from samchat.cashflow.service import _apply_ar, _bucket_months
+    from samchat.cashflow.service import build_cashflow_report
 
-    buckets = {row["key"]: row for row in _bucket_months(2026, 12, 2)}
     payload = {
         "issued_linked": [
             {
+                "ar_item_id": "linked:invoice",
+                "currency": "MXN",
                 "recognized_income_amount": 1000,
                 "recognized_income_date": "2026-12-01",
                 "collection_status": "matched_collected",
+                "collection_source": "accepted_match",
                 "collected_amount": 1160,
                 "collection_receipts": [
-                    {"accepted_amount": 400, "collection_date": "2026-12-30"},
-                    {"accepted_amount": 760, "collection_date": "2027-01-02"},
+                    {
+                        "id": "receipt-1",
+                        "accepted_amount": 400,
+                        "collection_date": "2026-12-30",
+                    },
+                    {
+                        "id": "receipt-2",
+                        "accepted_amount": 760,
+                        "collection_date": "2027-01-02",
+                    },
                 ],
             }
         ]
     }
-    assert _apply_ar(payload, buckets) == ["ar_forecast_basis_and_schedule_unproven"]
+
+    def report():
+        return build_cashflow_report(
+            {
+                "ar_payload": payload,
+                "source_status": {"ar": {"available": True, "complete": True}},
+            },
+            start=date(2026, 12, 1),
+            end=date(2027, 2, 1),
+            cutoff=date(2027, 1, 31),
+            forecast_end=date(2027, 2, 1),
+        )
+
+    result = report()
+    buckets = {row["key"]: row for row in result["monthly_buckets"]}
     assert buckets["2026-12"]["recognized_income"] == 1000
     assert buckets["2026-12"]["collected_income"] == 400
     assert buckets["2027-01"]["collected_income"] == 760
-    # No invoice-date fallback for an undated receipt.
+    # An undated receipt is unknown, without an invoice-date or zero fallback.
     payload["issued_linked"][0]["collection_receipts"][1]["collection_date"] = None
-    fresh = {row["key"]: row for row in _bucket_months(2026, 12, 2)}
-    assert "ar_collection_period_or_amount_missing" in _apply_ar(payload, fresh)
-    assert fresh["2027-01"]["collected_income"] == 0
+    fresh = report()
+    assert fresh["summary"]["collected_income"] is None
+    assert all(row["collected_income"] is None for row in fresh["monthly_buckets"])
 
 
 @pytest.mark.asyncio
 async def test_cashflow_weekly_plan_uses_edition_and_does_not_fold_years(monkeypatch):
-    from samchat.cashflow import service as cashflow
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    import devnous.gastos  # noqa: F401  # Match production startup import order.
+    from samchat.budgets import service as budgets
     from samchat.budgets import tournament_weekly_overlay
+    from samchat.cashflow import service as cashflow
 
+    async def source_rows(session, table, *args):
+        return [{"id": "version"}] if table == "budget_versions" else []
+
+    async def savepoint(session, operation):
+        return await operation()
+
+    monkeypatch.setattr(cashflow, "_cashflow_legacy_rows", source_rows)
+    monkeypatch.setattr(cashflow, "_cashflow_source_savepoint", savepoint)
     monkeypatch.setattr(
-        cashflow, "_budget_edition_year", AsyncMock(side_effect=[2026, None])
+        budgets,
+        "list_budget_versions",
+        AsyncMock(
+            return_value=[{"id": "version", "status": "approved", "edition_year": 2026}]
+        ),
     )
     monkeypatch.setattr(
-        tournament_weekly_overlay,
-        "effective_plans_for_lines",
-        AsyncMock(side_effect=lambda session, **kwargs: (kwargs["baseline_plans"], {})),
+        budgets,
+        "get_budget_version",
+        AsyncMock(side_effect=[{"edition_year": 2026}, {"edition_year": None}]),
     )
-
     monkeypatch.setattr(
-        cashflow,
+        budgets,
         "list_budget_lines",
-        AsyncMock(return_value=[{"id": "line", "line_direction": "income"}]),
+        AsyncMock(
+            return_value=[{"id": "line", "line_direction": "income", "currency": "MXN"}]
+        ),
     )
     monkeypatch.setattr(
-        cashflow,
+        budgets,
         "list_monthly_plan_for_lines",
         AsyncMock(
             return_value={
@@ -306,26 +348,37 @@ async def test_cashflow_weekly_plan_uses_edition_and_does_not_fold_years(monkeyp
             }
         ),
     )
-    buckets = {row["key"]: row for row in cashflow._bucket_months(2026, 12, 2)}
-    assert (
-        await cashflow._apply_budget_plan(
-            object(),
-            budget_version_id="version",
-            buckets_by_key=buckets,
-            budget_year=2026,
-            limit=500,
-        )
-        == []
+    monkeypatch.setattr(
+        tournament_weekly_overlay,
+        "effective_plans_for_lines",
+        AsyncMock(side_effect=lambda session, **kwargs: (kwargs["baseline_plans"], {})),
     )
+    monkeypatch.setattr(service, "build_ar_read_model", AsyncMock(return_value={}))
+
+    async def read_report():
+        loaded = await cashflow.load_cashflow_sources(
+            SimpleNamespace(no_autoflush=nullcontext()),
+            start=date(2026, 12, 1),
+            end=date(2027, 2, 1),
+            forecast_end=date(2027, 2, 1),
+            budget_version_id="version",
+        )
+        return cashflow.build_cashflow_report(
+            loaded,
+            start=date(2026, 12, 1),
+            end=date(2027, 2, 1),
+            cutoff=date(2027, 1, 31),
+            forecast_end=date(2027, 2, 1),
+            currency="MXN",
+        )
+
+    result = await read_report()
+    buckets = {row["key"]: row for row in result["monthly_buckets"]}
     assert buckets["2026-12"]["planned_budget_income"] == 200
     assert buckets["2027-01"]["planned_budget_income"] == 0
-    assert await cashflow._apply_budget_plan(
-        object(),
-        budget_version_id="version",
-        buckets_by_key=buckets,
-        budget_year=None,
-        limit=500,
-    ) == ["budget_plan_year_missing"]
+    missing = await read_report()
+    assert missing["summary"]["planned_budget_income"] is None
+    assert missing["summary"]["planned_budget_expense"] is None
 
 
 @pytest.mark.asyncio
