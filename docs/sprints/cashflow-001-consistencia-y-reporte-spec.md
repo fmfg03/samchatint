@@ -191,3 +191,13 @@ explícita del apartado afectado y actualización de hash en el mismo PR.
 La aprobación de esta spec habilita construcción y verificación locales del
 alcance descrito. No autoriza commit, push, PR, merge, deploy ni cargas productivas.
 UAT autenticada y aceptación de Finanzas siguen siendo evidencia separada.
+
+## Revisión de compatibilidad AC07/AC10 y consumidor efectivo T04
+
+2026-10-28: las observaciones de PR513 se corrigen dentro del alcance ya aprobado. El formulario conserva `edition_year` independientemente de `year`. El selector de proyectos usa identidades explícitas de fuentes autorizadas (incluidas partidas sin plan y CxC sin obligaciones), antes de filtros de visualización; no incorpora un catálogo global ni amplía permisos.
+
+Consumidor efectivo adicional registrado antes de editar: `src/samchat/assistant/finance_read_adapter.py`, `run_finance_read_adapter`, exclusivamente las ramas `cashflow.summary` y `cashflow.statement`. Es la frontera hacia `provider_execution` y `AssistantRun.tool_trace` JSONB. La adaptación T04 estrictamente necesaria conserva Decimal en la proyección y entrega números JSON mediante `fastapi.encoders.jsonable_encoder`, dependencia ya existente. `_run_source`, CxC y presupuesto conservan su comportamiento. No es ampliación de un owner de contabilización/pago/cobranza ni de una facultad de escritura.
+
+Pruebas: reenvío real del formulario 2025/2026, opciones sin solicitudes y con límites de empresa/torneo, serialización JSON estricta y bind_processor real de JSONB para resultados con movimientos y reportes anidados por moneda. El release debe conservar los handlers AR vigentes; aplicar sólo los hunks JSON cashflow al adapter, sin copiar otras ramas desde main. Canon unchanged: preserva el contrato de lectura y presentación existente.
+
+La frontera JSON conserva la codificación numérica finita habitual de FastAPI; valores Decimal/float no finitos se convierten recursivamente a `None` (N/D), incluyendo planes brutos y reportes anidados. No se modifica el DTO fuente ni se rellena con cero. La regresión verifica JSON estricto y el formato serializado por la columna JSONB, además de valores finitos, cero y faltantes.

@@ -723,6 +723,12 @@ def render_cashflow_filters(payload: dict[str, Any], action: str) -> str:
             "Año", "year", period.get("year", ""), 'type="number" min="2000" max="2100"'
         ),
         field(
+            "Edición presupuestal",
+            "edition_year",
+            filters.get("edition_year") or period.get("year", ""),
+            'type="number" min="2000" max="2100"',
+        ),
+        field(
             "Mes inicial",
             "month",
             period.get("month", ""),

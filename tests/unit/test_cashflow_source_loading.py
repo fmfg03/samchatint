@@ -564,3 +564,148 @@ async def test_expense_overlay_or_unreconciled_plan_keeps_income_separate(
     assert result["summary"]["planned_budget_income"] == 50
     if failure != "partial":
         assert any(note.startswith("budget_") for note in result["source_notes"])
+
+
+def _project_choices(sources, **filters):
+    from samchat.cashflow.service import build_cashflow_report
+
+    return build_cashflow_report(
+        sources,
+        start=date(2026, 1, 1),
+        end=date(2026, 2, 1),
+        cutoff=date(2026, 1, 31),
+        forecast_end=date(2026, 2, 1),
+        **filters,
+    )["project_options"]
+
+
+def test_project_choices_include_ar_and_budget_without_pending_payables():
+    sources = {
+        "documents": [],
+        "project_options": [{"key": "receivable", "label": "Proyecto sin nombre"}],
+        "ar_payload": {
+            "expected_income": [
+                {"tournament_id": "expected", "tournament_name": "Ingreso previsto"}
+            ],
+            "issued_linked": [
+                {
+                    "ar_item_id": "linked",
+                    "tournament_id": "receivable",
+                    "tournament_name": "Cobro pendiente",
+                }
+            ],
+            "unlinked_income_links": [
+                {"tournament_id": "link", "tournament_name": "Vínculo autorizado"}
+            ],
+        },
+        "budget_plan": [{"tournament_id": "budget", "tournament_name": "Presupuesto"}],
+    }
+    assert _project_choices(sources) == [
+        {"key": "budget", "label": "Presupuesto"},
+        {"key": "expected", "label": "Ingreso previsto"},
+        {"key": "link", "label": "Vínculo autorizado"},
+        {"key": "receivable", "label": "Cobro pendiente"},
+    ]
+    # Updating a report with a selected project keeps all authorized choices.
+    assert _project_choices(sources, project="receivable") == _project_choices(sources)
+
+
+@pytest.mark.parametrize("cap", [[], ["allowed"]])
+def test_project_choices_respect_company_and_server_tournament_scope(cap):
+    sources = {
+        "company_id": "company-current",
+        "authorized_tournament_ids": cap,
+        "project_options": [{"key": "other-scope", "label": "Fuera del ámbito"}],
+        "ar_payload": {
+            "expected_income": [
+                {
+                    "tournament_id": "allowed",
+                    "tournament_name": "Autorizado",
+                    "company_id": "company-current",
+                },
+                {
+                    "tournament_id": "foreign",
+                    "tournament_name": "Otra empresa",
+                    "company_id": "company-foreign",
+                },
+            ]
+        },
+        "budget_plan": [
+            {
+                "tournament_id": "other-scope",
+                "tournament_name": "Fuera del ámbito",
+                "company_id": "company-current",
+            }
+        ],
+    }
+    expected = [{"key": "allowed", "label": "Autorizado"}] if cap else []
+    assert _project_choices(sources, project="allowed") == expected
+    assert _project_choices(sources, project="unavailable") == expected
+
+
+def test_legacy_project_choices_do_not_admit_explicit_foreign_company():
+    assert _project_choices(
+        {
+            "ar_payload": {
+                "expected_income": [
+                    {
+                        "tournament_id": "legacy",
+                        "tournament_name": "Ámbito heredado",
+                    },
+                    {
+                        "tournament_id": "foreign",
+                        "tournament_name": "Otra empresa",
+                        "company_id": "not-legacy",
+                    },
+                ]
+            }
+        }
+    ) == [{"key": "legacy", "label": "Ámbito heredado"}]
+
+
+@pytest.mark.asyncio
+async def test_budget_only_project_remains_selectable_without_weekly_plan(monkeypatch):
+    import samchat.ar.service as ar
+    import samchat.budgets.service as budgets
+    from samchat.budgets import tournament_weekly_overlay
+
+    versions = [{"id": "selected", "edition_year": 2026, "status": "approved"}]
+    monkeypatch.setattr(
+        budgets, "list_budget_versions", AsyncMock(return_value=versions)
+    )
+    monkeypatch.setattr(
+        budgets, "get_budget_version", AsyncMock(return_value={"edition_year": 2026})
+    )
+    monkeypatch.setattr(
+        budgets,
+        "list_budget_lines",
+        AsyncMock(
+            return_value=[
+                {
+                    "id": "unplanned-line",
+                    "tournament_id": "budget-only",
+                    "tournament_name": "Proyecto sin solicitudes",
+                    "line_direction": "income",
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        budgets, "list_monthly_plan_for_lines", AsyncMock(return_value={})
+    )
+    monkeypatch.setattr(
+        tournament_weekly_overlay,
+        "effective_plans_for_lines",
+        AsyncMock(return_value=({}, {})),
+    )
+    monkeypatch.setattr(ar, "build_ar_read_model", AsyncMock(return_value={}))
+    session = SourceSession(versions=[{"id": "selected"}])
+    loaded = await load(session, budget_version_id="selected")
+    assert loaded["budget_plan"] == []
+    assert loaded["source_status"]["budget"]["complete"] is False
+    assert _project_choices(loaded, project="budget-only") == [
+        {"key": "budget-only", "label": "Proyecto sin solicitudes"}
+    ]
+    session.flush.assert_not_awaited()
+    session.commit.assert_not_awaited()
+    session.rollback.assert_not_awaited()

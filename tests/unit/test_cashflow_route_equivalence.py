@@ -187,3 +187,44 @@ def test_uncaptured_payables_risk_is_explicitly_unavailable(client):
     assert "CxP sin captura: N/D" in response.text
     assert "Abrir Cuentas por pagar" in response.text
     assert "/admin/contabilidad/cuentas-por-pagar" in response.text
+
+
+def test_filter_submission_retains_budget_edition_separate_from_cashflow_year(client):
+    from html.parser import HTMLParser
+
+    class FilterInputs(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.values = {}
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == "input" and attrs.get("name"):
+                self.values[attrs["name"]] = attrs.get("value", "")
+
+    http, loader, _ = client
+    version = "2025-authorized-version"
+    response = http.get(
+        "/admin/finanzas/cashflow",
+        params={
+            "year": 2026,
+            "month": 1,
+            "edition_year": 2025,
+            "budget_version_id": version,
+            "currency": "MXN",
+        },
+    )
+    assert response.status_code == 200
+    form = FilterInputs()
+    form.feed(response.text)
+    assert form.values["year"] == "2026"
+    assert form.values["edition_year"] == "2025"
+    # Submit the rendered input values, retaining the chosen version select.
+    updated = http.get(
+        "/admin/finanzas/cashflow",
+        params={**form.values, "budget_version_id": version, "currency": "MXN"},
+    )
+    assert updated.status_code == 200
+    assert loader.await_args.kwargs["start"].year == 2026
+    assert loader.await_args.kwargs["edition_year"] == 2025
+    assert loader.await_args.kwargs["budget_version_id"] == version

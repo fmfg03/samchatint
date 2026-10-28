@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import inspect
+import json
+from datetime import date
+from decimal import Decimal
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -180,6 +183,188 @@ async def test_adapter_routes_cashflow_statement_to_template_report():
     assert result["payload"]["report_type"] == "cashflow_statement"
     assert result["payload"]["title"] == "Flujo de Efectivo"
     assert "forecast_is_derived" in result["payload"]["safety_labels"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("intent", ["cashflow.summary", "cashflow.statement"])
+async def test_cashflow_results_cross_provider_and_jsonb_boundaries(intent):
+    from sqlalchemy.dialects.postgresql import dialect
+
+    from devnous.gastos.models import AssistantRun
+    from samchat.cashflow.service import build_cashflow_report
+
+    source_payload = build_cashflow_report(
+        {
+            "source_status": {
+                key: {"available": True, "complete": True}
+                for key in ("bank", "ar", "obligations", "budget")
+            },
+            "bank_rows": [
+                {
+                    "id": "mxn-bank-movement",
+                    "fecha": "2026-01-10",
+                    "currency": "MXN",
+                    "signo": "+",
+                    "importe": "100.10",
+                },
+                {
+                    "id": "usd-bank-movement",
+                    "fecha": "2026-01-10",
+                    "currency": "USD",
+                    "signo": "+",
+                    "importe": "40.20",
+                },
+            ],
+            "documents": [],
+            "ar_payload": {},
+            "budget_plan": [],
+        },
+        start=date(2026, 1, 1),
+        end=date(2026, 2, 1),
+        cutoff=date(2026, 1, 31),
+        forecast_end=date(2026, 2, 1),
+    )
+    with pytest.raises(TypeError, match="Decimal"):
+        json.dumps(source_payload)
+    source = AsyncMock(return_value=source_payload)
+    with patch.object(
+        finance_read_adapter, "build_cashflow_planning_read_model", source
+    ):
+        result = await run_finance_read_adapter(
+            object(), intent=intent, year=2026, month=1
+        )
+
+    # Provider messages use plain json.dumps, and the ORM's actual JSONB column
+    # uses the default JSON serializer for the same result inside a tool trace.
+    decoded = json.loads(json.dumps(result, ensure_ascii=False, allow_nan=False))
+    trace = [{"tool": "assistant_finance_read", "result": result}]
+    bind_trace = AssistantRun.__table__.c.tool_trace.type.bind_processor(dialect())
+    assert bind_trace is not None
+    assert json.loads(bind_trace(trace))[0]["result"] == decoded
+    payload = decoded["payload"]
+    if intent == "cashflow.summary":
+        assert payload["summary_by_currency"]["MXN"]["actual_cash_in"] == 100.1
+        assert payload["summary_by_currency"]["USD"]["actual_cash_in"] == 40.2
+        assert payload["summary_by_currency"]["MXN"]["actual_cash_out"] == 0
+        assert type(payload["summary_by_currency"]["MXN"]["actual_cash_out"]) is int
+        assert payload["summary_by_currency"]["MXN"]["opening_balance"] is None
+        assert {row["currency"]: row["amount"] for row in payload["movements"]} == {
+            "MXN": 100.1,
+            "USD": 40.2,
+        }
+        assert payload["details"]["rows"] == payload["movements"]
+    else:
+        reports = payload["currency_reports"]
+        assert reports["MXN"]["rows"][1]["months"][0] == 0.1001
+        assert reports["USD"]["rows"][1]["months"][0] == 0.0402
+        assert reports["MXN"]["summary"]["saldo_inicial"] is None
+        assert reports["MXN"]["rows"][0]["months"][0] is None
+    # Encoding at the assistant boundary never mutates exact source arithmetic.
+    assert source_payload["summary_by_currency"]["MXN"]["actual_cash_in"] == Decimal(
+        "100.10"
+    )
+    assert isinstance(source_payload["movements"][0]["amount"], Decimal)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("intent", ["cashflow.summary", "cashflow.statement"])
+@pytest.mark.parametrize(
+    "amount",
+    [
+        pytest.param(Decimal("NaN"), id="decimal-nan"),
+        pytest.param(Decimal("Infinity"), id="decimal-positive-infinity"),
+        pytest.param(Decimal("-Infinity"), id="decimal-negative-infinity"),
+        pytest.param(float("nan"), id="float-nan"),
+        pytest.param(float("inf"), id="float-positive-infinity"),
+        pytest.param(float("-inf"), id="float-negative-infinity"),
+        pytest.param(Decimal("9" * 400 + ".01"), id="decimal-overflows-wire-float"),
+    ],
+)
+async def test_cashflow_nonfinite_source_values_remain_unavailable_in_json(
+    intent, amount
+):
+    from math import isfinite
+
+    from sqlalchemy.dialects.postgresql import dialect
+
+    from devnous.gastos.models import AssistantRun
+    from samchat.cashflow.service import build_cashflow_report
+
+    source_payload = build_cashflow_report(
+        {
+            "source_status": {
+                key: {"available": True, "complete": True}
+                for key in ("bank", "ar", "obligations", "budget")
+            },
+            "bank_rows": [
+                {
+                    "id": "mxn-bank-movement",
+                    "fecha": "2026-01-10",
+                    "currency": "MXN",
+                    "signo": "+",
+                    "importe": "100.10",
+                }
+            ],
+            "documents": [],
+            "ar_payload": {},
+            "budget_plan": [
+                {
+                    "budget_line_id": "budget-source",
+                    "year": 2026,
+                    "month": 1,
+                    "currency": "MXN",
+                    "direction": "income",
+                    "amount": amount,
+                }
+            ],
+        },
+        start=date(2026, 1, 1),
+        end=date(2026, 2, 1),
+        cutoff=date(2026, 1, 31),
+        forecast_end=date(2026, 2, 1),
+    )
+    original_amount = source_payload["budget_plan"][0]["amount"]
+    assert not isfinite(float(original_amount))
+    if not isinstance(amount, Decimal) or not amount.is_finite():
+        assert (
+            source_payload["summary_by_currency"]["MXN"]["planned_budget_income"]
+            is None
+        )
+    with patch.object(
+        finance_read_adapter,
+        "build_cashflow_planning_read_model",
+        AsyncMock(return_value=source_payload),
+    ):
+        result = await run_finance_read_adapter(
+            object(), intent=intent, year=2026, month=1
+        )
+
+    def reject_nonfinite_json(token):
+        raise AssertionError(f"Non-finite JSON constant: {token}")
+
+    decoded = json.loads(
+        json.dumps(result, ensure_ascii=False, allow_nan=False),
+        parse_constant=reject_nonfinite_json,
+    )
+    trace = [{"tool": "assistant_finance_read", "result": result}]
+    bind_trace = AssistantRun.__table__.c.tool_trace.type.bind_processor(dialect())
+    assert bind_trace is not None
+    assert (
+        json.loads(bind_trace(trace), parse_constant=reject_nonfinite_json)[0]["result"]
+        == decoded
+    )
+    assert decoded["read_only"] is True
+    if intent == "cashflow.summary":
+        assert decoded["payload"]["budget_plan"][0]["amount"] is None
+        assert decoded["payload"]["summary"]["actual_cash_in"] == 100.1
+        assert type(decoded["payload"]["period"]["year"]) is int
+        assert decoded["payload"]["details"]["total"] == 1
+    else:
+        report = decoded["payload"]["currency_reports"]["MXN"]
+        assert report["rows"][1]["months"][0] == 0.1001
+        assert report["summary"]["saldo_inicial"] is None
+    assert source_payload["budget_plan"][0]["amount"] is original_amount
+    assert not isfinite(float(original_amount))
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+from math import isfinite
 from typing import Any, Awaitable, Callable, Optional
+
+from fastapi.encoders import jsonable_encoder
 
 from samchat.ar.matching import build_ar_matching_workbench
 from samchat.ar.service import build_ar_read_model
@@ -68,6 +72,21 @@ ALLOWED_INTENTS = (
 
 
 FinanceSourceCallable = Callable[..., Awaitable[dict[str, Any]]]
+
+
+def _cashflow_json_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Encode exact cashflow facts for JSON while retaining unavailable values."""
+
+    def finite_number(value: Decimal | float) -> int | float | None:
+        if isinstance(value, Decimal) and not value.is_finite():
+            return None
+        number = jsonable_encoder(value) if isinstance(value, Decimal) else value
+        return None if isinstance(number, float) and not isfinite(number) else number
+
+    encoded: dict[str, Any] = jsonable_encoder(
+        payload, custom_encoder={Decimal: finite_number, float: finite_number}
+    )
+    return encoded
 
 
 def _safety_labels(*extra: str) -> list[str]:
@@ -305,7 +324,7 @@ async def run_finance_read_adapter(
         )
 
     if intent == "cashflow.summary":
-        return await _run_source(
+        result = await _run_source(
             build_cashflow_planning_read_model,
             session,
             intent=intent,
@@ -325,6 +344,10 @@ async def run_finance_read_adapter(
                 "limit": limit,
             },
         )
+        # Providers and JSONB traces use the standard JSON serializer. Canonical
+        # cashflow calculations retain Decimal until this assistant boundary.
+        result["payload"] = _cashflow_json_payload(result["payload"])
+        return result
 
     if intent == "cashflow.statement":
         source_payload = await build_cashflow_planning_read_model(
@@ -340,6 +363,7 @@ async def run_finance_read_adapter(
             as_of_year=year,
             as_of_month=month,
         )
+        payload = _cashflow_json_payload(payload)
         return {
             "ok": True,
             "read_only": True,
