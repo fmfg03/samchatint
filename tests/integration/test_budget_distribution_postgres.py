@@ -41,6 +41,11 @@ class Result:
     def first(self):
         return self.rows[0] if self.rows else None
 
+    def one(self):
+        if len(self.rows) != 1:
+            raise ValueError("Expected exactly one row")
+        return self.rows[0]
+
 
 class Session:
     def __init__(self, module):
