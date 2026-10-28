@@ -27,9 +27,9 @@ def test_cashflow_display_distinguishes_unknown_from_confirmed_zero():
     html = render_cashflow_planning_html(payload)
     assert "Ingresos presupuestados</span><strong>$0.00</strong>" in html
     assert "Egresos presupuestados</span><strong>N/D</strong>" in html
-    assert "Ingreso esperado no cobrado</span><strong>N/D</strong>" in html
-    assert "Proyección neta</span><strong>N/D</strong>" in html
-    assert html.count("<td>N/D</td>") >= 3
+    assert "Cobros pendientes</dt><dd>N/D</dd>" in html
+    assert "Variación proyectada</dt><dd>N/D</dd>" in html
+    assert html.count('<td class="cashflow-number">N/D</td>') >= 3
 
 
 def test_assistant_preserves_unknown_cashflow_without_masking_real_zero():
@@ -46,7 +46,7 @@ def test_assistant_preserves_unknown_cashflow_without_masking_real_zero():
             },
         }
     )
-    assert "Caja real neta: $0.00." in answer
+    assert "Variación bancaria del período: $0.00." in answer
     assert "Ingreso esperado no cobrado: N/D." in answer
     assert "Forecast derivado: N/D." in answer
 
@@ -56,9 +56,24 @@ def test_cashflow_report_preserves_unknown_month_and_total():
         {
             "period": {"year": 2026, "month": 1},
             "monthly_buckets": [
-                {"month": 1, "expected_uncollected_income": None},
-                {"month": 2, "expected_uncollected_income": 1250},
-                {"month": 3, "expected_uncollected_income": 0},
+                {
+                    "year": 2026,
+                    "month": 1,
+                    "currency": "MXN",
+                    "expected_uncollected_income": None,
+                },
+                {
+                    "year": 2026,
+                    "month": 2,
+                    "currency": "MXN",
+                    "expected_uncollected_income": 1250,
+                },
+                {
+                    "year": 2026,
+                    "month": 3,
+                    "currency": "MXN",
+                    "expected_uncollected_income": 0,
+                },
             ],
         },
         opening_balance=10000,

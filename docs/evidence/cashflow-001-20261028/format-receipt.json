@@ -1,0 +1,294 @@
+{
+  "whole_files": [
+    "src/samchat/cashflow/service.py",
+    "src/samchat/cashflow/admin_ui.py",
+    "src/samchat/cashflow/__init__.py",
+    "tests/unit/test_cashflow_planning_read_model.py",
+    "tests/unit/test_cashflow_admin_ui.py",
+    "tests/unit/test_cashflow_admin_route_contract.py",
+    "tests/unit/test_cashflow_document_status_dedup.py",
+    "tests/unit/test_cashflow_report_ui.py",
+    "tests/unit/test_cashflow_route_equivalence.py",
+    "tests/unit/test_cashflow_source_loading.py",
+    "tests/unit/test_cashflow_statement_consistency.py",
+    "tests/unit/test_weekly_overlay_null_display.py",
+    "tests/integration/test_cashflow_sources_postgres.py",
+    "tests/browser/test_cashflow_report_browser.py"
+  ],
+  "scoped_functions": {
+    "src/devnous/gastos/routes/user_routes.py": [
+      "contabilidad_cash_flow_export_xlsx",
+      "contabilidad_cash_flow_view"
+    ],
+    "src/devnous/gastos/routes/admin_routes.py": [
+      "admin_finance_cashflow"
+    ],
+    "src/samchat/executive/template_reports.py": [
+      "build_cashflow_statement_report"
+    ],
+    "src/samchat/assistant/finance_read_answer.py": [
+      "_render_cashflow_summary",
+      "_render_template_report"
+    ],
+    "tests/unit/test_assistant_finance_read_answer.py": [
+      "test_render_cashflow_statement_template_report",
+      "test_render_cashflow_summary_separates_actuals_and_forecast"
+    ],
+    "tests/unit/test_executive_template_reports.py": [
+      "test_cashflow_statement_report_exposes_missing_opening_balance",
+      "test_cashflow_statement_report_matches_uploaded_workbook_shape"
+    ]
+  },
+  "commands": [
+    {
+      "command": [
+        "/root/samchat/.venv/bin/python",
+        "-m",
+        "isort",
+        "src/samchat/cashflow/service.py",
+        "src/samchat/cashflow/admin_ui.py",
+        "src/samchat/cashflow/__init__.py",
+        "tests/unit/test_cashflow_planning_read_model.py",
+        "tests/unit/test_cashflow_admin_ui.py",
+        "tests/unit/test_cashflow_admin_route_contract.py",
+        "tests/unit/test_cashflow_document_status_dedup.py",
+        "tests/unit/test_cashflow_report_ui.py",
+        "tests/unit/test_cashflow_route_equivalence.py",
+        "tests/unit/test_cashflow_source_loading.py",
+        "tests/unit/test_cashflow_statement_consistency.py",
+        "tests/unit/test_weekly_overlay_null_display.py",
+        "tests/integration/test_cashflow_sources_postgres.py",
+        "tests/browser/test_cashflow_report_browser.py"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/root/samchat/.venv/bin/python",
+        "-m",
+        "black",
+        "src/samchat/cashflow/service.py",
+        "src/samchat/cashflow/admin_ui.py",
+        "src/samchat/cashflow/__init__.py",
+        "tests/unit/test_cashflow_planning_read_model.py",
+        "tests/unit/test_cashflow_admin_ui.py",
+        "tests/unit/test_cashflow_admin_route_contract.py",
+        "tests/unit/test_cashflow_document_status_dedup.py",
+        "tests/unit/test_cashflow_report_ui.py",
+        "tests/unit/test_cashflow_route_equivalence.py",
+        "tests/unit/test_cashflow_source_loading.py",
+        "tests/unit/test_cashflow_statement_consistency.py",
+        "tests/unit/test_weekly_overlay_null_display.py",
+        "tests/integration/test_cashflow_sources_postgres.py",
+        "tests/browser/test_cashflow_report_browser.py"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "All done! \u2728 \ud83c\udf70 \u2728\n14 files left unchanged.\n"
+    },
+    {
+      "command": [
+        "/root/samchat/.venv/bin/python",
+        "-m",
+        "isort",
+        "--check-only",
+        "src/samchat/cashflow/service.py",
+        "src/samchat/cashflow/admin_ui.py",
+        "src/samchat/cashflow/__init__.py",
+        "tests/unit/test_cashflow_planning_read_model.py",
+        "tests/unit/test_cashflow_admin_ui.py",
+        "tests/unit/test_cashflow_admin_route_contract.py",
+        "tests/unit/test_cashflow_document_status_dedup.py",
+        "tests/unit/test_cashflow_report_ui.py",
+        "tests/unit/test_cashflow_route_equivalence.py",
+        "tests/unit/test_cashflow_source_loading.py",
+        "tests/unit/test_cashflow_statement_consistency.py",
+        "tests/unit/test_weekly_overlay_null_display.py",
+        "tests/integration/test_cashflow_sources_postgres.py",
+        "tests/browser/test_cashflow_report_browser.py"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/root/samchat/.venv/bin/python",
+        "-m",
+        "black",
+        "--check",
+        "src/samchat/cashflow/service.py",
+        "src/samchat/cashflow/admin_ui.py",
+        "src/samchat/cashflow/__init__.py",
+        "tests/unit/test_cashflow_planning_read_model.py",
+        "tests/unit/test_cashflow_admin_ui.py",
+        "tests/unit/test_cashflow_admin_route_contract.py",
+        "tests/unit/test_cashflow_document_status_dedup.py",
+        "tests/unit/test_cashflow_report_ui.py",
+        "tests/unit/test_cashflow_route_equivalence.py",
+        "tests/unit/test_cashflow_source_loading.py",
+        "tests/unit/test_cashflow_statement_consistency.py",
+        "tests/unit/test_weekly_overlay_null_display.py",
+        "tests/integration/test_cashflow_sources_postgres.py",
+        "tests/browser/test_cashflow_report_browser.py"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "All done! \u2728 \ud83c\udf70 \u2728\n14 files would be left unchanged.\n"
+    }
+  ],
+  "checks": {
+    "src/devnous/gastos/routes/user_routes.py": {
+      "outside_ast_identical": true,
+      "only_named_spans_replaced": true,
+      "normalized_ast_identical": true,
+      "sha256_before": "38b3a28e8125cfa545adc374220064af33ba347163da253bf5bcf9b1becd42ad",
+      "sha256_after": "38b3a28e8125cfa545adc374220064af33ba347163da253bf5bcf9b1becd42ad"
+    },
+    "src/devnous/gastos/routes/admin_routes.py": {
+      "outside_ast_identical": true,
+      "only_named_spans_replaced": true,
+      "normalized_ast_identical": true,
+      "sha256_before": "fba8eb8cd960d29c013b8be8fe4326809a1b2b22a49000552b9a5cb71434c227",
+      "sha256_after": "fba8eb8cd960d29c013b8be8fe4326809a1b2b22a49000552b9a5cb71434c227"
+    },
+    "src/samchat/executive/template_reports.py": {
+      "outside_ast_identical": true,
+      "only_named_spans_replaced": true,
+      "normalized_ast_identical": true,
+      "sha256_before": "e4a1fe95942fff1b93441285f5eacb3a096d5534b7ec5d805006e058427b4471",
+      "sha256_after": "e4a1fe95942fff1b93441285f5eacb3a096d5534b7ec5d805006e058427b4471"
+    },
+    "src/samchat/assistant/finance_read_answer.py": {
+      "outside_ast_identical": true,
+      "only_named_spans_replaced": true,
+      "normalized_ast_identical": true,
+      "sha256_before": "6d2178bbd1c4ab0a38d68fc9a0186c343bfe76e4bb351efcab7560ce296fd90b",
+      "sha256_after": "6d2178bbd1c4ab0a38d68fc9a0186c343bfe76e4bb351efcab7560ce296fd90b"
+    },
+    "tests/unit/test_assistant_finance_read_answer.py": {
+      "outside_ast_identical": true,
+      "only_named_spans_replaced": true,
+      "normalized_ast_identical": true,
+      "sha256_before": "3fca865b5280ce9d0cba03117ba6c9809a4be7bae01589d55d2863f014a398ec",
+      "sha256_after": "3fca865b5280ce9d0cba03117ba6c9809a4be7bae01589d55d2863f014a398ec"
+    },
+    "tests/unit/test_executive_template_reports.py": {
+      "outside_ast_identical": true,
+      "only_named_spans_replaced": true,
+      "normalized_ast_identical": true,
+      "sha256_before": "e3c15be91cf876016a4def091c7be37a0b51ec6694321f528ef0e0fa401a058f",
+      "sha256_after": "e3c15be91cf876016a4def091c7be37a0b51ec6694321f528ef0e0fa401a058f"
+    },
+    "src/samchat/cashflow/service.py": {
+      "normalized_ast_identical": true,
+      "sha256_before": "4a13e0c3527eaa42d870c1ba64b5653d933f3287487dc887a127dd6fb82cfd40",
+      "sha256_after": "4a13e0c3527eaa42d870c1ba64b5653d933f3287487dc887a127dd6fb82cfd40"
+    },
+    "src/samchat/cashflow/admin_ui.py": {
+      "normalized_ast_identical": true,
+      "sha256_before": "7441abab8ea9ab3eb8167b2a555ecbded811880186a141ac9226e6ae635ae3fc",
+      "sha256_after": "7441abab8ea9ab3eb8167b2a555ecbded811880186a141ac9226e6ae635ae3fc"
+    },
+    "src/samchat/cashflow/__init__.py": {
+      "normalized_ast_identical": true,
+      "sha256_before": "c44bef0a1c909a0bb8f9a0417e900c32444d5a7b5e808fdb767c1de93c062a81",
+      "sha256_after": "c44bef0a1c909a0bb8f9a0417e900c32444d5a7b5e808fdb767c1de93c062a81"
+    },
+    "tests/unit/test_cashflow_planning_read_model.py": {
+      "normalized_ast_identical": true,
+      "sha256_before": "ee4d1da118d7ebc3f5e3cc8de5d3bdaabef5f4a5f09bcd2f640a1f5acecd7b96",
+      "sha256_after": "ee4d1da118d7ebc3f5e3cc8de5d3bdaabef5f4a5f09bcd2f640a1f5acecd7b96"
+    },
+    "tests/unit/test_cashflow_admin_ui.py": {
+      "normalized_ast_identical": true,
+      "sha256_before": "41c562345ad17f235262a3df9f85e0cb17f6c58e7198852a120d654b82e0d054",
+      "sha256_after": "41c562345ad17f235262a3df9f85e0cb17f6c58e7198852a120d654b82e0d054"
+    },
+    "tests/unit/test_cashflow_admin_route_contract.py": {
+      "normalized_ast_identical": true,
+      "sha256_before": "d8d6a4de2812487c7c678489d05e10d7429d26e6adef37431b080aa3783a7225",
+      "sha256_after": "d8d6a4de2812487c7c678489d05e10d7429d26e6adef37431b080aa3783a7225"
+    },
+    "tests/unit/test_cashflow_document_status_dedup.py": {
+      "normalized_ast_identical": true,
+      "sha256_before": "e2e91d170e101aea1b395837b670557692fa26339fdb25c73d7c7da59b680fb4",
+      "sha256_after": "e2e91d170e101aea1b395837b670557692fa26339fdb25c73d7c7da59b680fb4"
+    },
+    "tests/unit/test_cashflow_report_ui.py": {
+      "normalized_ast_identical": true,
+      "sha256_before": "bed814e5262401fa1311d0cb0451e4bcb05b8915e60bbe8dd65058b56e9be206",
+      "sha256_after": "bed814e5262401fa1311d0cb0451e4bcb05b8915e60bbe8dd65058b56e9be206"
+    },
+    "tests/unit/test_cashflow_route_equivalence.py": {
+      "normalized_ast_identical": true,
+      "sha256_before": "90c5e3bfb1a250ed26340081df0fba3a3d1bb8cbc0f77f671879e1b39c024c77",
+      "sha256_after": "90c5e3bfb1a250ed26340081df0fba3a3d1bb8cbc0f77f671879e1b39c024c77"
+    },
+    "tests/unit/test_cashflow_source_loading.py": {
+      "normalized_ast_identical": true,
+      "sha256_before": "831311ff0b39be57d3ece1812aaae08e643d5f611527917b0318eb7df2fe8927",
+      "sha256_after": "831311ff0b39be57d3ece1812aaae08e643d5f611527917b0318eb7df2fe8927"
+    },
+    "tests/unit/test_cashflow_statement_consistency.py": {
+      "normalized_ast_identical": true,
+      "sha256_before": "a056a1b0d8032394572fe80b6efd2488c6b78aad213d1c0641eff00bc0f45919",
+      "sha256_after": "a056a1b0d8032394572fe80b6efd2488c6b78aad213d1c0641eff00bc0f45919"
+    },
+    "tests/unit/test_weekly_overlay_null_display.py": {
+      "normalized_ast_identical": true,
+      "sha256_before": "30f1d595548e53e18f86eee22bd96795109faaf137fd07c11239f3854dc7848f",
+      "sha256_after": "30f1d595548e53e18f86eee22bd96795109faaf137fd07c11239f3854dc7848f"
+    },
+    "tests/integration/test_cashflow_sources_postgres.py": {
+      "normalized_ast_identical": true,
+      "sha256_before": "c4587a72f2c2f29a1003db5b0500ca557ed882d4f1beee90b26f444cc951ea5a",
+      "sha256_after": "c4587a72f2c2f29a1003db5b0500ca557ed882d4f1beee90b26f444cc951ea5a"
+    },
+    "tests/browser/test_cashflow_report_browser.py": {
+      "normalized_ast_identical": true,
+      "sha256_before": "3710bba0dd32ac14e2a89934ac135b9de0734adf278033a018e540f7522ca01a",
+      "sha256_after": "3710bba0dd32ac14e2a89934ac135b9de0734adf278033a018e540f7522ca01a"
+    }
+  },
+  "snippet_checks": {
+    "black": "passed",
+    "isort": "passed",
+    "count": 10
+  },
+  "initial_format_run": {
+    "normalized_ast_equivalent": true,
+    "whole_files": 14,
+    "scoped_files": 6,
+    "scoped_functions": 10,
+    "tool_result": "initial formatter completed successfully; final run verifies idempotency"
+  },
+  "preexisting_manifest_runtime_hashes": {
+    "src/devnous/gastos/routes/admin_routes.py": "d68ad45c8954121eec79c105fb6c5ce7e77fc3c68704c1b6b0c6522ff51f3de7",
+    "src/devnous/gastos/routes/user_routes.py": "e8e88178b971266217cd22d452c3d5fee79f0955ace1bde80b4089474d155d68",
+    "src/samchat/assistant/finance_read_answer.py": "6d2178bbd1c4ab0a38d68fc9a0186c343bfe76e4bb351efcab7560ce296fd90b",
+    "src/samchat/cashflow/__init__.py": "18514aece972b3be3ea08834766bbbdf0273385eb032b3e07c95141437593380",
+    "src/samchat/cashflow/admin_ui.py": "08bae7ee1a2ca72f80594335f803a7a84b7488bd6c7b0006a1933d2096cdefc2",
+    "src/samchat/cashflow/service.py": "713465e83f6deb76a23225900a988398e599d365a83778902db77f50d0487897",
+    "src/samchat/executive/template_reports.py": "fb36e64cf2fbb6a33e3b0a96b7380075eab48b3c27bf35adc2ea8f2948eefb77"
+  },
+  "lint": {
+    "whole_files": {
+      "status": "passed",
+      "command": "/usr/bin/flake8 <14 owned whole files> --max-line-length=88 --extend-ignore=E203,W503",
+      "note": "E203/W503 ignored consistently with Black and repo pyproject.toml; line-width enforced including two split literals"
+    },
+    "scoped_snippets": {
+      "status": "passed",
+      "command": "/usr/bin/flake8 /tmp/cashflow001-format-snippets/*.py --extend-ignore=F821 --max-line-length=88",
+      "note": "Only undefined names from excluded module context ignored; no source ignores added"
+    },
+    "diff_check": {
+      "status": "passed",
+      "command": "git diff --check"
+    }
+  },
+  "files_released_for_typing": true
+}

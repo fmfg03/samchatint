@@ -109,7 +109,7 @@ def test_render_cashflow_summary_separates_actuals_and_forecast() -> None:
     answer = render_finance_read_answer(result)
 
     assert "Cashflow Planning read-only" in answer
-    assert "Caja real neta: $700.00." in answer
+    assert "Variación bancaria del período: $700.00." in answer
     assert "Ingreso reconocido: $500.00." in answer
     assert "Cobranza AR probada: $200.00." in answer
     assert "Forecast derivado: $1,400.00." in answer
@@ -143,7 +143,7 @@ def test_render_cashflow_statement_template_report() -> None:
     assert "Saldo inicial: $76,000.00." in answer
     assert "Origen total: $150.00." in answer
     assert "Aplicaciones total: $50.00." in answer
-    assert "Saldo final derivado: $76,100.00." in answer
+    assert "Saldo final acreditado: $76,100.00." in answer
     assert "Filas exportables: 2." in answer
     assert "Este reporte es una previsualización ejecutiva" in answer
     assert '{"name"' not in answer

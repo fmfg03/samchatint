@@ -1,0 +1,60 @@
+{
+  "approved_commit": "30f8ce824",
+  "merged_main": "b404e9849aa6e01342160f485df59653d47ca016",
+  "authorization": "user authorized commit, push, PR, merge and deployment",
+  "acceptance": {
+    "passed": 206,
+    "coverage_percent": 90.3225806451613,
+    "isolated_postgresql": 4,
+    "browser": 2
+  },
+  "ar_and_direction_regressions": 165,
+  "weekly_cashflow_postgresql": 6,
+  "weekly_cluster": "existing disposable /tmp/samchat-weekly-overlay-pg.tm4iIc; owned test databases only, server kept running",
+  "scope": [
+    "src/devnous/gastos/routes/admin_routes.py",
+    "src/devnous/gastos/routes/user_routes.py",
+    "src/samchat/assistant/finance_read_answer.py",
+    "src/samchat/cashflow/__init__.py",
+    "src/samchat/cashflow/admin_ui.py",
+    "src/samchat/cashflow/service.py",
+    "src/samchat/executive/template_reports.py"
+  ],
+  "sha256": {
+    "src/devnous/gastos/routes/admin_routes.py": "196bfe1b7f5496c497954b1e79b4c0610569d97caecb66b8e2c708b0d852835f",
+    "src/devnous/gastos/routes/user_routes.py": "6951dcb08c4abd47b01946d9799d2e14cb7557658e2cbd3ef3593020ae30fcde",
+    "src/samchat/assistant/finance_read_answer.py": "91cd56c5ea646008c25da9031e6829695e404fc8eaca2214d5496e81da1ed015",
+    "src/samchat/cashflow/__init__.py": "c44bef0a1c909a0bb8f9a0417e900c32444d5a7b5e808fdb767c1de93c062a81",
+    "src/samchat/cashflow/admin_ui.py": "ea731f048a54ae02707f25ebbd937f4964afb46180866a1203435c9244281371",
+    "src/samchat/cashflow/service.py": "567c2f183b8e49b30d7837c61f24ed474de4db3988a4086466d0912491ecb3c7",
+    "src/samchat/executive/template_reports.py": "481de5d65f09fc8c0dc471d96742a7f224181d9c94508bc139da415349514c83"
+  },
+  "source_limitations": [
+    "Legacy current-main AR DTO lacks accredited currency and complete company-scoped status; totals/forecast remain N/D with details; no company owner activation.",
+    "Bank opening/closing not accredited; N/D, never period variation as available balance."
+  ],
+  "preserved_contracts": [
+    "AR accepted receipts individually dated; recognized_income_amount independent from gross; calendar_year independent from edition_year",
+    "Canonical weekly week_bounds/effective_plans_for_lines/schedule_state without schema initialization; expense unknown does not erase independently known income",
+    "Per-direction budget coverage invalidated by account/company/currency/identity scope gaps"
+  ],
+  "runtime_preservation_plan": {
+    "source_pr": "cashflow only against latest main",
+    "release_overlay": "exact serving commit800848939 cherry-pick after merged cashflow; eight historical accounting files otherwise absent from main",
+    "runtime_venv": "/srv/samchat/venvs/release-598e7a286"
+  },
+  "canon": "Canon unchanged: existing finance read-only authority and actual/forecast separation retained",
+  "quality": "scoped Black/isort and cashflow mypy pass; repository-wide legacy lint/type clean not claimed",
+  "publication_effects_so_far": [
+    "local approved diff commit only; no push/PR/merge/deploy yet"
+  ],
+  "private_plugin": {
+    "passed": 135,
+    "errors": 0,
+    "inventory_routes": 613,
+    "live_static": 578,
+    "canonical_actions": 44,
+    "parse_gaps": [],
+    "sdk": "isolated /tmp MCP1.29.0; shared MCP2.3.0 unchanged"
+  }
+}

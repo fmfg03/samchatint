@@ -119,7 +119,7 @@ def _render_cashflow_summary(result: dict[str, Any], payload: dict[str, Any]) ->
     summary = payload.get("summary") or {}
     lines = [
         "Cashflow Planning read-only",
-        f"- Caja real neta: {_money(summary.get('actual_cash_net'))}.",
+        f"- Variación bancaria del período: {_money(summary.get('actual_cash_net'))}.",
         f"- Obligaciones aprobadas: {_money(summary.get('approved_obligations'))}.",
         f"- Ingreso reconocido: {_money(summary.get('recognized_income'))}.",
         f"- Cobranza AR probada: {_money(summary.get('collected_income'))}.",
@@ -148,7 +148,7 @@ def _render_template_report(result: dict[str, Any], payload: dict[str, Any]) -> 
                 f"- Saldo inicial: {_money(summary.get('saldo_inicial'))}.",
                 f"- Origen total: {_money(summary.get('origen_total'))}.",
                 f"- Aplicaciones total: {_money(summary.get('aplicaciones_total'))}.",
-                f"- Saldo final derivado: {_money(summary.get('saldo_final'))}.",
+                f"- Saldo final acreditado: {_money(summary.get('saldo_final'))}.",
             ]
         )
     elif report_type == "budget_vs_actual":

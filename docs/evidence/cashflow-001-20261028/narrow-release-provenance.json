@@ -1,0 +1,57 @@
+{
+  "base": "80084893936dd2214239f52107150e4f86c1a150",
+  "approved_source_head": "db2084bb9d0e81a518d2622819d008182da5e960",
+  "supersedes": "Preliminary main plus historical cherry-pick plan; avoids activating unrelated AR owners.",
+  "ast_outside_approved_functions_unchanged": {
+    "src/devnous/gastos/routes/admin_routes.py": [
+      "admin_finance_cashflow"
+    ],
+    "src/devnous/gastos/routes/user_routes.py": [
+      "contabilidad_cash_flow_export_xlsx",
+      "contabilidad_cash_flow_view"
+    ],
+    "src/samchat/assistant/finance_read_answer.py": [
+      "_render_cashflow_summary",
+      "_render_template_report"
+    ],
+    "src/samchat/executive/template_reports.py": [
+      "build_cashflow_statement_report"
+    ]
+  },
+  "runtime_files": [
+    "src/devnous/gastos/routes/admin_routes.py",
+    "src/devnous/gastos/routes/user_routes.py",
+    "src/samchat/assistant/finance_read_answer.py",
+    "src/samchat/cashflow/__init__.py",
+    "src/samchat/cashflow/admin_ui.py",
+    "src/samchat/cashflow/service.py",
+    "src/samchat/executive/template_reports.py"
+  ],
+  "preserved_owner_sha256": {
+    "src/samchat/ar/service.py": "e4cd3602ff69d58791439e6e2f9c61c0d964e194f4e11b4dbbdb02d084386600",
+    "src/samchat/ar/collection_matches.py": "77a7a93346bd784333cae1fb42ad805b32f310a87f46088a4c5d15fd961bf7bb",
+    "src/samchat/ar/matching.py": "0368e9f0dd914d05b67c6948e2d00cd31682e7eebb6039a7ad0e4a4ec2847dee",
+    "src/samchat/budgets/service.py": "9da838965992184c5aeb367d1c3223b1320f21f9952ff2a7b9752b8780a00ff0",
+    "src/samchat/budgets/tournament_weekly_overlay.py": "06462fb82eacc4153d91ff25de4b936fdb57508ce8f620b04665df6ff8bf5ff2",
+    "src/devnous/gastos/services/cfdi_income_bridge_service.py": "f615ccf03227a5ea2364616e57f3592514897daf1dde7789b70984b1eeda8871",
+    "src/samchat/accounting_historical/service.py": "ecf19a28e9527bd8e24ef5815901deff389472a84fc3a012b8269f4a47c692a2"
+  },
+  "canon": "Canon unchanged; all three hashes verified in order against serving register.",
+  "effects": "local release preparation only; no production mutation",
+  "validation": {
+    "acceptance_passed": 219,
+    "skipped": 1,
+    "skip_reason": "future multiempresa candidate not present; no activation",
+    "postgresql_acceptance": 3,
+    "browser_tests": 2,
+    "coverage_percent": 91.00684261974584,
+    "preserved_owner_regressions_passed": 234,
+    "private_plugin_passed": 135,
+    "inventory": "613/578/44; no parse gaps",
+    "source_ast_scope": "6 approved functions exactly match db208; all AST outside identical to serving800848",
+    "runtime_modules": "three byte-identical to approved db208",
+    "guards": "both pass; canonical deploy script rechecks before promotion",
+    "runtime_imports": "pass with existing production venv",
+    "review": "independent release review plus targeted reviewed UX fix, reproduced exact AST/owner assertions"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "user_authorization": "autorizo",
+  "target": "/tmp/cashflow001-mcp129",
+  "mcp_version": "1.29.0",
+  "mcp_module": "/tmp/cashflow001-mcp129/mcp/__init__.py",
+  "extra_temporary_dependency": {
+    "httpx-sse": "0.4.3"
+  },
+  "resolved_active_requirements": {
+    "anyio": "4.14.2",
+    "httpx-sse": "0.4.3",
+    "httpx": "0.28.1",
+    "jsonschema": "4.26.0",
+    "pydantic-settings": "2.15.0",
+    "pydantic": "2.13.4",
+    "pyjwt": "2.13.0",
+    "python-multipart": "0.0.32",
+    "sse-starlette": "3.6.0",
+    "starlette": "1.6.0",
+    "typing-extensions": "4.16.0",
+    "typing-inspection": "0.4.4",
+    "uvicorn": "0.52.4"
+  },
+  "shared_environment_mcp": "2.3.0, independently checked without PYTHONPATH override",
+  "commands": [
+    "/root/samchat/.venv/bin/python -m pip install --no-cache-dir --no-deps --target /tmp/cashflow001-mcp129 mcp==1.29.0",
+    "/root/samchat/.venv/bin/python -m pip install --no-cache-dir --no-deps --target /tmp/cashflow001-mcp129 httpx-sse>=0.4",
+    "PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/tmp/cashflow001-mcp129:src /root/samchat/.venv/bin/python scripts/private_plugin/run_offline_tests.py"
+  ],
+  "result": {
+    "tests": 135,
+    "errors": 0,
+    "failures": 0,
+    "exit_code": 0
+  },
+  "shared_packages_changed": false,
+  "runtime_code_changed": false,
+  "production_changed": false,
+  "log_sha256": "6206fb120b10caef2e59e94ad61cc7c93059c89f2dba24d19b0d19c22e559c18"
+}

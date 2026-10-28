@@ -1,0 +1,31 @@
+{
+  "classification": "two task-caused presentation regressions found by full CI; fixed",
+  "ci_unit_result_before_fix": {
+    "passed": 6579,
+    "failed": [
+      "tests/unit/gastos/test_executive_navigation_contract.py::test_cashflow_links_back_to_executive_center",
+      "tests/unit/gastos/test_table_usability_contract.py::test_admin_fragments_adopt_shared_table_shell"
+    ]
+  },
+  "fix": [
+    "restore canonical breadcrumb and executive-center backlink inside approved admin cashflow handler",
+    "retain shared table-shell and cashflow-specific styles/accessibility together; adjust exact-literal contract to cover four shared report wrappers"
+  ],
+  "acceptance_passed": 226,
+  "coverage_percent": 91.00684261974584,
+  "private_plugin_passed": 135,
+  "inventory": "613/578/44, no parse gaps",
+  "types": "scoped cashflow mypy pass",
+  "sha256": {
+    "src/devnous/gastos/routes/admin_routes.py": "d34480e77cfc9236c54bcc4da4fe6b650e060cf17dadab5b15ea2d2d5f326e27",
+    "src/devnous/gastos/routes/user_routes.py": "6951dcb08c4abd47b01946d9799d2e14cb7557658e2cbd3ef3593020ae30fcde",
+    "src/samchat/assistant/finance_read_answer.py": "91cd56c5ea646008c25da9031e6829695e404fc8eaca2214d5496e81da1ed015",
+    "src/samchat/cashflow/__init__.py": "c44bef0a1c909a0bb8f9a0417e900c32444d5a7b5e808fdb767c1de93c062a81",
+    "src/samchat/cashflow/admin_ui.py": "2decf4367036e9d2ca5bbc472842a791457d5b95b82136a5b48f169d775955f2",
+    "src/samchat/cashflow/service.py": "567c2f183b8e49b30d7837c61f24ed474de4db3988a4086466d0912491ecb3c7",
+    "src/samchat/executive/template_reports.py": "481de5d65f09fc8c0dc471d96742a7f224181d9c94508bc139da415349514c83"
+  },
+  "authority_changes": false,
+  "financial_calculation_changes": false,
+  "canon": "Canon unchanged; restore existing navigation/table UX contracts"
+}

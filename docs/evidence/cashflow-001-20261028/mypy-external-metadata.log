@@ -1,0 +1,9 @@
+src/samchat/cashflow/service.py:955: error: Skipping analyzing "devnous.gastos.services.company_operation_scope": module is installed, but missing library stubs or py.typed marker  [import-untyped]
+src/samchat/cashflow/service.py:967: error: Skipping analyzing "devnous.gastos.services.company_scope_service": module is installed, but missing library stubs or py.typed marker  [import-untyped]
+src/samchat/cashflow/service.py:1424: error: Skipping analyzing "devnous.gastos.routes.company_dependencies": module is installed, but missing library stubs or py.typed marker  [import-untyped]
+src/samchat/cashflow/admin_ui.py:456: error: Library stubs not installed for "openpyxl"  [import-untyped]
+src/samchat/cashflow/admin_ui.py:457: error: Library stubs not installed for "openpyxl.styles"  [import-untyped]
+src/samchat/cashflow/admin_ui.py:457: note: Hint: "python3 -m pip install types-openpyxl"
+src/samchat/cashflow/admin_ui.py:457: note: (or run "mypy --install-types" to install all missing stub packages)
+src/samchat/cashflow/admin_ui.py:457: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+Found 5 errors in 2 files (checked 3 source files)
