@@ -418,3 +418,149 @@ async def test_budget_edition_is_independent_from_bank_calendar_year(monkeypatch
 async def test_loader_declares_current_document_state_date():
     result = await load(SourceSession())
     assert result["state_as_of"] == date.today().isoformat()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("edition", [2026, None])
+async def test_week_52_uses_budget_edition_not_next_bank_year(monkeypatch, edition):
+    from samchat.ar import service as ar
+    from samchat.budgets import service as budgets
+    from samchat.budgets import tournament_weekly_overlay
+    from samchat.cashflow.service import build_cashflow_report
+
+    monkeypatch.setattr(
+        budgets,
+        "list_budget_versions",
+        AsyncMock(
+            return_value=[
+                {"id": "approved", "status": "approved", "edition_year": 2026}
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        budgets, "get_budget_version", AsyncMock(return_value={"edition_year": edition})
+    )
+    monkeypatch.setattr(
+        budgets,
+        "list_budget_lines",
+        AsyncMock(
+            return_value=[
+                {"id": "income", "line_direction": "income", "currency": "MXN"}
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        budgets,
+        "list_monthly_plan_for_lines",
+        AsyncMock(
+            return_value={
+                "income": {
+                    23: {"expected_income_amount": 100},
+                    52: {"expected_income_amount": 200},
+                }
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        tournament_weekly_overlay,
+        "effective_plans_for_lines",
+        AsyncMock(side_effect=lambda session, **kwargs: (kwargs["baseline_plans"], {})),
+    )
+    monkeypatch.setattr(ar, "build_ar_read_model", AsyncMock(return_value={}))
+    loaded = await load_cashflow_sources(
+        SourceSession(versions=[{"id": "approved"}]),
+        start=date(2026, 6, 1),
+        end=date(2027, 2, 1),
+        forecast_end=date(2027, 2, 1),
+        edition_year=2026,
+        budget_version_id="approved",
+    )
+    result = build_cashflow_report(
+        loaded,
+        start=date(2026, 6, 1),
+        end=date(2027, 2, 1),
+        cutoff=date(2027, 1, 31),
+        forecast_end=date(2027, 2, 1),
+        currency="MXN",
+    )
+    buckets = {row["key"]: row for row in result["monthly_buckets"]}
+    if edition is None:
+        assert result["summary"]["planned_budget_income"] is None
+    else:
+        assert buckets["2026-06"]["planned_budget_income"] == 100
+        assert buckets["2026-12"]["planned_budget_income"] == 200
+        assert buckets["2027-01"]["planned_budget_income"] == 0
+        assert result["summary"]["planned_budget_income"] == 300
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["conflict", "error", "partial"])
+async def test_expense_overlay_or_unreconciled_plan_keeps_income_separate(
+    monkeypatch, failure
+):
+    from samchat.ar import service as ar
+    from samchat.budgets import service as budgets
+    from samchat.budgets import tournament_weekly_overlay
+    from samchat.cashflow.service import build_cashflow_report
+
+    plans = {
+        "income": {1: {"expected_income_amount": "50"}},
+        "expense": {
+            1: {"budget_expense_amount": "40" if failure == "partial" else "100"}
+        },
+    }
+    monkeypatch.setattr(
+        budgets,
+        "list_budget_versions",
+        AsyncMock(
+            return_value=[
+                {"id": "approved", "status": "approved", "edition_year": 2026}
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        budgets, "get_budget_version", AsyncMock(return_value={"edition_year": 2026})
+    )
+    monkeypatch.setattr(
+        budgets,
+        "list_budget_lines",
+        AsyncMock(
+            return_value=[
+                {"id": "income", "line_direction": "income", "currency": "MXN"},
+                {
+                    "id": "expense",
+                    "line_direction": "expense",
+                    "budget_amount": "100",
+                    "currency": "MXN",
+                },
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        budgets, "list_monthly_plan_for_lines", AsyncMock(return_value=plans)
+    )
+    overlay = AsyncMock(
+        side_effect=ValueError("invalid overlay") if failure == "error" else None,
+        return_value=(
+            plans,
+            {"tournament": "conflict"} if failure == "conflict" else {},
+        ),
+    )
+    monkeypatch.setattr(tournament_weekly_overlay, "effective_plans_for_lines", overlay)
+    monkeypatch.setattr(ar, "build_ar_read_model", AsyncMock(return_value={}))
+    loaded = await load(
+        SourceSession(versions=[{"id": "approved"}]), budget_version_id="approved"
+    )
+    result = build_cashflow_report(
+        loaded,
+        start=date(2026, 1, 1),
+        end=date(2026, 2, 1),
+        cutoff=date(2026, 1, 31),
+        forecast_end=date(2026, 2, 1),
+        currency="MXN",
+    )
+    assert loaded["source_status"]["budget"]["complete"] is False
+    assert result["summary"]["planned_budget_expense"] is None
+    assert result["summary"]["planned_budget_income"] == 50
+    if failure != "partial":
+        assert any(note.startswith("budget_") for note in result["source_notes"])

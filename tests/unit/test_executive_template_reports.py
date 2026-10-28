@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from samchat.executive.template_reports import (
     MONTH_LABELS_ES,
     build_budget_vs_actual_report,
@@ -130,3 +132,67 @@ def test_budget_vs_actual_report_degrades_without_monthly_granularity() -> None:
     assert report["rows"][0]["segment"] == "Presupuesto"
     assert report["summary"]["variance_accumulated_total"] == 75000.0
     assert "missing_breakdown_granularity" in report["source_notes"]
+
+
+def test_cashflow_report_keeps_unknown_expected_receipts_and_total():
+    report = build_cashflow_statement_report(
+        {
+            "period": {"year": 2026},
+            "currency": "MXN",
+            "monthly_buckets": [
+                {
+                    "year": 2026,
+                    "month": 1,
+                    "currency": "MXN",
+                    "expected_uncollected_income": None,
+                },
+                {
+                    "year": 2026,
+                    "month": 2,
+                    "currency": "MXN",
+                    "expected_uncollected_income": 1000,
+                },
+            ],
+        },
+        opening_balance=0,
+    )
+    row = next(
+        r for r in report["rows"] if r["segment"] == "Ingreso esperado no cobrado"
+    )
+    assert row["months"][:2] == [None, 1.0]
+    assert row["total"] is None
+
+
+def test_cashflow_report_does_not_restore_unknown_collections_as_zero():
+    report = build_cashflow_statement_report(
+        {
+            "period": {"year": 2026},
+            "currency": "MXN",
+            "monthly_buckets": [
+                {
+                    "year": 2026,
+                    "currency": "MXN",
+                    "month": 1,
+                    "actual_cash_in": 1000,
+                    "actual_cash_out": 200,
+                    "collected_income": None,
+                },
+                {
+                    "year": 2026,
+                    "currency": "MXN",
+                    "month": 2,
+                    "actual_cash_in": 100,
+                    "collected_income": 0,
+                },
+            ],
+        },
+        opening_balance=100,
+    )
+    rows = {row["segment"]: row for row in report["rows"]}
+    assert rows["Ingresos reales"]["months"][0] == 1
+    assert rows["Salidas reales"]["months"][0] == Decimal("0.2")
+    assert rows["Origen"]["months"][0] == 1
+    for label in ("Cobranza comprobada", "SALDO FINAL:"):
+        assert rows[label]["months"][0] is None
+        assert rows[label]["total"] is None
+    assert report["summary"]["saldo_final"] is None

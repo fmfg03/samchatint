@@ -15,6 +15,8 @@ def _payload() -> dict:
             "linked_income_total": 500,
             "issued_unlinked_total": 250,
             "invoiced_total": 750,
+            "invoiced_gross_total": 750,
+            "recognized_income_total": 600,
             "collected_total": 40,
             "balance_total": 710,
             "overdue_total": 60,
@@ -138,7 +140,7 @@ def test_render_ar_read_model_html_includes_executive_cxc_kpis():
     assert "$1,200.00" in html
     assert "Facturado" in html
     assert "$750.00" in html
-    assert "Cobrado comprobado" in html
+    assert "Cobrado registrado" in html
     assert "$40.00" in html
     assert "Saldo pendiente CxC" in html
     assert "$710.00" in html
@@ -279,7 +281,7 @@ def test_render_ar_read_model_html_does_not_confirm_collection():
         "outstanding confirmado",
     ]
     assert all(term not in html for term in forbidden_terms)
-    assert "estimado desde facturado menos cobrado comprobado" in html
+    assert "n/d no significa cero" in html
 
 
 def test_render_ar_read_model_html_handles_empty_payload():

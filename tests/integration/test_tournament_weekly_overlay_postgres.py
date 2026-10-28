@@ -827,12 +827,50 @@ async def test_independent_version_cannot_spoof_financial_lineage_via_metadata(
         assert plans[pairs[1][1]][4]["expected_income_amount"] == 2.0
 
 
+async def _cashflow_budget_report(session, monkeypatch, lines, *, horizon_year=2026):
+    """Read actual weekly owners with explicit synthetic currency evidence."""
+    from datetime import date
+    from unittest.mock import AsyncMock
+
+    from samchat.ar import service as ar
+    from samchat.cashflow import service as cashflow
+
+    scoped_lines = []
+    for line in lines:
+        amount = await session.scalar(
+            text("SELECT budget_amount FROM budget_lines WHERE id=CAST(:id AS uuid)"),
+            {"id": line["id"]},
+        )
+        scoped_lines.append({**line, "budget_amount": amount, "currency": "MXN"})
+    monkeypatch.setattr(
+        service, "list_budget_lines", AsyncMock(return_value=scoped_lines)
+    )
+    monkeypatch.setattr(ar, "build_ar_read_model", AsyncMock(return_value={}))
+    loaded = await cashflow.load_cashflow_sources(
+        session,
+        start=date(horizon_year or 2026, 1, 1),
+        end=date(2028, 1, 1),
+        forecast_end=date(2028, 1, 1),
+        budget_version_id=VERSION,
+        edition_year=2026,
+    )
+    return cashflow.build_cashflow_report(
+        loaded,
+        start=date(2026, 1, 1),
+        end=date(2028, 1, 1),
+        cutoff=date(2027, 12, 31),
+        forecast_end=date(2028, 1, 1),
+        currency="MXN",
+    )
+
+
 @pytest.mark.asyncio
 async def test_weekly_values_agree_in_direction_budget_matrix_and_cashflow(
     database, monkeypatch
 ):
     from datetime import date
     from unittest.mock import AsyncMock
+
     from devnous.gastos.routes.admin_budget_ui import _sum_budget_line_periods
     from samchat.cashflow import service as cashflow
     from samchat.client_executive.home_ui import render_budget_distribution
@@ -912,25 +950,15 @@ async def test_weekly_values_agree_in_direction_budget_matrix_and_cashflow(
         )
         assert matrix[39]["budget"] == 584640.0 and matrix[51]["budget"] == 99.91
         assert matrix[39]["plan_known"] and matrix[51]["plan_known"]
-        monkeypatch.setattr(
-            cashflow,
-            "list_budget_lines",
-            AsyncMock(return_value=liga + homeless + [income]),
+        report = await _cashflow_budget_report(
+            session, monkeypatch, liga + homeless + [income]
         )
-        buckets = {
-            f"2026-{m:02d}": {"planned_budget_income": 0, "planned_budget_expense": 0}
-            for m in (1, 9, 12)
-        }
-        notes = await cashflow._apply_budget_plan(
-            session,
-            budget_version_id=VERSION,
-            buckets_by_key=buckets,
-            budget_year=2026,
-            limit=5000,
+        buckets = {row["key"]: row for row in report["monthly_buckets"]}
+        assert (
+            "budget_distribution_requires_reconciliation" not in report["source_notes"]
         )
-        assert not notes
         assert buckets["2026-09"]["planned_budget_expense"] == 584640.0
-        assert buckets["2026-12"]["planned_budget_expense"] == 99.91
+        assert buckets["2026-12"]["planned_budget_expense"] == Decimal("99.91")
         assert buckets["2026-01"]["planned_budget_income"] == 50.0
 
 
@@ -939,6 +967,7 @@ async def test_cashflow_marks_conflicting_expense_unavailable_but_keeps_income(
     database, monkeypatch
 ):
     from unittest.mock import AsyncMock
+
     from samchat.cashflow import service as cashflow
 
     monkeypatch.setattr(service, "ensure_budget_schema", AsyncMock())
@@ -955,29 +984,18 @@ async def test_cashflow_marks_conflicting_expense_unavailable_but_keeps_income(
             {"id": LIGA_ZERO},
         )
         await session.commit()
-        monkeypatch.setattr(
-            cashflow, "list_budget_lines", AsyncMock(return_value=lines)
-        )
-        buckets = {
-            f"2026-{m:02d}": {"planned_budget_income": 0, "planned_budget_expense": 0}
-            for m in (1, 9, 12)
-        }
-        notes = await cashflow._apply_budget_plan(
-            session,
-            budget_version_id=VERSION,
-            buckets_by_key=buckets,
-            budget_year=2026,
-            limit=5000,
-        )
-        assert notes == ["budget_distribution_requires_reconciliation"]
+        report = await _cashflow_budget_report(session, monkeypatch, lines)
+        buckets = {row["key"]: row for row in report["monthly_buckets"]}
+        assert "budget_distribution_requires_reconciliation" in report["source_notes"]
         assert all(b["planned_budget_expense"] is None for b in buckets.values())
         assert buckets["2026-01"]["planned_budget_income"] == 50.0
 
 
 @pytest.mark.asyncio
-async def test_cashflow_overlay_failure_does_not_present_expense_as_zero(monkeypatch):
+async def test_cashflow_overlay_failure_does_not_present_expense_as_zero(
+    database, monkeypatch
+):
     from unittest.mock import AsyncMock
-    from samchat.cashflow import service as cashflow
 
     lines = [
         {"id": LIGA_COST, "line_direction": "expense"},
@@ -986,45 +1004,38 @@ async def test_cashflow_overlay_failure_does_not_present_expense_as_zero(monkeyp
     baseline = {
         LIGA_INCOME: {4: {"budget_expense_amount": 0, "expected_income_amount": 50}}
     }
-    monkeypatch.setattr(cashflow, "list_budget_lines", AsyncMock(return_value=lines))
-    monkeypatch.setattr(cashflow, "_budget_edition_year", AsyncMock(return_value=2026))
     monkeypatch.setattr(
-        cashflow, "list_monthly_plan_for_lines", AsyncMock(return_value=baseline)
+        service, "list_monthly_plan_for_lines", AsyncMock(return_value=baseline)
     )
     monkeypatch.setattr(
         overlay,
         "effective_plans_for_lines",
         AsyncMock(side_effect=ValueError("invalid overlay")),
     )
-    buckets = {"2026-01": {"planned_budget_income": 0, "planned_budget_expense": 0}}
-    notes = await cashflow._apply_budget_plan(
-        object(),
-        budget_version_id=VERSION,
-        buckets_by_key=buckets,
-        budget_year=2026,
-        limit=5000,
-    )
-    assert notes == ["budget_plan_unavailable:ValueError"]
+    async with AsyncSession(database) as session:
+        report = await _cashflow_budget_report(session, monkeypatch, lines)
+    buckets = {row["key"]: row for row in report["monthly_buckets"]}
+    assert "budget_plan_unavailable:ValueError" in report["source_notes"]
     assert buckets["2026-01"]["planned_budget_expense"] is None
-    assert buckets["2026-01"]["planned_budget_income"] == 50.0
+    assert buckets["2026-01"]["planned_budget_income"] == 50
 
 
 @pytest.mark.asyncio
 async def test_cashflow_missing_version_marks_both_plans_unavailable(database):
+    from datetime import date
+
     from samchat.cashflow import service as cashflow
 
-    buckets = {"2026-01": {"planned_budget_income": 0, "planned_budget_expense": 0}}
+    # An explicit unowned/unknown version fails closed instead of choosing another.
     async with AsyncSession(database) as session:
-        notes = await cashflow._apply_budget_plan(
-            session,
-            budget_version_id="10000000-0000-4000-8000-000000000999",
-            buckets_by_key=buckets,
-            budget_year=2026,
-            limit=5000,
-        )
-    assert notes == ["budget_plan_year_missing"]
-    assert buckets["2026-01"]["planned_budget_income"] is None
-    assert buckets["2026-01"]["planned_budget_expense"] is None
+        with pytest.raises(ValueError, match="budget_version_selection_denied"):
+            await cashflow.load_cashflow_sources(
+                session,
+                start=date(2026, 1, 1),
+                end=date(2026, 2, 1),
+                forecast_end=date(2026, 3, 1),
+                budget_version_id="10000000-0000-4000-8000-000000000999",
+            )
 
 
 @pytest.mark.asyncio
@@ -1034,6 +1045,7 @@ async def test_cashflow_uses_budget_version_edition_instead_of_horizon(
 ):
     """Week 23 starts in June 2026, but in May 2027."""
     from unittest.mock import AsyncMock
+
     from samchat.cashflow import service as cashflow
 
     lines = [
@@ -1042,22 +1054,16 @@ async def test_cashflow_uses_budget_version_edition_instead_of_horizon(
         {"id": LIGA_INCOME, "line_direction": "income"},
     ]
     monkeypatch.setattr(service, "ensure_budget_schema", AsyncMock())
-    monkeypatch.setattr(cashflow, "list_budget_lines", AsyncMock(return_value=lines))
     async with AsyncSession(database) as session:
         await apply(session, await preview(session, week=23))
         await session.commit()
-        buckets = {
-            month: {"planned_budget_income": 0, "planned_budget_expense": 0}
-            for month in ("2026-01", "2026-06", "2027-05")
-        }
-        notes = await cashflow._apply_budget_plan(
-            session,
-            budget_version_id=VERSION,
-            buckets_by_key=buckets,
-            budget_year=horizon_year,
-            limit=5000,
+        report = await _cashflow_budget_report(
+            session, monkeypatch, lines, horizon_year=horizon_year
         )
-        assert not notes
+        buckets = {row["key"]: row for row in report["monthly_buckets"]}
+        assert (
+            "budget_distribution_requires_reconciliation" not in report["source_notes"]
+        )
         assert buckets["2026-06"]["planned_budget_expense"] == 584640.0
         assert buckets["2027-05"]["planned_budget_expense"] == 0.0
         assert buckets["2026-01"]["planned_budget_income"] == 50.0

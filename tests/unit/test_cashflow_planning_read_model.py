@@ -46,7 +46,8 @@ def ar(**changes):
     result = dict(
         ar_item_id="linked:1",
         currency="MXN",
-        linked_income_amount="100",
+        linked_income_amount="116",
+        recognized_income_amount="100",
         recognized_income_date="2026-01-05",
         due_date="2026-01-31",
         collection_status="matched_collected",
@@ -648,3 +649,153 @@ def test_grouping_preserves_real_baseline_and_future_obligation_once(grouping):
     )
     assert result["summary"]["actual_cash_net"] == 100
     assert result["summary"]["forecast_net"] == 60
+
+
+@pytest.mark.parametrize(
+    "state", ["matched_collected", "partially_collected", "over_collected_review"]
+)
+def test_current_ar_receipts_keep_each_collection_in_its_year_month(state):
+    item = ar(
+        recognized_income_amount="1000",
+        linked_income_amount="1160",
+        collection_status=state,
+        collection_source="accepted_match",
+        collected_amount="400",
+        outstanding_amount="760",
+        due_date=None,
+        collection_matches=[],
+        collection_receipts=[
+            dict(id="receipt-1", accepted_amount="150", collection_date="2026-01-20"),
+            dict(id="receipt-2", accepted_amount="250", collection_date="2027-01-20"),
+        ],
+    )
+    result = report(
+        sources(ar_payload={"issued_linked": [item]}),
+        end=date(2027, 2, 1),
+        cutoff=date(2027, 1, 31),
+        forecast_end=date(2027, 2, 1),
+    )
+    january = {r["key"]: r for r in result["monthly_buckets"]}
+    assert january["2026-01"]["recognized_income"] == 1000
+    assert january["2026-01"]["collected_income"] == 150
+    assert january["2027-01"]["collected_income"] == 250
+    assert result["summary"]["collected_income"] == 400
+    assert result["summary"]["forecast_net"] is None
+    assert item["outstanding_amount"] == "760"
+
+
+def test_missing_recognized_income_does_not_fall_back_to_gross_invoice():
+    result = report(
+        sources(ar_payload={"issued_linked": [ar(recognized_income_amount=None)]})
+    )
+    assert result["summary"]["recognized_income"] is None
+    assert result["summary"]["collected_income"] == 100
+
+
+@pytest.mark.parametrize("state", ["candidate_match", "collection_unknown"])
+def test_current_ar_candidates_do_not_supply_collection_facts(state):
+    result = report(
+        sources(
+            ar_payload={
+                "issued_linked": [
+                    ar(
+                        collection_status=state,
+                        collection_matches=[],
+                        collected_amount=None,
+                        outstanding_amount=None,
+                        outstanding_amount_status="unknown",
+                    )
+                ]
+            }
+        )
+    )
+    assert result["summary"]["collected_income"] == 0
+    assert result["summary"]["forecast_net"] is None
+
+
+def test_current_ar_collection_conflict_does_not_show_zero_collection():
+    result = report(
+        sources(
+            ar_payload={
+                "issued_linked": [
+                    ar(collection_status="collection_conflict", collected_amount=None)
+                ]
+            }
+        )
+    )
+    assert result["summary"]["collected_income"] is None
+    assert result["summary"]["forecast_net"] is None
+    assert "ar_collection_conflict" in result["source_notes"]
+
+
+@pytest.mark.parametrize(
+    "gap",
+    [
+        "candidates_year_missing",
+        "income_lines_truncated",
+        "candidates_truncated",
+        "unlinked_accounting_count",
+        "unknown_balance_count",
+        "gross_amount_gap",
+        "recognized_income_gap",
+        "collection_conflict_count",
+    ],
+)
+def test_current_ar_coverage_gap_keeps_forecast_unknown(gap):
+    result = report(
+        sources(ar_payload={"source_coverage": {gap: True}, "issued_linked": [ar()]})
+    )
+    assert result["summary"]["expected_uncollected_income"] is None
+    assert result["summary"]["forecast_net"] is None
+    assert "ar_forecast_basis_and_schedule_unproven" in result["source_notes"]
+
+
+def test_current_ar_currency_gap_does_not_show_zero_income_or_collection():
+    result = report(
+        sources(ar_payload={"source_coverage": {"currency_gap": True}}), currency="MXN"
+    )
+    assert result["summary"]["recognized_income"] is None
+    assert result["summary"]["collected_income"] is None
+    assert result["summary"]["forecast_net"] is None
+    assert "ar_currency_coverage_missing" in result["source_notes"]
+
+
+def test_current_ar_unlinked_accounting_keeps_forecast_unknown():
+    result = report(sources(ar_payload={"unlinked_income_links": [{"id": "old-link"}]}))
+    assert result["summary"]["forecast_net"] is None
+    assert "ar_forecast_basis_and_schedule_unproven" in result["source_notes"]
+
+
+def test_direction_coverage_never_overrides_selected_account_scope():
+    from samchat.cashflow.service import _account_key
+
+    data = sources(
+        bank_rows=[bank(bank_account_id="bank-account-a")],
+        budget_plan=[
+            dict(year=2026, month=1, currency="MXN", direction="income", amount="1000")
+        ],
+    )
+    data["source_status"]["budget"]["direction_complete"] = {
+        "income": True,
+        "expense": True,
+    }
+    result = report(data, account=_account_key("1234567890123456"))
+    assert result["summary"]["actual_cash_in"] == 100
+    assert result["summary"]["planned_budget_income"] is None
+    assert result["summary"]["planned_budget_expense"] is None
+    assert not any(result["source_status"]["budget"]["direction_complete"].values())
+
+
+def test_direction_coverage_never_overrides_missing_budget_currency():
+    data = sources(
+        budget_plan=[
+            dict(year=2026, month=1, currency=None, direction="income", amount="1000")
+        ]
+    )
+    data["source_status"]["budget"]["direction_complete"] = {
+        "income": True,
+        "expense": True,
+    }
+    result = report(data, currency="MXN")
+    assert result["summary"]["planned_budget_income"] is None
+    assert result["summary"]["planned_budget_expense"] is None

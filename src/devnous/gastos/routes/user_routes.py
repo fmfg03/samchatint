@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import sys
 import asyncio
 import unicodedata
@@ -26,6 +27,7 @@ from typing import Optional, List, Union, Dict, Any, Tuple, Iterable, cast
 from uuid import UUID as UUIDType, uuid4
 from urllib.parse import quote, unquote, parse_qs, urlparse, urlencode
 from dotenv import dotenv_values
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from fastapi import APIRouter, Request, Form, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
 from sqlalchemy import select, func, and_, or_, text, exists
@@ -402,6 +404,15 @@ from ..services.payroll_run_service import (
     generate_accounting_policy_for_run,
     has_strict_payroll_account_coverage,
 )
+from ..services.payroll_amount_import_service import (
+    build_payroll_amount_preview,
+    confirm_payroll_amount_import,
+)
+from ..services.payroll_amount_workbook_parser import (
+    MAX_FILE_BYTES as PAYROLL_AMOUNT_MAX_BYTES,
+    parse_payroll_amount_workbook,
+)
+from ..models import PayrollAmountImport, PayrollAmountImportLine
 from ..services.tournament_phase_service import (
     DEFAULT_TOURNAMENT_ETAPAS,
     get_tournament_etapas,
@@ -2287,6 +2298,7 @@ def _payroll_subnav(active: str) -> str:
         ("/admin/nomina/periodos", "Períodos", "periodos"),
         ("/admin/nomina/incidencias", "Incidencias", "incidencias"),
         ("/admin/nomina/prenomina", "Prenómina", "prenomina"),
+        ("/admin/nomina/carga-importes", "Carga de importes", "carga-importes"),
         ("/admin/nomina/beneficios", "Beneficios", "beneficios"),
         ("/admin/nomina/cuentas", "Cuentas", "cuentas"),
         ("/admin/nomina/cfdi", "CFDI SAT", "cfdi"),
@@ -3296,6 +3308,305 @@ def _build_cxc_collection_line_payload(
     return lines, Decimal("0.00")
 
 
+def _payroll_amount_csrf(request: Request) -> str:
+    """Return a session-bound token without exposing any payroll content."""
+    if not request.session.get("payroll_amount_csrf"):
+        request.session["payroll_amount_csrf"] = secrets.token_urlsafe(32)
+    return request.session["payroll_amount_csrf"]
+
+
+def _check_payroll_amount_csrf(request: Request, submitted: str) -> None:
+    expected = request.session.get("payroll_amount_csrf", "")
+    if not expected or not secrets.compare_digest(expected, submitted):
+        raise HTTPException(
+            status_code=403, detail="Formulario inválido; vuelva a abrir la carga."
+        )
+
+
+def _payroll_amount_signer() -> URLSafeTimedSerializer:
+    secret = (os.getenv("SESSION_SECRET_KEY") or "").strip()
+    if not secret:
+        raise HTTPException(status_code=503, detail="La carga no está configurada.")
+    return URLSafeTimedSerializer(secret, salt="payroll-amount-preview-v1")
+
+
+def _payroll_amount_page(empleado: Empleado, body: str) -> str:
+    return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Carga de importes de nómina</title><style>
+    body {{font-family:Arial,sans-serif;background:#f6f8fb;margin:0;padding:20px}}
+    main {{max-width:1480px;margin:auto}}
+    section {{background:white;padding:20px;margin:16px 0;border-radius:10px}}
+    table {{border-collapse:collapse;width:100%}}
+    td,th {{padding:8px;text-align:left;border-bottom:1px solid #ddd}}
+    .scroll {{overflow:auto}} .error {{color:#991b1b}}
+    label {{display:block;margin:12px 0}}
+    button {{padding:12px;background:#111827;color:white;border:0;border-radius:8px}}
+    </style></head><body><main>{render_top_navigation(empleado, 'nomina')}
+    {_payroll_subnav('carga-importes')}<h1>Carga de importes de nómina</h1>
+    <p>Registra importes y destinos contables del archivo. La carga conserva el detalle
+    por empleado y no genera póliza ni registra un pago.</p>
+    {body}</main></body></html>"""
+
+
+def _payroll_amount_rows_html(rows: list[dict]) -> str:
+    parts = []
+    for row in rows:
+        for component in row["components"]:
+            pending = (
+                " · Pendiente de cuenta" if component.get("pending_mapping") else ""
+            )
+            parts.append(
+                "<tr>"
+                + "".join(
+                    f"<td>{escape(str(value))}</td>"
+                    for value in (
+                        row["source_row"],
+                        row["employee_code"],
+                        row["source_name"],
+                        component["label"],
+                        component["amount"],
+                        (component.get("account_code") or "—") + pending,
+                    )
+                )
+                + "</tr>"
+            )
+    return (
+        '<div class="scroll"><table><thead><tr><th>Fila</th><th>Clave</th>'
+        '<th>Empleado</th><th>Concepto</th><th>Importe MXN</th><th>Cuenta</th>'
+        '</tr></thead><tbody>'
+        + "".join(parts)
+        + "</tbody></table></div>"
+    )
+
+
+@router.get("/admin/nomina/carga-importes", response_class=HTMLResponse)
+async def nomina_amount_import_form(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+) -> str:
+    employers = (
+        (
+            await session.execute(
+                select(PayrollEmployer)
+                .where(PayrollEmployer.active.is_(True))
+                .order_by(PayrollEmployer.legal_name)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    periods = (
+        (
+            await session.execute(
+                select(PayrollPeriod)
+                .where(PayrollPeriod.status.in_(["draft", "open", "calculated"]))
+                .order_by(PayrollPeriod.start_date.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    batches = (
+        (
+            await session.execute(
+                select(PayrollAmountImport)
+                .order_by(PayrollAmountImport.created_at.desc())
+                .limit(20)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    employer_options = '<option value="">Seleccione un empleador</option>' + "".join(
+        f'<option value="{item.id}">{escape(item.legal_name)}</option>'
+        for item in employers
+    )
+    period_options = '<option value="">Seleccione un período</option>' + "".join(
+        f'<option value="{item.id}">{item.start_date} a {item.end_date}</option>'
+        for item in periods
+    )
+    history = "".join(
+        f'<li><a href="/admin/nomina/carga-importes/{item.id}">'
+        f'Carga {item.created_at:%Y-%m-%d %H:%M}</a> · '
+        + ("Pendiente de cuentas" if item.status == "pending_mapping" else "Validada")
+        + "</li>"
+        for item in batches
+    )
+    csrf = escape(_payroll_amount_csrf(request), quote=True)
+    body = f"""<section><form method="post"
+    action="/admin/nomina/carga-importes/preview" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{csrf}">
+    <label>Empleador <select name="employer_id" required>
+    {employer_options}</select></label>
+    <label>Período <select name="period_id" required>{period_options}</select></label>
+    <label>Archivo XLSX (máximo 10 MiB)
+    <input type="file" name="file" accept=".xlsx" required></label>
+    <p>Recalcule y guarde el Excel antes de cargarlo.
+    La plantilla sin montos sólo permite revisión.</p>
+    <button type="submit">Revisar carga</button></form></section>
+    <section><h2>Cargas recientes</h2>
+    <ul>{history or '<li>Sin cargas todavía.</li>'}</ul></section>"""
+    return _payroll_amount_page(current_empleado, body)
+
+
+async def _read_payroll_amount_upload(file: UploadFile):
+    contents = await file.read(PAYROLL_AMOUNT_MAX_BYTES + 1)
+    return await asyncio.to_thread(
+        parse_payroll_amount_workbook, file.filename or "", contents
+    )
+
+
+@router.post("/admin/nomina/carga-importes/preview", response_class=HTMLResponse)
+async def nomina_amount_import_preview(
+    request: Request,
+    employer_id: UUIDType = Form(...),
+    period_id: UUIDType = Form(...),
+    csrf_token: str = Form(...),
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+):
+    _check_payroll_amount_csrf(request, csrf_token)
+    try:
+        parsed = await _read_payroll_amount_upload(file)
+        plan = await build_payroll_amount_preview(
+            session, parsed, employer_id=employer_id, period_id=period_id
+        )
+    except ValueError as exc:
+        return HTMLResponse(
+            _payroll_amount_page(
+                current_empleado, f'<p class="error">{escape(str(exc))}</p>'
+            ),
+            status_code=422,
+        )
+    errors = "".join(
+        f'<li class="error">{escape(message)}</li>' for message in plan["errors"]
+    )
+    warnings = "".join(f"<li>{escape(message)}</li>" for message in plan["warnings"])
+    totals = plan["totals"]
+    confirmation = ""
+    if not plan["errors"]:
+        token = _payroll_amount_signer().dumps(
+            {
+                "actor": str(current_empleado.id),
+                "employer": str(employer_id),
+                "period": str(period_id),
+                "plan": plan["plan_sha256"],
+            }
+        )
+        confirmation = f"""<section><form method="post"
+        action="/admin/nomina/carga-importes/confirmar" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{escape(csrf_token, quote=True)}">
+        <input type="hidden" name="preview_token" value="{escape(token, quote=True)}">
+        <input type="hidden" name="employer_id" value="{employer_id}">
+        <input type="hidden" name="period_id" value="{period_id}">
+        <label>Seleccione el mismo archivo para confirmar
+        <input type="file" name="file" accept=".xlsx" required></label>
+        <p>La vista previa vence en 30 minutos. Se guardará el lote completo
+        con sus cuentas pendientes, si las hay.</p>
+        <button type="submit">Confirmar carga de importes</button></form></section>"""
+    body = f"""<section><h2>Vista previa</h2>
+    <p>{escape(plan['employer_label'])} · {escape(plan['period_label'])}</p>
+    <p>Referencia del archivo: {escape(plan.get('source_title', ''))}</p>
+    <p>{len(plan['rows'])} empleados · Percepciones: {totals['gross_total']} MXN ·
+    Deducciones: {totals['deductions_total']} MXN · Neto: {totals['net_total']} MXN.</p>
+    <p>Conceptos pendientes de cuenta: {plan['pending_count']}.</p>
+    <ul>{errors}{warnings}</ul>
+    {_payroll_amount_rows_html(plan['rows'])}</section>{confirmation}
+    <p><a href="/admin/nomina/carga-importes">Volver a la carga</a></p>"""
+    return HTMLResponse(
+        _payroll_amount_page(current_empleado, body), status_code=422 if errors else 200
+    )
+
+
+@router.post("/admin/nomina/carga-importes/confirmar")
+async def nomina_amount_import_confirm(
+    request: Request,
+    employer_id: UUIDType = Form(...),
+    period_id: UUIDType = Form(...),
+    csrf_token: str = Form(...),
+    preview_token: str = Form(...),
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+):
+    _check_payroll_amount_csrf(request, csrf_token)
+    try:
+        claim = _payroll_amount_signer().loads(preview_token, max_age=1800)
+        if not isinstance(claim, dict) or (
+            claim.get("actor"),
+            claim.get("employer"),
+            claim.get("period"),
+        ) != (str(current_empleado.id), str(employer_id), str(period_id)):
+            raise ValueError(
+                "La vista previa no corresponde a esta sesión o selección."
+            )
+        parsed = await _read_payroll_amount_upload(file)
+        import_id = await confirm_payroll_amount_import(
+            session,
+            parsed,
+            employer_id=employer_id,
+            period_id=period_id,
+            actor_id=current_empleado.id,
+            expected_plan_sha256=claim.get("plan", ""),
+        )
+    except (SignatureExpired, BadSignature):
+        raise HTTPException(
+            status_code=409, detail="Vista previa inválida o vencida; genere otra."
+        ) from None
+    except ValueError as exc:
+        return HTMLResponse(
+            _payroll_amount_page(
+                current_empleado,
+                f'<p class="error">{escape(str(exc))}</p>'
+                '<a href="/admin/nomina/carga-importes">Revisar de nuevo</a>',
+            ),
+            status_code=409,
+        )
+    return RedirectResponse(
+        url=f"/admin/nomina/carga-importes/{import_id}", status_code=303
+    )
+
+
+@router.get("/admin/nomina/carga-importes/{import_id}", response_class=HTMLResponse)
+async def nomina_amount_import_detail(
+    import_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+):
+    batch = await session.get(PayrollAmountImport, import_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Carga no encontrada.")
+    lines = (
+        (
+            await session.execute(
+                select(PayrollAmountImportLine)
+                .where(PayrollAmountImportLine.import_id == import_id)
+                .order_by(PayrollAmountImportLine.source_row)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    state = (
+        "Pendiente de cuentas; no lista para contabilizar"
+        if batch.status == "pending_mapping"
+        else "Importes validados"
+    )
+    body = f"""<section><h2>Recibo de carga</h2><p>{state}</p>
+    <p>Referencia: {batch.id} · Fecha: {batch.created_at}
+    · Actor: {batch.created_by_empleado_id}</p>
+    <p>Período: {batch.period_id} · Empleador: {batch.payroll_employer_id}</p>
+    <p>Percepciones: {batch.gross_total} MXN
+    · Deducciones: {batch.deductions_total} MXN · Neto: {batch.net_total} MXN.</p>
+    <p>Huella del archivo: {escape(batch.file_sha256)}</p>
+    {_payroll_amount_rows_html([line.source_json for line in lines])}</section>
+    <a href="/admin/nomina/carga-importes">Volver a la carga</a>"""
+    return _payroll_amount_page(current_empleado, body)
+
+
 @router.get("/admin/nomina/patrones", response_class=HTMLResponse)
 async def nomina_patrones_view(
     request: Request,
@@ -4268,7 +4579,7 @@ async def contabilidad_ingresos_view(
                 </div>
                 <div style="margin-top:14px;">
                     <button type="submit" class="button" {'disabled' if period_closed else ''}>Registrar ingreso cobrado</button>
-                    <span class="muted" style="margin-left:10px;">No hay autorización ni CxC: sólo se guarda si ya fue cobrado.</span>
+                    <span class="muted" style="margin-left:10px;">Si la factura tiene CxC, registra su cobro mediante conciliación bancaria en Finanzas.</span>
                 </div>
             </form>
         </div>
@@ -4357,6 +4668,15 @@ async def contabilidad_ingresos_save(
         cfdi_uuid=cfdi_uuid,
         cfdi_report_id=(cfdi_report.id if cfdi_report else None),
     )
+    if cuenta_cxc is not None:
+        return RedirectResponse(
+            url="/admin/finanzas/cuentas-por-cobrar?error_msg="
+            + quote(
+                "bank_reconciliation_required: los cobros de CxC se registran "
+                "exclusivamente mediante conciliación bancaria."
+            ),
+            status_code=303,
+        )
     cuenta_ingreso = await session.get(CuentaContable, form.get("cuenta_ingreso_id"))
     cuenta_iva = None
     cuenta_iva_id = str(form.get("cuenta_iva_id") or "").strip()

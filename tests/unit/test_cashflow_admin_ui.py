@@ -43,7 +43,7 @@ def test_render_cashflow_planning_html_includes_sections_and_copy():
     assert "Pagos aprobados / en proceso" in html
     assert "Ingresos presupuestados" in html
     assert "Egresos presupuestados" in html
-    assert "Ingreso facturado/reconocido" in html
+    assert "Ingreso reconocido contable" in html
     assert "Cobranza confirmada" in html
     assert "Variación proyectada" in html
     assert "Saldo inicial" in html
@@ -77,3 +77,36 @@ def test_render_cashflow_planning_html_does_not_treat_candidates_as_collection()
     assert "candidate_match cobrado" not in html
     assert "candidato ar cobrado" not in html
     assert "cobranza confirmada" in html
+
+
+def test_cashflow_unknown_forecast_is_not_rendered_as_zero():
+    payload = _payload()
+    for row in [payload["summary"], *payload["monthly_buckets"]]:
+        row["forecast_net"] = None
+        row["expected_uncollected_income"] = None
+    payload["source_notes"] = ["ar_forecast_basis_and_schedule_unproven"]
+    html = render_cashflow_planning_html(payload)
+    # Opening/closing and other uncovered fields also remain explicitly unknown.
+    assert "Variación proyectada</dt><dd>N/D</dd>" in html
+    assert "Cobros pendientes</dt><dd>N/D</dd>" in html
+    assert "base comparable" in html
+    assert "ar_forecast_basis" not in html
+    assert "$500.00" in html
+    assert "$400.00" in html
+
+
+def test_report_translates_collection_and_budget_coverage_notes():
+    payload = _payload()
+    payload["source_notes"] = [
+        "ar_currency_coverage_missing",
+        "ar_collection_conflict",
+        "budget_distribution_requires_reconciliation",
+        "budget_plan_unavailable:ProgrammingError",
+    ]
+    html = render_cashflow_planning_html(payload)
+    assert "moneda no está acreditada" in html
+    assert "evidencia en conflicto" in html
+    assert "calendario de egresos presupuestados requiere conciliación" in html
+    assert "calendario de egresos presupuestados no está disponible" in html
+    for note in payload["source_notes"]:
+        assert note not in html

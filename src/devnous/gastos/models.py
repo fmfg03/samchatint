@@ -3982,6 +3982,90 @@ class PayrollPeriod(Base):
     )
 
 
+class PayrollAmountImport(Base):
+    """Confirmed source amounts; separate from calculated or paid payroll."""
+
+    __tablename__ = "payroll_amount_imports"
+    __table_args__ = (
+        UniqueConstraint(
+            "period_id",
+            "payroll_employer_id",
+            "file_sha256",
+            name="uq_payroll_amount_file",
+        ),
+        UniqueConstraint(
+            "period_id",
+            "payroll_employer_id",
+            "content_sha256",
+            name="uq_payroll_amount_content",
+        ),
+        CheckConstraint(
+            "status IN ('validated', 'pending_mapping')",
+            name="ck_payroll_amount_status",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    period_id = Column(
+        UUID(as_uuid=True), ForeignKey("payroll_periods.id"), nullable=False, index=True
+    )
+    payroll_employer_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("payroll_employers.id"),
+        nullable=False,
+        index=True,
+    )
+    created_by_empleado_id = Column(
+        UUID(as_uuid=True), ForeignKey("empleados.id"), nullable=False
+    )
+    file_sha256 = Column(String(64), nullable=False)
+    content_sha256 = Column(String(64), nullable=False)
+    parser_version = Column(String(40), nullable=False)
+    status = Column(String(30), nullable=False)
+    gross_total = Column(Numeric(18, 2), nullable=False)
+    deductions_total = Column(Numeric(18, 2), nullable=False)
+    net_total = Column(Numeric(18, 2), nullable=False)
+    metadata_json = Column(JSONB, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+
+
+class PayrollAmountImportLine(Base):
+    """One employee's immutable source values and resolved account destinations."""
+
+    __tablename__ = "payroll_amount_import_lines"
+    __table_args__ = (
+        UniqueConstraint(
+            "import_id", "payroll_employee_id", name="uq_payroll_amount_employee"
+        ),
+        UniqueConstraint("import_id", "source_row", name="uq_payroll_amount_row"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    import_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("payroll_amount_imports.id"),
+        nullable=False,
+        index=True,
+    )
+    payroll_employee_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("payroll_employees.id"),
+        nullable=False,
+        index=True,
+    )
+    source_row = Column(Integer, nullable=False)
+    employee_code = Column(String(80), nullable=False)
+    source_name = Column(String(255), nullable=False)
+    days_paid = Column(Numeric(10, 4), nullable=False)
+    daily_salary = Column(Numeric(18, 4), nullable=True)
+    gross_total = Column(Numeric(18, 2), nullable=False)
+    deductions_total = Column(Numeric(18, 2), nullable=False)
+    net_total = Column(Numeric(18, 2), nullable=False)
+    source_json = Column(JSONB, nullable=False)
+
+
 class PayrollIncident(Base):
     """Prenómina incident captured before a payroll run."""
 

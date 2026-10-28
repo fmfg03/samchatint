@@ -162,6 +162,9 @@ def build_cashflow_report(
     def incomplete(lane, reason):
         available[lane] = False
         status[lane] = {**status[lane], "complete": False, "reason": reason}
+        if lane == "budget":
+            # Measure coverage never overrides an account/currency/scope gap.
+            status[lane]["direction_complete"] = {"income": False, "expense": False}
         if reason not in notes:
             notes.append(reason)
 
@@ -316,11 +319,33 @@ def build_cashflow_report(
             )
         )
     ar = sources.get("ar_payload") or {}
+    ar_coverage = ar.get("source_coverage") or {}
+    ar_forecast_unknown = bool(ar.get("unlinked_income_links")) or any(
+        ar_coverage.get(key)
+        for key in (
+            "candidates_year_missing",
+            "currency_gap",
+            "income_lines_truncated",
+            "candidates_truncated",
+            "unlinked_accounting_count",
+            "unknown_balance_count",
+            "gross_amount_gap",
+            "recognized_income_gap",
+            "collection_conflict_count",
+        )
+    )
+    if ar_forecast_unknown:
+        notes.append("ar_forecast_basis_and_schedule_unproven")
+    if ar_coverage.get("currency_gap"):
+        incomplete("ar", "ar_currency_coverage_missing")
     ar_rows = _unique(
         [*(ar.get("issued_linked") or []), *(ar.get("issued_unlinked") or [])],
         notes,
         "ar",
     )
+    if any(row.get("collection_status") == "collection_conflict" for row in ar_rows):
+        ar_forecast_unknown = True
+        notes.append("ar_collection_conflict")
     budget_plan = list(sources.get("budget_plan") or [])
     if project != "all":
         ar_rows = [
@@ -449,6 +474,7 @@ def build_cashflow_report(
             bucket["expected_uncollected_income"] = (
                 _total(r["amount"] for r in incoming)
                 if available["ar"]
+                and not ar_forecast_unknown
                 and curr != "SIN_MONEDA"
                 and not any(
                     r["currency"] == curr and (r["amount"] is None or not r["date"])
@@ -458,7 +484,11 @@ def build_cashflow_report(
             )
             # Facturation/cobranza describe stages; neither is an extra cash entry.
             for field, date_field, amount_field in (
-                ("recognized_income", "recognized_income_date", "linked_income_amount"),
+                (
+                    "recognized_income",
+                    "recognized_income_date",
+                    "recognized_income_amount",
+                ),
                 ("collected_income", "collection_date", "collected_amount"),
             ):
                 events = []
@@ -469,9 +499,26 @@ def build_cashflow_report(
                     if field == "recognized_income":
                         if row.get("recognized_income_date") is None:
                             continue
+                        if ar_coverage.get("recognized_income_gap"):
+                            valid = False
                         entries = [(row.get(date_field), row.get(amount_field))]
                     else:
-                        proofs = row.get("collection_matches") or []
+                        if row.get("collection_status") == "collection_conflict":
+                            valid = False
+                            continue
+                        if row.get("collection_status") not in {
+                            "matched_collected",
+                            "partially_collected",
+                            "over_collected_review",
+                        }:
+                            continue
+                        # Current AR exposes each active accepted receipt; the
+                        # company-scoped DTO also retains its status-bearing matches.
+                        proofs = row.get("collection_matches") or [
+                            {**receipt, "status": "accepted_collection_match"}
+                            for receipt in row.get("collection_receipts") or []
+                            if row.get("collection_source") == "accepted_match"
+                        ]
                         accepted = [
                             proof
                             for proof in proofs
@@ -518,7 +565,11 @@ def build_cashflow_report(
                 ]
                 bucket[field] = (
                     _total(r.get("amount") for r in plan)
-                    if available["budget"] and curr != "SIN_MONEDA"
+                    if status["budget"].get("available")
+                    and status["budget"]
+                    .get("direction_complete", {})
+                    .get(direction, available["budget"])
+                    and curr != "SIN_MONEDA"
                     else None
                 )
             expected, approved = (
@@ -942,6 +993,7 @@ async def load_cashflow_sources(
         "ar_payload": None,
         "budget_plan": [],
         "source_status": {},
+        "source_notes": [],
     }
     status = result["source_status"]
     result["state_as_of"] = date.today().isoformat()
@@ -1288,28 +1340,85 @@ async def load_cashflow_sources(
                         **scope,
                     )
                     if len(lines) >= 5000:
-                        return [], False
+                        return [], {"income": False, "expense": False}
                     plans = await list_monthly_plan_for_lines(
                         session,
                         line_ids=[str(row["id"]) for row in lines],
                         ensure_schema=False,
                         **scope,
                     )
-                    records = []
-                    plan_complete = all(
-                        bool(plans.get(str(line["id"]))) for line in lines
+                    from samchat.budgets.distribution import schedule_state, week_bounds
+                    from samchat.budgets.tournament_weekly_overlay import (
+                        effective_plans_for_lines,
                     )
+
+                    overlay_failed = False
+                    conflicts = {}
+                    try:
+
+                        async def overlay_operation():
+                            return await effective_plans_for_lines(
+                                session,
+                                version_id=budget_version_id,
+                                line_ids=[str(row["id"]) for row in lines],
+                                baseline_plans=plans,
+                            )
+
+                        plans, conflicts = await _cashflow_source_savepoint(
+                            session, overlay_operation
+                        )
+                    except (SQLAlchemyError, ValueError, TypeError) as exc:
+                        overlay_failed = True
+                        result["source_notes"].append(
+                            f"budget_plan_unavailable:{type(exc).__name__}"
+                        )
+                    if conflicts:
+                        result["source_notes"].append(
+                            "budget_distribution_requires_reconciliation"
+                        )
+                    edition = version.get("edition_year")
+                    if edition is None:
+                        return [], {"income": False, "expense": False}
+                    direction_complete = {
+                        direction: edition is not None
+                        and all(
+                            bool(plans.get(str(line["id"])))
+                            for line in lines
+                            if (
+                                line.get("line_direction")
+                                or line.get("budget_direction")
+                            )
+                            == direction
+                        )
+                        for direction in ("income", "expense")
+                    }
+                    direction_complete["expense"] = direction_complete[
+                        "expense"
+                    ] and all(
+                        schedule_state(line, plans.get(str(line["id"])) or {})["status"]
+                        == "complete"
+                        for line in lines
+                        if (line.get("line_direction") or line.get("budget_direction"))
+                        == "expense"
+                    )
+                    if conflicts or overlay_failed:
+                        direction_complete["expense"] = False
+                    records = []
                     for line in lines:
-                        monthly = plans.get(str(line["id"])) or {}
-                        for month, values in monthly.items():
+                        weekly = plans.get(str(line["id"])) or {}
+                        for week, values in weekly.items():
+                            try:
+                                week_start, _ = week_bounds(int(edition), int(week))
+                            except (TypeError, ValueError):
+                                return [], {"income": False, "expense": False}
                             direction = line.get("line_direction") or line.get(
                                 "budget_direction"
                             )
                             records.append(
                                 {
                                     "budget_line_id": str(line["id"]),
-                                    "year": version.get("edition_year"),
-                                    "month": int(month),
+                                    "year": week_start.year,
+                                    "month": week_start.month,
                                     "currency": line.get("currency"),
                                     "direction": direction,
                                     "amount": (
@@ -1320,12 +1429,13 @@ async def load_cashflow_sources(
                                     "tournament_id": line.get("tournament_id"),
                                 }
                             )
-                    return records, plan_complete
+                    return records, direction_complete
 
                 try:
-                    plan, complete = await _cashflow_source_savepoint(
+                    plan, direction_complete = await _cashflow_source_savepoint(
                         session, budget_operation
                     )
+                    complete = all(direction_complete.values())
                     result["budget_plan"] = plan
                     currency_known = bool(plan) and all(
                         row.get("currency")
@@ -1352,6 +1462,10 @@ async def load_cashflow_sources(
                             )
                         ),
                     )
+                    status["budget"]["direction_complete"] = {
+                        direction: valid and currency_known
+                        for direction, valid in direction_complete.items()
+                    }
                 except SQLAlchemyError as exc:
                     status["budget"] = _cashflow_source_state(
                         False, False, f"Plan no disponible ({type(exc).__name__})."
@@ -1362,6 +1476,7 @@ async def load_cashflow_sources(
                         session,
                         budget_version_id=budget_version_id,
                         tournament_id=tournament,
+                        calendar_year=start.year,
                         limit=5000,
                         ensure_schema=False,
                         credit_days_default=max(0, min(int(credit_days), 365)),

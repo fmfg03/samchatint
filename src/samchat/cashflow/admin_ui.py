@@ -29,7 +29,7 @@ FUTURE_FIELDS = (
 CONTEXT_FIELDS = (
     ("planned_budget_income", "Ingresos presupuestados"),
     ("planned_budget_expense", "Egresos presupuestados"),
-    ("recognized_income", "Ingreso facturado/reconocido"),
+    ("recognized_income", "Ingreso reconocido contable"),
     ("collected_income", "Cobranza confirmada"),
 )
 SOURCE_LABELS = {
@@ -69,6 +69,26 @@ def _source_label(value: Any) -> Any:
 def _visible_note(value: Any) -> Any:
     if value is None:
         return None
+    descriptions = {
+        "ar_forecast_basis_and_schedule_unproven": (
+            "Proyección no disponible: falta una base comparable y una fecha "
+            "prevista de cobro para CxC. Consulte el saldo en Cuentas por Cobrar."
+        ),
+        "ar_currency_coverage_missing": (
+            "Cuentas por cobrar: la moneda no está acreditada en todos los registros."
+        ),
+        "ar_collection_conflict": (
+            "Cuentas por cobrar: hay cobros con evidencia en conflicto; "
+            "la proyección requiere conciliación."
+        ),
+        "budget_distribution_requires_reconciliation": (
+            "El calendario de egresos presupuestados requiere conciliación."
+        ),
+    }
+    if str(value) in descriptions:
+        return descriptions[str(value)]
+    if str(value).startswith("budget_plan_unavailable:"):
+        return "El calendario de egresos presupuestados no está disponible."
     text = str(value)
     for name, label in SOURCE_LABELS.items():
         if text.startswith(name + ":"):

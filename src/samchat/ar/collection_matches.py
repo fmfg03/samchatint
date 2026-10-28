@@ -10,6 +10,12 @@ from typing import Any, Optional
 
 from sqlalchemy import text
 
+from .collection_integrity import (
+    CollectionSourceConflict,
+    guard_collection_channel,
+    load_collection_source_context,
+    require_collection_period_open,
+)
 
 ACCEPTED_STATUS = "accepted_collection_match"
 REVERSED_STATUS = "match_reversed"
@@ -155,16 +161,15 @@ async def _load_bank_movement(session: Any, bank_movement_id: str) -> dict[str, 
     row = (
         (
             await session.execute(
-                text(
-                    """
+                text("""
                     SELECT id, signo, importe, fecha, cuenta_bancaria, rfc_ordenante,
                            nombre_ordenante, descripcion, concepto_banco,
                            conciliacion_estado
                     FROM bank_movements
                     WHERE id = CAST(:bank_movement_id AS uuid)
                     LIMIT 1
-                    """
-                ),
+                    FOR UPDATE
+                    """),
                 {"bank_movement_id": bank_movement_id},
             )
         )
@@ -198,17 +203,34 @@ async def _resolve_bank_account(session: Any, bank_movement: dict[str, Any], acc
     return dict(account)
 
 
-async def _resolve_cxc_account(session: Any, cfdi_report_id: str) -> dict[str, Any]:
-    row = (await session.execute(text("""
-        SELECT line.cuenta_contable_id AS id, line.cuenta_codigo AS codigo
+async def _resolve_cxc_account(
+    session: Any, cfdi_report_id: str, source_poliza_id: str = ""
+) -> dict[str, Any]:
+    row = (
+        (
+            await session.execute(
+                text("""
+        SELECT line.cuenta_contable_id AS id, line.cuenta_codigo AS codigo,
+               line.debe AS receivable_amount
         FROM accounting_polizas poliza
         JOIN accounting_poliza_lines line ON line.poliza_id = poliza.id
         WHERE poliza.origen = 'cxc_cfdi_income'
           AND poliza.cfdi_report_id = CAST(:cfdi_report_id AS uuid)
+          AND (NULLIF(:source_poliza_id, '') IS NULL
+               OR poliza.id = CAST(NULLIF(:source_poliza_id, '') AS uuid))
           AND COALESCE(line.raw_row_json->>'movement', '') = 'debe_cxc'
           AND COALESCE(line.debe, 0) > 0
         ORDER BY line.created_at ASC LIMIT 1
-    """), {"cfdi_report_id": _safe_str(cfdi_report_id)})).mappings().first()
+    """),
+                {
+                    "cfdi_report_id": _safe_str(cfdi_report_id),
+                    "source_poliza_id": source_poliza_id,
+                },
+            )
+        )
+        .mappings()
+        .first()
+    )
     if not row or not row.get("id"):
         raise ARCollectionMatchError("cxc_source_posting_missing")
     return dict(row)
@@ -569,14 +591,43 @@ async def accept_ar_collection_match(
     )
     if active_bank:
         raise ARCollectionMatchError("active_match_exists_for_bank_movement")
+    try:
+        await guard_collection_channel(
+            session,
+            cfdi_report_id=_safe_str(ar_item.get("cfdi_report_id")),
+            channel="match",
+        )
+        source_context = await load_collection_source_context(session, ar_item)
+        await require_collection_period_open(session, bank_movement.get("fecha"))
+    except CollectionSourceConflict as exc:
+        raise ARCollectionMatchError(str(exc)) from exc
     await session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:ar_item_id))"), {
         "ar_item_id": _safe_str(ar_item.get("ar_item_id")),
     })
-    previously_collected = (await session.execute(text("""
+    previously_collected = (
+        (
+            await session.execute(
+                text("""
         SELECT COALESCE(SUM(accepted_amount), 0) AS total
         FROM ar_collection_matches
-        WHERE ar_item_id = :ar_item_id AND status = :status
-    """), {"ar_item_id": _safe_str(ar_item.get("ar_item_id")), "status": ACCEPTED_STATUS})).mappings().first()
+        WHERE cfdi_report_id = CAST(:cfdi_report_id AS uuid) AND status = :status
+    """),
+                {
+                    "cfdi_report_id": _safe_str(ar_item.get("cfdi_report_id")),
+                    "status": ACCEPTED_STATUS,
+                },
+            )
+        )
+        .mappings()
+        .first()
+    )
+    cxc_account = await _resolve_cxc_account(
+        session,
+        _safe_str(ar_item.get("cfdi_report_id")),
+        _safe_str(source_context.get("accounting_poliza_id")),
+    )
+    if _ar_amount(ar_item) != _safe_float(cxc_account.get("receivable_amount")):
+        raise ARCollectionMatchError("ar_source_amount_changed")
     _validate_acceptance(
         ar_item=ar_item, bank_movement=bank_movement, acceptance_reason=clean_reason,
         tolerance=safe_tolerance, already_collected=_safe_float((previously_collected or {}).get("total")),
@@ -585,12 +636,11 @@ async def accept_ar_collection_match(
     bank_account = await _resolve_bank_account(session, bank_movement, bank_account_id)
     if not _safe_str(ar_item.get("cfdi_report_id")):
         raise ARCollectionMatchError("cfdi_report_id_required_for_collection_posting")
-    cxc_account = await _resolve_cxc_account(session, _safe_str(ar_item.get("cfdi_report_id")))
-
     evidence_payload = {
         "accepted_at": _now_iso(),
         "bank_movement": _snapshot(bank_movement),
         "ar_item": _snapshot(ar_item),
+        "source_context": _snapshot(source_context),
         **(evidence or {}),
     }
     row = await _insert_match(
@@ -630,54 +680,21 @@ async def reverse_ar_collection_match(
     actor_empleado_id: Optional[str],
     reversal_reason: str,
 ) -> dict[str, Any]:
-    """Reverse an accepted AR collection match without deleting history."""
+    """Prepare the exact original, but fail closed until Finance defines the date/period rule."""
+    from .reversal_preview import REVERSAL_BLOCKER, prepare_collection_reversal
 
-    await ensure_ar_collection_match_schema(session)
-    clean_reason = _safe_str(reversal_reason)
-    if not clean_reason:
+    if not _safe_str(actor_empleado_id):
+        raise ARCollectionMatchError("reversal_actor_required")
+    if not _safe_str(reversal_reason):
         raise ARCollectionMatchError("reversal_reason_required")
     before = await _load_match(session, match_id)
     if not before:
         raise ARCollectionMatchError("collection_match_not_found")
     if _safe_str(before.get("status")) != ACCEPTED_STATUS:
         raise ARCollectionMatchError("collection_match_not_active")
-    await session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:match_id))"), {"match_id": match_id})
-    if not before.get("accounting_poliza_id"):
-        raise ARCollectionMatchError("collection_posting_missing")
-    bank_movement = await _load_bank_movement(session, _safe_str(before.get("bank_movement_id")))
-    bank_reference = _bank_reference(bank_movement.get("cuenta_bancaria"))
-    mapping = (await session.execute(text("""
-        SELECT map.cuenta_contable_id AS id, account.codigo
-        FROM ar_bank_account_mappings map
-        JOIN cuentas_contables account ON account.id = map.cuenta_contable_id
-        WHERE map.bank_account_reference = :reference AND account.activo IS TRUE
-    """), {"reference": bank_reference})).mappings().first()
-    if not mapping:
-        raise ARCollectionMatchError("bank_account_mapping_missing")
-    cxc_account = await _resolve_cxc_account(session, _safe_str(before.get("cfdi_report_id")))
-    reversal_poliza_id = await _create_collection_poliza(
-        session, match_id=_safe_str(before.get("id")), match=before,
-        bank_account=dict(mapping), cxc_account=cxc_account, reversal=True,
-    )
-    after = await _update_match_reversed(
-        session,
-        match_id=match_id,
-        actor_empleado_id=actor_empleado_id,
-        reversal_reason=clean_reason,
-    )
-    await session.execute(text("""
-        UPDATE ar_collection_matches
-        SET reversal_poliza_id = CAST(:poliza_id AS uuid), updated_at = NOW()
-        WHERE id = CAST(:match_id AS uuid)
-    """), {"poliza_id": reversal_poliza_id, "match_id": match_id})
-    after["reversal_poliza_id"] = reversal_poliza_id
-    await _audit_match_event(
-        session,
-        collection_match_id=_safe_str(after.get("id") or before.get("id")),
-        action="reverse_collection_match",
-        actor_empleado_id=actor_empleado_id,
-        before_state=before,
-        after_state=after,
-        details={"reason": clean_reason},
-    )
-    return after
+    try:
+        await prepare_collection_reversal(session, before)
+    except ValueError as exc:
+        raise ARCollectionMatchError(str(exc)) from exc
+    # No implicit date, current account mapping, DDL, or historical mutation.
+    raise ARCollectionMatchError(REVERSAL_BLOCKER)

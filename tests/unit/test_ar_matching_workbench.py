@@ -245,3 +245,62 @@ async def test_matching_workbench_skips_items_with_active_matches():
     assert result["items"] == []
     assert result["accepted_matches"][0]["id"] == "match-1"
     assert result["summary"]["accepted_match_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_workbench_preserves_source_identity_and_keeps_partial_open():
+    payload = _read_model_item(amount=1000)
+    payload["financial_version_id"] = "financial-root"
+    payload["issued_linked"][0].update(
+        budget_version_id="financial-root",
+        budget_line_id="line-1",
+        cfdi_report_id="cfdi-1",
+        collection_status="partially_collected",
+        outstanding_amount=600,
+    )
+    with (
+        patch(
+            "samchat.ar.matching.build_ar_read_model",
+            new=AsyncMock(return_value=payload),
+        ),
+        patch(
+            "samchat.ar.matching.list_candidate_bank_inflows",
+            new=AsyncMock(return_value=[_bank_movement(amount=600)]),
+        ),
+        patch(
+            "samchat.ar.matching.list_ar_collection_matches",
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "id": "receipt-1",
+                        "ar_item_id": "linked:1",
+                        "accepted_amount": 400,
+                    }
+                ]
+            ),
+        ) as receipts,
+    ):
+        result = await build_ar_matching_workbench(
+            object(), budget_version_id="revision"
+        )
+    assert len(result["items"]) == 1
+    item = result["items"][0]
+    assert item["budget_version_id"] == "financial-root"
+    assert item["budget_line_id"] == "line-1"
+    assert item["cfdi_report_id"] == "cfdi-1"
+    assert item["amount"] == 1000
+    assert item["outstanding_amount"] == 600
+    assert item["status"] == "candidate_match"
+    assert receipts.await_args.kwargs["budget_version_id"] == "financial-root"
+    from samchat.ar.admin_ui import _accept_match_form
+
+    form = _accept_match_form(
+        item,
+        item["candidate_evidence"][0],
+        budget_version_id="revision",
+        action_base="/ar",
+        return_to="/ar",
+    )
+    assert 'name="cfdi_report_id" value="cfdi-1"' in form
+    assert 'name="budget_line_id" value="line-1"' in form
+    assert 'name="budget_version_id" value="financial-root"' in form
