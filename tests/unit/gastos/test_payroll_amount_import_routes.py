@@ -45,7 +45,7 @@ def harness(monkeypatch):
     app = FastAPI()
     app.add_middleware(SessionMiddleware, secret_key="test-only-cookie-secret")
     for route in routes.router.routes:
-        if route.path.startswith("/admin/nomina/carga-importes"):
+        if getattr(route, "path", "").startswith("/admin/nomina/carga-importes"):
             app.add_api_route(
                 route.path,
                 route.endpoint,

@@ -170,3 +170,9 @@ Resultado local posterior: **93 pruebas aprobadas**, incluyendo las regresiones
 de los tres hallazgos y la suite existente del límite de DDL de AMEX. Los checks
 del PR se repiten sobre el nuevo head; los resultados del head anterior no se
 usan para autorizar la promoción. El primer candidato preparado no se desplegó.
+
+CI completo detectó además una incompatibilidad del fixture HTTP con FastAPI
+0.162: su grafo incluye nodos `_IncludedRouter` sin atributo `path`. El fixture
+selecciona ahora sólo entradas con `path`; no cambia código productivo. Los
+14 errores de setup quedaron atribuidos a esa prueba nueva y se corrigieron,
+sin cambiar la baseline de fallos aceptados ni ocultar el fallo.
