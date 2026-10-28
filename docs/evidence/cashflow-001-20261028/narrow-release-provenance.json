@@ -1,7 +1,7 @@
 {
-  "base": "80084893936dd2214239f52107150e4f86c1a150",
+  "base": "f8c9c11b05e3e3be071d4199e97e9e3a55173191",
   "approved_source_head": "db2084bb9d0e81a518d2622819d008182da5e960",
-  "supersedes": "Preliminary main plus historical cherry-pick plan; avoids activating unrelated AR owners.",
+  "supersedes": "Prepared465b on800848; current f8c9 accounting fix retained; no earlier preparation was deployed.",
   "ast_outside_approved_functions_unchanged": {
     "src/devnous/gastos/routes/admin_routes.py": [
       "admin_finance_cashflow"
@@ -28,13 +28,14 @@
     "src/samchat/executive/template_reports.py"
   ],
   "preserved_owner_sha256": {
-    "src/samchat/ar/service.py": "e4cd3602ff69d58791439e6e2f9c61c0d964e194f4e11b4dbbdb02d084386600",
+    "src/devnous/gastos/services/cfdi_income_bridge_service.py": "f615ccf03227a5ea2364616e57f3592514897daf1dde7789b70984b1eeda8871",
+    "src/samchat/accounting_historical/service.py": "ecf19a28e9527bd8e24ef5815901deff389472a84fc3a012b8269f4a47c692a2",
     "src/samchat/ar/collection_matches.py": "77a7a93346bd784333cae1fb42ad805b32f310a87f46088a4c5d15fd961bf7bb",
     "src/samchat/ar/matching.py": "0368e9f0dd914d05b67c6948e2d00cd31682e7eebb6039a7ad0e4a4ec2847dee",
+    "src/samchat/ar/service.py": "e4cd3602ff69d58791439e6e2f9c61c0d964e194f4e11b4dbbdb02d084386600",
+    "src/samchat/assistant/tools.py": "c28700659d74d92cb042b7546fa20dbdf7cec0e99ad2f435bb6c70a56fe87753",
     "src/samchat/budgets/service.py": "9da838965992184c5aeb367d1c3223b1320f21f9952ff2a7b9752b8780a00ff0",
-    "src/samchat/budgets/tournament_weekly_overlay.py": "06462fb82eacc4153d91ff25de4b936fdb57508ce8f620b04665df6ff8bf5ff2",
-    "src/devnous/gastos/services/cfdi_income_bridge_service.py": "f615ccf03227a5ea2364616e57f3592514897daf1dde7789b70984b1eeda8871",
-    "src/samchat/accounting_historical/service.py": "ecf19a28e9527bd8e24ef5815901deff389472a84fc3a012b8269f4a47c692a2"
+    "src/samchat/budgets/tournament_weekly_overlay.py": "06462fb82eacc4153d91ff25de4b936fdb57508ce8f620b04665df6ff8bf5ff2"
   },
   "canon": "Canon unchanged; all three hashes verified in order against serving register.",
   "effects": "local release preparation only; no production mutation",
@@ -48,10 +49,19 @@
     "preserved_owner_regressions_passed": 234,
     "private_plugin_passed": 135,
     "inventory": "613/578/44; no parse gaps",
-    "source_ast_scope": "6 approved functions exactly match db208; all AST outside identical to serving800848",
+    "source_ast_scope": "six functions approved db208; all other AST identical to fresh f8c9",
     "runtime_modules": "three byte-identical to approved db208",
     "guards": "both pass; canonical deploy script rechecks before promotion",
     "runtime_imports": "pass with existing production venv",
-    "review": "independent release review plus targeted reviewed UX fix, reproduced exact AST/owner assertions"
-  }
+    "review": "independent release review plus targeted reviewed UX fix, reproduced exact AST/owner assertions",
+    "fresh_accounting_preservation_tests_passed": 20,
+    "prospective_main_merge": "db208+660104 clean; regenerated inventory identical;135 private-plugin tests pass"
+  },
+  "prior_prepared_base": "80084893936dd2214239f52107150e4f86c1a150",
+  "concurrent_serving_delta_preserved": [
+    "docs/ops/historical-explicit-source-import-20261028.md",
+    "src/samchat/assistant/tools.py",
+    "tests/integration/test_historical_explicit_manifest_postgres.py",
+    "tests/unit/test_assistant_historical_report_coverage.py"
+  ]
 }
