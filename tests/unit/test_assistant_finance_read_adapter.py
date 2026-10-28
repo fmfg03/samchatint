@@ -12,6 +12,45 @@ from samchat.assistant import finance_read_adapter
 from samchat.assistant.finance_read_adapter import run_finance_read_adapter
 
 
+def _jsonb_trace_processor(driver):
+    from sqlalchemy.dialects.postgresql import JSONB, psycopg, psycopg2
+
+    from devnous.gastos.models import AssistantRun
+
+    trace_type = AssistantRun.__table__.c.tool_trace.type
+    assert isinstance(trace_type, JSONB)
+    pg_dialect = {"psycopg2": psycopg2, "psycopg": psycopg}[driver].dialect()
+    processor = trace_type.bind_processor(pg_dialect)
+    if processor is None:
+        assert pg_dialect.supports_native_json_serialization
+    return processor
+
+
+def _strict_jsonb_trace_roundtrip(trace, processor):
+    # Native JSON drivers accept the Python value; other drivers accept the
+    # type's serialized value. Both must still satisfy PostgreSQL JSON syntax.
+    bound = (
+        json.dumps(trace, allow_nan=False) if processor is None else processor(trace)
+    )
+    assert isinstance(bound, (str, bytes, bytearray))
+
+    def reject_nonfinite_json(token):
+        raise ValueError(f"Non-finite JSON constant: {token}")
+
+    return json.loads(bound, parse_constant=reject_nonfinite_json)
+
+
+@pytest.mark.parametrize("uses_processor", [False, True], ids=["native", "encoded"])
+def test_jsonb_trace_requires_strict_json_on_both_binding_paths(uses_processor):
+    processor = json.dumps if uses_processor else None
+    trace = [{"result": {"amount": 100.1, "opening": None, "count": 0, "ok": True}}]
+    assert _strict_jsonb_trace_roundtrip(trace, processor) == trace
+    for amount in (float("nan"), float("inf"), float("-inf")):
+        invalid_trace = [{"result": {"amount": amount}}]
+        with pytest.raises(ValueError):
+            _strict_jsonb_trace_roundtrip(invalid_trace, processor)
+
+
 @pytest.mark.asyncio
 async def test_adapter_routes_ar_summary_to_canonical_read_model():
     source = AsyncMock(
@@ -187,10 +226,8 @@ async def test_adapter_routes_cashflow_statement_to_template_report():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("intent", ["cashflow.summary", "cashflow.statement"])
-async def test_cashflow_results_cross_provider_and_jsonb_boundaries(intent):
-    from sqlalchemy.dialects.postgresql import dialect
-
-    from devnous.gastos.models import AssistantRun
+@pytest.mark.parametrize("driver", ["psycopg2", "psycopg"])
+async def test_cashflow_results_cross_provider_and_jsonb_boundaries(intent, driver):
     from samchat.cashflow.service import build_cashflow_report
 
     source_payload = build_cashflow_report(
@@ -234,13 +271,12 @@ async def test_cashflow_results_cross_provider_and_jsonb_boundaries(intent):
             object(), intent=intent, year=2026, month=1
         )
 
-    # Provider messages use plain json.dumps, and the ORM's actual JSONB column
-    # uses the default JSON serializer for the same result inside a tool trace.
+    # Providers use plain json.dumps. The ORM's actual JSONB column may encode
+    # the same trace or delegate serialization to a native JSON driver.
     decoded = json.loads(json.dumps(result, ensure_ascii=False, allow_nan=False))
     trace = [{"tool": "assistant_finance_read", "result": result}]
-    bind_trace = AssistantRun.__table__.c.tool_trace.type.bind_processor(dialect())
-    assert bind_trace is not None
-    assert json.loads(bind_trace(trace))[0]["result"] == decoded
+    bind_trace = _jsonb_trace_processor(driver)
+    assert _strict_jsonb_trace_roundtrip(trace, bind_trace)[0]["result"] == decoded
     payload = decoded["payload"]
     if intent == "cashflow.summary":
         assert payload["summary_by_currency"]["MXN"]["actual_cash_in"] == 100.1
@@ -268,6 +304,7 @@ async def test_cashflow_results_cross_provider_and_jsonb_boundaries(intent):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("intent", ["cashflow.summary", "cashflow.statement"])
+@pytest.mark.parametrize("driver", ["psycopg2", "psycopg"])
 @pytest.mark.parametrize(
     "amount",
     [
@@ -281,13 +318,10 @@ async def test_cashflow_results_cross_provider_and_jsonb_boundaries(intent):
     ],
 )
 async def test_cashflow_nonfinite_source_values_remain_unavailable_in_json(
-    intent, amount
+    intent, driver, amount
 ):
     from math import isfinite
 
-    from sqlalchemy.dialects.postgresql import dialect
-
-    from devnous.gastos.models import AssistantRun
     from samchat.cashflow.service import build_cashflow_report
 
     source_payload = build_cashflow_report(
@@ -347,12 +381,8 @@ async def test_cashflow_nonfinite_source_values_remain_unavailable_in_json(
         parse_constant=reject_nonfinite_json,
     )
     trace = [{"tool": "assistant_finance_read", "result": result}]
-    bind_trace = AssistantRun.__table__.c.tool_trace.type.bind_processor(dialect())
-    assert bind_trace is not None
-    assert (
-        json.loads(bind_trace(trace), parse_constant=reject_nonfinite_json)[0]["result"]
-        == decoded
-    )
+    bind_trace = _jsonb_trace_processor(driver)
+    assert _strict_jsonb_trace_roundtrip(trace, bind_trace)[0]["result"] == decoded
     assert decoded["read_only"] is True
     if intent == "cashflow.summary":
         assert decoded["payload"]["budget_plan"][0]["amount"] is None
