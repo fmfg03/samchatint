@@ -534,7 +534,13 @@ async def _load_historical_accounting_tables_report(
     latest_run_result = await session.execute(
         text(
             """
-            SELECT air.id, MAX(hs.company_label) AS company_label
+            SELECT air.id, MAX(hs.company_label) AS company_label,
+              (SELECT sf.metadata FROM historical_accounting_source_files sf
+               WHERE sf.import_run_id = air.id
+                 AND sf.fiscal_year = :fiscal_year
+                 AND sf.company_code = :company_code
+                 AND sf.source_family = 'explicit_manifest'
+               LIMIT 1) AS coverage_metadata
             FROM accounting_import_runs air
             JOIN historical_accounting_source_files hs ON hs.import_run_id = air.id
             WHERE air.source_type = 'historical_accounting'
@@ -575,6 +581,92 @@ async def _load_historical_accounting_tables_report(
     else:
         period_payload["scope"] = "year"
 
+    metadata = getattr(latest_run, "coverage_metadata", None) or {}
+    available_months = metadata.get(
+        "balance_months" if selected_type == "balanza" else "policy_months"
+    )
+    withheld_months = metadata.get("withheld_months", [])
+    withheld_period = (
+        next((item for item in withheld_months if item.get("month_num") == month), None)
+        if month
+        else None
+    )
+    coverage = {
+        "import_run_id": import_run_id,
+        "available_months": available_months,
+        "withheld_months": withheld_months,
+        "status": (
+            "withheld"
+            if withheld_period
+            else (
+                "unavailable"
+                if month
+                and available_months is not None
+                and month not in available_months
+                else (
+                    "partial"
+                    if not month
+                    and available_months is not None
+                    and len(available_months) < 12
+                    else "available"
+                )
+            )
+        ),
+    }
+    coverage_note = (
+        "- Cobertura parcial de la fuente seleccionada; meses disponibles: "
+        + ", ".join(str(m) for m in available_months)
+        if coverage["status"] == "partial"
+        else ""
+    )
+
+    def empty_selected_report() -> Dict[str, Any]:
+        # A selected source is authoritative even when the period/filter is empty.
+        # Returning None here would restore superseded movement/static sources.
+        status = coverage["status"]
+        if status not in {"withheld", "unavailable"}:
+            status = "no_matching_rows"
+        reason = (
+            "Período retenido en la fuente seleccionada: "
+            + str(withheld_period.get("reason") or "requiere conciliación")
+            if withheld_period
+            else (
+                "Período sin cobertura en la fuente seleccionada."
+                if status == "unavailable"
+                else "Sin filas coincidentes para el período y filtros de la fuente seleccionada."
+            )
+        )
+        title = f"Reporte contable histórico {period_label} · {period_payload['company_display']}"
+        return {
+            "report_type": selected_type,
+            "title": title,
+            "period": period_payload,
+            "source": "historical_tables",
+            "company_code": period_payload["company_code"],
+            "company_label": company_label or None,
+            "company_display": period_payload["company_display"],
+            "coverage": {**coverage, "status": status, "reason": reason},
+            "filters": {
+                "company_code": period_payload["company_code"],
+                "cuenta_codigo": selected_cuenta if selected_cuenta != "all" else None,
+                "tipo_poliza": selected_tipo if selected_tipo != "all" else None,
+                "q": search or None,
+            },
+            "summary": {
+                "rows": 0,
+                "source_rows_total": 0,
+                "debe": None,
+                "haber": None,
+                "difference": None,
+                "saldo_inicial": None,
+                "saldo_final": None,
+                "neto": None,
+            },
+            "rows": [],
+            "summary_by_account": [],
+            "movements": [],
+            "artifact_markdown": f"# {title}\n\n{reason}\n\nImportes: No disponible.",
+        }
     params: Dict[str, Any] = {
         "import_run_id": import_run_id,
         "fiscal_year": int(year),
@@ -586,6 +678,7 @@ async def _load_historical_accounting_tables_report(
     month_clause = "AND fiscal_month = :fiscal_month" if month else ""
     if month:
         params["fiscal_month"] = int(month)
+    line_month_clause = "AND l.fiscal_month = :fiscal_month" if month else ""
     cuenta_clause = (
         "AND account_code_raw = :cuenta_codigo"
         if selected_cuenta != "all"
@@ -625,7 +718,7 @@ async def _load_historical_accounting_tables_report(
                 JOIN historical_policy_headers h ON h.id = l.policy_header_id
                 WHERE l.import_run_id = :import_run_id
                   AND l.fiscal_year = :fiscal_year
-                  {month_clause}
+                  {line_month_clause}
                   {cuenta_clause}
                   {header_tipo_clause}
                   {line_search_clause}
@@ -635,7 +728,7 @@ async def _load_historical_accounting_tables_report(
         )
         total_count = int(count_result.scalar_one() or 0)
         if total_count <= 0:
-            return None
+            return empty_selected_report()
 
         result = await session.execute(
             text(
@@ -656,7 +749,7 @@ async def _load_historical_accounting_tables_report(
                 JOIN historical_policy_headers h ON h.id = l.policy_header_id
                 WHERE l.import_run_id = :import_run_id
                   AND l.fiscal_year = :fiscal_year
-                  {month_clause}
+                  {line_month_clause}
                   {cuenta_clause}
                   {header_tipo_clause}
                   {line_search_clause}
@@ -688,6 +781,7 @@ async def _load_historical_accounting_tables_report(
                 f"# Libro diario histórico {period_label} · {company_display}",
                 "",
                 "- Fuente: tablas históricas canónicas",
+                coverage_note,
                 f"- Empresa: {company_display}",
                 f"- Partidas incluidas: {len(rows)}",
                 f"- Debe: {_format_currency(total_debe)}",
@@ -730,6 +824,7 @@ async def _load_historical_accounting_tables_report(
             "rows": rows,
             "artifact_markdown": artifact_markdown,
             "source": "historical_tables",
+            "coverage": coverage,
             "company_code": str(company_code or "01").zfill(2),
             "company_label": company_label or None,
         }
@@ -752,7 +847,7 @@ async def _load_historical_accounting_tables_report(
         )
         total_count = int(count_result.scalar_one() or 0)
         if total_count <= 0:
-            return None
+            return empty_selected_report()
 
         result = await session.execute(
             text(
@@ -823,6 +918,7 @@ async def _load_historical_accounting_tables_report(
                 f"# Balanza histórica {period_label} · {company_display}",
                 "",
                 "- Fuente: tablas históricas canónicas",
+                coverage_note,
                 f"- Empresa: {company_display}",
                 f"- Saldo inicial: {_format_currency(summary['saldo_inicial'])}",
                 f"- Debe: {_format_currency(summary['debe'])}",
@@ -860,6 +956,7 @@ async def _load_historical_accounting_tables_report(
             "rows": rows,
             "artifact_markdown": artifact_markdown,
             "source": "historical_tables",
+            "coverage": coverage,
             "company_code": str(company_code or "01").zfill(2),
             "company_label": company_label or None,
             "company_display": company_display,
@@ -874,7 +971,7 @@ async def _load_historical_accounting_tables_report(
             JOIN historical_policy_headers h ON h.id = l.policy_header_id
             WHERE l.import_run_id = :import_run_id
               AND l.fiscal_year = :fiscal_year
-              {month_clause}
+              {line_month_clause}
               {cuenta_clause}
               {header_tipo_clause}
               {line_search_clause}
@@ -884,7 +981,7 @@ async def _load_historical_accounting_tables_report(
     )
     total_count = int(count_result.scalar_one() or 0)
     if total_count <= 0:
-        return None
+        return empty_selected_report()
 
     result = await session.execute(
         text(
@@ -900,7 +997,7 @@ async def _load_historical_accounting_tables_report(
             JOIN historical_policy_headers h ON h.id = l.policy_header_id
             WHERE l.import_run_id = :import_run_id
               AND l.fiscal_year = :fiscal_year
-              {month_clause}
+              {line_month_clause}
               {cuenta_clause}
               {header_tipo_clause}
               {line_search_clause}
@@ -934,7 +1031,7 @@ async def _load_historical_accounting_tables_report(
             JOIN historical_policy_headers h ON h.id = l.policy_header_id
             WHERE l.import_run_id = :import_run_id
               AND l.fiscal_year = :fiscal_year
-              {month_clause}
+              {line_month_clause}
               {cuenta_clause}
               {header_tipo_clause}
               {line_search_clause}
@@ -958,6 +1055,7 @@ async def _load_historical_accounting_tables_report(
             f"# Mayor contable histórico {period_label} · {company_display}",
             "",
             "- Fuente: tablas históricas canónicas",
+            coverage_note,
             f"- Empresa: {company_display}",
             f"- Debe: {_format_currency(total_debe)}",
             f"- Haber: {_format_currency(total_haber)}",
@@ -995,6 +1093,7 @@ async def _load_historical_accounting_tables_report(
         "rows": rows,
         "artifact_markdown": artifact_markdown,
         "source": "historical_tables",
+        "coverage": coverage,
         "company_code": str(company_code or "01").zfill(2),
         "company_label": company_label or None,
         "company_display": company_display,

@@ -8,6 +8,8 @@ The user subsequently authorized loading the undisputed remainder. Complete poli
 
 Current company/coverage inventories now select the same latest completed apply per company/year as the canonical snapshot. Their counts and period sets exclude superseded records; historical records remain addressable by import-run ID. This prevents the partial replacement from displaying old March as current or counting multiple versions as duplicate facts.
 
+Report readers must also treat a selected import as authoritative when its requested period or filters return no rows. They disclose missing or withheld coverage and do not fall through to superseded movement sources or static Q1 balances. Annual reports disclose the partial coverage of their selected source. Legacy fallback remains available only when no historical import is selected for the requested company/year. This closes the report-path gap identified in PR #512 review; the approved source-selection behavior and financial records are unchanged.
+
 ## Operator sequence
 
 1. Normalize the pinned source configuration with scripts/normalize_historical_xlsx.py into a private output directory. Review its independent validation report and full-source discrepancy evidence. Keep complete original reports distinct from admitted manifests.
