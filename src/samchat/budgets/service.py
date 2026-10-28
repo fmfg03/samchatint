@@ -5817,8 +5817,10 @@ async def transition_budget_version(
     new_status: str,
     actor_empleado_id: Optional[str] = None,
     note: Optional[str] = None,
+    ensure_schema: bool = True,
 ) -> dict[str, Any]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     current = (
         (
             await session.execute(
@@ -5839,7 +5841,7 @@ async def transition_budget_version(
     from_status = _normalize_budget_status(current["status"])
     to_status = _normalize_budget_status(new_status)
     if to_status == from_status:
-        versions = await list_budget_versions(session)
+        versions = await list_budget_versions(session, ensure_schema=ensure_schema)
         return next(item for item in versions if item["id"] == version_id)
     allowed = _BUDGET_ALLOWED_TRANSITIONS.get(from_status, set())
     if to_status not in allowed:
@@ -5938,7 +5940,7 @@ async def transition_budget_version(
         payload={"action": "transition"},
     )
     await session.commit()
-    versions = await list_budget_versions(session)
+    versions = await list_budget_versions(session, ensure_schema=ensure_schema)
     return next(item for item in versions if item["id"] == version_id)
 
 
