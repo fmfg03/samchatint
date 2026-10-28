@@ -5886,6 +5886,18 @@ async def transition_budget_version(
             plans = await list_monthly_plan_for_lines(
                 session, line_ids=[l["id"] for l in lines], ensure_schema=False
             )
+            from .tournament_weekly_overlay import effective_plans_for_lines
+
+            plans, conflicts = await effective_plans_for_lines(
+                session,
+                version_id=version_id,
+                line_ids=[line["id"] for line in lines],
+                baseline_plans=plans,
+            )
+            if conflicts:
+                raise ValueError(
+                    "La distribución vigente tiene conflictos; concilia antes de aprobar"
+                )
             for line in lines:
                 if line.get(
                     "line_direction", "expense"
