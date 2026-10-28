@@ -1,7 +1,8 @@
 # NOMINA-EXCEL-001 — Entrega local y validación
 
 Fecha: 2026-10-28.
-Estado: IMPLEMENTADO_LOCAL; VALIDACION_PARCIAL; pendiente de revisión humana del diff.
+Estado: IMPLEMENTADO_LOCAL; VALIDACION_LOCAL_COMPLETA; promoción autorizada.
+Recibos: diff aprobado y «aprobado hasta deploy» en conversación.
 Worktree: `/root/samchat/.worktrees/nomina-excel-001`.
 Rama local: `feature/nomina-excel-001`.
 Base: `d548d148f7521988587d6498b5461901c21a2ee3`.
@@ -103,10 +104,11 @@ la línea 4 de la historia. No quedan hallazgos bloqueantes de código identific
 
 ## Chequeos pendientes, atribución y riesgos
 
-- **Inventario/matriz del plugin privado: NO EJECUTADO.** No existen la herramienta,
+- **Inventario/matriz del plugin privado: RESUELTO tras actualizar main (9 PASS).**
+  Registro histórico de la primera base local: No existen la herramienta,
   los artefactos ni su suite en el HEAD base; clasificación: capacidad/artefacto
-  preexistente ausente. No se importaron desde otra rama. Por este chequeo requerido
-  pendiente no se afirma validación completa ni preparación final para merge.
+  preexistente ausente. No se importaron desde otra rama. El pendiente se cerró
+  al integrar la base actual y regenerar sus dos artefactos.
 - Black del router entero falla también contra el archivo original de HEAD,
   en una sección heredada de f-strings (línea 30897 del original). Clasificación:
   limitación preexistente del formateador. El bloque nuevo se formateó aislado
@@ -124,8 +126,8 @@ la línea 4 de la historia. No quedan hallazgos bloqueantes de código identific
   La migración productiva requiere respaldo, autorización y verificación propios.
 
 No hay desviaciones funcionales pendientes respecto del alcance aprobado.
-La desviación de verificación es el inventario privado no disponible; la evidencia
-local no sustituye ese chequeo ni la aceptación de negocio.
+El inventario inicialmente no disponible quedó verificado al actualizar main;
+la evidencia local no sustituye la aceptación de negocio.
 
 Canon unchanged: recepción gobernada dentro del dominio de nómina, conservando
 fuente, cálculo, póliza, pago y aceptación como etapas separadas. No se editaron
