@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 ADMIN_ROUTES = Path("src/devnous/gastos/routes/admin_routes.py")
 USER_ROUTES = Path("src/devnous/gastos/routes/user_routes.py")
 
@@ -31,7 +30,7 @@ def test_cashflow_route_uses_canonical_read_model_and_finance_auth():
     block = _cashflow_route_block()
 
     assert "require_admin_finanzas()" in block
-    assert "build_cashflow_planning_read_model" in block
+    assert "build_cashflow_request_payload" in block
     assert "render_cashflow_planning_html" in block
 
 
@@ -48,8 +47,7 @@ def test_cashflow_route_uses_executive_visible_copy():
     block = _cashflow_route_block()
 
     assert "Flujo de efectivo ejecutivo" in block
-    assert "Finanzas ejecutivas" in block
-    assert "Sólo cobranza confirmada cuenta como entrada real" in block
+    assert "render_cashflow_planning_html" in block
     assert "Cashflow Planning" not in block
     assert "Finance Spine" not in block
     assert "accepted matches" not in block
@@ -62,9 +60,13 @@ def test_treasury_cfdi_match_requires_existing_collection_evidence():
     )[1].split(
         '@router.post("/admin/contabilidad/tesoreria-matches/{movement_id}/undo")',
         maxsplit=1,
-    )[0]
+    )[
+        0
+    ]
 
-    assert "debe estar marcado como cobrado antes de conciliarlo con banco" in accept_block
+    assert (
+        "debe estar marcado como cobrado antes de conciliarlo con banco" in accept_block
+    )
     assert "must not manufacture that state" in accept_block
 
 

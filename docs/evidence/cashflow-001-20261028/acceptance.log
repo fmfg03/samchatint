@@ -1,0 +1,31 @@
+........................................................................ [ 41%]
+........................................................................ [ 83%]
+............................                                             [100%]
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1345
+  /root/samchat/.venv/lib/python3.12/site-packages/_pytest/config/__init__.py:1345: PytestAssertRewriteWarning: Module already imported so cannot be rewritten; anyio
+    self._mark_plugins_for_rewrite(hook, disable_autoload)
+
+src/samchat/assistant/router.py:5246
+  /root/samchat/.worktrees/cashflow-001-20261028/src/samchat/assistant/router.py:5246: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    year: int = Field(default=datetime.utcnow().year, ge=2000, le=2100)
+
+src/samchat/assistant/router.py:5252
+  /root/samchat/.worktrees/cashflow-001-20261028/src/samchat/assistant/router.py:5252: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    year: int = Field(default=datetime.utcnow().year, ge=2000, le=2100)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+_______________ coverage: platform linux, python 3.12.3-final-0 ________________
+
+Name                                        Stmts   Miss  Cover   Missing
+-------------------------------------------------------------------------
+src/samchat/cashflow/__init__.py                3      0   100%
+src/samchat/cashflow/admin_ui.py              214      0   100%
+src/samchat/cashflow/service.py               595     73    88%   57, 97-98, 176, 191-192, 207-209, 211, 292, 294, 345, 353, 498, 960, 966-989, 1004-1006, 1011, 1028-1041, 1092, 1102-1114, 1135-1136, 1169-1170, 1238-1239, 1265-1266, 1281, 1291, 1355-1356, 1395-1396, 1400-1402, 1418, 1429, 1439-1444, 1447, 1462-1464, 1469
+src/samchat/executive/template_reports.py     163     18    89%   39-40, 46-47, 80-90, 94, 127-128, 148, 153-154, 339
+-------------------------------------------------------------------------
+TOTAL                                         975     91    91%
+Coverage JSON written to file /tmp/cashflow001-coverage.json
+Required test coverage of 85% reached. Total coverage: 90.67%
+172 passed, 3 warnings in 16.63s

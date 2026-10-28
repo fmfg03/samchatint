@@ -1,0 +1,14 @@
+test_baseline_canons_match_register (test_inventory.InventoryTest.test_baseline_canons_match_register) ... ok
+test_every_current_action_router_entry_is_accounted_for (test_inventory.InventoryTest.test_every_current_action_router_entry_is_accounted_for) ... ok
+test_inventory_is_reproducible_and_no_parse_gaps (test_inventory.InventoryTest.test_inventory_is_reproducible_and_no_parse_gaps) ... ok
+test_product_lanes_and_aliases_are_not_silently_omitted (test_inventory.InventoryTest.test_product_lanes_and_aliases_are_not_silently_omitted) ... ok
+test_action_services_have_exact_source_and_effect_evidence (test_inventory.MountEvidenceTest.test_action_services_have_exact_source_and_effect_evidence) ... ok
+test_every_mounted_path_has_source_chain_evidence (test_inventory.MountEvidenceTest.test_every_mounted_path_has_source_chain_evidence) ... ok
+test_exclusions_keep_ui_and_transitive_authority_open (test_inventory.MountEvidenceTest.test_exclusions_keep_ui_and_transitive_authority_open) ... ok
+test_profile_defaults_are_evidence_and_direction_not_role_grant (test_inventory.MountEvidenceTest.test_profile_defaults_are_evidence_and_direction_not_role_grant) ... ok
+test_webhooks_have_ingress_prefix_and_budget_registration_resolves (test_inventory.MountEvidenceTest.test_webhooks_have_ingress_prefix_and_budget_registration_resolves) ... ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 20.930s
+
+OK

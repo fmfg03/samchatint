@@ -1,0 +1,71 @@
+{
+  "task": "CASHFLOW-001 scoped typing closeout",
+  "files": [
+    "src/samchat/cashflow/service.py",
+    "src/samchat/cashflow/admin_ui.py",
+    "src/samchat/executive/template_reports.py"
+  ],
+  "scope": "Only cashflow service/admin UI and build_cashflow_statement_report; no other template AST changes",
+  "changes": [
+    "Annotated heterogeneous canonical DTO containers, date maps and key sets",
+    "Narrowed parsed Optional dates using one parsed local per predicate",
+    "Retained lazy finance helper imports under a distinct alias and typed container",
+    "Annotated exception-class tuple used for canonical authority errors",
+    "Narrowed statement period and Decimal-or-None monthly values, sum guarded against unknowns",
+    "Typed rendering summary groups and normalized mapping keys"
+  ],
+  "new_tests": false,
+  "test_result": "121 affected unit tests passed; PostgreSQL not rerun by this agent",
+  "commands": [
+    {
+      "command": "PYTHONPATH=src /root/samchat/.venv/bin/python -m mypy --follow-imports=skip --ignore-missing-imports src/samchat/cashflow /tmp/cashflow001_statement_types.py",
+      "result": "Success: no issues found in 4 source files",
+      "scope_note": "Extracted statement is exactly approved function with existing helpers imported; external typing metadata excluded, not whole repo typing"
+    },
+    {
+      "command": "PYTHONPATH=src /root/samchat/.venv/bin/python -m mypy --follow-imports=skip src/samchat/cashflow",
+      "result": "5 import-untyped metadata gaps only",
+      "classification": "Optional company modules and missing types-openpyxl stubs; no local cashflow logic errors"
+    },
+    {
+      "command": "PYTHONPATH=src /root/samchat/.venv/bin/python -m mypy --follow-imports=skip --ignore-missing-imports src/samchat/cashflow src/samchat/executive/template_reports.py",
+      "result": "7 errors outside modified statement builder",
+      "classification": "Pre-existing helper/budget typing debt reproduced against HEAD baseline"
+    },
+    {
+      "command": "/root/samchat/.venv/bin/python -m black --check src/samchat/cashflow",
+      "result": "pass"
+    },
+    {
+      "command": "/root/samchat/.venv/bin/python -m isort --check-only src/samchat/cashflow",
+      "result": "pass"
+    },
+    {
+      "command": "/usr/bin/flake8 src/samchat/cashflow --max-line-length=88 --extend-ignore=E203,W503",
+      "result": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "result": "pass"
+    }
+  ],
+  "logs": [
+    "/tmp/cashflow001-type-tests.log",
+    "/tmp/cashflow001-mypy-owned-success.log",
+    "/tmp/cashflow001-mypy-after-types.log",
+    "/tmp/cashflow001-mypy-with-stubs-gaps.log",
+    "/tmp/cashflow001-mypy-template-head.log"
+  ],
+  "hashes": {
+    "src/samchat/cashflow/service.py": "c1b8b4aa6c12b4f8a027afad6183ef043d29a19560ad1458f1fd337de5654aab",
+    "src/samchat/cashflow/admin_ui.py": "aa21f0125146d9529b55f9c893fb154e852f577076f228e6f3357fbe35d8a21b",
+    "src/samchat/executive/template_reports.py": "708f4a4afbb6198bed2b09ba23821dfdc7de35971651112bd630ea75d4c7724c"
+  },
+  "effects": {
+    "installs": false,
+    "financial_writes": false,
+    "schema_changes": false,
+    "commits": false,
+    "production": false
+  }
+}

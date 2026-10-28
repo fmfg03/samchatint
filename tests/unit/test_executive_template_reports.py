@@ -11,7 +11,9 @@ def test_cashflow_statement_report_matches_uploaded_workbook_shape() -> None:
             "period": {"year": 2026, "month": 6, "horizon_months": 12},
             "monthly_buckets": [
                 {
+                    "year": 2026,
                     "month": 1,
+                    "currency": "MXN",
                     "actual_cash_in": 100000,
                     "collected_income": 50000,
                     "expected_uncollected_income": 20000,
@@ -19,7 +21,9 @@ def test_cashflow_statement_report_matches_uploaded_workbook_shape() -> None:
                     "approved_obligations": 10000,
                 },
                 {
+                    "year": 2026,
                     "month": 2,
+                    "currency": "MXN",
                     "actual_cash_in": 0,
                     "collected_income": 25000,
                     "expected_uncollected_income": 5000,
@@ -36,7 +40,7 @@ def test_cashflow_statement_report_matches_uploaded_workbook_shape() -> None:
 
     assert report["report_type"] == "cashflow_statement"
     assert report["columns"] == ["Segmento", *MONTH_LABELS_ES, "Total"]
-    assert report["subtitle"] == "Al Junio 2026 (cifras en miles de pesos)"
+    assert report["subtitle"] == "Al Junio 2026 (cifras en miles de MXN)"
     labels = [row["segment"] for row in report["rows"]]
     assert labels == [
         "SALDO INICIAL:",
@@ -49,9 +53,10 @@ def test_cashflow_statement_report_matches_uploaded_workbook_shape() -> None:
         "Obligaciones aprobadas",
         "SALDO FINAL:",
     ]
-    assert report["rows"][1]["months"][0] == 150.0
-    assert report["rows"][5]["months"][0] == 50.0
-    assert report["summary"]["saldo_final"] == 76095.0
+    assert report["rows"][1]["months"][0] == 100.0
+    assert report["rows"][5]["months"][0] == 40.0
+    assert report["summary"]["saldo_final"] is None
+    assert report["summary"]["saldo_inicial"] is None
     assert report["read_only"] is True
 
 
@@ -60,8 +65,10 @@ def test_cashflow_statement_report_exposes_missing_opening_balance() -> None:
         {"period": {"year": 2026, "month": 6}, "monthly_buckets": []}
     )
 
-    assert report["summary"]["saldo_inicial"] == 0.0
-    assert any("missing_opening_bank_balance" in note for note in report["source_notes"])
+    assert report["summary"]["saldo_inicial"] is None
+    assert any(
+        "missing_opening_bank_balance" in note for note in report["source_notes"]
+    )
     assert "forecast_is_derived" in report["safety_labels"]
 
 

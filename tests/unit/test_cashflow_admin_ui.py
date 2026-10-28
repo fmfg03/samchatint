@@ -39,14 +39,16 @@ def test_render_cashflow_planning_html_includes_sections_and_copy():
     html = render_cashflow_planning_html(_payload())
 
     assert "Flujo de efectivo ejecutivo" in html
-    assert "Caja real neta" in html
-    assert "Pagos aprobados pendientes" in html
+    assert "Variación neta" in html
+    assert "Pagos aprobados / en proceso" in html
     assert "Ingresos presupuestados" in html
     assert "Egresos presupuestados" in html
     assert "Ingreso facturado/reconocido" in html
     assert "Cobranza confirmada" in html
-    assert "Proyección neta" in html
-    assert "Vista mensual" in html
+    assert "Variación proyectada" in html
+    assert "Saldo inicial" in html
+    assert "Saldo final" in html
+    assert "Lo que viene" in html
     assert "Notas de lectura" in html
 
 

@@ -1,0 +1,108 @@
+src/samchat/cashflow/service.py:84: error: Need type annotation for "result" (hint: "result: dict[<type>, <type>] = ...")  [var-annotated]
+src/samchat/cashflow/service.py:300: error: Value of type variable "SupportsRichComparisonT" of "sorted" cannot be "str | Decimal | Any | None"  [type-var]
+src/samchat/cashflow/service.py:307: error: Need type annotation for "days" (hint: "days: dict[<type>, <type>] = ...")  [var-annotated]
+src/samchat/cashflow/service.py:308: error: Need type annotation for "historical_keys" (hint: "historical_keys: set[<type>] = ...")  [var-annotated]
+src/samchat/cashflow/service.py:309: error: Need type annotation for "forecast_keys" (hint: "forecast_keys: set[<type>] = ...")  [var-annotated]
+src/samchat/cashflow/service.py:322: error: Incompatible types in assignment (expression has type "str | Decimal | Any | None", variable has type "str")  [assignment]
+src/samchat/cashflow/service.py:345: error: Unsupported operand types for <= ("date" and "None")  [operator]
+src/samchat/cashflow/service.py:345: note: Left operand is of type "date | None"
+src/samchat/cashflow/service.py:346: error: Argument 1 to "_period_key" has incompatible type "date | None"; expected "date"  [arg-type]
+src/samchat/cashflow/service.py:357: error: Unsupported operand types for <= ("date" and "None")  [operator]
+src/samchat/cashflow/service.py:357: note: Left operand is of type "date | None"
+src/samchat/cashflow/service.py:358: error: Argument 1 to "_period_key" has incompatible type "date | None"; expected "date"  [arg-type]
+src/samchat/cashflow/service.py:428: error: Unsupported operand types for > ("date" and "None")  [operator]
+src/samchat/cashflow/service.py:428: note: Left operand is of type "date | None"
+src/samchat/cashflow/service.py:429: error: Unsupported operand types for > ("str" and "Decimal")  [operator]
+src/samchat/cashflow/service.py:429: note: Left operand is of type "str | Any | Decimal"
+src/samchat/cashflow/service.py:433: error: Unsupported operand types for > ("str" and "Decimal")  [operator]
+src/samchat/cashflow/service.py:433: note: Left operand is of type "str | Any | Decimal"
+src/samchat/cashflow/service.py:452: error: Incompatible types in assignment (expression has type "str | Decimal | Any | None", variable has type "str")  [assignment]
+src/samchat/cashflow/service.py:704: error: Need type annotation for "result"  [var-annotated]
+src/samchat/cashflow/service.py:707: error: Incompatible types in assignment (expression has type "str", target has type "dict[Any, Any] | list[Any] | None")  [assignment]
+src/samchat/cashflow/service.py:709: error: Incompatible types in assignment (expression has type "str", target has type "dict[Any, Any] | list[Any] | None")  [assignment]
+src/samchat/cashflow/service.py:715: error: Skipping analyzing "devnous.gastos.services.company_operation_scope": module is installed, but missing library stubs or py.typed marker  [import-untyped]
+src/samchat/cashflow/service.py:727: error: Name "helpers" already defined on line 710  [no-redef]
+src/samchat/cashflow/service.py:728: error: Skipping analyzing "devnous.gastos.services.company_scope_service": module is installed, but missing library stubs or py.typed marker  [import-untyped]
+src/samchat/cashflow/service.py:737: error: "None" has no attribute "_read_snapshot"  [attr-defined]
+src/samchat/cashflow/service.py:738: error: "None" has no attribute "_read_company"  [attr-defined]
+src/samchat/cashflow/service.py:740: error: Incompatible types in assignment (expression has type "Any | str", target has type "dict[Any, Any] | list[Any] | None")  [assignment]
+src/samchat/cashflow/service.py:749: error: Unsupported target for indexed assignment ("dict[Any, Any] | list[Any] | None")  [index]
+src/samchat/cashflow/service.py:749: error: No overload variant of "__setitem__" of "list" matches argument types "str", "Any"  [call-overload]
+src/samchat/cashflow/service.py:749: note: Possible overload variants:
+src/samchat/cashflow/service.py:749: note:     def __setitem__(self, SupportsIndex, Any, /) -> None
+src/samchat/cashflow/service.py:749: note:     def __setitem__(self, slice[SupportsIndex | None, SupportsIndex | None, SupportsIndex | None], Iterable[Any], /) -> None
+src/samchat/cashflow/service.py:751: error: Statement is unreachable  [unreachable]
+src/samchat/cashflow/service.py:758: error: Statement is unreachable  [unreachable]
+src/samchat/cashflow/service.py:772: error: Statement is unreachable  [unreachable]
+src/samchat/cashflow/service.py:797: error: Unsupported target for indexed assignment ("dict[Any, Any] | list[Any] | None")  [index]
+src/samchat/cashflow/service.py:797: error: No overload variant of "__setitem__" of "list" matches argument types "str", "Any"  [call-overload]
+src/samchat/cashflow/service.py:797: note: Possible overload variants:
+src/samchat/cashflow/service.py:797: note:     def __setitem__(self, SupportsIndex, Any, /) -> None
+src/samchat/cashflow/service.py:797: note:     def __setitem__(self, slice[SupportsIndex | None, SupportsIndex | None, SupportsIndex | None], Iterable[Any], /) -> None
+src/samchat/cashflow/service.py:806: error: Unsupported target for indexed assignment ("dict[Any, Any] | list[Any] | None")  [index]
+src/samchat/cashflow/service.py:806: error: No overload variant of "__setitem__" of "list" matches argument types "str", "Any"  [call-overload]
+src/samchat/cashflow/service.py:806: note: Possible overload variants:
+src/samchat/cashflow/service.py:806: note:     def __setitem__(self, SupportsIndex, Any, /) -> None
+src/samchat/cashflow/service.py:806: note:     def __setitem__(self, slice[SupportsIndex | None, SupportsIndex | None, SupportsIndex | None], Iterable[Any], /) -> None
+src/samchat/cashflow/service.py:808: error: Unsupported target for indexed assignment ("dict[Any, Any] | list[Any] | None")  [index]
+src/samchat/cashflow/service.py:808: error: No overload variant of "__setitem__" of "list" matches argument types "str", "Any"  [call-overload]
+src/samchat/cashflow/service.py:808: note: Possible overload variants:
+src/samchat/cashflow/service.py:808: note:     def __setitem__(self, SupportsIndex, Any, /) -> None
+src/samchat/cashflow/service.py:808: note:     def __setitem__(self, slice[SupportsIndex | None, SupportsIndex | None, SupportsIndex | None], Iterable[Any], /) -> None
+src/samchat/cashflow/service.py:826: error: Incompatible types in assignment (expression has type "list[str]", target has type "date")  [assignment]
+src/samchat/cashflow/service.py:830: error: Statement is unreachable  [unreachable]
+src/samchat/cashflow/service.py:898: error: Unsupported target for indexed assignment ("dict[Any, Any] | list[Any] | None")  [index]
+src/samchat/cashflow/service.py:898: error: No overload variant of "__setitem__" of "list" matches argument types "str", "Any"  [call-overload]
+src/samchat/cashflow/service.py:898: note: Possible overload variants:
+src/samchat/cashflow/service.py:898: note:     def __setitem__(self, SupportsIndex, Any, /) -> None
+src/samchat/cashflow/service.py:898: note:     def __setitem__(self, slice[SupportsIndex | None, SupportsIndex | None, SupportsIndex | None], Iterable[Any], /) -> None
+src/samchat/cashflow/service.py:900: error: Unsupported target for indexed assignment ("dict[Any, Any] | list[Any] | None")  [index]
+src/samchat/cashflow/service.py:900: error: No overload variant of "__setitem__" of "list" matches argument types "str", "Any"  [call-overload]
+src/samchat/cashflow/service.py:900: note: Possible overload variants:
+src/samchat/cashflow/service.py:900: note:     def __setitem__(self, SupportsIndex, Any, /) -> None
+src/samchat/cashflow/service.py:900: note:     def __setitem__(self, slice[SupportsIndex | None, SupportsIndex | None, SupportsIndex | None], Iterable[Any], /) -> None
+src/samchat/cashflow/service.py:953: error: Incompatible types in assignment (expression has type "str | None", target has type "dict[Any, Any] | list[Any] | None")  [assignment]
+src/samchat/cashflow/service.py:956: error: Unsupported target for indexed assignment ("dict[Any, Any] | list[Any] | None")  [index]
+src/samchat/cashflow/service.py:956: error: No overload variant of "__setitem__" of "list" matches argument types "str", "Any"  [call-overload]
+src/samchat/cashflow/service.py:956: note: Possible overload variants:
+src/samchat/cashflow/service.py:956: note:     def __setitem__(self, SupportsIndex, Any, /) -> None
+src/samchat/cashflow/service.py:956: note:     def __setitem__(self, slice[SupportsIndex | None, SupportsIndex | None, SupportsIndex | None], Iterable[Any], /) -> None
+src/samchat/cashflow/service.py:977: error: Unsupported target for indexed assignment ("dict[Any, Any] | list[Any] | None")  [index]
+src/samchat/cashflow/service.py:977: error: No overload variant of "__setitem__" of "list" matches argument types "str", "Any"  [call-overload]
+src/samchat/cashflow/service.py:977: note: Possible overload variants:
+src/samchat/cashflow/service.py:977: note:     def __setitem__(self, SupportsIndex, Any, /) -> None
+src/samchat/cashflow/service.py:977: note:     def __setitem__(self, slice[SupportsIndex | None, SupportsIndex | None, SupportsIndex | None], Iterable[Any], /) -> None
+src/samchat/cashflow/service.py:1032: error: Unsupported target for indexed assignment ("dict[Any, Any] | list[Any] | None")  [index]
+src/samchat/cashflow/service.py:1032: error: No overload variant of "__setitem__" of "list" matches argument types "str", "Any"  [call-overload]
+src/samchat/cashflow/service.py:1032: note: Possible overload variants:
+src/samchat/cashflow/service.py:1032: note:     def __setitem__(self, SupportsIndex, Any, /) -> None
+src/samchat/cashflow/service.py:1032: note:     def __setitem__(self, slice[SupportsIndex | None, SupportsIndex | None, SupportsIndex | None], Iterable[Any], /) -> None
+src/samchat/cashflow/service.py:1043: error: Unsupported target for indexed assignment ("dict[Any, Any] | list[Any] | None")  [index]
+src/samchat/cashflow/service.py:1043: error: No overload variant of "__setitem__" of "list" matches argument types "str", "Any"  [call-overload]
+src/samchat/cashflow/service.py:1043: note: Possible overload variants:
+src/samchat/cashflow/service.py:1043: note:     def __setitem__(self, SupportsIndex, Any, /) -> None
+src/samchat/cashflow/service.py:1043: note:     def __setitem__(self, slice[SupportsIndex | None, SupportsIndex | None, SupportsIndex | None], Iterable[Any], /) -> None
+src/samchat/cashflow/service.py:1065: error: Unsupported target for indexed assignment ("dict[Any, Any] | list[Any] | None")  [index]
+src/samchat/cashflow/service.py:1065: error: No overload variant of "__setitem__" of "list" matches argument types "str", "Any"  [call-overload]
+src/samchat/cashflow/service.py:1065: note: Possible overload variants:
+src/samchat/cashflow/service.py:1065: note:     def __setitem__(self, SupportsIndex, Any, /) -> None
+src/samchat/cashflow/service.py:1065: note:     def __setitem__(self, slice[SupportsIndex | None, SupportsIndex | None, SupportsIndex | None], Iterable[Any], /) -> None
+src/samchat/cashflow/service.py:1071: error: Unsupported target for indexed assignment ("dict[Any, Any] | list[Any] | None")  [index]
+src/samchat/cashflow/service.py:1071: error: No overload variant of "__setitem__" of "list" matches argument types "str", "Any"  [call-overload]
+src/samchat/cashflow/service.py:1071: note: Possible overload variants:
+src/samchat/cashflow/service.py:1071: note:     def __setitem__(self, SupportsIndex, Any, /) -> None
+src/samchat/cashflow/service.py:1071: note:     def __setitem__(self, slice[SupportsIndex | None, SupportsIndex | None, SupportsIndex | None], Iterable[Any], /) -> None
+src/samchat/cashflow/service.py:1075: error: Statement is unreachable  [unreachable]
+src/samchat/cashflow/service.py:1094: error: Incompatible types in assignment (expression has type "tuple[Any]", variable has type "tuple[()]")  [assignment]
+src/samchat/cashflow/service.py:1097: error: Skipping analyzing "devnous.gastos.routes.company_dependencies": module is installed, but missing library stubs or py.typed marker  [import-untyped]
+src/samchat/cashflow/service.py:1113: error: Need type annotation for "exc"  [var-annotated]
+src/samchat/cashflow/service.py:1128: error: Need type annotation for "exc"  [var-annotated]
+src/samchat/cashflow/admin_ui.py:102: error: Returning Any from function declared to return "dict[str, dict[str, Any]]"  [no-any-return]
+src/samchat/cashflow/admin_ui.py:173: error: Argument 1 to "get" of "dict" has incompatible type "Any | None"; expected "str"  [arg-type]
+src/samchat/cashflow/admin_ui.py:205: error: Argument 1 to "get" of "dict" has incompatible type "Any | None"; expected "str"  [arg-type]
+src/samchat/cashflow/admin_ui.py:395: error: Library stubs not installed for "openpyxl"  [import-untyped]
+src/samchat/cashflow/admin_ui.py:396: error: Library stubs not installed for "openpyxl.styles"  [import-untyped]
+src/samchat/cashflow/admin_ui.py:396: note: Hint: "python3 -m pip install types-openpyxl"
+src/samchat/cashflow/admin_ui.py:396: note: (or run "mypy --install-types" to install all missing stub packages)
+src/samchat/cashflow/admin_ui.py:396: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+Found 63 errors in 2 files (checked 3 source files)
