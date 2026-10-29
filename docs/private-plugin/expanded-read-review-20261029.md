@@ -53,7 +53,7 @@ ninguna herramienta nueva, no se crea una conexión ni se concede un permiso.
 | Código y diagnóstico | Nueva entrada `TechnicalReads.call_async` espera autoridad y revalida antes/después de auditoría; la entrada sync rechaza resolver async | Binding autenticado de scope técnico propio; no copiar permisos financieros |
 | Scope técnico | `CanonicalAuthorityResolver.binding` rechaza `technical.source`, fuera de `DATASETS` | Prueba positiva/negativa del owner técnico antes de declarar diagnóstico disponible |
 | Desarrollo Agentius | Contrato local puro, sin worker ni persistencia | Adapter contra árbol/manifest vigente con recibos e idempotencia; no renombrar revisión a hash |
-| PostgreSQL nativo | `initdb`, `pg_ctl`, `psql` y `/usr/lib/postgresql` ausentes en este entorno | Cluster exclusivamente desechable, driver real, rol mínimo, revocación concurrente y cancelación |
+| PostgreSQL nativo | Binarios ausentes localmente; las 81 pruebas readonly originales pasan en PostgreSQL nativo desechable de CI en `f2f7582` | Aceptación nativa específica de los nuevos adapters/autoridad, con driver real, rol mínimo, revocación concurrente y cancelación |
 | AMEX | Getter/modelo original y cuerpos de guards ejercitados con fixtures; admisión de esquema explícitamente simulada | Esquema canónico completo y ORM/imports originales en PostgreSQL nativo; casos legacy/direct/contexto/empresa/tarjeta |
 | Batiseñal | Ninguna prueba autenticada extremo a extremo ejecutada | Caso autorizado que vincule solicitante, contexto, fuentes y propuesta privada de respuesta |
 
@@ -185,3 +185,30 @@ La etapa de aceptación readonly nativa y la suite ampliada remota fueron
 omitidas en ese head porque falló antes la suite general. No se presentan como
 aprobadas. El entorno se desconectó y volvió a estar disponible; el checkout se
 recuperó limpio en `c928ee7`, sin trabajo local perdido o pendiente de publicar.
+
+### Aislamiento de cobertura y SQLAlchemy
+
+En `f2f7582`, la suite general pasó **6726 pruebas, ocho omitidas**; las **81
+pruebas readonly originales** pasaron en PostgreSQL nativo de CI. La suite
+ampliada ejecutó sus 57 casos pero fallaron tres AMEX con
+`TypeError: 'InternalTraversal' object is not callable` en SQLAlchemy 2.1.6.
+Esto no certifica esquema AMEX nativo: los casos nuevos siguen usando SQLite
+y PGlite con las fronteras sintéticas descritas arriba.
+
+Se reprodujeron exactamente los tres errores en Python 3.12.14 con SQLAlchemy
+2.1.6 y Pydantic 2.14.1, sin necesitar Python 3.12.15 ni cambiar dependencias del
+repositorio. La selección dotted de coverage (`--source=...connector_read_service`)
+usa `find_spec`, importando los paquetes padre antes del runner aislado. Coverage
+restaura `sys.modules`, pero la extensión compilada de SQLAlchemy conserva
+referencias al enum anterior; el import posterior produce identidades distintas.
+Sin Pydantic, el import del padre falla antes de llegar a SQLAlchemy y oculta el
+problema localmente. SQLAlchemy 2.0.54 del venv private_plugin no reproduce el fallo.
+
+La corrección selecciona por rutas con `--include`, acumulando las mismas fuentes
+sin importar el bootstrap de la aplicación. La ejecución nativa previa mantiene
+el inventario completo del directorio gateway; el servicio nuevo se importa y
+mide en los tests ampliados. Se conservan los 57 casos, el umbral 85% y todas las
+guardias. Con 2.1.6 y Pydantic, pasan los 57 y la cobertura de los siete módulos
+nuevos permanece **708/754 líneas (93.90%)**. No se desactiva caché/Cython ni se
+fija una versión distinta para ocultar el error. La conclusión remota del nuevo
+head sigue requiriendo verificación.
