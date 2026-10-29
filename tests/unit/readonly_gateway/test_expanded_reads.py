@@ -801,6 +801,41 @@ class DevelopmentTests(unittest.TestCase):
                 current_generation="g1",
             )
 
+    def test_local_requests_are_not_worker_wire_messages(self):
+        # Execute the recorded proxy's actual admission logic, stopping before
+        # socket access. This fixture is not evidence of the deployed worker.
+        import runpy
+
+        wire = runpy.run_path(
+            str(Path(__file__).parent / "fixtures/bridge/work_tools.py.fixture")
+        )
+        client = wire["WorkClient"]("/tmp/nonexistent-synthetic-worker.sock", 1000)
+        requests = {
+            "work_create": {
+                "project": "samchat-dev",
+                "objective": "review",
+                "files": ["src/a.py"],
+                "checks": ["activation-stdlib"],
+            },
+            "work_start": {"work_id": "work-1", "expected_revision": 1},
+            "work_resume": {"work_id": "work-1", "expected_revision": 1},
+            "work_status": {"work_id": "work-1", "expected_revision": 1},
+            "work_cancel": {"work_id": "work-1", "expected_revision": 1},
+            "work_artifact": {
+                "work_id": "work-1",
+                "expected_revision": 1,
+                "sha256": "b" * 64,
+            },
+        }
+        with patch("socket.socket") as socket:
+            for operation, arguments in requests.items():
+                with self.subTest(operation=operation):
+                    with self.assertRaisesRegex(
+                        wire["WorkerError"], "Missing or unknown fields"
+                    ):
+                        client.call(operation, arguments)
+            socket.assert_not_called()
+
     def test_publication_preparation_never_executes(self):
         for checks, review in ((False, True), (True, False)):
             with self.assertRaises(ReadError):

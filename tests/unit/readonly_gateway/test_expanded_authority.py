@@ -679,6 +679,18 @@ class CanonicalAuthorityTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ReadError, "AUTH_REQUIRED"):
             await self.gateway.capabilities_async({})
 
+    async def test_async_technical_entry_does_not_promote_financial_authority(self):
+        from samchat.readonly_gateway.gateway import Sources
+        from samchat.readonly_gateway.technical_contracts import TechnicalReads
+
+        sources = Sources({"safe.py": b"# fixture\n"}, self.gateway.commit)
+        technical = TechnicalReads(self.gateway, sources)
+        with patch.object(sources, "info") as read:
+            with self.assertRaisesRegex(ReadError, "NOT_FOUND_OR_NOT_VISIBLE"):
+                await technical.call_async("source_info", {})
+            read.assert_not_called()
+        self.assertEqual(self.open_authorities, 0)
+
     async def test_financial_binding_cannot_grant_technical_source_scope(self):
         self.binding_value = replace(
             self.binding_value,

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import re
 from typing import Any
 
 from .contracts import ReadError
-from .expanded import ExpandedReads, digest
+from .expanded import Authority, ExpandedReads, digest
 from .gateway import Sources
 
 
@@ -35,8 +36,9 @@ def redact_source(text: str) -> str:
 class TechnicalReads:
     """Uses the existing immutable Sources manifest, under separate source scope.
 
-    Synchronous policy only: CanonicalAuthorityResolver cannot grant technical
-    scope. Async compositions fail closed; no financial-to-source scope fallback.
+    Async callers must use call_async; both entries require technical.source
+    explicitly. CanonicalAuthorityResolver grants financial scope only, so it
+    still cannot authorize these reads. No financial-to-source scope fallback.
     Only source-manifest and adapter-bindings checks are admitted. No executable
     checks, path discovery, free grep, environment, process or live log access.
     """
@@ -46,10 +48,9 @@ class TechnicalReads:
             raise ReadError("SOURCE_VERSION_UNPROVEN")
         self.perimeter, self.sources = perimeter, sources
 
-    def call(self, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _event(self, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if type(operation) is not str:
             raise ReadError("INVALID_ARGUMENTS")
-        p = self.perimeter
         event = {
             "operation": (
                 operation
@@ -66,6 +67,12 @@ class TechnicalReads:
                 "adapter-bindings",
             }:
                 event["check"] = arguments["check"]
+        return event
+
+    def call(self, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Synchronous compatibility entry; never bypass an async policy resolver."""
+        p = self.perimeter
+        event = self._event(operation, arguments)
         try:
             actor = p._authority()
             event.update(
@@ -73,7 +80,8 @@ class TechnicalReads:
                 policy_version=actor.policy_version,
             )
             p._audit({**event, "decision": "attempt"})
-            result = self._dispatch(operation, arguments)
+            result = self._dispatch(operation, arguments, actor)
+            p._revalidate(actor)
             p._audit({**event, "decision": "allow"})
             p._revalidate(actor)
             return result
@@ -84,9 +92,43 @@ class TechnicalReads:
             p._audit({**event, "decision": "deny", "code": "SOURCE_UNAVAILABLE"})
             raise ReadError("SOURCE_UNAVAILABLE") from exc
 
-    def _dispatch(self, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def call_async(
+        self, operation: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Await fresh authority before access and again before/after allow audit.
+
+        The supplied resolver remains responsible for authenticated technical
+        scope. Supporting async execution does not create that scope or bind a
+        transport. Cancellation and failed revalidation never return source data.
+        """
         p = self.perimeter
-        actor = p._authority()
+        event = self._event(operation, arguments)
+        try:
+            actor = await p._authority_for(None)
+            event.update(
+                actor_digest=digest(actor.actor_binding),
+                policy_version=actor.policy_version,
+            )
+            p._audit({**event, "decision": "attempt"})
+            result = self._dispatch(operation, arguments, actor)
+            await p._revalidate_for(actor, None)
+            p._audit({**event, "decision": "allow"})
+            await p._revalidate_for(actor, None)
+            return result
+        except asyncio.CancelledError:
+            p._audit({**event, "decision": "cancelled"})
+            raise
+        except ReadError as exc:
+            p._audit({**event, "decision": "deny", "code": exc.code})
+            raise
+        except Exception as exc:
+            p._audit({**event, "decision": "deny", "code": "SOURCE_UNAVAILABLE"})
+            raise ReadError("SOURCE_UNAVAILABLE") from exc
+
+    def _dispatch(
+        self, operation: str, arguments: dict[str, Any], actor: Authority
+    ) -> dict[str, Any]:
+        p = self.perimeter
         if not any(
             s.dataset == "technical.source"
             and self.sources.source_id in s.object_ids
@@ -135,13 +177,12 @@ class TechnicalReads:
             elif arguments["check"] == "adapter-bindings":
                 result = {
                     "check": "adapter-bindings",
-                    "datasets": p.capabilities({})["datasets"],
+                    "datasets": p._capabilities(actor)["datasets"],
                 }
             else:
                 raise ReadError("CHECK_NOT_ADMITTED")
         else:
             raise ReadError("ACTION_NOT_REGISTERED")
-        p._revalidate(actor)
         return {
             "data": result,
             "source_version": self.sources.source_id,
