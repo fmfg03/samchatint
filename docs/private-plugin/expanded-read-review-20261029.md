@@ -1,0 +1,276 @@
+# Revisión del candidato de lecturas contra main — 2026-10-29
+
+Estado: **candidato de código para PR de borrador; no listo para merge ni activación**.
+
+Base revisada: `74598d1abdb883aca9bbfdcdbf41a2b67aacce58` (`main`).
+Candidato: `217501f56e808c4f23051424035a761df63cc2a4`, rama
+`feat/connector-reads-diagnostics-20261016`; ancestro común
+`a983be79e1ad8a6b5aa56affe27a945160ac8166`. Divergencia comprobada: main tiene
+123 commits exclusivos y el candidato uno. Rama aislada de revisión:
+`feat/connector-review-20261029`.
+
+## Dictamen y alcance
+
+Sirve como base de consultas acotadas de SOLICITUD, presupuesto, CxC, Payment Run
+y metadatos AMEX. No constituye todavía soporte integral de Batiseñal.
+Runtime objetivo: owners del web `copa_telmex_dashboard.py`; frontera PostgreSQL,
+sin puente Supabase nuevo. Nivel: `coded_not_wired`. Los owners financieros
+existentes siguen siendo autoridad de lectura y de escritura; no se crea un
+owner financiero paralelo ni se autoriza escritura de negocio.
+
+Se ha trasladado el candidato al main inspeccionado conservando INFORME,
+delegaciones, catálogo, servicio y controles de revocación. No se registra
+ninguna herramienta nueva, no se crea una conexión ni se concede un permiso.
+
+## Cambios necesarios para conciliarlo
+
+- Payment Run: conflicto real con la extracción posterior de
+  `_PAYMENT_RUN_SOURCE_SQL`. Se conserva la consulta común de main, la selección
+  por fecha efectiva de las pagadas, los estados y los defaults de sus callers.
+  La ampliación añade únicamente los filtros exactos, la opción de omitir DDL
+  y la señal de importe fuente ausente en la consulta acotada.
+- CxC: main ya agrega receipts de cobros parciales y conserva reversos/conflictos.
+  Se elimina la segunda consulta de matches y la retención obsoleta por
+  multiplicidad. El adapter usa los totales canónicos y conserva NULL para
+  saldos desconocidos, con gaps explícitos. La regresión verifica 50 + 20 = 70,
+  saldo 46, reverso a 50 y aislamiento de otra versión/objeto.
+- Fixtures: se usa la constante SQL vigente de Payment Run; se evita agregar
+  columnas ya existentes; se incluyen tablas canónicas de auditoría de versiones,
+  pólizas y líneas en el PostgreSQL/WASM sintético. No se aplica esquema a una
+  base externa ni se modifica el SQL del owner para satisfacer el test.
+- Diagnóstico técnico: se auditan también las denegaciones iniciales de identidad
+  y de composición asíncrona, sin inventar actor ni leer código antes de autorizar.
+- CI: se añade el runner ampliado con PGlite 0.3.14 y cobertura acumulada al job
+  existente, sin eliminar la aceptación nativa ni rebajar el umbral de 85%.
+  La suite nativa original no descubría los nuevos tests; el pytest general
+  excluye expresamente `tests/unit/readonly_gateway`.
+
+## Fronteras comprobadas que siguen pendientes
+
+| Componente | Evidencia actual | Paso mínimo que falta |
+| --- | --- | --- |
+| Autoridad financiera | Resolver async, ceilings del servidor, guards y nuevas sesiones; tests sintéticos de revocación | Binding autenticado de instalación/empleado/objetos/fiscalidad y auditoría durable, con recibos auténticos |
+| Código y diagnóstico | Nueva entrada `TechnicalReads.call_async` espera autoridad y revalida antes/después de auditoría; la entrada sync rechaza resolver async | Binding autenticado de scope técnico propio; no copiar permisos financieros |
+| Scope técnico | `CanonicalAuthorityResolver.binding` rechaza `technical.source`, fuera de `DATASETS` | Prueba positiva/negativa del owner técnico antes de declarar diagnóstico disponible |
+| Desarrollo Agentius | Contrato local puro, sin worker ni persistencia | Adapter contra árbol/manifest vigente con recibos e idempotencia; no renombrar revisión a hash |
+| PostgreSQL nativo | 17 casos nuevos pasan localmente con driver, imports y owners originales; rol mínimo, revocación concurrente, cancelación y timeout | CI del nuevo head y binding autenticado; el binding y la auditoría de esta aceptación son sintéticos |
+| AMEX | Migraciones canónicas completas y ORM/imports originales en PostgreSQL nativo; positivos legacy/direct y negativos esquema/contexto/empresa/tarjeta/RFC/actor | Validación autenticada del circuito y esquema del runtime objetivo; esta fixture no certifica producción |
+| Batiseñal | Ninguna prueba autenticada extremo a extremo ejecutada | Caso autorizado que vincule solicitante, contexto, fuentes y propuesta privada de respuesta |
+
+La incompatibilidad de ejecución se corrige mediante `call_async`: usa el mismo
+predicado de source_id/commit, espera la autoridad inicial y revalida antes del
+allow y antes de entregar la respuesta. Cancelación, timeout, auditoría fallida
+y revocación impiden entrega. La entrada sync sigue devolviendo
+`ASYNC_AUTHORITY_REQUIRED` si se intenta saltar el resolver async. El resolver
+canónico financiero no adquiere scope técnico: su uso con la nueva entrada devuelve
+`NOT_FOUND_OR_NOT_VISIBLE`; añadir `technical.source` al binding financiero sigue
+produciendo `AUTH_REQUIRED`. No se amplía DATASETS ni se aceptan grants del modelo.
+
+El schema de herramientas Agentius Directo disponible en esta sesión confirma:
+
+| Operación | Wire anunciado | Contrato local del candidato |
+| --- | --- | --- |
+| create | project, request_id, mode, base_sha, manifest_hash, objective, scope{read_files,write_files,checks}, story_ref/spec_ref opcionales en schema | project, objective, files, checks |
+| start/resume | work_id, expected_contract_hash, request_id | work_id, expected_revision |
+| artifact | work_id, artifact_id, cursor opcional | work_id, expected_revision, sha256 |
+
+No se invocaron jobs ni se verificó el worker desplegado. El schema anunciado no
+prueba su ejecución ni permite inventar hashes o artifact IDs.
+
+## Unified Resources y separación de componentes
+
+La revisión recibió como antecedente un paquete Agentius Unified Resources del
+18/oct, `REVIEW_ONLY_NOT_INSTALLED`, SHA-256
+`070b70882deec0474af693ed44c2642fb42eb49e9f129076fd7020e017dafcab`.
+No se encontró el artefacto ni ese hash en los archivos de texto accesibles del
+workspace. Su contenido e integridad no se verificaron aquí. No se instaló,
+desplegó ni reconstruyó un adapter `resources_*`.
+
+La integración debe separar: (1) owners/perímetro financiero de SamChat;
+(2) binding de identidad y transporte; (3) recursos de código/plataforma y worker
+Agentius. El paquete de infraestructura puede complementar (2)/(3); no sustituye
+los owners financieros ni convierte estos contratos locales en herramientas live.
+
+## Verificación reproducible
+
+Python 3.12.14; entorno virtual desechable bajo `/tmp`, SQLAlchemy 2.1.6,
+Node y PGlite 0.3.14. Sin entorno/credenciales de producción. Comandos principales:
+
+```sh
+export SAMCHAT_TEST_PGLITE_PATH=/tmp/samchat-connector-node/node_modules/@electric-sql/pglite/dist/index.js
+/tmp/samchat-connector-venv/bin/python scripts/readonly_gateway/run_expanded_tests.py
+/tmp/samchat-connector-venv/bin/python scripts/readonly_gateway/run_expanded_tests.py --legacy
+```
+
+- Candidato actualizado: **57/57 tests únicos pasan**, incluyendo autoridad técnica
+  async y rechazo del contrato local por el proxy wire registrado.
+- Cobertura de los siete módulos nuevos: **708/754 instrucciones, 93,90%**.
+  No es cobertura de todo el repositorio ni prueba de imports/runtime nativos.
+- Regresión comparable en el primer head `e3ffa92`, mismo entorno y harness de namespaces:
+  main: 81 tests, 58 pasan, 3 fallos, 6 errores, 14 omitidos;
+  candidato: 129 tests, 106 pasan, los mismos 3 fallos, 6 errores y 14 omitidos.
+  Se compararon los nueve IDs: **ningún fallo nuevo observado**.
+- Ocho fallos/errores heredados corresponden a identidad/rol/JIT del harness
+  PGlite de la suite legacy; uno a `AUDIT_UNAVAILABLE` en el test de auditoría
+  durable en este filesystem. No se modificaron guards para hacerlos pasar.
+- Los 14 omitidos requieren el entorno de aceptación PostgreSQL nativo.
+  La suite completa no está verde; esta comparación no reemplaza la aceptación.
+- Pasan los cuatro scripts: `check-pr-quality-gate.py`,
+  `check_runtime_packaging_consistency.py`,
+  `check-registration-operational-surface.py`, `check-accepted-regressions.py`.
+- Compilación y diff hygiene pasan. Black/isort aplicados al código nuevo y sus
+  tests. No se ejecutó la suite completa de aplicación ni se acredita UAT.
+- CI remoto y revisión del diff deben consultarse en el PR; esta evidencia local
+  no los da por aprobados.
+
+Los tres hashes canónicos se verificaron contra el registro antes de investigar.
+**Canon unchanged:** esta preparación reutiliza owners e invariantes vigentes;
+no modifica autoridad de negocio, datos, esquema productivo, despliegue ni
+aceptación. No contiene cambios a los tres canons o su registro.
+
+No hacer merge mientras falten las verificaciones anteriores y revisión del
+alcance útil. Si se decide promover sólo la biblioteca financiera, acotar primero
+ese alcance explícitamente; no presentarlo como cierre de Batiseñal. Revertir esta
+propuesta de código no requiere tocar datos ni retirar grants, pues no los crea.
+
+
+## Seguimiento del CI y del wire
+
+El primer head `e3ffa92` pasó Assistant Scoped Gate, Browser UX Pilot y los jobs
+de política y seguridad. El job unitario falló en la reproducción del inventario
+estático de private_plugin: los siete módulos añadidos y las líneas/hashes de
+owners no estaban reflejados en los archivos generados. Es un fallo causado por
+este PR. Se regeneraron `route-inventory.json` y `route-matrix.csv` mediante
+`python scripts/private_plugin/inventory.py`, preservando el generador, sus
+exclusiones y los estados DISABLED. Resultado: 613 rutas, 578 montajes estáticos,
+44 acciones canónicas, cero parse gaps. **135/135 tests aislados del plugin pasan**
+en su entorno de dependencias fijadas. La conclusión remota del head actualizado
+se conserva en el PR; no se presume por esta ejecución local.
+
+La revisión del wire ejecuta el admission check del proxy histórico versionado
+`tests/unit/readonly_gateway/fixtures/bridge/work_tools.py.fixture`. Las seis
+operaciones locales create/start/resume/status/cancel/artifact son rechazadas por
+campos desconocidos/faltantes, antes de acceder a sockets. Esa prueba coincide
+con el schema anunciado en las herramientas disponibles; no demuestra identidad
+con el worker desplegado. No existe aquí un recibo autenticado que permita
+traducir revisión a `expected_contract_hash`, hash de contenido a `artifact_id`,
+ni una selección `files` a permisos diferenciados read/write y request_id durable.
+Inventarlos debilitaría autoridad e idempotencia. El adapter wire sigue pendiente
+del árbol/manifest y recibos auténticos del executor; no se creó un sustituto.
+
+Este seguimiento corrige ejecución async e inventario, sin registrar herramientas,
+crear grants, conectar una identidad real, instalar PostgreSQL/infraestructura
+ni afirmar aceptación nativa AMEX. Canon unchanged por los mismos motivos.
+
+### Regresión de orden del guard web
+
+El head `c928ee7` pasó el inventario corregido, las 135 pruebas de private_plugin,
+política, seguridad, Assistant Scoped Gate y Browser UX Pilot. La suite general
+unitaria reportó 6725 aprobadas, una fallida y ocho omitidas. La prueba
+`test_document_detail_authorizes_before_pending_payment_side_effects` buscaba el
+predicado inline retirado al extraer `_can_read_documento`; el fallo fue nuevo
+del PR, no evidencia por sí solo de un cambio funcional en autoridad.
+
+Se reprodujo la prueba original aprobada sobre main y fallida sobre la ruta del
+PR. La prueba actualizada exige la llamada negada al guard y el retorno de acceso
+denegado antes del observador y de la preparación de fecha de pago, conservando
+los checks previos a commit y notificación. El cuerpo exacto del test ejecutado
+por AST pasa localmente y rechaza tres mutaciones: eliminar el retorno de
+denegación, invertir el guard y preparar el pago antes de autorizar. Además,
+las 16 pruebas aisladas de autoridad pasan. No se cambia código productivo ni
+se acepta el fallo en una baseline. La ejecución local por AST no sustituye el
+módulo completo con bootstrap; éste se reejecuta en CI.
+
+La etapa de aceptación readonly nativa y la suite ampliada remota fueron
+omitidas en ese head porque falló antes la suite general. No se presentan como
+aprobadas. El entorno se desconectó y volvió a estar disponible; el checkout se
+recuperó limpio en `c928ee7`, sin trabajo local perdido o pendiente de publicar.
+
+### Aislamiento de cobertura y SQLAlchemy
+
+En `f2f7582`, la suite general pasó **6726 pruebas, ocho omitidas**; las **81
+pruebas readonly originales** pasaron en PostgreSQL nativo de CI. La suite
+ampliada ejecutó sus 57 casos pero fallaron tres AMEX con
+`TypeError: 'InternalTraversal' object is not callable` en SQLAlchemy 2.1.6.
+Esto no certifica esquema AMEX nativo: los casos nuevos siguen usando SQLite
+y PGlite con las fronteras sintéticas descritas arriba.
+
+Se reprodujeron exactamente los tres errores en Python 3.12.14 con SQLAlchemy
+2.1.6 y Pydantic 2.14.1, sin necesitar Python 3.12.15 ni cambiar dependencias del
+repositorio. La selección dotted de coverage (`--source=...connector_read_service`)
+usa `find_spec`, importando los paquetes padre antes del runner aislado. Coverage
+restaura `sys.modules`, pero la extensión compilada de SQLAlchemy conserva
+referencias al enum anterior; el import posterior produce identidades distintas.
+Sin Pydantic, el import del padre falla antes de llegar a SQLAlchemy y oculta el
+problema localmente. SQLAlchemy 2.0.54 del venv private_plugin no reproduce el fallo.
+
+La corrección selecciona por rutas con `--include`, acumulando las mismas fuentes
+sin importar el bootstrap de la aplicación. La ejecución nativa previa mantiene
+el inventario completo del directorio gateway; el servicio nuevo se importa y
+mide en los tests ampliados. Se conservan los 57 casos, el umbral 85% y todas las
+guardias. Con 2.1.6 y Pydantic, pasan los 57 y la cobertura de los siete módulos
+nuevos permanece **708/754 líneas (93.90%)**. No se desactiva caché/Cython ni se
+fija una versión distinta para ocultar el error. La conclusión remota del nuevo
+head sigue requiriendo verificación.
+
+### Aceptación nativa adicional del circuito ampliado
+
+El head previo `f850012a14d050ba2c9ff47c50f7a45e0ce950be` terminó con CI verde:
+Test Suite [40819548017](https://github.com/fmfg03/samchatint/actions/runs/40819548017),
+Assistant Scoped Gate y Browser UX Pilot. Unitarias generales: 6726/8 omitidas;
+plugin: 135; readonly original nativo: 81; ampliadas: 57. Integración general:
+840/31 omitidas; plugin PostgreSQL: 20. Diff: 711/773 líneas cubiertas (91%).
+Payment Run y dependencies todavía tenían 14 y dos líneas nuevas sin cobertura.
+
+La continuación agrega `tests/acceptance/test_connector_reads_native.py` al
+mismo cluster efímero del job unitario. No modifica código productivo. Mantiene
+el gate readonly original de 85% y combina además esta cobertura con la general
+para el gate del diff. Los 57 casos ampliados vuelven a pasar localmente.
+
+**17/17 casos nativos locales pasan**, Python 3.12.14, SQLAlchemy 2.1.6 y
+asyncpg, PostgreSQL 16.15. Imagen de test `postgres:16-bookworm`, digest
+`sha256:e8a07d2c7579b038938cdba6c539e580e5001caf9ea203d397b5cc83e76bd938`.
+Contenedor sin red, sin puertos, datos tmpfs y conexión por socket Unix bajo
+`/tmp/samchat-ro-native-*`; no credenciales ni volumen persistente. Cada caso
+crea/elimina su esquema sintético y rol temporal sin contraseña. El rol de
+lectura tiene sólo SELECT explícito, sin superusuario/DDL/DML/BYPASSRLS;
+empleados usa privilegios por columna y deniega password_hash.
+
+- SOLICITUD y Payment Run: IDs exactos, objeto ajeno denegado antes de abrir
+  datos, importe NULL preservado, sin DML/DDL/locks. `todas` conserva la fecha
+  programada del owner; `pagadas` conserva fecha efectiva. Scope vacío no consulta
+  SQL; el default de preparación de esquema sigue activo y el rol read lo rechaza.
+- Dependencias: acceso a perfiles ilegible aborta fail-closed; revocación de
+  empleado en otra conexión impide entregar aun cuando el snapshot de datos ve
+  su estado anterior. Cancelación y statement_timeout real cierran transacciones.
+- Presupuesto y CxC: owners originales, versión aprobada exacta; torneo ajeno y
+  versión draft denegados. Finanzas solo no concede presupuesto: el caso positivo
+  usa una facultad de Dirección ya reconocida por el guard, en el fixture.
+- AMEX: imports, ORM y getters originales; las nueve migraciones canónicas del
+  1 al 23/oct se ejecutan mediante el fixture del owner. Positivos legacy/direct,
+  denegación explícita respectiva y ausencia/cambio de contexto, empresa, tarjeta,
+  RFC, actor y esquema. No se reemplaza el guard de esquema con un stub.
+
+Cobertura nativa de las líneas nuevas: **Payment Run 14/14; dependencies 2/2**.
+La fixture heredada omite FKs de dominios legacy ajenos para no requerir sus
+seeds operativos; conserva las FKs/guards de las migraciones AMEX. No es una
+réplica de producción ni un ensayo SAT remoto. Datos, identidad, binding,
+source_commit y MemoryAudit son sintéticos; esta aceptación no acredita OAuth,
+auditoría durable, transporte ni Batiseñal E2E.
+
+Comando principal, con el socket del cluster desechable explícito y configuración
+de aplicación de test (no un DSN productivo):
+
+```sh
+TEST_AMEX_NATIVE_SOCKET="$samchat_ro_cluster" PYTHON_DOTENV_DISABLED=1 \
+  python -m coverage run --data-file=reports/readonly_gateway/native-candidate.coverage \
+  --include='src/samchat/readonly_gateway/*,src/devnous/gastos/services/connector_read_service.py,src/devnous/gastos/services/payment_run_service.py,src/devnous/gastos/routes/dependencies.py' \
+  -m pytest tests/acceptance/test_connector_reads_native.py --timeout=120 --no-cov -q
+```
+
+La [preparación de bindings y wire](expanded-read-binding-plan-20261029.md)
+identifica qué reutilizar y qué evidencia falta. No se crean credenciales,
+permisos persistentes ni un adapter remoto especulativo. El PR permanece draft;
+el CI del head nuevo debe verificarse en GitHub antes de atribuirle aprobación.
+Canon unchanged: sólo aceptación, cobertura y documentación; reglas y owners
+productivos permanecen intactos.

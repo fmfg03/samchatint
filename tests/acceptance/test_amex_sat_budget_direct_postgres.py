@@ -18,7 +18,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 from sqlalchemy import ForeignKeyConstraint, MetaData, func, select, text
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     close_all_sessions,
@@ -55,19 +55,40 @@ DIRECT_TABLES = frozenset(
 
 @pytest_asyncio.fixture
 async def direct_pg(monkeypatch):
-    raw = os.getenv("TEST_AMEX_DATABASE_URL")
-    if not raw:
-        pytest.skip("Set isolated TEST_AMEX_DATABASE_URL")
-    url = make_url(raw)
-    if (
-        url.host not in {"localhost", "127.0.0.1"}
-        or url.port != 55471
-        or url.username != "test_user"
-        or url.database != "devnous_test"
-    ):
-        pytest.fail(
-            "Direct acceptance requires isolated localhost:55471/test_user/devnous_test"
+    native_socket = os.getenv("TEST_AMEX_NATIVE_SOCKET")
+    if native_socket:
+        # Same ephemeral Unix-socket cluster as readonly acceptance. No TCP,
+        # password, production DSN or persistent authentication is introduced.
+        socket = Path(native_socket)
+        if (
+            socket.parent != Path("/tmp")
+            or not socket.name.startswith("samchat-ro-native-")
+            or socket.resolve() != socket
+            or not (socket / ".s.PGSQL.5432").is_socket()
+        ):
+            pytest.fail(
+                "Native AMEX acceptance requires a disposable readonly test socket"
+            )
+        url = URL.create(
+            "postgresql+asyncpg",
+            username="postgres",
+            database="devnous_db",
+            query={"host": str(socket)},
         )
+    else:
+        raw = os.getenv("TEST_AMEX_DATABASE_URL")
+        if not raw:
+            pytest.skip("Set isolated TEST_AMEX_DATABASE_URL")
+        url = make_url(raw)
+        if (
+            url.host not in {"localhost", "127.0.0.1"}
+            or url.port != 55471
+            or url.username != "test_user"
+            or url.database != "devnous_test"
+        ):
+            pytest.fail(
+                "Direct acceptance requires isolated localhost:55471/test_user/devnous_test"
+            )
     schema = "direct_acceptance_" + uuid4().hex
     admin = create_async_engine(url)
     async with admin.begin() as conn:
@@ -95,7 +116,7 @@ async def direct_pg(monkeypatch):
         connection = await asyncpg.connect(
             user=url.username,
             password=url.password,
-            host=url.host,
+            host=url.query.get("host", url.host),
             port=url.port,
             database=url.database,
             server_settings={"search_path": schema},
