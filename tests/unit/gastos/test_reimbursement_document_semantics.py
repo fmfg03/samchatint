@@ -1132,8 +1132,13 @@ def test_document_detail_authorizes_before_pending_payment_side_effects() -> Non
     block = source[start:end]
 
     assert "selectinload(Documento.empleado)" in block
-    assert block.index("documento.empleado_id != current_empleado.id") < block.index(
-        "is_read_only_operations_observer"
+    denied_guard = (
+        "if not _can_read_documento(documento, current_empleado):\n"
+        "        return _render_documento_access_denied_page(current_empleado)"
+    )
+    assert block.index(denied_guard) < block.index("is_read_only_operations_observer")
+    assert block.index(denied_guard) < block.index(
+        "ensure_fecha_pago_for_approved_solicitud(documento)"
     )
     assert block.index("is_read_only_operations_observer") < block.index(
         "await session.commit()"

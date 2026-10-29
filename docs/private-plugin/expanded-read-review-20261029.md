@@ -161,3 +161,27 @@ del árbol/manifest y recibos auténticos del executor; no se creó un sustituto
 Este seguimiento corrige ejecución async e inventario, sin registrar herramientas,
 crear grants, conectar una identidad real, instalar PostgreSQL/infraestructura
 ni afirmar aceptación nativa AMEX. Canon unchanged por los mismos motivos.
+
+### Regresión de orden del guard web
+
+El head `c928ee7` pasó el inventario corregido, las 135 pruebas de private_plugin,
+política, seguridad, Assistant Scoped Gate y Browser UX Pilot. La suite general
+unitaria reportó 6725 aprobadas, una fallida y ocho omitidas. La prueba
+`test_document_detail_authorizes_before_pending_payment_side_effects` buscaba el
+predicado inline retirado al extraer `_can_read_documento`; el fallo fue nuevo
+del PR, no evidencia por sí solo de un cambio funcional en autoridad.
+
+Se reprodujo la prueba original aprobada sobre main y fallida sobre la ruta del
+PR. La prueba actualizada exige la llamada negada al guard y el retorno de acceso
+denegado antes del observador y de la preparación de fecha de pago, conservando
+los checks previos a commit y notificación. El cuerpo exacto del test ejecutado
+por AST pasa localmente y rechaza tres mutaciones: eliminar el retorno de
+denegación, invertir el guard y preparar el pago antes de autorizar. Además,
+las 16 pruebas aisladas de autoridad pasan. No se cambia código productivo ni
+se acepta el fallo en una baseline. La ejecución local por AST no sustituye el
+módulo completo con bootstrap; éste se reejecuta en CI.
+
+La etapa de aceptación readonly nativa y la suite ampliada remota fueron
+omitidas en ese head porque falló antes la suite general. No se presentan como
+aprobadas. El entorno se desconectó y volvió a estar disponible; el checkout se
+recuperó limpio en `c928ee7`, sin trabajo local perdido o pendiente de publicar.
