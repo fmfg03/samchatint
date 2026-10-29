@@ -53,8 +53,8 @@ ninguna herramienta nueva, no se crea una conexión ni se concede un permiso.
 | Código y diagnóstico | Nueva entrada `TechnicalReads.call_async` espera autoridad y revalida antes/después de auditoría; la entrada sync rechaza resolver async | Binding autenticado de scope técnico propio; no copiar permisos financieros |
 | Scope técnico | `CanonicalAuthorityResolver.binding` rechaza `technical.source`, fuera de `DATASETS` | Prueba positiva/negativa del owner técnico antes de declarar diagnóstico disponible |
 | Desarrollo Agentius | Contrato local puro, sin worker ni persistencia | Adapter contra árbol/manifest vigente con recibos e idempotencia; no renombrar revisión a hash |
-| PostgreSQL nativo | Binarios ausentes localmente; las 81 pruebas readonly originales pasan en PostgreSQL nativo desechable de CI en `f2f7582` | Aceptación nativa específica de los nuevos adapters/autoridad, con driver real, rol mínimo, revocación concurrente y cancelación |
-| AMEX | Getter/modelo original y cuerpos de guards ejercitados con fixtures; admisión de esquema explícitamente simulada | Esquema canónico completo y ORM/imports originales en PostgreSQL nativo; casos legacy/direct/contexto/empresa/tarjeta |
+| PostgreSQL nativo | 17 casos nuevos pasan localmente con driver, imports y owners originales; rol mínimo, revocación concurrente, cancelación y timeout | CI del nuevo head y binding autenticado; el binding y la auditoría de esta aceptación son sintéticos |
+| AMEX | Migraciones canónicas completas y ORM/imports originales en PostgreSQL nativo; positivos legacy/direct y negativos esquema/contexto/empresa/tarjeta/RFC/actor | Validación autenticada del circuito y esquema del runtime objetivo; esta fixture no certifica producción |
 | Batiseñal | Ninguna prueba autenticada extremo a extremo ejecutada | Caso autorizado que vincule solicitante, contexto, fuentes y propuesta privada de respuesta |
 
 La incompatibilidad de ejecución se corrige mediante `call_async`: usa el mismo
@@ -212,3 +212,65 @@ guardias. Con 2.1.6 y Pydantic, pasan los 57 y la cobertura de los siete módulo
 nuevos permanece **708/754 líneas (93.90%)**. No se desactiva caché/Cython ni se
 fija una versión distinta para ocultar el error. La conclusión remota del nuevo
 head sigue requiriendo verificación.
+
+### Aceptación nativa adicional del circuito ampliado
+
+El head previo `f850012a14d050ba2c9ff47c50f7a45e0ce950be` terminó con CI verde:
+Test Suite [40819548017](https://github.com/fmfg03/samchatint/actions/runs/40819548017),
+Assistant Scoped Gate y Browser UX Pilot. Unitarias generales: 6726/8 omitidas;
+plugin: 135; readonly original nativo: 81; ampliadas: 57. Integración general:
+840/31 omitidas; plugin PostgreSQL: 20. Diff: 711/773 líneas cubiertas (91%).
+Payment Run y dependencies todavía tenían 14 y dos líneas nuevas sin cobertura.
+
+La continuación agrega `tests/acceptance/test_connector_reads_native.py` al
+mismo cluster efímero del job unitario. No modifica código productivo. Mantiene
+el gate readonly original de 85% y combina además esta cobertura con la general
+para el gate del diff. Los 57 casos ampliados vuelven a pasar localmente.
+
+**17/17 casos nativos locales pasan**, Python 3.12.14, SQLAlchemy 2.1.6 y
+asyncpg, PostgreSQL 16.15. Imagen de test `postgres:16-bookworm`, digest
+`sha256:e8a07d2c7579b038938cdba6c539e580e5001caf9ea203d397b5cc83e76bd938`.
+Contenedor sin red, sin puertos, datos tmpfs y conexión por socket Unix bajo
+`/tmp/samchat-ro-native-*`; no credenciales ni volumen persistente. Cada caso
+crea/elimina su esquema sintético y rol temporal sin contraseña. El rol de
+lectura tiene sólo SELECT explícito, sin superusuario/DDL/DML/BYPASSRLS;
+empleados usa privilegios por columna y deniega password_hash.
+
+- SOLICITUD y Payment Run: IDs exactos, objeto ajeno denegado antes de abrir
+  datos, importe NULL preservado, sin DML/DDL/locks. `todas` conserva la fecha
+  programada del owner; `pagadas` conserva fecha efectiva. Scope vacío no consulta
+  SQL; el default de preparación de esquema sigue activo y el rol read lo rechaza.
+- Dependencias: acceso a perfiles ilegible aborta fail-closed; revocación de
+  empleado en otra conexión impide entregar aun cuando el snapshot de datos ve
+  su estado anterior. Cancelación y statement_timeout real cierran transacciones.
+- Presupuesto y CxC: owners originales, versión aprobada exacta; torneo ajeno y
+  versión draft denegados. Finanzas solo no concede presupuesto: el caso positivo
+  usa una facultad de Dirección ya reconocida por el guard, en el fixture.
+- AMEX: imports, ORM y getters originales; las nueve migraciones canónicas del
+  1 al 23/oct se ejecutan mediante el fixture del owner. Positivos legacy/direct,
+  denegación explícita respectiva y ausencia/cambio de contexto, empresa, tarjeta,
+  RFC, actor y esquema. No se reemplaza el guard de esquema con un stub.
+
+Cobertura nativa de las líneas nuevas: **Payment Run 14/14; dependencies 2/2**.
+La fixture heredada omite FKs de dominios legacy ajenos para no requerir sus
+seeds operativos; conserva las FKs/guards de las migraciones AMEX. No es una
+réplica de producción ni un ensayo SAT remoto. Datos, identidad, binding,
+source_commit y MemoryAudit son sintéticos; esta aceptación no acredita OAuth,
+auditoría durable, transporte ni Batiseñal E2E.
+
+Comando principal, con el socket del cluster desechable explícito y configuración
+de aplicación de test (no un DSN productivo):
+
+```sh
+TEST_AMEX_NATIVE_SOCKET="$samchat_ro_cluster" PYTHON_DOTENV_DISABLED=1 \
+  python -m coverage run --data-file=reports/readonly_gateway/native-candidate.coverage \
+  --include='src/samchat/readonly_gateway/*,src/devnous/gastos/services/connector_read_service.py,src/devnous/gastos/services/payment_run_service.py,src/devnous/gastos/routes/dependencies.py' \
+  -m pytest tests/acceptance/test_connector_reads_native.py --timeout=120 --no-cov -q
+```
+
+La [preparación de bindings y wire](expanded-read-binding-plan-20261029.md)
+identifica qué reutilizar y qué evidencia falta. No se crean credenciales,
+permisos persistentes ni un adapter remoto especulativo. El PR permanece draft;
+el CI del head nuevo debe verificarse en GitHub antes de atribuirle aprobación.
+Canon unchanged: sólo aceptación, cobertura y documentación; reglas y owners
+productivos permanecen intactos.

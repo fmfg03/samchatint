@@ -157,11 +157,19 @@ jobs:
             --include='src/samchat/readonly_gateway/*,src/devnous/gastos/services/connector_read_service.py' \
             scripts/readonly_gateway/run_expanded_tests.py
           python -m coverage report --fail-under=85
+          # Original ORM/owners and native asyncpg, with a temporary passwordless
+          # read role on the same disposable socket. No application binding.
+          TEST_AMEX_NATIVE_SOCKET="$samchat_ro_cluster" PYTHON_DOTENV_DISABLED=1 \
+            python -m coverage run \
+              --data-file=reports/readonly_gateway/native-candidate.coverage \
+              --include='src/samchat/readonly_gateway/*,src/devnous/gastos/services/connector_read_service.py,src/devnous/gastos/services/payment_run_service.py,src/devnous/gastos/routes/dependencies.py' \
+              -m pytest tests/acceptance/test_connector_reads_native.py \
+              --timeout=120 --no-cov -q
 
       - name: Combine unit coverage including isolated slices
         run: |
           mv .coverage .coverage.repository.unit
-          python -m coverage combine .coverage.repository.unit reports/private-plugin/unit.coverage reports/readonly_gateway/unit.coverage
+          python -m coverage combine .coverage.repository.unit reports/private-plugin/unit.coverage reports/readonly_gateway/unit.coverage reports/readonly_gateway/native-candidate.coverage
 
       - name: Upload unit-test report
         if: always()
