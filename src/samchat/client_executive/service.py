@@ -18,6 +18,7 @@ from devnous.copa_telmex.registration_read_model import (
 from samchat.budgets.service import budget_alias_candidates, build_budget_snapshot
 from samchat.client_executive.accounting_bridge import (
     build_tournament_accounting,
+    budget_actual_comparison,
     unavailable as unavailable_accounting,
 )
 from samchat.sports_platform import build_director_general_entity_dossier
@@ -322,7 +323,10 @@ def _budget_metric(
 
 
 def _executive_card(
-    tournament: dict[str, str], snapshot: dict[str, Any]
+    tournament: dict[str, str],
+    snapshot: dict[str, Any],
+    *,
+    edition_year: int | None = None,
 ) -> dict[str, Any]:
     summary = (
         snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
@@ -408,6 +412,13 @@ def _executive_card(
         bridge = snapshot.get("direction_scope_bridge")
         if isinstance(bridge, dict):
             card["budget_scope_bridge"] = dict(bridge)
+    if edition_year is not None:
+        comparison_gap = budget_actual_comparison(tournament["id"], edition_year)
+        if comparison_gap is not None:
+            card["budget_actual_comparison"] = comparison_gap
+            card["available"] = None
+            card["projected"] = None
+            card["execution_pct"] = None
     return card
 
 
@@ -918,7 +929,7 @@ async def build_client_dashboard(
             tournament=tournament,
             edition_year=edition_year,
         )
-        card = _executive_card(tournament, snapshot)
+        card = _executive_card(tournament, snapshot, edition_year=edition_year)
         if "source" in snapshot and accounting_access:
             card["accounting"] = await build_tournament_accounting(
                 session,
@@ -1010,7 +1021,7 @@ async def build_portfolio_dashboard(
             tournament=tournament,
             edition_year=edition_year,
         )
-        card = _executive_card(tournament, snapshot)
+        card = _executive_card(tournament, snapshot, edition_year=edition_year)
         if "source" in snapshot and accounting_access:
             card["accounting"] = await build_tournament_accounting(
                 session,

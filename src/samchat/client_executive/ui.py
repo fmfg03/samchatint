@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 from html import escape
+from pathlib import PurePath
 from typing import Any, Iterable, Optional
 from urllib.parse import quote
 
@@ -80,6 +82,10 @@ def _budget_kpis(card: dict[str, Any]) -> str:
     committed = card.get("committed")
     paid = card.get("paid")
     projected = card.get("projected")
+    comparison = card.get("budget_actual_comparison") or {}
+    comparable = comparison.get("status") != "unavailable"
+    if not comparable:
+        projected = None
     paid_note = (
         "Estado documental pagado/cerrado o fecha de pago registrada; "
         "no equivale por sí solo a salida de caja"
@@ -87,8 +93,11 @@ def _budget_kpis(card: dict[str, Any]) -> str:
         else "Sin total pagado acreditado"
     )
     available = card.get("available")
+    if not comparable:
+        available = None
     if (
-        available is None
+        comparable
+        and available is None
         and budget is not None
         and actual is not None
         and committed is not None
@@ -108,13 +117,14 @@ def _budget_kpis(card: dict[str, Any]) -> str:
     <section class="kpi-section" aria-label="Resumen financiero">
       <div class="kpi-grid">
         {_kpi('Presupuesto', budget, note='Base autorizada', emphasis=True)}
-        {_kpi('Ejercido', actual, note=f'{_pct(actual, budget)} del presupuesto')}
-        {_kpi('Comprometido', committed, note=f'{_pct(committed, budget)} del presupuesto')}
+        {_kpi('Ejercido', actual, note=f'{_pct(actual, budget)} del presupuesto' if comparable else 'Base fiscal; sin proporción comparable acreditada')}
+        {_kpi('Comprometido', committed, note=f'{_pct(committed, budget)} del presupuesto' if comparable else 'Importe documental; no se suma al ejercido')}
         {_kpi('Cerrado / pagado', paid, note=paid_note)}
-        {_kpi('Disponible', available, note='Presupuesto menos mayor uso reconocido')}
-        {_kpi('Proyección', projected, note='Cierre estimado')}
+        {_kpi('Disponible', available, note='Presupuesto menos mayor uso reconocido' if comparable else 'Base común por acreditar')}
+        {_kpi('Proyección', projected, note='Cierre estimado' if comparable else 'Base común por acreditar')}
       </div>
       <p class="source-note">{escape(note)}</p>
+      {('<p class="source-note">' + _text(comparison.get('reason')) + '</p>') if not comparable else ''}
     </section>
     """
 
@@ -136,7 +146,9 @@ def _alerts(card: dict[str, Any]) -> str:
     """
 
 
-def _breakdown_rows(items: list[dict[str, Any]], limit: int | None = None) -> str:
+def _breakdown_rows(
+    items: list[dict[str, Any]], limit: int | None = None, *, comparable: bool = True
+) -> str:
     rows = []
     for item in items[:limit]:
         budget = item.get("budget_total")
@@ -148,7 +160,7 @@ def _breakdown_rows(items: list[dict[str, Any]], limit: int | None = None) -> st
             f"<td class='money'>{_money(budget)}</td>"
             f"<td class='money'>{_money(actual)}</td>"
             f"<td class='money'>{_money(committed)}</td>"
-            f"<td>{_pct(actual, budget)}</td>"
+            f"<td>{_pct(actual, budget) if comparable else '—'}</td>"
             "</tr>"
         )
     return "".join(rows)
@@ -194,7 +206,10 @@ def _budget_detail(card: dict[str, Any]) -> str:
         for item in list(breakdowns.get("by_account") or [])
         if isinstance(item, dict)
     ]
-    concept_rows = _breakdown_rows(concepts)
+    comparable = (card.get("budget_actual_comparison") or {}).get(
+        "status"
+    ) != "unavailable"
+    concept_rows = _breakdown_rows(concepts, comparable=comparable)
     account_rows = _account_breakdown_rows(accounts)
     if not concept_rows and not account_rows:
         return ""
@@ -237,7 +252,7 @@ def _budget_detail(card: dict[str, Any]) -> str:
         else ""
     )
     phases = [item for item in breakdowns.get("by_phase", []) if isinstance(item, dict)]
-    phase_rows = _breakdown_rows(phases)
+    phase_rows = _breakdown_rows(phases, comparable=comparable)
     phases_html = (
         '<h3>Fases y subproyectos</h3><div class="table-wrap"><table>'
         "<thead><tr><th>Fase / subproyecto</th><th>Presupuesto</th>"
@@ -266,17 +281,21 @@ def _entity_detail(entity: dict[str, Any], index: int) -> str:
     player_groups = list(operations.get("players_by_category_age_gender") or [])
 
     contacts_html = (
-        "".join(f"""
+        "".join(
+            f"""
         <tr>
           <td>{_text(contact.get('name'), 'Sin nombre')}</td>
           <td>{_text(contact.get('phone'))}</td>
           <td>{_text(contact.get('email'))}</td>
         </tr>
-        """ for contact in contacts)
+        """
+            for contact in contacts
+        )
         or '<tr><td colspan="3">Sin responsable de la entidad registrado.</td></tr>'
     )
     teams_html = (
-        "".join(f"""
+        "".join(
+            f"""
         <tr>
           <td>{_text(row.get('category'), 'Sin categoría')}</td>
           <td>{_text(row.get('gender_or_branch'), 'Sin género/rama')}</td>
@@ -284,18 +303,23 @@ def _entity_detail(entity: dict[str, Any], index: int) -> str:
           <td>{int(row.get('players_count') or 0)}</td>
           <td>{_text(', '.join(row.get('team_names') or []))}</td>
         </tr>
-        """ for row in team_groups)
+        """
+            for row in team_groups
+        )
         or '<tr><td colspan="5">Sin equipos participantes registrados.</td></tr>'
     )
     players_html = (
-        "".join(f"""
+        "".join(
+            f"""
         <tr>
           <td>{_text(row.get('category'), 'Sin categoría')}</td>
           <td>{_text(row.get('gender_or_branch'), 'Sin género/rama')}</td>
           <td>{_text(row.get('age'), 'Edad no disponible')}</td>
           <td>{int(row.get('players_count') or 0)}</td>
         </tr>
-        """ for row in player_groups)
+        """
+            for row in player_groups
+        )
         or '<tr><td colspan="4">Sin jugadores registrados.</td></tr>'
     )
 
@@ -534,8 +558,171 @@ def _registration(snapshot: dict[str, Any], index: int) -> str:
     """
 
 
+DOCUMENTARY_CLASSIFICATIONS = {
+    "documentary_account": "Clasificación del catálogo; exclusividad no acreditada",
+    "shared_active": "Cuenta compartida; reparto pendiente",
+    "other_project_retired": "Referencia histórica a otro proyecto",
+    "prior_year": "Cuenta de año anterior; edición por acreditar",
+}
+
+
+def registered_amount(value: object) -> str:
+    """Format a recorded number without asserting its currency or tax basis."""
+    if value is None or value == "" or isinstance(value, bool):
+        return "N/D"
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return "N/D"
+    return f"{number:,.2f}" if number.is_finite() else "N/D"
+
+
+def documentary_accounting_rows(documentary: dict[str, Any]) -> list[dict[str, Any]]:
+    """Project source rows for presentation; never aggregate account amounts."""
+    rows = []
+    for account in documentary.get("accounts") or []:
+        classification = DOCUMENTARY_CLASSIFICATIONS.get(
+            account.get("classification"), "Alcance por acreditar"
+        )
+        note = classification
+        if account.get("attribution_note") and account["attribution_note"] != note:
+            note += " · " + account["attribution_note"]
+        if account.get("has_active_concept") is False:
+            note += " · Sin partida presupuestal activa"
+        evidence = "; ".join(
+            " · ".join(
+                str(v)
+                for v in (
+                    PurePath(str(item.get("filename") or "")).name,
+                    item.get("sheet"),
+                    f"fila {item['row_number']}" if item.get("row_number") else None,
+                )
+                if v
+            )
+            for item in account.get("evidence") or []
+        )
+        common = {
+            "company_code": documentary.get("company_code"),
+            "fiscal_year": documentary.get("fiscal_year"),
+            "account_code": account.get("account_code"),
+            "account_name": account.get("account_name"),
+            "classification": classification,
+            "attribution_note": note,
+            "evidence": evidence,
+        }
+        periods = []
+        for family, label in (
+            ("trial_balance_periods", "Balanza oficial"),
+            ("policy_periods", "Pólizas admitidas"),
+        ):
+            for period in account.get(family) or []:
+                warning = (
+                    "Advertencia de formato: resumen impreso ausente; movimientos balanceados."
+                    if "missing_summary_marker" in (period.get("quality_flags") or [])
+                    else ""
+                )
+                periods.append(
+                    {
+                        **common,
+                        "source_family": label,
+                        "month": period.get("month"),
+                        "debits": period.get("debits"),
+                        "credits": period.get("credits"),
+                        "registered_net": period.get("registered_net"),
+                        "closing_balance": period.get("closing_balance"),
+                        "source_sha256": period.get("source_sha256"),
+                        "warning": warning,
+                    }
+                )
+        rows.extend(
+            sorted(periods, key=lambda row: (row["source_family"], row["month"] or 0))
+            or [{**common, "source_family": "Sin periodos admitidos"}]
+        )
+    return rows
+
+
+def render_documentary_accounting(
+    documentary: dict[str, Any], *, expanded: bool = False
+) -> str:
+    """Render evidence separately from exclusive totals and budget comparisons."""
+    if not documentary or not documentary.get("accounts"):
+        return ""
+    coverage = documentary.get("coverage") or {}
+
+    def months(key: str) -> str:
+        return ", ".join(str(m) for m in coverage.get(key) or []) or "N/D"
+
+    withheld = (
+        ", ".join(
+            str(item.get("month_num")) for item in coverage.get("withheld_months") or []
+        )
+        or "Ninguno declarado"
+    )
+    rows = documentary_accounting_rows(documentary)
+    body = "".join(
+        "<tr>"
+        + "".join(
+            "<td>" + _text(value, "N/D") + "</td>"
+            for value in (
+                " · ".join(
+                    str(row.get(k) or "") for k in ("account_code", "account_name")
+                ),
+                row["attribution_note"],
+                row["source_family"],
+                row.get("month"),
+                registered_amount(row.get("debits")),
+                registered_amount(row.get("credits")),
+                registered_amount(row.get("registered_net")),
+                registered_amount(row.get("closing_balance")),
+                row.get("warning"),
+            )
+        )
+        + "</tr>"
+        for row in rows
+    )
+    gaps = "".join(
+        "<li>" + _text(gap) + "</li>" for gap in documentary.get("gaps") or []
+    )
+    reason = documentary.get("reason")
+    return (
+        '<section class="panel documentary-accounting"><h3>Contabilidad registrada · clasificación documental</h3>'
+        + _status(documentary.get("source_status"))
+        + "<p>Empresa "
+        + _text(documentary.get("company_code"))
+        + " · Ejercicio "
+        + _text(documentary.get("fiscal_year"))
+        + ". Estas cuentas corresponden a una rama del catálogo; no acreditan por sí solas un gasto exclusivo del torneo.</p>"
+        "<p>Moneda y base fiscal contables: no acreditadas. Los importes conservan los números registrados, "
+        "sin conversión ni variación contra el presupuesto. No se presenta un total exclusivo del torneo.</p>"
+        "<p>La cobertura anual de esta fuente es independiente del intervalo de los indicadores documentales.</p>"
+        "<p>Meses con balanza: "
+        + escape(months("trial_balance_months"))
+        + " · Meses con pólizas: "
+        + escape(months("policy_months"))
+        + " · Meses retenidos: "
+        + escape(withheld)
+        + ".</p>"
+        + ("<p>" + _text(reason) + "</p>" if reason else "")
+        + ("<ul>" + gaps + "</ul>" if gaps else "")
+        + '<details class="documentary-accounts"'
+        + (" open" if expanded else "")
+        + "><summary>Cuentas y periodos registrados ("
+        + str(len(documentary.get("accounts") or []))
+        + " cuentas)</summary><p>N/D significa que no hay importe acreditado; es distinto de un cero explícito de la fuente.</p>"
+        '<div class="table-wrap" tabindex="0" role="region" aria-label="Cuentas contables documentales con desplazamiento horizontal">'
+        "<table><thead><tr><th>Cuenta</th><th>Alcance</th><th>Fuente</th><th>Mes</th>"
+        "<th>Debe registrado</th><th>Haber registrado</th><th>Movimiento registrado</th>"
+        "<th>Saldo de cierre</th><th>Advertencia de fuente</th></tr></thead><tbody>"
+        + body
+        + "</tbody></table></div></details></section>"
+    )
+
+
 def _accounting_detail(card: dict[str, Any]) -> str:
     accounting = card.get("accounting") or {}
+    documentary_html = render_documentary_accounting(
+        accounting.get("documentary") or {}
+    )
     previous = card.get("accounting_previous_year") or {}
     previous_html = (
         _accounting_detail({"accounting": previous})
@@ -548,6 +735,7 @@ def _accounting_detail(card: dict[str, Any]) -> str:
             "<p>No disponible · "
             + _text(accounting.get("reason"), "Falta acreditar el vínculo contable.")
             + "</p></section>"
+            + documentary_html
             + previous_html
         )
     rows = "".join(
@@ -635,6 +823,7 @@ def _accounting_detail(card: dict[str, Any]) -> str:
         + comparison_html
         + "".join("<p>" + _text(gap) + "</p>" for gap in accounting.get("gaps", []))
         + "</section>"
+        + documentary_html
         + previous_html
     )
 

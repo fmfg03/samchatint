@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import uuid
 from functools import lru_cache
@@ -7480,6 +7481,259 @@ def budget_movement_key(movement: dict[str, Any]) -> str:
     return ""
 
 
+_CLOSEOUT_EVENT = "tournament_closeout_decisions_confirmed_20261030"
+_CLOSEOUT_ACTIONS = _ROOT / "config/tournament_dashboard_closeout_20261030_actions.json"
+_CLOSEOUT_ACTIONS_SHA256 = (
+    "423358853fc62138b9a997ab5e487859daf41841c835c29a4ce136507ccd5254"
+)
+_CLOSEOUT_ACTOR = "e3d13040-2360-420f-98a1-516440ef63c3"
+
+
+def _closeout_hash(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, default=str, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _closeout_actions() -> dict:
+    """The reviewed immutable batch, never an editable concept-lineage hint."""
+    payload = _CLOSEOUT_ACTIONS.read_bytes()
+    if hashlib.sha256(payload).hexdigest() != _CLOSEOUT_ACTIONS_SHA256:
+        raise ValueError("El lote aprobado de conciliación cambió")
+    actions = json.loads(payload)
+    for decision in actions["movements"]:
+        decision["version_id"] = actions["version_id"]
+        decision["concept_id"] = decision["source_concept_id"]
+        decision["target_phase"] = decision["effective_phase"]
+    return actions
+
+
+def _closeout_movement_identity(movement: dict) -> dict:
+    keys = (
+        "accounting_line_id",
+        "poliza_id",
+        "document_id",
+        "expense_id",
+        "concept_key",
+        "effective_phase",
+        "kind",
+        "amount",
+        "cuenta_codigo",
+        "month_number",
+        "document_state",
+    )
+    return {key: movement.get(key) for key in keys}
+
+
+async def _closeout_source(session: AsyncSession, movement: dict) -> dict:
+    """Pin the complete policy and its factual sources; never rewrite them."""
+    result = await session.execute(
+        text(
+            """SELECT to_jsonb(p) AS policy,
+      (SELECT jsonb_agg(to_jsonb(l) ORDER BY l.id) FROM accounting_poliza_lines l
+       WHERE l.poliza_id=p.id) AS policy_lines,
+      (SELECT to_jsonb(d) FROM documentos d WHERE d.id=CAST(:did AS uuid)) AS document,
+      (SELECT to_jsonb(e) FROM expense_reports e WHERE e.id=CAST(:eid AS uuid)) AS expense
+      FROM accounting_polizas p WHERE p.id=CAST(:pid AS uuid)"""
+        ),
+        {
+            "pid": movement.get("poliza_id"),
+            "did": movement.get("document_id"),
+            "eid": movement.get("expense_id"),
+        },
+    )
+    row = result.mappings().first()
+    if not row:
+        raise ValueError("La póliza de origen no está disponible")
+    return dict(row)
+
+
+async def _closeout_destination(
+    session: AsyncSession, decision: dict, movement: dict
+) -> dict:
+    result = await session.execute(
+        text(
+            """SELECT l.id::text AS line_id,
+      l.budget_version_id::text AS version_id,l.tournament_id::text AS tournament_id,
+      l.budget_concept_id::text AS concept_id,l.phase,l.budget_amount,
+      COALESCE(l.line_direction,'expense') AS direction,
+      target.active AS target_active, source.active AS source_active
+      FROM budget_lines l JOIN budget_concepts target ON target.id=l.budget_concept_id
+      JOIN budget_concepts source ON source.id=CAST(:source AS uuid)
+      WHERE l.id=CAST(:line AS uuid)"""
+        ),
+        {"line": decision["target_line_id"], "source": decision["concept_id"]},
+    )
+    row = result.mappings().first()
+    if not row:
+        raise ValueError("Destino de conciliación no disponible")
+    value = dict(row)
+    value["budget_amount"] = str(value["budget_amount"])
+    if (
+        value["version_id"] != decision["version_id"]
+        or value["tournament_id"] != decision["tournament_id"]
+        or value["concept_id"] != decision["target_concept_id"]
+        or value["direction"] != "expense"
+        or value["source_active"] is not False
+        or value["target_active"] is not True
+        or str(movement.get("concept_key")) != decision["concept_id"]
+        or budget_movement_key(movement) != decision["movement_key"]
+        or str(movement.get("document_id")) != decision["document_id"]
+        or str(movement.get("cuenta_codigo")) != decision["source_account_code"]
+        or movement.get("kind") != "ledger_expense"
+        or _safe_decimal(movement.get("amount")) != _safe_decimal(decision["amount"])
+        or normalize_budget_identity_value(movement.get("effective_phase"))
+        != normalize_budget_identity_value(decision["effective_phase"])
+        or normalize_budget_identity_value(value["phase"])
+        != normalize_budget_identity_value(decision["target_phase"])
+    ):
+        raise ValueError("Fuente, fase o destino distintos de la decisión aprobada")
+    return value
+
+
+async def confirm_tournament_closeout_decisions(
+    session: AsyncSession, *, actor_empleado_id: str
+) -> None:
+    """Confirm only the reviewed sixteen pairs in the caller's transaction.
+
+    The audit contains full factual-source fingerprints and exact destinations.
+    It grants no payment/accounting authority and never changes concept metadata.
+    """
+    if actor_empleado_id != _CLOSEOUT_ACTOR:
+        raise PermissionError("La decisión requiere el actor aprobado")
+    from .tournament_weekly_overlay import _require_budget_actor
+
+    await _require_budget_actor(session, actor_empleado_id)
+    actions = _closeout_actions()
+    proofs = []
+    snapshots = {}
+    for decision in actions["movements"]:
+        tid = decision["tournament_id"]
+        if tid not in snapshots:
+            snapshot = await build_budget_actuals_snapshot(
+                session,
+                edition_year=2026,
+                version_id=decision["version_id"],
+                tournament_id=tid,
+            )
+            snapshots[tid] = {budget_movement_key(m): m for m in snapshot["movements"]}
+        movement = snapshots[tid].get(decision["movement_key"])
+        if movement is None:
+            raise ValueError("El movimiento aprobado ya no existe en su torneo")
+        prior = decision.get("prior_authority_evidence")
+        if prior:
+            recorded = (
+                await session.execute(
+                    text(
+                        "SELECT payload FROM budget_version_audit_log WHERE id=CAST(:id AS uuid) AND budget_version_id=CAST(:version AS uuid) AND event_type='tournament_upload_four_conflicts_reconciled'"
+                    ),
+                    {"id": prior["audit_id"], "version": decision["version_id"]},
+                )
+            ).scalar_one_or_none()
+            if (
+                not recorded
+                or recorded.get("plan_sha256") != prior["plan_sha256"]
+                or recorded.get("canonical_id") != decision["target_concept_id"]
+                or decision["document_id"] not in recorded.get("document_ids", [])
+            ):
+                raise ValueError("La decisión previa de Liga no está acreditada")
+        destination = await _closeout_destination(session, decision, movement)
+        proofs.append(
+            {
+                "movement_key": decision["movement_key"],
+                "movement": _closeout_movement_identity(movement),
+                "source_sha256": _closeout_hash(
+                    await _closeout_source(session, movement)
+                ),
+                "destination": destination,
+            }
+        )
+    await _audit_budget_event(
+        session,
+        budget_version_id=actions["version_id"],
+        event_type=_CLOSEOUT_EVENT,
+        actor_empleado_id=actor_empleado_id,
+        payload={
+            "actions_sha256": _CLOSEOUT_ACTIONS_SHA256,
+            "workbook_sha256": actions["workbook_sha256"],
+            "proofs": proofs,
+        },
+    )
+    await session.flush()
+
+
+async def _closeout_assignment_proofs(
+    session: AsyncSession, version_id: str, movements: list[dict]
+) -> dict[str, str]:
+    """Read-only admission of exact, persisted confirmations; invalid proof is a gap."""
+    keys = {budget_movement_key(m) for m in movements}
+    if not any(key.startswith("accounting:") for key in keys):
+        return {}
+    try:
+        actions = _closeout_actions()
+    except (OSError, ValueError):
+        return {}
+    decisions = {
+        d["movement_key"]: d
+        for d in actions["movements"]
+        if d["version_id"] == version_id
+    }
+    if not keys.intersection(decisions):
+        return {}
+    audits = (
+        (
+            await session.execute(
+                text(
+                    """SELECT payload FROM budget_version_audit_log
+      WHERE budget_version_id=CAST(:version AS uuid) AND event_type=:event
+        AND actor_empleado_id=CAST(:actor AS uuid) ORDER BY created_at,id"""
+                ),
+                {
+                    "version": version_id,
+                    "event": _CLOSEOUT_EVENT,
+                    "actor": _CLOSEOUT_ACTOR,
+                },
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not audits:
+        return {}
+    approved = {}
+    for audit in audits:
+        if (
+            audit.get("actions_sha256") != _CLOSEOUT_ACTIONS_SHA256
+            or audit.get("workbook_sha256") != actions["workbook_sha256"]
+        ):
+            continue
+        for proof in audit.get("proofs", []):
+            key = proof.get("movement_key")
+            decision = decisions.get(key)
+            movement = next(
+                (m for m in movements if budget_movement_key(m) == key), None
+            )
+            if (
+                not decision
+                or movement is None
+                or _closeout_hash(proof.get("movement"))
+                != _closeout_hash(_closeout_movement_identity(movement))
+            ):
+                continue
+            try:
+                destination = await _closeout_destination(session, decision, movement)
+                current_source = _closeout_hash(
+                    await _closeout_source(session, movement)
+                )
+            except ValueError:
+                continue
+            if _closeout_hash(destination) == _closeout_hash(
+                proof.get("destination")
+            ) and current_source == proof.get("source_sha256"):
+                approved[key] = decision["target_line_id"]
+    return approved
+
+
 async def assign_budget_movement_to_line(
     session: AsyncSession,
     *,
@@ -7572,8 +7826,16 @@ async def assign_budget_movement_to_line(
         for movement in candidates
     ):
         raise ValueError("El origen AMEX directo requiere su autoridad presupuestal")
+    confirmed = (
+        await _closeout_assignment_proofs(
+            session, _safe_str(budget_version_id), candidates
+        )
+        if source_kind is None
+        else {}
+    )
     if not candidates or any(
         _safe_str(movement.get("concept_key")) != _safe_str(budget_concept_id)
+        and confirmed.get(budget_movement_key(movement)) != _safe_str(budget_line_id)
         for movement in candidates
     ):
         raise ValueError(
@@ -7647,13 +7909,15 @@ async def _apply_explicit_movement_assignments(
     assignment_rows = (
         (
             await session.execute(
-                text("""
+                text(
+                    """
                     SELECT id::text AS assignment_id, movement_key,
                            budget_concept_id::text AS budget_concept_id,
                            budget_line_id::text AS budget_line_id
                     FROM budget_movement_assignments
                     WHERE budget_version_id = CAST(:budget_version_id AS uuid)
-                    """),
+                    """
+                ),
                 {"budget_version_id": _safe_str(budget_version_id)},
             )
         )
@@ -7661,18 +7925,21 @@ async def _apply_explicit_movement_assignments(
         .all()
     )
     assignments = {_safe_str(row["movement_key"]): row for row in assignment_rows}
+    confirmed = await _closeout_assignment_proofs(session, budget_version_id, movements)
     activated_concepts = {
         _safe_str(row["budget_concept_id"]) for row in assignment_rows
     }
     line_rows = (
         (
             await session.execute(
-                text("""
+                text(
+                    """
                     SELECT id::text AS id, budget_concept_id::text AS budget_concept_id
                     FROM budget_lines
                     WHERE budget_version_id = CAST(:budget_version_id AS uuid)
                       AND COALESCE(line_direction, 'expense') = 'expense'
-                    """),
+                    """
+                ),
                 {"budget_version_id": _safe_str(budget_version_id)},
             )
         )
@@ -7726,6 +7993,11 @@ async def _apply_explicit_movement_assignments(
             if (
                 _safe_str(assignment["budget_concept_id"]) == concept_id
                 and line_concepts.get(assigned_line) == concept_id
+            ) or (
+                confirmed.get(movement_key) == assigned_line
+                and candidate_key == movement_key
+                and _safe_str(assignment["budget_concept_id"])
+                == line_concepts.get(assigned_line)
             ):
                 line_id = assigned_line
                 break

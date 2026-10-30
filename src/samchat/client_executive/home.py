@@ -24,6 +24,7 @@ from samchat.finance_platform.service import (
 )
 
 from . import service
+from .accounting_bridge import budget_actual_comparison
 from .report_layouts import report_layouts
 
 SCHEMA = "samchat.direction.home.v1"
@@ -136,10 +137,12 @@ async def resolve_scope(
     portfolios = (
         (
             await session.execute(
-                text("""
+                text(
+                    """
         SELECT id::text AS id, label FROM client_executive_portfolios
         WHERE id = ANY(CAST(:ids AS uuid[])) AND active = TRUE ORDER BY label
-    """),
+    """
+                ),
                 {"ids": ids},
             )
         )
@@ -154,10 +157,12 @@ async def resolve_scope(
         rows = (
             (
                 await session.execute(
-                    text("""
+                    text(
+                        """
             SELECT tournament_id::text AS id FROM client_executive_portfolio_tournaments
             WHERE portfolio_id = CAST(:id AS uuid) AND active = TRUE
-        """),
+        """
+                    ),
                     {"id": portfolio_id},
                 )
             )
@@ -844,6 +849,17 @@ async def build_home(
             )
         for key in ("actual", "committed", "paid"):
             values[key] = amount(factual_values.get(key))
+        # Matching populations or numbers does not establish a common tax basis.
+        # Keep the factual stages visible without projecting a fiscal expense
+        # against an authorized amount whose comparable basis is not attested.
+        comparison_info = (
+            budget_actual_comparison(tournament["id"], year)
+            if source_access["budget"]
+            else None
+        )
+        if comparison_info and comparison_info["status"] == "unavailable":
+            values.update(forecast=None, deviation=None)
+            budget_gaps.append(comparison_info["reason"])
         concepts = concept_evidence(snapshot, values)
         prior = (previous_facts.get("by_tournament") or {}).get(tournament["id"], {})
         previous = {
@@ -868,6 +884,19 @@ async def build_home(
             },
         )
         version = str((snapshot.get("version") or {}).get("id") or "")
+        accounting = (
+            await _optional_read(
+                row_session,
+                service.build_tournament_accounting,
+                tournament_id=tournament["id"],
+                edition_year=year,
+                budget_version_id=version or None,
+            )
+            if source_access["finance"]
+            and source_access["budget"]
+            and comparison_info is not None
+            else None
+        )
         ar = (
             await receivable_values(row_session, tournament["id"], version, year)
             if version and source_access["finance"]
@@ -912,6 +941,8 @@ async def build_home(
             "name": tournament["name"],
             "version_id": version or None,
             "budget_distribution": snapshot.get("budget_distribution"),
+            "accounting": accounting,
+            "budget_actual_comparison": comparison_info,
             "documentary_evidence": {
                 **factual,
                 "source": FACT_SOURCE,

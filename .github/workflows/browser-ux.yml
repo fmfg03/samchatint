@@ -28,7 +28,17 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-browser.txt
 
+      - name: Free hosted runner disk space
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          rm -rf "$HOME/.cache/pip"
+          mkdir -p "$HOME/.cache/pip"
+          df -h /
+
       - name: Install browser test dependencies
+        env:
+          PIP_NO_CACHE_DIR: "1"
         run: python -m pip install -r requirements-browser.txt
 
       - name: Install Chromium

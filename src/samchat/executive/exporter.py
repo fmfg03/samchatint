@@ -67,6 +67,7 @@ def generate_direction_report_xlsx(report: dict[str, Any]) -> bytes:
     from openpyxl.chart import BarChart, Reference
 
     from samchat.client_executive.home import amount
+    from samchat.client_executive.ui import documentary_accounting_rows
 
     def money(value):
         parsed = amount(value)
@@ -175,7 +176,7 @@ def generate_direction_report_xlsx(report: dict[str, Any]) -> bytes:
     comparison = wb.create_sheet("Comparación")
     _write_table(
         comparison,
-        ["Torneo", "Presupuesto anual MXN", "Ejercido del intervalo MXN"],
+        ["Torneo", "Importe autorizado anual MXN", "Ejercido fiscal del intervalo MXN"],
         [
             [
                 t["name"],
@@ -185,7 +186,36 @@ def generate_direction_report_xlsx(report: dict[str, Any]) -> bytes:
             for t in report["tournaments"]
         ],
     )
-    if report["tournaments"]:
+    comparison["E1"] = (
+        "Importes de referencia de bases y periodos distintos. No se calcula "
+        "una proporción, variación o gráfica sin base común acreditada."
+    )
+    comparable = [
+        t
+        for t in report["tournaments"]
+        if (t.get("budget_actual_comparison") or {}).get("status") != "unavailable"
+    ]
+    if comparable:
+        # Preserve the existing chart for unaffected tournaments, never include
+        # a tournament whose canonical comparison guard explicitly blocks it.
+        _write_table(
+            comparison,
+            [
+                "Torneo con comparación habilitada",
+                "Presupuesto anual MXN",
+                "Ejercido del intervalo MXN",
+            ],
+            [
+                [
+                    t["name"],
+                    money(t["values"].get("budget")),
+                    money(t["values"].get("actual")),
+                ]
+                for t in comparable
+            ],
+            start_row=len(report["tournaments"]) + 4,
+        )
+        first = len(report["tournaments"]) + 4
         chart = BarChart()
         chart.title = "Ejercido del intervalo frente a presupuesto anual"
         chart.y_axis.title = "MXN"
@@ -196,17 +226,125 @@ def generate_direction_report_xlsx(report: dict[str, Any]) -> bytes:
                 comparison,
                 min_col=2,
                 max_col=3,
-                min_row=1,
-                max_row=len(report["tournaments"]) + 1,
+                min_row=first,
+                max_row=first + len(comparable),
             ),
             titles_from_data=True,
         )
         chart.set_categories(
             Reference(
-                comparison, min_col=1, min_row=2, max_row=len(report["tournaments"]) + 1
+                comparison,
+                min_col=1,
+                min_row=first + 1,
+                max_row=first + len(comparable),
             )
         )
         comparison.add_chart(chart, "E2")
+    documentary_tournaments = [
+        tournament
+        for tournament in report["tournaments"]
+        if ((tournament.get("accounting") or {}).get("documentary") or {}).get(
+            "accounts"
+        )
+    ]
+    if documentary_tournaments:
+        recorded = wb.create_sheet("Contabilidad registrada")
+        recorded.append(
+            [
+                "Clasificación documental por rama del catálogo; no acredita un gasto exclusivo del torneo."
+            ]
+        )
+        recorded.append(
+            [
+                "Moneda y base fiscal contables no acreditadas. Importes registrados sin conversión ni variación presupuestal."
+            ]
+        )
+        recorded.append(
+            [
+                "N/D se conserva como celda vacía; un cero explícito de fuente permanece cero. La cobertura anual de la fuente es independiente del intervalo documental."
+            ]
+        )
+        recorded_rows = []
+        coverage_rows = []
+        for tournament in documentary_tournaments:
+            documentary = tournament["accounting"]["documentary"]
+            coverage = documentary.get("coverage") or {}
+            coverage_rows.append(
+                [
+                    tournament["name"],
+                    documentary.get("company_code"),
+                    documentary.get("fiscal_year"),
+                    documentary.get("source_status"),
+                    ", ".join(
+                        str(m) for m in coverage.get("trial_balance_months") or []
+                    ),
+                    ", ".join(str(m) for m in coverage.get("policy_months") or []),
+                    ", ".join(
+                        str(m.get("month_num"))
+                        for m in coverage.get("withheld_months") or []
+                    ),
+                    documentary.get("source_sha256"),
+                    "; ".join(documentary.get("gaps") or []),
+                ]
+            )
+            for item in documentary_accounting_rows(documentary):
+                recorded_rows.append(
+                    [
+                        tournament["name"],
+                        item.get("company_code"),
+                        item.get("fiscal_year"),
+                        item.get("account_code"),
+                        item.get("account_name"),
+                        item["attribution_note"],
+                        item["source_family"],
+                        item.get("month"),
+                        money(item.get("debits")),
+                        money(item.get("credits")),
+                        money(item.get("registered_net")),
+                        money(item.get("closing_balance")),
+                        item.get("warning"),
+                        item["evidence"],
+                        item.get("source_sha256"),
+                    ]
+                )
+        _write_table(
+            recorded,
+            [
+                "Rama documental",
+                "Empresa",
+                "Ejercicio",
+                "Cuenta",
+                "Descripción",
+                "Alcance sin exclusividad acreditada",
+                "Fuente",
+                "Mes",
+                "Debe registrado",
+                "Haber registrado",
+                "Movimiento registrado",
+                "Saldo de cierre",
+                "Advertencia de fuente",
+                "Evidencia de clasificación",
+                "SHA de fuente",
+            ],
+            recorded_rows,
+            start_row=5,
+        )
+        sources = wb.create_sheet("Fuentes contables")
+        _write_table(
+            sources,
+            [
+                "Rama documental",
+                "Empresa",
+                "Ejercicio",
+                "Cobertura",
+                "Meses con balanza",
+                "Meses con pólizas",
+                "Meses retenidos",
+                "SHA de paquete seleccionado",
+                "Brechas",
+            ],
+            coverage_rows,
+        )
     scenario = report.get("scenario")
     if scenario:
         case = wb.create_sheet("Escenario")
@@ -464,7 +602,7 @@ def generate_direction_report_pdf(report: dict[str, Any]) -> bytes:
     story += [
         table,
         Spacer(1, 10),
-        p("Ejecución frente a presupuesto anual", "Heading2"),
+        p("Presupuesto y hechos documentales", "Heading2"),
     ]
     for row in report["tournaments"]:
         budget, actual = amount(row["values"].get("budget")), amount(
@@ -476,7 +614,12 @@ def generate_direction_report_pdf(report: dict[str, Any]) -> bytes:
                 f"Presupuesto anual: {format_money(budget)} · Ejercido del intervalo: {format_money(actual)}"
             )
         )
-        if budget is not None and actual is not None and budget >= 0 and actual >= 0:
+        comparison_guard = row.get("budget_actual_comparison") or {}
+        if comparison_guard.get("status") == "unavailable":
+            story.append(
+                p(comparison_guard.get("reason") or "Base común por acreditar.")
+            )
+        elif budget is not None and actual is not None and budget >= 0 and actual >= 0:
             maximum = max(budget, actual, Decimal("1"))
             drawing = Drawing(500, 52)
             for y, value, label, color in (
@@ -512,6 +655,111 @@ def generate_direction_report_pdf(report: dict[str, Any]) -> bytes:
                 story.append(
                     p(f"Mes {point['month']:02d}: {format_money(point['value'])}")
                 )
+        documentary = (row.get("accounting") or {}).get("documentary") or {}
+        if documentary.get("accounts"):
+            from samchat.client_executive.ui import (
+                documentary_accounting_rows,
+                registered_amount,
+            )
+
+            story.append(
+                p("Contabilidad registrada · clasificación documental", "Heading3")
+            )
+            story.append(
+                p(
+                    f"Empresa {documentary.get('company_code')} · Ejercicio {documentary.get('fiscal_year')}. "
+                    "Estas cuentas corresponden a una rama del catálogo; no acreditan por sí solas un gasto exclusivo del torneo."
+                )
+            )
+            story.append(
+                p(
+                    "Moneda y base fiscal contables: no acreditadas. Los importes conservan los números registrados, "
+                    "sin conversión ni variación contra el presupuesto. La cobertura anual de esta fuente es independiente "
+                    "del intervalo de los indicadores documentales. N/D es distinto de un cero explícito de la fuente."
+                )
+            )
+            coverage = documentary.get("coverage") or {}
+            balance_months = (
+                ", ".join(str(m) for m in coverage.get("trial_balance_months") or [])
+                or "N/D"
+            )
+            policy_months = (
+                ", ".join(str(m) for m in coverage.get("policy_months") or []) or "N/D"
+            )
+            withheld = (
+                ", ".join(
+                    str(m.get("month_num"))
+                    for m in coverage.get("withheld_months") or []
+                )
+                or "Ninguno declarado"
+            )
+            story.append(
+                p(
+                    f"Meses con balanza: {balance_months} · Meses con pólizas: {policy_months} · Meses retenidos: {withheld}."
+                )
+            )
+            if documentary.get("reason"):
+                story.append(p(documentary["reason"]))
+            for gap in documentary.get("gaps") or []:
+                story.append(p(gap))
+            account_rows: dict[str, list[dict]] = {}
+            for item in documentary_accounting_rows(documentary):
+                account_rows.setdefault(item["account_code"], []).append(item)
+            for code, items in account_rows.items():
+                first = items[0]
+                story.append(p(f"{code} · {first.get('account_name')}", "Heading4"))
+                story.append(p(first["attribution_note"]))
+                if first["evidence"]:
+                    story.append(p("Clasificación: " + first["evidence"]))
+                registered = [
+                    [
+                        p(label)
+                        for label in (
+                            "Fuente",
+                            "Mes",
+                            "Debe registrado",
+                            "Haber registrado",
+                            "Movimiento registrado",
+                            "Saldo de cierre",
+                        )
+                    ]
+                ]
+                for item in items:
+                    registered.append(
+                        [
+                            p(item["source_family"]),
+                            p(item.get("month") or "N/D"),
+                            p(registered_amount(item.get("debits"))),
+                            p(registered_amount(item.get("credits"))),
+                            p(registered_amount(item.get("registered_net"))),
+                            p(registered_amount(item.get("closing_balance"))),
+                        ]
+                    )
+                registered_table = Table(
+                    registered, colWidths=[100, 30, 90, 90, 90, 90], repeatRows=1
+                )
+                registered_table.setStyle(
+                    TableStyle(
+                        [
+                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#dcecee")),
+                            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                            (
+                                "LINEBELOW",
+                                (0, 0),
+                                (-1, -1),
+                                0.3,
+                                colors.HexColor("#d1dfe8"),
+                            ),
+                            ("TOPPADDING", (0, 0), (-1, -1), 7),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                        ]
+                    )
+                )
+                story.append(registered_table)
+                for warning in sorted(
+                    {item["warning"] for item in items if item.get("warning")}
+                ):
+                    story.append(p(warning))
     for index, item in enumerate(report["recommendations"]):
         story.append(
             KeepTogether(

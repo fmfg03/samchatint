@@ -1,0 +1,2060 @@
+{
+  "schema_version": "samchat.tournament.documentary.v1",
+  "fiscal_year": 2026,
+  "company_code": "01",
+  "company_label": "PSP1705058S4",
+  "approval": {
+    "spec_sha256": "637a835003c27786db0a9d2f1a202d842773e774ed37c5b01a751e24305b6f24",
+    "review_sha256": "2c3d4544261bd49b283f9eabc8e863ff3fe34ae2b62344cce840f9257a1bf1ad"
+  },
+  "original_source_hashes": {
+    "original_trial_balance": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222",
+    "original_policy_lines": "8844cdf5b5d0423a0da54dc4220e709b86b9d3e2a38c76c602bfd9817816f645"
+  },
+  "catalogue": {
+    "filename": "BGPSP.xls",
+    "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652"
+  },
+  "accounts": [
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-001",
+      "account_name": "GASTOS DE VIAJE TRANSPORTE",
+      "classification": "shared_active",
+      "attribution_note": "Cuenta compartida con otros proyectos activos; sin atribución exclusiva.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 479,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 479,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-002",
+      "account_name": "GASTOS DE VIAJE HOSPEDAJE",
+      "classification": "shared_active",
+      "attribution_note": "Cuenta compartida con otros proyectos activos; sin atribución exclusiva.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 480,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 480,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-003",
+      "account_name": "GASTOS DE VIAJE ALIMENTOS",
+      "classification": "shared_active",
+      "attribution_note": "Cuenta compartida con otros proyectos activos; sin atribución exclusiva.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 481,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 481,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-004",
+      "account_name": "GASTOS DE VIAJE GASTOS VARIOS",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 482,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 482,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-005",
+      "account_name": "BALONES FASE ESTATAL",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 483,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 483,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-006",
+      "account_name": "ARBITRAJES FASE ESTATAL",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 484,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 484,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-007",
+      "account_name": "CUOTAS ASOCIACIONES",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 485,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 485,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-008",
+      "account_name": "UNIFORMES FASE ESTATAL",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 486,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 486,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-009",
+      "account_name": "VARIOS DE OPERACION CTT",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 487,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 487,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-010",
+      "account_name": "SITIO WEB CTT",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 488,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 488,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-011",
+      "account_name": "MENSAJERIA, FLETES Y MAT. DE EMPAQUE FE",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 489,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 489,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-012",
+      "account_name": "CENA DE INTEGRACION",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 490,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 490,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-013",
+      "account_name": "UNIFORMES FASE NACIONAL CONCEPTO DE PRES",
+      "classification": "other_project_retired",
+      "attribution_note": "Referencia histórica retirada de otro proyecto; sin atribución exclusiva.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 491,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 491,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-014",
+      "account_name": "TRANSPORTE JUGADORES",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 492,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 492,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-015",
+      "account_name": "HOSPEDAJE JUGADORES",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 493,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 493,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-016",
+      "account_name": "ALIMENTACION JUGADORES",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 494,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 494,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-017",
+      "account_name": "ARBITRAJES FASE NACIONAL",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 495,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 495,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-018",
+      "account_name": "BALONES FASE NACIONAL",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 496,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 496,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-019",
+      "account_name": "IMPRESION FORMATOS VARIOS Y PAPELERIA",
+      "classification": "shared_active",
+      "attribution_note": "Cuenta compartida con otros proyectos activos; sin atribución exclusiva.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 497,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 497,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-020",
+      "account_name": "COPA TELMEX TELCEL AÑO ANTERIOR",
+      "classification": "prior_year",
+      "attribution_note": "Cuenta de año anterior; no atribuida a la edición 2026.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 498,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 498,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-021",
+      "account_name": "AMBULANCIAS, SERVICIO MÉD Y MEDICAMENTOS",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 499,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 499,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-022",
+      "account_name": "GRABACION Y FILMACIÓN DE EVENTOS",
+      "classification": "shared_active",
+      "attribution_note": "Cuenta compartida con otros proyectos activos; sin atribución exclusiva.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 500,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 500,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-023",
+      "account_name": "GASTOS GWR",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 501,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 501,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-024",
+      "account_name": "COMISARIOS",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 502,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 502,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-025",
+      "account_name": "GASTOS FASE NACIONAL",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 503,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 503,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-026",
+      "account_name": "MEDALLAS Y TROFEOS CTT",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 504,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 504,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-027",
+      "account_name": "GASTOS DE MANEJO DE PATROCINIO",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 505,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 505,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-028",
+      "account_name": "GASTOS ADMTVOS ASIGNADOS AL PROYECTO",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 506,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 506,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "account_code": "5300-010-030",
+      "account_name": "GASTOS NO DEDUCIBLES CTT",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 507,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 507,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-001",
+      "account_name": "VIAJES DE SUPERVISION",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 529,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 529,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-002",
+      "account_name": "IMPRESION CEDULAS Y OTROS FORMATOS",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 530,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 530,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-003",
+      "account_name": "GASTOS ADMINISTRATIVOS ASIGNADOS AL PROY",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 531,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 531,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-004",
+      "account_name": "SUELDOS ASIGNADOS AL PROYECTO",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 532,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 532,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-005",
+      "account_name": "PUBLICIDAD EN LONAS Y OTROS",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 533,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 533,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-008",
+      "account_name": "UNIFORMES LTB FASE ESTATAL",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 534,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 534,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-009",
+      "account_name": "PELOTAS LTB FASE ESTATAL",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 535,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 535,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-010",
+      "account_name": "CUOTAS ASOCIACIONES DE BEISBOL",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 536,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 536,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-011",
+      "account_name": "AVAL FEMEBE",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 537,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 537,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-012",
+      "account_name": "VIDEOS Y SONORIZACION FASE ESTATAL",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 538,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 538,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-013",
+      "account_name": "MENSAJERIA, FLETES Y MAT EMPAQUE",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 539,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 539,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-014",
+      "account_name": "GASTOS VARIOS FASE ESTATAL LTB",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 540,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 540,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-017",
+      "account_name": "TRANSPORTE DE JUGADORES F.N. LTB",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 541,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 541,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-018",
+      "account_name": "HOSPEDAJE Y ALIMENTACION LTB F.N.",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 542,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 542,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-019",
+      "account_name": "ARREOS, ALMOHADILLAS, HOMEPLATES,LTB",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 543,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 543,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-020",
+      "account_name": "UMPIRES Y ANOTADORES",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 544,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 544,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-021",
+      "account_name": "COMISARIOS",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 545,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 545,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-022",
+      "account_name": "IMPRESION DE GAFETES Y DIPLOMAS F. NAC.",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 546,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 546,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-023",
+      "account_name": "MEDALLAS Y TROFEOS LTB",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 547,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 547,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-024",
+      "account_name": "SEGUROS, AMBULANCIAS Y ATN MÉDICA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 548,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 548,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-025",
+      "account_name": "VIDEOS Y SONORIZACIÓN FASE NACIONAL LTB",
+      "classification": "shared_active",
+      "attribution_note": "Cuenta compartida con otros proyectos activos; sin atribución exclusiva.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 549,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 549,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-026",
+      "account_name": "GASTOS GWR LTB",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 550,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 550,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-027",
+      "account_name": "SITIO WEB LTB",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 551,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 551,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-028",
+      "account_name": "OTROS GASTOS DE LA FASE NACIONAL",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 552,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 552,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-030",
+      "account_name": "GASTOS NO DEDUCIBLES LTB",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 553,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 553,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-031",
+      "account_name": "GASTOS VIAJE DE PREMIACIÓN",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 554,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 554,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "account_code": "5300-012-032",
+      "account_name": "GASTOS CLINICA DE BEISBOL",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 555,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 555,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-001",
+      "account_name": "MONTAJE GENERAL",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 606,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 606,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-002",
+      "account_name": "HOSPEDAJE Y ALIMENTOS HWC",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 607,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 607,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-003",
+      "account_name": "OPERACION HWC",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 608,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 608,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-004",
+      "account_name": "GB Y VOLUNTARIOS",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 609,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 609,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-005",
+      "account_name": "SERVICIOS MEDICOS",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 610,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 610,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-006",
+      "account_name": "SEGURIDAD PRIVADA Y PROTECCION CIVIL",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 611,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 611,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-007",
+      "account_name": "SANITARIOS MOVILES Y SER DE LIMPIZA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 612,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 612,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-008",
+      "account_name": "LAVANDERIA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 613,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 613,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-009",
+      "account_name": "TRANSPORTES HWC",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 614,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 614,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-010",
+      "account_name": "AUDIO,VIDEO Y ELECTRICIDAD",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 615,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 615,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-011",
+      "account_name": "GTOS DE ATENCION A JUGADORES",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 616,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 616,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-012",
+      "account_name": "FEE",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 617,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 617,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-013",
+      "account_name": "NO DEDUCIBLES",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 618,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 618,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-014",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 619,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 619,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-015",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 620,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 620,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-016",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 621,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 621,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-017",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 622,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 622,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-018",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 623,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 623,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-019",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 624,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 624,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-020",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 625,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 625,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-021",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 626,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 626,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-022",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 627,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 627,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-023",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 628,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 628,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-024",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 629,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 629,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-025",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 630,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 630,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-026",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 631,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 631,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-027",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": true,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 632,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 632,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-028",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 633,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 633,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    },
+    {
+      "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+      "account_code": "5300-016-033",
+      "account_name": "NA",
+      "classification": "documentary_account",
+      "attribution_note": "Cuenta documental del catálogo; exclusividad no acreditada.",
+      "has_active_concept": false,
+      "exclusive_attribution": false,
+      "evidence": [
+        {
+          "filename": "BALANZAS PLATAFORMA SPORTS 2026 .xlsx",
+          "sheet": "AGOSTO",
+          "row_number": 634,
+          "sha256": "630e97be202e9b72a53f4c266472bb2a4d98e476480423866579b03354bf8222"
+        },
+        {
+          "filename": "BGPSP.xls",
+          "sheet": null,
+          "row_number": 634,
+          "sha256": "5e66cbf4825a985aebf6cfc7049639c0e259b09d76f5032d1cb58463f5955652",
+          "review_manifest_sha256": "e9c9e4f1ec8b8aff0d2b5d9d3100ffdaff0e4b6873201355e686fb3324468e14"
+        }
+      ]
+    }
+  ]
+}
