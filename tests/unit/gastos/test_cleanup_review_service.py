@@ -1,7 +1,7 @@
 """Explicit human review must not change fiscal readiness or financial fields."""
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -48,7 +48,7 @@ def event(expense_id, action, **details):
         entidad_id=expense_id,
         accion=action,
         comentario=json.dumps({"batch": reviews.BATCH, **details}),
-        fecha=datetime(2026, 10, 30),
+        fecha=datetime(2026, 10, 30, tzinfo=UTC),
     )
 
 
@@ -86,6 +86,20 @@ async def test_confirm_is_explicit_audited_and_idempotent():
     assert session.added[0].fecha > session.events[0].fecha
     session.events = [session.added[0]]
     assert await reviews.confirm_review(session, expense.id, actor) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("zone", [None, UTC, timezone(timedelta(hours=-6))])
+async def test_confirmation_orders_persisted_timestamps_in_utc(zone):
+    expense = SimpleNamespace(id=uuid4(), estado_gasto="activo")
+    previous = event(expense.id, reviews.REQUESTED)
+    previous.fecha = datetime(2099, 1, 1, tzinfo=zone)
+    session = Session(expense, [previous])
+    await reviews.confirm_review(session, expense.id, uuid4())
+    timestamp = session.added[0].fecha
+    assert timestamp.tzinfo is UTC
+    prior_utc = previous.fecha if zone else previous.fecha.replace(tzinfo=UTC)
+    assert timestamp > prior_utc
 
 
 @pytest.mark.asyncio

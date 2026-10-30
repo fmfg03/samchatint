@@ -78,9 +78,13 @@ async def _locked_expense(session: AsyncSession, expense_id: UUID) -> ExpenseRep
 
 
 def _event(expense_id: UUID, actor_id: UUID, action: str, previous=None) -> Aprobacion:
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = datetime.now(UTC)
     if previous is not None and previous.fecha is not None:
-        now = max(now, previous.fecha + timedelta(microseconds=1))
+        prior = previous.fecha
+        prior = (
+            prior.replace(tzinfo=UTC) if prior.tzinfo is None else prior.astimezone(UTC)
+        )
+        now = max(now, prior + timedelta(microseconds=1))
     return Aprobacion(
         tipo_entidad="gasto",
         entidad_id=expense_id,
