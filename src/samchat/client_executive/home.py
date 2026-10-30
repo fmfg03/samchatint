@@ -852,7 +852,11 @@ async def build_home(
         # Matching populations or numbers does not establish a common tax basis.
         # Keep the factual stages visible without projecting a fiscal expense
         # against an authorized amount whose comparable basis is not attested.
-        comparison_info = budget_actual_comparison(tournament["id"], year)
+        comparison_info = (
+            budget_actual_comparison(tournament["id"], year)
+            if source_access["budget"]
+            else None
+        )
         if comparison_info and comparison_info["status"] == "unavailable":
             values.update(forecast=None, deviation=None)
             budget_gaps.append(comparison_info["reason"])
@@ -888,7 +892,9 @@ async def build_home(
                 edition_year=year,
                 budget_version_id=version or None,
             )
-            if source_access["finance"] and comparison_info is not None
+            if source_access["finance"]
+            and source_access["budget"]
+            and comparison_info is not None
             else None
         )
         ar = (

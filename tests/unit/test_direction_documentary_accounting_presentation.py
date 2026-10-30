@@ -1,5 +1,6 @@
 """Documentary account evidence stays distinct from fiscal/project totals."""
 
+import json
 from datetime import date, datetime
 from io import BytesIO
 from types import SimpleNamespace
@@ -10,7 +11,7 @@ import pytest
 from openpyxl import load_workbook
 
 import devnous.gastos  # noqa: F401 - bootstrap the live runtime's model registry
-from samchat.client_executive import home, home_ui, reports, ui
+from samchat.client_executive import conversation, home, home_ui, reports, ui
 from samchat.executive.exporter import (
     generate_direction_report_pdf,
     generate_direction_report_xlsx,
@@ -328,3 +329,123 @@ async def test_home_reads_only_authorized_documentary_scope_and_blocks_false_for
     html = home_ui.render_home(got, resolved, token="signed", csrf="csrf")
     assert ("Contabilidad registrada" in html) is finance_allowed
     assert 'class="home-track"' not in html
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("superadmin", [False, True])
+@pytest.mark.parametrize(
+    "selected_ids",
+    [
+        (TID,),
+        ("16793f0e-4697-4a28-8f42-b563da8cc7d8",),
+        ("c3b247f1-e3fc-4f4a-8995-56a5880f86a6",),
+        (
+            TID,
+            "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+            "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+        ),
+    ],
+)
+async def test_budget_denial_blocks_accounting_membership_and_signed_export_context(
+    monkeypatch, selected_ids, superadmin
+):
+    """Finance permission never overrides an explicit budget-source denial."""
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 30, 12, tzinfo=tz)
+
+    monkeypatch.setattr(home, "datetime", Clock)
+    monkeypatch.setenv("SESSION_SECRET_KEY", "closeout-source-denial-test-only")
+    selected = [
+        {"id": tid, "name": f"Torneo autorizado {index}"}
+        for index, tid in enumerate(selected_ids)
+    ]
+    scope = {
+        "portfolio_ids": [],
+        "portfolio_id": None,
+        "tournament_id": None,
+        "tournaments": selected,
+        "selected": selected,
+        "portfolios": [],
+    }
+    monkeypatch.setattr(home, "resolve_scope", AsyncMock(return_value=scope))
+    sentinel = "DENIED_BUDGET_CONCEPT_MEMBERSHIP"
+    accounting = AsyncMock(
+        return_value={"gaps": [sentinel], "documentary": documentary()}
+    )
+    budget = AsyncMock(
+        return_value={"breakdowns": {"by_concept": [{"label": sentinel}]}}
+    )
+    monkeypatch.setattr(home.service, "build_tournament_accounting", accounting)
+    monkeypatch.setattr(home.service, "_build_direction_budget_snapshot", budget)
+
+    def denied_comparison(*_args):
+        raise AssertionError("Budget catalogue membership must not be consulted")
+
+    monkeypatch.setattr(home, "budget_actual_comparison", denied_comparison)
+
+    async def read(_session, loader, **kwargs):
+        assert loader is home.build_executive_facts
+        assert kwargs["include_documents"] is True
+        assert kwargs["include_expenses"] is False
+        assert kwargs["tournament_ids"] == list(selected_ids)
+        return {
+            "by_tournament": {
+                tid: {
+                    "values": {"actual": None, "committed": "50", "paid": "30"},
+                    "gaps": {},
+                }
+                for tid in selected_ids
+            }
+        }
+
+    monkeypatch.setattr(home, "_optional_read", read)
+    monkeypatch.setattr(home, "payment_values", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        home, "receivable_values", AsyncMock(return_value={"value": None, "gaps": []})
+    )
+    monkeypatch.setattr(
+        home.service, "dispatch_registration_snapshot", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        home.service, "_build_operational_dossier", AsyncMock(return_value={})
+    )
+    snapshot, resolved = await home.build_home(
+        SimpleNamespace(),
+        actor=ACTOR,
+        superadmin=superadmin,
+        year=2026,
+        start=date(2026, 1, 1),
+        end=date(2026, 10, 30),
+        source_access={"budget": False, "finance": True},
+    )
+    accounting.assert_not_awaited()
+    budget.assert_not_awaited()
+    for row in snapshot["tournaments"]:
+        assert row["accounting"] is None
+        assert row["budget_actual_comparison"] is None
+        assert row["version_id"] is None
+        assert row["concepts"]["rows"] == []
+        assert row["values"]["budget"] is None and row["values"]["actual"] is None
+        assert row["values"]["committed"] == "50.00"
+        assert row["values"]["paid"] == "30.00"
+    token = conversation.sign_context(snapshot, ACTOR)
+    signed_snapshot = conversation.load_context(
+        token, ACTOR, conversation.context_receipt(snapshot, ACTOR, token)
+    )
+    report_data = reports.build_report(signed_snapshot)
+    assert sentinel not in json.dumps(signed_snapshot)
+    assert sentinel not in json.dumps(report_data)
+    assert sentinel not in reports.render_report(report_data)
+    html = home_ui.render_home(snapshot, resolved, token=token, csrf="csrf")
+    assert sentinel not in html and "Contabilidad registrada" not in html
+    book = load_workbook(BytesIO(generate_direction_report_xlsx(report_data)))
+    assert "Contabilidad registrada" not in book.sheetnames
+    assert all(
+        sentinel not in str(cell.value)
+        for sheet in book
+        for row in sheet
+        for cell in row
+    )
