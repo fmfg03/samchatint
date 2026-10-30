@@ -22,6 +22,8 @@ BATCH = "la-merced-octubre-2026-20261030"
 LABEL = "La Merced · revisión contable solicitada"
 REQUESTED = "cleanup_review_requested"
 CONFIRMED = "cleanup_review_confirmed"
+# Existing database CHECK permits metadata edits, not new action literals.
+AUDIT_ACTION = "editar"
 
 
 @dataclass(frozen=True)
@@ -45,7 +47,8 @@ async def load_review_states(
         .where(
             Aprobacion.tipo_entidad == "gasto",
             Aprobacion.entidad_id.in_(ids),
-            Aprobacion.accion.in_([REQUESTED, CONFIRMED]),
+            Aprobacion.accion == AUDIT_ACTION,
+            Aprobacion.comentario.contains(BATCH, autoescape=True),
         )
         .order_by(Aprobacion.fecha.desc(), Aprobacion.id.desc())
     )
@@ -54,14 +57,19 @@ async def load_review_states(
         expense_id = cast(UUID, event.entidad_id)
         if expense_id in states:
             continue
+        raw = str(event.comentario or "")
+        if BATCH not in raw:
+            continue
         try:
-            details = json.loads(str(event.comentario or "{}"))
+            details = json.loads(raw)
         except (ValueError, TypeError):
             raise ValueError("Historial de revisión contable inválido.") from None
         if not isinstance(details, dict) or details.get("batch") != BATCH:
+            continue
+        if details.get("event") not in {REQUESTED, CONFIRMED}:
             raise ValueError("Historial de revisión contable inválido.")
         states[expense_id] = ReviewState(
-            pending=str(event.accion) == REQUESTED,
+            pending=details["event"] == REQUESTED,
             fecha=cast(datetime, event.fecha),
         )
     return states
@@ -89,11 +97,12 @@ def _event(expense_id: UUID, actor_id: UUID, action: str, previous=None) -> Apro
         tipo_entidad="gasto",
         entidad_id=expense_id,
         aprobador_id=actor_id,
-        accion=action,
+        accion=AUDIT_ACTION,
         fecha=now,
         comentario=json.dumps(
             {
                 "batch": BATCH,
+                "event": action,
                 "marker": LABEL,
                 "reason": (
                     "Revisión solicitada por el responsable para pagos semanales."
