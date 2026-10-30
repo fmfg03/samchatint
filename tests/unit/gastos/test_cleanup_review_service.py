@@ -10,6 +10,13 @@ import pytest
 from devnous.gastos.services import cleanup_review_service as reviews
 
 
+@pytest.mark.parametrize("logical_event", [reviews.REQUESTED, reviews.CONFIRMED])
+def test_review_uses_the_existing_edit_action_allowed_by_postgres(logical_event):
+    row = reviews._event(uuid4(), uuid4(), logical_event)
+    assert row.accion == "editar"
+    assert json.loads(row.comentario)["event"] == logical_event
+
+
 class Rows:
     def __init__(self, rows):
         self.rows = rows
@@ -46,8 +53,8 @@ def event(expense_id, action, **details):
     return SimpleNamespace(
         id=uuid4(),
         entidad_id=expense_id,
-        accion=action,
-        comentario=json.dumps({"batch": reviews.BATCH, **details}),
+        accion="editar",
+        comentario=json.dumps({"batch": reviews.BATCH, "event": action, **details}),
         fecha=datetime(2026, 10, 30, tzinfo=UTC),
     )
 
@@ -60,7 +67,8 @@ async def test_request_is_audited_and_leaves_financial_fields_untouched():
     assert await reviews.request_review(session, expense.id, uuid4()) is True
     assert vars(expense) == before
     assert len(session.added) == 1
-    assert session.added[0].accion == reviews.REQUESTED
+    assert session.added[0].accion == "editar"
+    assert json.loads(session.added[0].comentario)["event"] == reviews.REQUESTED
     assert session.added[0].aprobador_id
 
 
@@ -81,7 +89,8 @@ async def test_confirm_is_explicit_audited_and_idempotent():
     actor = uuid4()
     session = Session(expense, [event(expense.id, reviews.REQUESTED)])
     assert await reviews.confirm_review(session, expense.id, actor) is True
-    assert session.added[0].accion == reviews.CONFIRMED
+    assert session.added[0].accion == "editar"
+    assert json.loads(session.added[0].comentario)["event"] == reviews.CONFIRMED
     assert session.added[0].aprobador_id == actor
     assert session.added[0].fecha > session.events[0].fecha
     session.events = [session.added[0]]
@@ -151,7 +160,25 @@ def test_marker_is_escaped_and_explicit_confirmation_has_csrf():
 @pytest.mark.asyncio
 async def test_invalid_audit_is_not_silently_treated_as_complete():
     row = event(uuid4(), reviews.REQUESTED)
-    row.comentario = "{"
+    row.comentario = '{"batch": "' + reviews.BATCH
+    with pytest.raises(ValueError, match="Historial"):
+        await reviews.load_review_states(Session(None, [row]), [row.entidad_id])
+
+
+@pytest.mark.asyncio
+async def test_unrelated_edits_are_not_review_events():
+    first = event(uuid4(), reviews.REQUESTED)
+    first.comentario = "Cuenta de gasto editada."
+    second = event(uuid4(), reviews.CONFIRMED, batch="another-batch")
+    rows = await reviews.load_review_states(
+        Session(None, [first, second]), [first.entidad_id, second.entidad_id]
+    )
+    assert rows == {}
+
+
+@pytest.mark.asyncio
+async def test_reserved_batch_requires_a_valid_logical_event():
+    row = event(uuid4(), "unsupported")
     with pytest.raises(ValueError, match="Historial"):
         await reviews.load_review_states(Session(None, [row]), [row.entidad_id])
 

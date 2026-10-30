@@ -29,6 +29,7 @@ from devnous.gastos.routes.dependencies import (
 )
 from devnous.gastos.services.access_control_service import explicit_tool_decision
 from devnous.gastos.services.cleanup_review_service import (
+    AUDIT_ACTION,
     BATCH,
     load_review_states,
     request_review,
@@ -126,6 +127,20 @@ async def authorize_actor(session: AsyncSession, actor_id: UUID) -> None:
             raise PermissionError("Acceso a limpieza contable denegado.")
 
 
+async def validate_audit_storage(session: AsyncSession) -> None:
+    """Check the deployed CHECK contract before taking locks or writing a snapshot."""
+    result = await session.execute(
+        text(
+            "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
+            "WHERE c.conrelid='public.aprobaciones'::regclass "
+            "AND c.conname='aprobaciones_accion_check'"
+        )
+    )
+    definition = result.scalar_one_or_none()
+    if not definition or f"'{AUDIT_ACTION}'::text" not in str(definition):
+        raise ValueError("El historial no admite la acción de edición requerida.")
+
+
 async def run(args: argparse.Namespace) -> dict:
     """Preview or activate one transaction; reruns never reopen completed reviews."""
     manifest = json.loads(MANIFEST.read_text())
@@ -137,6 +152,7 @@ async def run(args: argparse.Namespace) -> dict:
                 await session.execute(text("SET TRANSACTION READ ONLY"))
             await session.execute(text("SET LOCAL statement_timeout = '20000'"))
             await session.execute(text("SET LOCAL lock_timeout = '5000'"))
+            await validate_audit_storage(session)
             sql = SELECTION_SQL + (" FOR UPDATE OF d, er" if args.apply else "")
             result = await session.execute(
                 text(sql), {"project_id": manifest["project_id"]}

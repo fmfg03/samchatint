@@ -41,6 +41,15 @@ class Result:
         return self.rows[0] if self.rows else None
 
 
+@pytest.mark.asyncio
+async def test_storage_preflight_rejects_an_incompatible_check():
+    async def execute(*a, **kw):
+        return Result(["CHECK (accion IN ('pagar'))"])
+
+    with pytest.raises(ValueError, match="historial"):
+        await batch.validate_audit_storage(SimpleNamespace(execute=execute))
+
+
 @pytest.fixture
 def harness(monkeypatch):
     manifest = json.loads(batch.MANIFEST.read_text())
@@ -55,6 +64,8 @@ def harness(monkeypatch):
 
         async def execute(self, query, params=None):
             calls.append(str(query))
+            if "pg_constraint" in str(query):
+                return Result(["CHECK (accion = ANY (ARRAY['editar'::text]))"])
             return Result(manifest["items"])
 
         async def commit(self):
