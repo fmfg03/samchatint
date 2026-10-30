@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
+import json
+from pathlib import Path
+import re
 from typing import Any
 
 from sqlalchemy import text
@@ -119,7 +122,391 @@ def _bindings(
     return bindings, gaps
 
 
+_DOCUMENTARY_SCOPE_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "config/tournament_accounting_documentary_scope_2026.json"
+)
+
+
+def _documentary_scope(tournament_id: str, edition_year: int) -> dict[str, Any] | None:
+    if edition_year != 2026:
+        return None
+    scope = json.loads(_DOCUMENTARY_SCOPE_PATH.read_text(encoding="utf-8"))
+    accounts = [a for a in scope["accounts"] if a["tournament_id"] == tournament_id]
+    if not accounts:
+        return None
+    if (
+        scope["schema_version"] != "samchat.tournament.documentary.v1"
+        or scope["fiscal_year"] != edition_year
+        or scope["company_code"] != "01"
+        or scope["company_label"] != "PSP1705058S4"
+        or len({a["account_code"] for a in accounts}) != len(accounts)
+        or any(a["exclusive_attribution"] is not False for a in accounts)
+    ):
+        raise ValueError("Invalid documentary scope")
+    return {**scope, "accounts": accounts}
+
+
+def budget_actual_comparison(
+    tournament_id: str, edition_year: int
+) -> dict[str, Any] | None:
+    """Declare the approved three-tournament comparison gap without inference."""
+    if _documentary_scope(tournament_id, edition_year) is None:
+        return None
+    return {
+        "status": "unavailable",
+        "reason": (
+            "Presupuesto con IVA, gasto fiscal y compromiso documental tienen "
+            "bases distintas; falta acreditar una población comparable."
+        ),
+    }
+
+
+def _documentary_money(value: Any) -> Decimal:
+    number = Decimal(str(value))
+    if not number.is_finite():
+        raise ValueError("Invalid documentary amount")
+    return number
+
+
+def _documentary_sources(
+    sources: list[dict[str, Any]], scope: dict[str, Any]
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    """Require the independent canonical admission; flags never grant admission."""
+    families: dict[str, dict[str, Any]] = {}
+    for source in sources:
+        if (
+            source["fiscal_year"] != scope["fiscal_year"]
+            or source["company_code"] != scope["company_code"]
+            or source["company_label"] != scope["company_label"]
+            or source["validation_status"] != "OK"
+            or not re.fullmatch(r"[0-9a-f]{64}", source.get("source_sha256") or "")
+            or source["source_family"] in families
+        ):
+            raise ValueError("Unvalidated or conflicting documentary source")
+        families[source["source_family"]] = source
+    required = {"balanza", "poliza_header", "poliza_line", "explicit_manifest"}
+    if not required.issubset(families):
+        raise ValueError("Independent explicit admission missing")
+    for family, expected in scope["original_source_hashes"].items():
+        if families.get(family, {}).get("source_sha256") != expected:
+            raise ValueError("Original documentary source changed")
+    validation = families["explicit_manifest"].get("metadata")
+    if not isinstance(validation, dict):
+        raise ValueError("Independent admission metadata missing")
+    if validation.get("reconciliation_status") != "reconciled_with_disclosed_precision":
+        raise ValueError("Source reconciliation not admitted")
+    for key in (
+        "material_reconciliation_issues",
+        "rounding_incidents",
+        "cent_reconciliation_differences",
+    ):
+        if validation.get(key) != []:
+            raise ValueError("Unresolved admission issue")
+    for key in ("balance_months", "policy_months"):
+        months = validation.get(key)
+        limit = 8 if key == "balance_months" else 9
+        if (
+            not isinstance(months, list)
+            or not months
+            or any(type(m) is not int or not 1 <= m <= limit for m in months)
+            or months != sorted(set(months))
+        ):
+            raise ValueError("Invalid admitted coverage")
+    withheld = validation.get("withheld_months")
+    if not isinstance(withheld, list):
+        raise ValueError("Missing withheld coverage declaration")
+    excluded = set()
+    for item in withheld:
+        month = item.get("month_num")
+        if (
+            type(month) is not int
+            or not 1 <= month <= 9
+            or month in excluded
+            or not item.get("reason")
+        ):
+            raise ValueError("Invalid withheld coverage declaration")
+        excluded.add(month)
+    if (
+        set(validation["balance_months"]) != set(range(1, 9)) - excluded
+        or set(validation["policy_months"]) != set(range(1, 10)) - excluded
+    ):
+        raise ValueError("Undeclared coverage gap")
+    return families, validation
+
+
+def _documentary_rows(
+    balances: list[dict[str, Any]],
+    headers: list[dict[str, Any]],
+    lines: list[dict[str, Any]],
+    *,
+    families: dict[str, dict[str, Any]],
+    validation: dict[str, Any],
+    scope: dict[str, Any],
+    run_id: str,
+) -> None:
+    """Check whole policies independently, including their unshown counterparties."""
+    for rows, family, coverage in (
+        (balances, "balanza", "balance_months"),
+        (headers, "poliza_header", "policy_months"),
+        (lines, "poliza_line", "policy_months"),
+    ):
+        if {r["fiscal_month"] for r in rows} != set(validation[coverage]):
+            raise ValueError("Persisted coverage differs from admission")
+        for row in rows:
+            if (
+                str(row["import_run_id"]) != run_id
+                or row["fiscal_year"] != scope["fiscal_year"]
+                or row["company_code"] != scope["company_code"]
+                or row["company_label"] != scope["company_label"]
+                or str(row["source_file_id"]) != str(families[family]["id"])
+            ):
+                raise ValueError("Documentary row escaped admitted scope")
+    by_header = {str(h["id"]): h for h in headers}
+    if len(by_header) != len(headers):
+        raise ValueError("Duplicate policy header")
+    totals: dict[str, list[Any]] = defaultdict(lambda: [0, Decimal(0), Decimal(0)])
+    seen = set()
+    for line in lines:
+        hid = str(line["policy_header_id"])
+        if hid not in by_header or str(line["id"]) in seen:
+            raise ValueError("Orphan or duplicate policy line")
+        seen.add(str(line["id"]))
+        header = by_header[hid]
+        if (
+            header["fiscal_month"] != line["fiscal_month"]
+            or header["policy_id_natural"] != line["policy_id_natural"]
+        ):
+            raise ValueError("Inconsistent policy identity")
+        debit = _documentary_money(line["debit_amount"])
+        credit = _documentary_money(line["credit_amount"])
+        if min(debit, credit) < 0:
+            raise ValueError("Negative policy movement")
+        totals[hid][0] += 1
+        totals[hid][1] += debit
+        totals[hid][2] += credit
+    for hid, header in by_header.items():
+        flags = header.get("quality_flags")
+        if (
+            not isinstance(flags, list)
+            or any(f != "missing_summary_marker" for f in flags)
+            or header["is_balanced"] is not True
+            or totals[hid]
+            != [
+                header["line_count"],
+                _documentary_money(header["total_debits"]),
+                _documentary_money(header["total_credits"]),
+            ]
+            or totals[hid][1] != totals[hid][2]
+        ):
+            raise ValueError("Incomplete or materially flagged policy")
+    seen = set()
+    for row in balances:
+        key = (row["fiscal_month"], row["account_code"])
+        if key in seen:
+            raise ValueError("Duplicate documentary balance")
+        seen.add(key)
+        for field in ("debits", "credits", "closing_balance"):
+            _documentary_money(row[field])
+
+
+async def build_tournament_documentary_accounting(
+    session: Any, *, tournament_id: str, edition_year: int
+) -> dict[str, Any]:
+    """Project verified account facts for an already-authorized tournament.
+
+    Catalogue membership conveys documentary visibility only. It does not attest
+    project ownership, currency, tax basis, financial totals or cash movement.
+    """
+    result: dict[str, Any] = {
+        "source_status": "unavailable",
+        "source": "historical_accounting_documentary",
+        "read_only": True,
+        "company_code": "01",
+        "fiscal_year": edition_year,
+        "currency": None,
+        "tax_basis": None,
+        "accounts": [],
+        "coverage": {
+            "trial_balance_months": [],
+            "policy_months": [],
+            "withheld_months": [],
+        },
+        "gaps": [],
+    }
+    scope = _documentary_scope(tournament_id, edition_year)
+    if scope is None:
+        result["reason"] = (
+            "Sin alcance documental aprobado para este torneo y ejercicio."
+        )
+        return result
+    result["accounts"] = [
+        {
+            **a,
+            "company_code": scope["company_code"],
+            "currency": None,
+            "tax_basis": None,
+            "trial_balance_periods": [],
+            "policy_periods": [],
+        }
+        for a in scope["accounts"]
+    ]
+    ready = (
+        await session.execute(
+            text(
+                """
+        SELECT to_regclass('historical_trial_balance_rows') IS NOT NULL
+          AND to_regclass('historical_policy_headers') IS NOT NULL
+          AND to_regclass('historical_policy_lines') IS NOT NULL
+          AND to_regclass('historical_accounting_source_files') IS NOT NULL
+          AND to_regclass('accounting_import_runs') IS NOT NULL AS ready
+    """
+            )
+        )
+    ).scalar_one()
+    if not ready:
+        result["reason"] = "La fuente histórica no está disponible."
+        return result
+    run = await _find_latest_applied_import_run(
+        session, fiscal_year=edition_year, company_code=scope["company_code"]
+    )
+    if not run or not re.fullmatch(r"[0-9a-f]{64}", run.get("source_sha256") or ""):
+        result["reason"] = "Sin importación aplicada con huella acreditada."
+        return result
+    params = {"run": run["id"], "year": edition_year, "company": scope["company_code"]}
+
+    async def read(sql: str) -> list[dict[str, Any]]:
+        return [
+            dict(r) for r in (await session.execute(text(sql), params)).mappings().all()
+        ]
+
+    sources = await read(
+        """
+        SELECT id, fiscal_year, company_code, company_label, source_family,
+               source_sha256, validation_status, metadata
+        FROM historical_accounting_source_files
+        WHERE import_run_id=:run AND fiscal_year=:year AND company_code=:company
+    """
+    )
+    try:
+        families, validation = _documentary_sources(sources, scope)
+        balances = await read(
+            """
+            SELECT *, COALESCE(account_code_canonical, account_code_raw) AS account_code
+            FROM historical_trial_balance_rows
+            WHERE import_run_id=:run AND fiscal_year=:year AND company_code=:company
+        """
+        )
+        headers = await read(
+            """
+            SELECT * FROM historical_policy_headers
+            WHERE import_run_id=:run AND fiscal_year=:year AND company_code=:company
+        """
+        )
+        lines = await read(
+            """
+            SELECT *, COALESCE(account_code_canonical, account_code_raw) AS account_code
+            FROM historical_policy_lines
+            WHERE import_run_id=:run AND fiscal_year=:year AND company_code=:company
+        """
+        )
+        _documentary_rows(
+            balances,
+            headers,
+            lines,
+            families=families,
+            validation=validation,
+            scope=scope,
+            run_id=str(run["id"]),
+        )
+    except (ValueError, InvalidOperation, TypeError, KeyError):
+        result["reason"] = "La fuente documental requiere validación o conciliación."
+        result["gaps"].append(result["reason"])
+        return result
+    result.update(
+        source_status="partial",
+        import_run_id=str(run["id"]),
+        source_sha256=run["source_sha256"],
+        coverage={
+            "trial_balance_months": validation["balance_months"],
+            "policy_months": validation["policy_months"],
+            "withheld_months": validation["withheld_months"],
+        },
+    )
+    result["gaps"] = [
+        "Cobertura parcial; los meses retenidos no se completan con versiones anteriores.",
+        "Septiembre tiene pólizas; no hay balanza oficial de septiembre.",
+        "Moneda, base fiscal y atribución exclusiva no acreditadas; sin comparación presupuestal.",
+    ]
+    by_account = {a["account_code"]: a for a in result["accounts"]}
+    for row in sorted(balances, key=lambda r: r["fiscal_month"]):
+        account = by_account.get(row["account_code"])
+        if account is not None and row["is_detail"]:
+            account["trial_balance_periods"].append(
+                {
+                    "month": row["fiscal_month"],
+                    **{
+                        k: str(row[k]) for k in ("debits", "credits", "closing_balance")
+                    },
+                    "source_family": "balanza",
+                    "source_sha256": families["balanza"]["source_sha256"],
+                }
+            )
+    header_flags = {str(h["id"]): h["quality_flags"] for h in headers}
+    monthly: dict[tuple[str, int], dict[str, Any]] = {}
+    for line in lines:
+        code, month = line["account_code"], line["fiscal_month"]
+        if code not in by_account:
+            continue
+        bucket = monthly.setdefault(
+            (code, month),
+            {
+                "debits": Decimal(0),
+                "credits": Decimal(0),
+                "quality_flags": set(),
+            },
+        )
+        bucket["debits"] += _documentary_money(line["debit_amount"])
+        bucket["credits"] += _documentary_money(line["credit_amount"])
+        bucket["quality_flags"].update(header_flags[str(line["policy_header_id"])])
+    for (code, month), bucket in sorted(monthly.items()):
+        by_account[code]["policy_periods"].append(
+            {
+                "month": month,
+                "debits": str(bucket["debits"]),
+                "credits": str(bucket["credits"]),
+                "registered_net": str(bucket["debits"] - bucket["credits"]),
+                "quality_flags": sorted(bucket["quality_flags"]),
+                "source_family": "poliza_line",
+                "source_sha256": families["poliza_line"]["source_sha256"],
+            }
+        )
+    return result
+
+
 async def build_tournament_accounting(
+    session: Any,
+    *,
+    tournament_id: str,
+    edition_year: int,
+    budget_version_id: str | None = None,
+) -> dict[str, Any]:
+    """Keep strict attributed totals separate from independent documentary facts."""
+    result = await _build_strict_tournament_accounting(
+        session,
+        tournament_id=tournament_id,
+        edition_year=edition_year,
+        budget_version_id=budget_version_id,
+    )
+    result["documentary"] = await build_tournament_documentary_accounting(
+        session,
+        tournament_id=tournament_id,
+        edition_year=edition_year,
+    )
+    return result
+
+
+async def _build_strict_tournament_accounting(
     session: Any,
     *,
     tournament_id: str,
@@ -415,7 +802,8 @@ async def build_tournament_accounting(
                 await session.execute(
                     text(
                         """
-            SELECT l.budget_amount, l.metadata
+            SELECT l.id, l.budget_version_id, l.tournament_id,
+                   l.budget_concept_id, l.phase, l.budget_amount, l.metadata
             FROM budget_lines l JOIN budget_versions v ON v.id = l.budget_version_id
             WHERE l.tournament_id = :tournament_id AND l.budget_version_id = :version_id
               AND v.edition_year = :year
@@ -432,12 +820,14 @@ async def build_tournament_accounting(
             .mappings()
             .all()
         )
-        basis_matches = bool(budget_rows) and all(
-            (r.get("metadata") or {}).get("upload_source", {}).get("currency")
-            == result["currency"]
-            and (r.get("metadata") or {}).get("upload_source", {}).get("tax_basis")
-            == result["tax_basis"]
-            for r in budget_rows
+        from samchat.budgets.source_provenance import resolve_budget_line_source
+
+        budget_sources = [resolve_budget_line_source(r) for r in budget_rows]
+        basis_matches = bool(budget_sources) and all(
+            source["status"] in {"declared", "verified"}
+            and source["currency"] == result["currency"]
+            and source["tax_basis"] == result["tax_basis"]
+            for source in budget_sources
         )
         if basis_matches:
             total = sum(

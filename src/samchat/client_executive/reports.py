@@ -8,6 +8,7 @@ from html import escape
 
 from .analysis import deviations, recommendations
 from .home import format_money
+from .ui import render_documentary_accounting
 
 SOURCE_NAMES = {
     "budget": "Presupuesto aprobado · versión de cada torneo",
@@ -65,7 +66,7 @@ def build_report(snapshot: dict, analysis: dict | None = None) -> dict:
         "scenario": (analysis or {}).get("scenario"),
         "gaps": gaps,
         "validation": "Validación de negocio pendiente. Subtotales parciales no representan toda la cartera.",
-        "method": "Lecturas independientes con cortes individuales. Proyección mecánica, sin causalidad acreditada. Pagado documental no equivale a salida de caja.",
+        "method": "Lecturas independientes con cortes individuales. El presupuesto anual y el ejercido fiscal del intervalo conservan su propia base; sin base común acreditada no hay proporción ni variación entre ambos. Pagado documental no equivale a salida de caja.",
         "read_only": True,
         "layouts": snapshot.get("reports", {}),
     }
@@ -103,12 +104,25 @@ def render_report(report: dict) -> str:
         if scenario
         else ""
     )
+    accounting = "".join(
+        "<h2>"
+        + e(tournament["name"])
+        + "</h2>"
+        + render_documentary_accounting(
+            (tournament.get("accounting") or {}).get("documentary") or {},
+            expanded=True,
+        )
+        for tournament in report["tournaments"]
+        if ((tournament.get("accounting") or {}).get("documentary") or {}).get(
+            "accounts"
+        )
+    )
     return f"""<section class="business-report"><h1>{e(report['title'])}</h1>
     <p>{e(report['scope'])} · {e(report['period']['start'])} a {e(report['period']['end'])}</p>
     <p>Corte: {e(report['cut'])} · Identificador de cifras: {e(report['snapshot_id'])}</p>
     <h2>Conclusión</h2><p>{e(report['conclusion'])}</p><p>{e(report['validation'])}</p>
     <div style="overflow:auto"><table><thead><tr><th>Indicador</th><th>MXN</th><th>Cobertura</th><th>Interpretación y brechas</th></tr></thead><tbody>{metrics}</tbody></table></div>
-    <h2>Riesgos y recomendaciones</h2>{advice}{hypothetical}<h2>Datos faltantes</h2><ul>{gaps}</ul>
+    {accounting}<h2>Riesgos y recomendaciones</h2>{advice}{hypothetical}<h2>Datos faltantes</h2><ul>{gaps}</ul>
     <p>{e(report['method'])}</p></section>"""
 
 

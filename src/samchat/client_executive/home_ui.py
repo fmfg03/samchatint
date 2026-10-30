@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 
 from .home import amount, format_money
 from .report_layouts import report_cell_evidence, report_layouts
+from .ui import render_documentary_accounting
 
 
 def _report_panels(snapshot: dict) -> str:
@@ -207,10 +208,11 @@ def render_home(
     comparisons = ""
     for row in snapshot["tournaments"]:
         budget, actual = row["values"].get("budget"), row["values"].get("actual")
+        guard = row.get("budget_actual_comparison") or {}
         b, a = amount(budget), amount(actual)
         ratio = (
             min(100, max(0, float(a / b * 100)))
-            if a is not None and b and b > 0
+            if guard.get("status") != "unavailable" and a is not None and b and b > 0
             else None
         )
         bar = (
@@ -218,10 +220,25 @@ def render_home(
             if ratio is not None
             else '<p class="muted">Sin base comparable para graficar.</p>'
         )
+        comparison_note = (
+            f'<p class="muted">{escape(guard["reason"])}</p>'
+            if guard.get("reason")
+            else ""
+        )
         comparisons += f"""<div class="comparison"><h3>{escape(row['name'])}</h3>
-            <p>Ejercido: {escape(format_money(actual))} · presupuesto anual: {escape(format_money(budget))}</p>{bar}
+            <p>Ejercido fiscal del intervalo: {escape(format_money(actual))} · importe autorizado anual: {escape(format_money(budget))}</p>{bar}{comparison_note}
             <p class="muted">Comprometido: {escape(format_money(row['values'].get('committed')))} · pagado documental: {escape(format_money(row['values'].get('paid')))}</p>
             <details><summary>Fuente y cobertura</summary><p>Versión: {escape(str(row.get('version_id') or 'Sin versión acreditada'))}</p><p>{escape('; '.join(row['gaps'].get('actual', [])) or 'Sin brechas automáticas detectadas; conciliación de negocio pendiente.')}</p></details></div>"""
+    accounting = "".join(
+        "<h2>"
+        + escape(row["name"])
+        + "</h2>"
+        + render_documentary_accounting(
+            ((row.get("accounting") or {}).get("documentary") or {})
+        )
+        for row in snapshot["tournaments"]
+        if ((row.get("accounting") or {}).get("documentary") or {}).get("accounts")
+    )
     evolution = ""
     for row in snapshot["tournaments"]:
         series = row.get("monthly_execution") or {}
@@ -279,7 +296,8 @@ def render_home(
     <section id="summary-panel" role="tabpanel" aria-labelledby="summary-tab"><section aria-label="Indicadores ejecutivos" class="home-metrics">{cards}</section>
     <section id="documentary-basis" class="context" aria-label="Cómo leer las cifras documentales"><strong>Cómo leer estas cifras</strong><p>Ejercido: fecha del gasto y base fiscal. Comprometido y pagado documental: solicitudes creadas en el periodo, con su estado actual. Comprometido incluye enviadas y liquidadas; no equivale a deuda pendiente. Pagado documental no acredita por sí solo una transferencia bancaria.</p><p>Ejemplo: una solicitud de septiembre pagada en octubre aparece pagada al consultar septiembre hoy. No significa que el dinero saliera en septiembre.</p><p>Caja: solo movimientos bancarios conciliados por su fecha efectiva. Ejercido, comprometido y pagado documental no se suman entre sí ni equivalen a caja.</p></section>
     <details class="source-gaps"><summary>Fuentes por completar · {sum(m['value'] is None for m in metrics)} indicadores</summary><p>Selecciona un indicador para revisar su fuente, alcance y siguiente paso con Sam.</p><ul>{missing}</ul></details>
-    <div class="layout"><div><section class="panel"><h2>Ejecución contra presupuesto</h2><p class="muted">La barra compara ejercido del intervalo con presupuesto anual. No apila ejercido, comprometido y pagado.</p>{comparisons or '<p>No hay torneos en este alcance.</p>'}</section>
+    <div class="layout"><div><section class="panel"><h2>Presupuesto y hechos documentales</h2><p class="muted">Importes de referencia con su propia base y periodo. No se apilan ejercido, comprometido y pagado ni se calcula una proporción sin base común acreditada.</p>{comparisons or '<p>No hay torneos en este alcance.</p>'}</section>
+    {accounting}
     <section class="panel"><h2>Evolución mensual del ejercido</h2><p class="muted">Misma base y alcance del agregado; meses de inicio y fin pueden ser parciales. No representa salida de caja.</p>{evolution}</section>
     <section class="panel"><h2>Asuntos prioritarios</h2><ol class="priorities">{priorities}</ol></section>
     <section class="panel"><h2>Operación respaldada</h2><p class="muted">Conteos de la edición {snapshot['edition_year']}; no se filtran por el intervalo financiero. Conteos no equivalen a porcentaje de avance.</p><div class="table-wrap"><table><thead><tr><th>Torneo</th><th>Equipos</th><th>Jugadores</th><th>Avance</th></tr></thead><tbody>{operations}</tbody></table></div></section></div>
