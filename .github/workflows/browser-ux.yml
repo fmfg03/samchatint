@@ -33,6 +33,7 @@ jobs:
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
           rm -rf "$HOME/.cache/pip"
+          mkdir -p "$HOME/.cache/pip"
           df -h /
 
       - name: Install browser test dependencies
