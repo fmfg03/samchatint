@@ -72,6 +72,19 @@ def source_functions(path, names, namespace, *, constants=False):
     return namespace
 
 
+# Load the canonical pure comparison without importing runtime configuration.
+# The only file it may read is this repository's versioned documentary scope.
+_documentary_scope_path = (
+    ROOT / "config/tournament_accounting_documentary_scope_2026.json"
+)
+_accounting_helpers = source_functions(
+    "src/samchat/client_executive/accounting_bridge.py",
+    {"_documentary_scope", "budget_actual_comparison"},
+    {"json": json, "_DOCUMENTARY_SCOPE_PATH": _documentary_scope_path},
+)
+budget_actual_comparison = _accounting_helpers["budget_actual_comparison"]
+
+
 class AccessError(PermissionError):
     pass
 
@@ -212,6 +225,7 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
                 "FACT_SOURCE": "samchat.budgets.executive_facts.build_executive_facts",
                 "report_layouts": report_layouts,
                 "build_executive_facts": AsyncMock(side_effect=documentary_facts),
+                "budget_actual_comparison": budget_actual_comparison,
                 "text": lambda value: value,
                 "date": date,
                 "datetime": datetime,
@@ -307,6 +321,18 @@ class DirectionReadTests(unittest.IsolatedAsyncioTestCase):
 
     async def read(self, **kwargs):
         return await self.adapter.read(identity=self.identity, **kwargs)
+
+    async def test_canonical_comparison_preserves_documentary_scope(self):
+        self.assertIsNone(budget_actual_comparison(TOURNAMENT, 2026))
+        scope = json.loads(_documentary_scope_path.read_text(encoding="utf-8"))
+        tournament_ids = {row["tournament_id"] for row in scope["accounts"]}
+        self.assertEqual(len(tournament_ids), 3)
+        for tournament_id in tournament_ids:
+            with self.subTest(tournament_id=tournament_id):
+                comparison = budget_actual_comparison(tournament_id, 2026)
+                self.assertEqual(comparison["status"], "unavailable")
+                self.assertTrue(comparison["reason"])
+                self.assertIsNone(budget_actual_comparison(tournament_id, 2025))
 
     async def test_actual_canonical_home_aggregates_and_evidence(self):
         result = await self.read(tournament_id=TOURNAMENT)
