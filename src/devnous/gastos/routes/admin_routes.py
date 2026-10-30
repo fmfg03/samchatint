@@ -150,6 +150,8 @@ from ..services.expense_accounting_cleanup_service import (
     resolve_default_cleanup_contra_cuenta,
     save_expense_cleanup,
 )
+from ..services.cleanup_review_service import confirm_review, review_controls
+from ..services.access_control_service import explicit_tool_decision
 from ..services.budget_concept_account_service import (
     build_cleanup_accounting_display,
     resolve_effective_budget_concept,
@@ -25905,6 +25907,19 @@ async def cfdi_matching_control_room(
         )
 
 
+def _cleanup_review_token(request: Request) -> str:
+    """Bind explicit review confirmation to the authenticated browser session."""
+    if not request.session.get("cleanup_review_csrf"):
+        request.session["cleanup_review_csrf"] = secrets.token_urlsafe(32)
+    return request.session["cleanup_review_csrf"]
+
+
+def _check_cleanup_review_token(request: Request, submitted: str) -> None:
+    expected = request.session.get("cleanup_review_csrf", "")
+    if not expected or not secrets.compare_digest(expected, submitted):
+        raise HTTPException(status_code=403, detail="Formulario de revisión inválido.")
+
+
 @router.get("/admin/gastos/sin-cuenta-contable", response_class=HTMLResponse)
 async def gastos_sin_cuenta_contable(
     request: Request,
@@ -26483,6 +26498,16 @@ async def gastos_sin_cuenta_contable(
         )
         detail_display = "table-row" if is_focused else "none"
         review_label = "Ocultar" if is_focused else "Revisar"
+        review_state = getattr(gasto, "_cleanup_review_state", None)
+        review_html = ""
+        if review_state and review_state.pending:
+            review_html = review_controls(
+                gasto.id, review_state, _cleanup_review_token(request)
+            )
+            row_state_chips += (
+                '<span class="cleanup-pill cleanup-pill-warn">'
+                'La Merced · revisión contable solicitada</span>'
+            )
         rows_html += f"""
         <tr id="row-{gasto.id}" class="{summary_class}">
             <td>
@@ -26554,6 +26579,7 @@ async def gastos_sin_cuenta_contable(
                             <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:8px;">Guardar fila</div>
                             <p class="muted-mini" style="margin:0 0 12px;">Guarda CFDI, impuestos y cuentas contables de este gasto sin afectar las demas filas.</p>
                             <button class="btn-asignar" data-gasto-id="{gasto.id}" style="padding: 10px 16px; background: #0f766e; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; width:100%;">Guardar preparación COI</button>
+                            {review_html}
                         </section>
                     </div>
                     <details class="cleanup-advanced-details{" open" if _cleanup_fiscal_controls_are_blockers(readiness_issues) else ""}">
@@ -26661,6 +26687,7 @@ async def gastos_sin_cuenta_contable(
         f"{label}</option>"
         for value, label in (
             ("all", "Todos los pendientes"),
+            ("review", "Revisión solicitada · La Merced"),
             ("main_account", "Cuenta de cargo"),
             ("counterpart", "Contrapartida"),
             ("cfdi", "CFDI"),
@@ -27609,6 +27636,43 @@ async def gastos_sin_cuenta_contable(
     </html>
     """
     return html
+
+
+@router.post("/admin/gastos/{gasto_id}/confirmar-revision-contable")
+async def confirmar_revision_contable(
+    gasto_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    csrf_token: str = Form(""),
+    review_confirmed: str = Form(""),
+) -> Response:
+    """Confirm human review separately from saving accounting preparation."""
+    _check_cleanup_review_token(request, csrf_token)
+    if review_confirmed != "yes":
+        raise HTTPException(
+            status_code=400, detail="Confirme la revisión de la partida."
+        )
+    for action in ("ver", "editar"):
+        if await explicit_tool_decision(
+            session, current_empleado, "admin.gastos.limpieza", action
+        ) is False:
+            raise HTTPException(
+                status_code=403, detail="Acceso a limpieza contable denegado."
+            )
+    try:
+        await confirm_review(session, gasto_id, current_empleado.id)
+        await session.commit()
+    except ValueError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        await session.rollback()
+        raise
+    return RedirectResponse(
+        url="/admin/gastos/sin-cuenta-contable?period=2026-10&q=La+Merced",
+        status_code=303,
+    )
 
 
 @router.post("/admin/gastos/{gasto_id}/cleanup-contable")
