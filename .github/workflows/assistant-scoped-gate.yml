@@ -116,7 +116,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
 
       - name: Install dependencies
         if: steps.detect.outputs.available == 'true'
@@ -124,7 +123,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install -r requirements.txt
+          bash scripts/ci/install-cpu-test-dependencies.sh .venv/bin/python -r requirements.txt
 
       - name: Compile runtime and tests
         if: steps.detect.outputs.available == 'true'
