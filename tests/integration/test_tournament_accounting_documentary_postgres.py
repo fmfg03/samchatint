@@ -1,8 +1,8 @@
 """Real JSONB/current-run selection inside PostgreSQL READ ONLY transactions."""
 
-from datetime import datetime, timezone
 import importlib.util
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,17 +10,19 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Match the live application import order for the existing gastos/budgets cycle.
-import devnous.gastos  # noqa: F401
-from samchat.client_executive import accounting_bridge as bridge
-
 # Reuse the exact opt-in disposable PostgreSQL fixture; it creates/drops only its
 # own UUID database and rejects DDL after owner schema bootstrap.
 from test_historical_explicit_manifest_postgres import database  # noqa: F401
 
+# Match the live application import order for the existing gastos/budgets cycle.
+import devnous.gastos  # noqa: F401
+from samchat.client_executive import accounting_bridge as bridge
+
 
 @pytest.mark.asyncio
-async def test_documentary_real_jsonb_current_selected_source_no_ddl(database):  # noqa: F811
+async def test_documentary_real_jsonb_current_selected_source_no_ddl(
+    database,  # noqa: F811
+):
     spec = importlib.util.spec_from_file_location(
         "documentary_fixtures",
         Path(__file__).parents[1] / "unit/test_tournament_accounting_documentary.py",
@@ -198,3 +200,125 @@ async def test_documentary_real_jsonb_current_selected_source_no_ddl(database): 
         ).scalar_one()
         assert flags == ["missing_summary_marker"]
         await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_actual_restored_multitournament_home_uses_real_batch_readers(
+    monkeypatch,
+):
+    """Financial owners and authorization run unmocked on the opt-in restore."""
+    import os
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import event
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from samchat.client_executive import home, service
+    from samchat.client_executive.read_batches import ReadBatch
+
+    dsn = (
+        "postgresql+asyncpg://postgres@/samchat_dashboard_closeout_restore_20261030"
+        "?host=/tmp/samchat-dashboard-closeout-restore-proxy-20261030&port=55483"
+    )
+    if os.environ.get("SAMCHAT_DASHBOARD_RESTORE_TEST_URL") != dsn:
+        pytest.skip("Requires the exact private dashboard acceptance restore")
+    engine = create_async_engine(dsn)
+    statements = []
+
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def readonly_guard(conn, cursor, statement, parameters, context, executemany):
+        assert statement.lstrip().split()[0].upper() in {
+            "SELECT",
+            "WITH",
+            "SET",
+            "SAVEPOINT",
+            "RELEASE",
+            "ROLLBACK",
+        }
+        statements.append(statement)
+
+    # Operational stores are independent of this financial transport regression.
+    # Budget, documentary, fact, scope and receipt owners are the real readers.
+    monkeypatch.setattr(
+        service,
+        "dispatch_registration_snapshot",
+        AsyncMock(return_value={"available": False}),
+    )
+    monkeypatch.setattr(
+        service, "_build_operational_summaries", AsyncMock(return_value={})
+    )
+    expected = {
+        "16793f0e-4697-4a28-8f42-b563da8cc7d8": ("3686827.60", 27),
+        "67c556df-f953-4f99-8cab-87ed4d111b05": ("17471291.92", 29),
+        "c3b247f1-e3fc-4f4a-8995-56a5880f86a6": ("30384939.78", 29),
+    }
+    try:
+        async with AsyncSession(engine) as session:
+            await session.execute(text("SET TRANSACTION READ ONLY"))
+            result, scope = await home.build_home(
+                session,
+                actor="e3d13040-2360-420f-98a1-516440ef63c3",
+                superadmin=True,
+                year=2026,
+                tournament_ids=list(expected),
+            )
+            assert len(scope["selected"]) == len(result["tournaments"]) == 3
+            for row in result["tournaments"]:
+                budget, count = expected[row["id"]]
+                assert row["values"]["budget"] == budget
+                assert row["accounting"] is not None
+                documentary = row["accounting"]["documentary"]
+                assert documentary["source_status"] == "partial"
+                assert len(documentary["accounts"]) == count
+                assert documentary["coverage"]["trial_balance_months"] == [1, 2, 5, 8]
+            assert any("__direction_batch" in q for q in statements)
+            # Exercise the actual JSONB scalar result used by audit-proof owners,
+            # including a cache hit: mutation cannot rewrite cached evidence.
+            batch = ReadBatch(session)
+            query = text(
+                "SELECT jsonb_build_object('proofs', jsonb_build_array(jsonb_build_object('authorized', false))) AS payload"
+            )
+            try:
+                from samchat.budgets import service as budgets
+
+                actions = budgets._closeout_actions()
+                audit_payloads = (
+                    (
+                        await session.execute(
+                            text(
+                                "SELECT payload FROM budget_version_audit_log WHERE event_type=:event AND budget_version_id=CAST(:version AS uuid)"
+                            ),
+                            {
+                                "event": budgets._CLOSEOUT_EVENT,
+                                "version": actions["version_id"],
+                            },
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                movements = [
+                    proof["movement"]
+                    for audit in audit_payloads
+                    for proof in audit.get("proofs", [])
+                ]
+                confirmed = await budgets._closeout_assignment_proofs(
+                    batch, actions["version_id"], movements
+                )
+                assert len(confirmed) == 16
+                assert set(confirmed) == {
+                    d["movement_key"] for d in actions["movements"]
+                }
+                before = len(statements)
+                proof = (await batch.execute(query)).scalars().all()
+                assert proof == [{"proofs": [{"authorized": False}]}]
+                proof[0]["proofs"][0]["authorized"] = True
+                assert (await batch.execute(query)).scalars().all() == [
+                    {"proofs": [{"authorized": False}]}
+                ]
+                assert len(statements) - before == 3  # savepoint, SELECT, release
+            finally:
+                await batch.close()
+            await session.rollback()
+    finally:
+        await engine.dispose()

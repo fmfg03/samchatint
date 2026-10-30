@@ -1,6 +1,6 @@
 # Cierre técnico de tableros: candidato validado
 
-Fecha: 2026-10-30. Estado: implementación y ensayo restaurado completos; **sin aplicación productiva de esta corrección**. Historia y especificación aprobadas, incluido el lote explícito de 13 equivalencias de Copa. La publicación, CI, revisión del diff/PR, merge, promoción y aplicación tendrán sus propios recibos.
+Fecha: 2026-10-30. Estado: implementación y ensayo restaurado completos; **sin aplicación productiva de esta corrección**. Historia y especificación aprobadas, incluido el lote explícito de 13 equivalencias de Copa. El usuario aprobó el PR #515 y la continuidad hasta despliegue y carga, condicionada a checks en verde. Merge, promoción y aplicación tendrán sus propios recibos.
 
 ## Resultado
 
@@ -44,3 +44,13 @@ Doce movimientos ambiguos o sin destino acreditado no se asignan automáticament
 Sports marzo/abril/junio/julio y GOAT agosto siguen retenidos; no se recibió balanza de septiembre. Aceptación autenticada de Finanzas sigue separada. Estos pendientes no se presentarán como completados por el despliegue técnico.
 
 Canon unchanged: concreta fuente, atribución documental, trazabilidad, conciliación y distinción de bases existentes; preserva autoridad, definición fiscal, estados y economía. La regularización de cinco calendarios es continuidad de la semana40 ya autorizada, documentada y probada, no un permiso para saltar controles.
+
+## Correcciones de revisión del PR #515
+
+La revisión automática detectó dos P1: el adaptador ReadBatch no conservaba las vistas escalares ni el acceso posicional utilizado por los lectores canónicos, y una denegación explícita de Presupuestos no bloqueaba la evidencia contable de la portada. Ambos se corrigieron sin ampliar autoridad: vistas de filas/mappings/scalars separadas, cardinalidad correcta, aislamiento de JSONB en caché y gate conjunto Finanzas/Presupuestos antes de consultar el comparador y el lector. Ocho regresiones cubren tres torneos y la vista conjunta, con y sin superadmin.
+
+Suite conjunta actualizada: **448 pruebas pasadas y un caso opt-in omitido** por no estar habilitada la copia privada; ese caso se ejecutó luego con su URL exacta y pasó junto con la otra prueba PostgreSQL del archivo (**2 pasadas**, sin omisiones). En la copia real la portada obtiene los tres presupuestos y las 85 cuentas documentadas; las 16 pruebas de decisión se verifican también a través del ReadBatch real. Ninguna escritura productiva ni cambios en el respaldo restaurado. Evidencia privada: `readbatch-home-restore-acceptance.json`, SHA `11bd32ffbca29a787e353222452fd778efd6e0b139657c49906e72504d3b021e`.
+
+Los cuatro jobs originales de GitHub fallaron antes de ejecutar pruebas por `OSError: [Errno 28] No space left on device` instalando dependencias. Clasificación: infraestructura. El usuario aprobó expresamente el ajuste de capacidad de los runners y continuar hasta despliegue/carga: tres workflows liberan SDKs no usados y caché pip únicamente en GitHub-hosted/Linux; pip mantiene las dependencias originales con caché deshabilitada. No cambian tests, umbrales, permisos ni triggers; el YAML original es idéntico tras retirar sólo estas adiciones y el contrato de quality gate pasa. Canon unchanged por tratarse de capacidad temporal y conservar el contrato existente. Los checks finales aún requieren recibo de CI.
+
+Revalidación independiente de los P1 y el ajuste de CI: **40 pruebas pasadas sin omisiones**, incluida la copia real con los tres torneos y las 16 decisiones; sin hallazgos pendientes. Black, isort, inventario (9 pruebas), contrato CI y diff hygiene verificados.

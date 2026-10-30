@@ -335,3 +335,52 @@ async def test_rest_batch_failure_scope_validation_and_cancellation():
     with pytest.raises(asyncio.CancelledError):
         await pending
     assert client.task is None
+
+
+@pytest.mark.asyncio
+async def test_real_batch_scalar_views_cardinality_nulls_and_cache_isolation():
+    from sqlalchemy.exc import MultipleResultsFound, NoResultFound
+
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        session = SQLSession(connection)
+        batch = ReadBatch(session)
+        query = text("SELECT :id AS id, :payload AS payload")
+        params = {"id": 7, "payload": '{"proof":"preserved"}'}
+        try:
+            result = await batch.execute(query, params)
+            assert result.scalar_one() == 7
+            assert result.scalars().all() == [7]
+            assert result.scalars("payload").one() == params["payload"]
+            row = result.first()
+            assert row[0] == row.id == 7
+            assert row[1] == row.payload == params["payload"]
+            assert result.mappings().one() == {"id": 7, "payload": params["payload"]}
+            returned = result.mappings().all()
+            returned[0]["payload"] = "changed"
+            cached = await batch.execute(query, params)
+            assert cached.mappings().first()["payload"] == params["payload"]
+            assert cached.scalar_one_or_none() == 7
+            assert session.calls == 1
+            empty = await batch.execute(text("SELECT 1 AS value WHERE 0"))
+            assert empty.scalar() is None
+            assert empty.scalar_one_or_none() is None
+            assert empty.scalars().all() == []
+            with pytest.raises(NoResultFound):
+                empty.scalar_one()
+            null = await batch.execute(text("SELECT NULL AS value"))
+            assert null.scalar_one() is None
+            assert null.scalar_one_or_none() is None
+            assert null.scalars().all() == [None]
+            multiple = await batch.execute(
+                text("SELECT 1 AS value UNION ALL SELECT 1 AS value")
+            )
+            assert multiple.scalar() == 1
+            assert multiple.scalars().all() == [1, 1]
+            with pytest.raises(MultipleResultsFound):
+                multiple.scalar_one()
+            with pytest.raises(MultipleResultsFound):
+                multiple.scalar_one_or_none()
+        finally:
+            await batch.close()
+    engine.dispose()

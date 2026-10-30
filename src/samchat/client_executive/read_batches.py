@@ -13,21 +13,78 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 
 from sqlalchemy import text
+from sqlalchemy.exc import MultipleResultsFound, NoResultFound
 from sqlalchemy.sql.elements import TextClause
 
 
+class _Row(tuple):
+    """Preserve positional and named access on a detached SQLAlchemy-style row."""
+
+    def __new__(cls, mapping):
+        row = super().__new__(cls, mapping.values())
+        row._mapping = mapping
+        return row
+
+    def __getattr__(self, name):
+        try:
+            return self._mapping[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
 class _Rows:
-    def __init__(self, rows):
+    """Detached result views retain the canonical readers' result semantics."""
+
+    def __init__(self, rows, *, mode="rows", index=0):
         self.rows = rows
+        self.mode = mode
+        self.index = index
 
     def mappings(self):
-        return self
+        return _Rows(self.rows, mode="mappings")
+
+    def scalars(self, index=0):
+        return _Rows(self.rows, mode="scalars", index=index)
+
+    def _value(self, row):
+        value = deepcopy(row)
+        if self.mode == "mappings":
+            return value
+        if self.mode == "scalars":
+            if isinstance(self.index, str):
+                return value[self.index]
+            return tuple(value.values())[self.index]
+        return _Row(value)
+
+    def __iter__(self):
+        return iter(self.all())
 
     def all(self):
-        return deepcopy(self.rows)
+        return [self._value(row) for row in self.rows]
 
     def first(self):
-        return deepcopy(self.rows[0]) if self.rows else None
+        return self._value(self.rows[0]) if self.rows else None
+
+    def one(self):
+        if not self.rows:
+            raise NoResultFound("No row was found when one was required")
+        if len(self.rows) != 1:
+            raise MultipleResultsFound(
+                "Multiple rows were found when exactly one was required"
+            )
+        return self._value(self.rows[0])
+
+    def one_or_none(self):
+        return self.one() if self.rows else None
+
+    def scalar(self):
+        return self.scalars().first()
+
+    def scalar_one(self):
+        return self.scalars().one()
+
+    def scalar_one_or_none(self):
+        return self.scalars().one_or_none()
 
 
 class ReadBatch:
