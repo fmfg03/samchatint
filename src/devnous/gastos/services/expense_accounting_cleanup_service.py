@@ -22,6 +22,7 @@ from samchat.assistant.historical_accounting_precedent import (
 )
 
 from ..models import CFDIReport, CuentaContable, ExpenseReport
+from .cleanup_review_service import load_review_states
 
 DEFAULT_CLEANUP_CONTRA_CUENTA_CODIGO = "2120-000-000"
 DEFAULT_CLEANUP_CONTRA_CUENTA_NOMBRE = "ACREEDORES DIVERSOS"
@@ -44,6 +45,7 @@ _CLEANUP_ISSUE_TYPES = {
     "counterpart",
     "cfdi",
     "fiscal",
+    "review",
 }
 from .budget_concept_account_service import (
     cleanup_expense_loader_options,
@@ -224,6 +226,8 @@ def cleanup_issues_match_filter(issues: Iterable[Any], issue_type: str) -> bool:
         return any("falta contrapartida" in issue for issue in normalized_issues)
     if normalized_issue_type == "cfdi":
         return any("falta cfdi" in issue for issue in normalized_issues)
+    if normalized_issue_type == "review":
+        return False  # Explicit review is loaded separately from technical issues.
     return any(
         "falta cuenta de iva" in issue or "falta cuenta de retencion" in issue
         for issue in normalized_issues
@@ -418,6 +422,9 @@ async def load_cleanup_expenses(
     query = select(ExpenseReport).options(*loader_options).where(and_(*conditions))
     result = await session.execute(query.order_by(ExpenseReport.fecha.desc()))
     candidates = result.scalars().all()
+    review_states = await load_review_states(
+        session, [expense.id for expense in candidates if getattr(expense, "id", None)]
+    )
 
     # Show rows that still need human/accounting action, not rows that are merely
     # missing a persisted fallback field. Counterpart accounts can be resolved
@@ -433,7 +440,14 @@ async def load_cleanup_expenses(
         ):
             continue
         state = await build_cleanup_preview(session, expense)
-        if cleanup_issues_match_filter(state.get("issues") or [], issue_type):
+        review = review_states.get(getattr(expense, "id", None))
+        expense._cleanup_review_state = review
+        requested = bool(review and review.pending)
+        selected_issue = normalize_cleanup_issue_type(issue_type)
+        if (requested and selected_issue in {"all", "review"}) or (
+            selected_issue != "review"
+            and cleanup_issues_match_filter(state.get("issues") or [], issue_type)
+        ):
             pending.append(expense)
     return pending
 

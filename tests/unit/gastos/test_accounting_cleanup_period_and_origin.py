@@ -383,6 +383,10 @@ async def test_cleanup_loader_keeps_fiscal_only_candidates(monkeypatch) -> None:
     async def preview(_session, _expense):
         return {"issues": ["Falta cuenta de IVA"]}
 
+    async def review_states(_session, _ids):
+        return {}
+
+    monkeypatch.setattr(cleanup_service, "load_review_states", review_states)
     monkeypatch.setattr(cleanup_service, "build_cleanup_preview", preview)
     rows = await cleanup_service.load_cleanup_expenses(
         Session(), issue_type="fiscal"
