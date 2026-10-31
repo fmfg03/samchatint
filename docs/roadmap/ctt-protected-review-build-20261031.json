@@ -168,7 +168,7 @@
     "tests/integration/test_ctt_review_proposals_postgres.py": "64af69e9852797ea241c8f8bd2c6923166b1a615d395133c438516c2c64d371a",
     "tests/integration/test_ctt_review_webauthn_postgres.py": "428ec2e9a7fab04eaf7a6dcb913c3507cf5f571fe74ef5c57ce08dadcb8982c8",
     "tests/integration/test_ctt_review_workflow_postgres.py": "9d718e3e0f8a98d6d49f6466f7a281b7416ab5b14b2c4bf8b19f6ffd31b27e03",
-    "tests/integration/test_ctt_signed_assertion_guard_postgres.py": "3fa283c0f9976592db07204168f613a9e99070a11d431f147eca8640eb6de74f",
+    "tests/integration/test_ctt_signed_assertion_guard_postgres.py": "b7350fd84ab332910358826fd801fe2408f745ded81a517293fdde5dede685f4",
     "tests/integration/test_ctt_signed_writer_postgres.py": "fcbbaee1f0670ac34eb8cc6ec7ea7b87237103a43babae512684f9c36c804c65",
     "tests/integration/test_ctt_source_admission_postgres.py": "c873e97ea079fda0cbe281a7f61ac7b8ea059b0140e3b4da6c5f310cd785d775",
     "tests/integration/test_ctt_staff_capture_executor_postgres.py": "011f3de13e7a9a30ba30fe027b0da930347136ace012add417e3e38beebf357a",
@@ -237,6 +237,14 @@
       "unit_passed": 7743,
       "unit_skipped": 10
     },
+    "github_d9_cut": {
+      "failure": "Both expiry guards rejected COMMIT; test expected one message without isolating guard order. Corrected in test only; not accepted as baseline.",
+      "integration_failed": 1,
+      "integration_passed": 1208,
+      "integration_skipped": 32,
+      "integration_xfailed": 1,
+      "mandatory_uid_step": "not run in failed cohort; next CI must execute it"
+    },
     "hermetic_ci_uid_acceptance": {
       "copied_code": "Exact per-file hashes before source path normalization; no temporary code paths remain in coverage",
       "runtime_signing_or_authority_flags_added": false,
@@ -280,6 +288,19 @@
     "real_source_preflight_pdf": 7,
     "runtime_coverage_percent": 95,
     "samchat_copa_and_kit_passed": 1519,
+    "signed_assertion_commit_expiry": {
+      "actual_commit_rejected_exact_signed_expiry": true,
+      "assertion_guard_remains_deferred": true,
+      "both_tables_rolled_back": true,
+      "competing_challenge_guard": "checked IMMEDIATE while current only in this isolated test transaction",
+      "failed": 0,
+      "full_module_repetitions": 3,
+      "independent_review": "PASS",
+      "nonroot_uid": 108,
+      "passed": 6,
+      "runtime_migrations_acl_unchanged": true,
+      "skipped": 0
+    },
     "sqlalchemy_compatibility": {
       "additional_json_text_regression_cases_each_version": 9,
       "first_github_unit_run": "failed: strict JSON type adaptation; reproduced and corrected; not accepted as baseline",

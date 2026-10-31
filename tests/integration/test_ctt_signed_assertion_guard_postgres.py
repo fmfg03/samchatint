@@ -1,7 +1,6 @@
 """Signed proof expiry guard tests; PostgreSQL and identities are synthetic."""
 
 import asyncio
-import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -102,7 +101,7 @@ def test_signed_expiry_is_checked_at_commit_and_rolls_back(guard_pg):
     async def run():
         conn = await connect(guard_pg)
         try:
-            state = await synthetic_state(conn, lifetime=timedelta(seconds=3))
+            state = await synthetic_state(conn, lifetime=timedelta(seconds=6))
             expiry = await conn.fetchval(
                 "SELECT floor(extract(epoch FROM expires_at))::bigint "
                 "FROM ctt_staff_private.review_challenges "
@@ -112,6 +111,13 @@ def test_signed_expiry_is_checked_at_commit_and_rolls_back(guard_pg):
             tx = conn.transaction()
             await tx.start()
             await consume(conn, state)
+            # Check the independent challenge guard while it is current. The
+            # signed-proof guard below remains deferred until actual COMMIT,
+            # so the test cannot depend on which expiry guard fires first.
+            await conn.execute(
+                "SET CONSTRAINTS "
+                "ctt_staff_private.ctt_review_consumption_commit_guard IMMEDIATE"
+            )
             await conn.execute(
                 "INSERT INTO ctt_staff_private.signed_assertion_guards "
                 "VALUES($1,$2,$3)",
@@ -119,7 +125,11 @@ def test_signed_expiry_is_checked_at_commit_and_rolls_back(guard_pg):
                 "sha256:" + "a" * 64,
                 expiry,
             )
-            await asyncio.sleep(max(0, expiry - time.time()) + 0.15)
+            await conn.execute(
+                "SELECT pg_sleep_until(to_timestamp($1::double precision) "
+                "+ interval '1 second')",
+                float(expiry),
+            )
             with pytest.raises(
                 asyncpg.InsufficientPrivilegeError,
                 match="signed assertion expired",
