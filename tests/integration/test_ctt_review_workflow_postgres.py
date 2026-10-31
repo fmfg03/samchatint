@@ -1369,7 +1369,14 @@ def test_private_prepare_to_official_committed_session(
                     elif scenario == "source_corruption":
                         page = scope.source_pages[0]
                         path = source_root / "pages" / (page.image_sha256[7:] + ".png")
-                        path.write_bytes(b"synthetic corrupted source")
+                        # The fixture owns this sealed object. Deliberately
+                        # tamper, then restore its mode before testing the hash.
+                        sealed_mode = path.stat().st_mode & 0o777
+                        path.chmod(0o600)
+                        try:
+                            path.write_bytes(b"synthetic corrupted source")
+                        finally:
+                            path.chmod(sealed_mode)
                     else:
                         await client_workflow.prepare(
                             account,

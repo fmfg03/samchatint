@@ -167,7 +167,7 @@
     "tests/integration/test_ctt_review_plan_scope_postgres.py": "0a56ed0832552d8889489558a1089b88aa2569a211474085759413bca70285ca",
     "tests/integration/test_ctt_review_proposals_postgres.py": "64af69e9852797ea241c8f8bd2c6923166b1a615d395133c438516c2c64d371a",
     "tests/integration/test_ctt_review_webauthn_postgres.py": "428ec2e9a7fab04eaf7a6dcb913c3507cf5f571fe74ef5c57ce08dadcb8982c8",
-    "tests/integration/test_ctt_review_workflow_postgres.py": "df464fa5ea1004236f9c017c78546308468e0bb512dd614f2deeb78ab0c6b2aa",
+    "tests/integration/test_ctt_review_workflow_postgres.py": "9d718e3e0f8a98d6d49f6466f7a281b7416ab5b14b2c4bf8b19f6ffd31b27e03",
     "tests/integration/test_ctt_signed_assertion_guard_postgres.py": "3fa283c0f9976592db07204168f613a9e99070a11d431f147eca8640eb6de74f",
     "tests/integration/test_ctt_signed_writer_postgres.py": "fcbbaee1f0670ac34eb8cc6ec7ea7b87237103a43babae512684f9c36c804c65",
     "tests/integration/test_ctt_source_admission_postgres.py": "c873e97ea079fda0cbe281a7f61ac7b8ea059b0140e3b4da6c5f310cd785d775",
@@ -225,6 +225,18 @@
     "backup_restore_verified": true,
     "documented_strict_xfail": 1,
     "finality_rpc_passed": 42,
+    "github_8e05_cut": {
+      "integration_failed": 1,
+      "integration_failure": "Synthetic corruption fixture wrote owner0400 without deliberately enabling its own write; corrected and tested under nonroot in both versions; not accepted as baseline",
+      "integration_passed": 1208,
+      "integration_skipped": 32,
+      "integration_xfailed": 1,
+      "mandatory_uid_step": "not run in failed cohort; final CI must run it",
+      "unit_errors": 0,
+      "unit_failed": 0,
+      "unit_passed": 7743,
+      "unit_skipped": 10
+    },
     "hermetic_ci_uid_acceptance": {
       "copied_code": "Exact per-file hashes before source path normalization; no temporary code paths remain in coverage",
       "runtime_signing_or_authority_flags_added": false,
@@ -242,6 +254,25 @@
       "style": "Black and Flake8 PASS after test-only formatting correction"
     },
     "legacy_socket_skips": 9,
+    "nonroot_corruption_acceptance": {
+      "github_sqlalchemy_2_1_6": {
+        "cases": [
+          "success",
+          "source_corruption"
+        ],
+        "passed": 2
+      },
+      "os_uid": 108,
+      "production_sqlalchemy_2_0_43": {
+        "cases": [
+          "success",
+          "source_corruption"
+        ],
+        "passed": 2
+      },
+      "runtime_or_production_permissions_changed": false,
+      "sealed_mode_restored_before_rejection": true
+    },
     "operational_uid_case_separately_passed": 1,
     "publication_changed_lines_coverage_percent": 90.8,
     "real_source_preflight_documents": 11,
