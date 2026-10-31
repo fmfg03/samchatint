@@ -21,4 +21,32 @@ for name,expected in json.loads((root/'overlay-hashes.json').read_text()).items(
  else:target=checkout/'tests/batisenal_pilot'/source.name
  shutil.copyfile(source,target)
 shutil.move(str(checkout), str(dest/'c'))
+# Keep the historical archive and identity overlay unchanged. Only this fresh
+# fixture checkout receives the separately reviewed modern transport delta.
+manifest=json.loads((root/'modern-hashes.json').read_text())
+contract=dest/'modern-tests'
+contract.mkdir()
+ui=pathlib.Path('src/devnous/gastos/routes/batisenal_pilot_routes.py')
+baseline=contract/'baseline'
+(baseline/ui).parent.mkdir(parents=True)
+shutil.copyfile(dest/'c'/ui,baseline/ui)
+def apply_patch(path,target,expected):
+ assert hashlib.sha256(path.read_bytes()).hexdigest()==expected
+ for mode in (['--check'],[]):
+  subprocess.run(['git','-c','core.autocrlf=false','apply','--unidiff-zero',*mode,str(path.resolve())],
+                 cwd=target,check=True)
+apply_patch(root/'presentation-baseline.patch',baseline,manifest['presentation_baseline_patch_sha256'])
+assert hashlib.sha256((baseline/ui).read_bytes()).hexdigest()==manifest['baseline_route_sha256']
+for row in manifest['changes']:
+ target=dest/'c'/row['path']
+ if row['before_sha256'] is None: assert not target.exists(),row['path']
+ else: assert hashlib.sha256(target.read_bytes()).hexdigest()==row['before_sha256'],row['path']
+apply_patch(root/'modern-integration.patch',dest/'c',manifest['integration_patch_sha256'])
+for row in manifest['changes']:
+ assert hashlib.sha256((dest/'c'/row['path']).read_bytes()).hexdigest()==row['after_sha256'],row['path']
+for name,expected in manifest['contract_files'].items():
+ assert pathlib.PurePosixPath(name).name==name
+ source=root/'modern_contract'/name
+ assert hashlib.sha256(source.read_bytes()).hexdigest()==expected
+ shutil.copyfile(source,contract/name)
 print(dest/'c')

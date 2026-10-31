@@ -34,3 +34,29 @@ suite reproduced 24/24. This HTTP composition was NOT run locally because sandbo
 policy denies Unix sockets. Dependency metadata is the historical observed list,
 not a guaranteed clean-install lock. CI installation errors must be reported as
 such, never hidden or converted into successful skips.
+
+## Modern transport composition (2026-10-31)
+
+The original ZIP and five-file identity overlay remain byte-identical.
+prepare.py applies a hash-pinned reviewed patch only inside its fresh temporary
+checkout. It adds modern MCP framing, the approved same-origin form referrer
+policy, and an accurate hidden-draft message after revocation/expiry.
+Three synthetic client requests gain protocol metadata and matching headers;
+their bearer source, domain arguments and assertions do not change.
+
+The separate modern contract runner requires 25 ASGI spy tests plus 8 actual
+renderer AST tests, with zero errors/skips and >=85% line coverage in each of
+framing.py and http.py. It forbids socket connect/bind/DNS/sendto.
+The existing 55 PostgreSQL tests and all five >=85% product-module gates remain.
+No dataset ceiling, second MCP grant, Events or publication authority is added.
+
+Surface verification: source hashes and 22 offline presentation/framing tests
+passed. The 25 ASGI tests could not run there because the permitted PyPI index
+failed DNS; the 55 PG tests require Linux/non-root/PG16/private Unix socket.
+Those are not reported as executed locally. CI must provide its own evidence.
+Canon unchanged: isolated synthetic fixture composition only, without runtime
+registration, production deployment or Chatty E2E acceptance.
+
+Patches use zero-context serialization to avoid whitespace-only context lines in
+repository diffs. Exact before/after hashes guard application; output bytes match
+the reviewed full-context delta recorded in modern-hashes.json.

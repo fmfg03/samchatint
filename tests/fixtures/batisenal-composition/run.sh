@@ -8,6 +8,13 @@ CHECKOUT="$PILOT_WORK/c"
 cd "$CHECKOUT"
 test "$(id -u)" != 0
 test ! -e /tmp/samchat-pilot-env-absent
+# Contract tests run without sockets/credentials before the private PG fixture.
+mkdir -p artifacts/pilot/ci-results
+env -i PATH=/usr/local/bin:/usr/bin:/bin \
+ PYTHONPATH="$CHECKOUT/src" SAMCHAT_ENV=test \
+ SAMCHAT_ENV_FILE=/tmp/samchat-pilot-env-absent \
+ EXPENSE_REPORT_RECEIPT_BLOB_COLUMN=archivo_data \
+ "$PILOT_PY" "$PILOT_WORK/modern-tests/run_tests.py"
 DATA="$PWD/artifacts/pilot/integration/pgdata"
 SOCKET="$PWD/artifacts/pilot/integration/socket"
 test ! -e "$DATA"; test ! -e "$SOCKET"
