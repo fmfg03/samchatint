@@ -16,7 +16,8 @@
   "deviations": [
     "Operational launcher/RPC/source-role configuration makes already approved contracts deployable; no new business authority.",
     "Catalogue fingerprint aggregate ordering uses COLLATE C for identical real schema across C/en_US locales.",
-    "Evidence Bus main.py blank-line whitespace corrected with identical AST; exact final snapshot hashes refreshed."
+    "Evidence Bus main.py blank-line whitespace corrected with identical AST; exact final snapshot hashes refreshed.",
+    "SQLAlchemy 2.1 JSON/Text adaptation corrected using declared SQL types; evidence remains exact dict and PostgreSQL physical signatures remain exact; same business authority."
   ],
   "files": {
     ".github/workflows/test.yml": "f02e3fd3cb5943bb5555198e0a1595985664986e8b9c08e87f2aa0be531c1eaf",
@@ -77,7 +78,7 @@
     "docs/private-plugin/route-inventory.json": "75ec17dc990c6ad0b7de278d935d0004f7f8bc8b1f2d0a64eebe4791fa1fa3b2",
     "docs/private-plugin/route-matrix.csv": "c8fa967fd6b490275dd1b4bd84ee49a305b082088832c17672898036398e62e6",
     "docs/roadmap/ctt-protected-review-canon-20261031.md": "f3db8a96d7cf4e6c77c4bb230c2ffbf7547bfaa9c99d4b152fc168c5d0ea997f",
-    "docs/roadmap/ctt-protected-review-release-20261031.md": "3b25d47947be83fd3623f9d563d0f882ddf0dfa9bfa95f7fd27c3b56d17cafeb",
+    "docs/roadmap/ctt-protected-review-release-20261031.md": "bb81521d96f50d257eaf3493d12fceafec948253f9d6cbd8d2e21216563a80b4",
     "docs/roadmap/samchat-convergence-register.md": "36a0acf92a488ab3a96b30bb20acf87f0deada5451e569401e8cd5c28e0c32d7",
     "requirements-test.txt": "52148a8b1d018282db2f284d26a27104e8cd2a07b748dab2cc5fbaf271707295",
     "scripts/ci/check-ctt-test-fixtures.py": "8a62d9a02b1885c0337b27185732fc5a615391ff5c8fdbbcf536c9363965069e",
@@ -90,13 +91,13 @@
     "src/devnous/copa_telmex/staff_capture_anchor_reader.py": "67a8ff5fe0642f31e77e957819d9e954451920cc1af06d12ed85374b5da14d17",
     "src/devnous/copa_telmex/staff_capture_authorization.py": "4dbfa3e2a4692880a2d926e2b7ba0009a67c01773f6c2b8f98df564d52d5a2c2",
     "src/devnous/copa_telmex/staff_capture_edition.py": "853b68323268761543347bf3e8d84b0fb9cad5686beb8dfec725ee93e57359ca",
-    "src/devnous/copa_telmex/staff_capture_effect.py": "716ee0213680bf9d10365735613148197dc47757002dd473cd01e43ed28b11d9",
+    "src/devnous/copa_telmex/staff_capture_effect.py": "b130d6aee81ad2d2581a7832e2c1550adc7dfbec3451f433eaeaab8c25252696",
     "src/devnous/copa_telmex/staff_capture_executor.py": "d56101039b37ed80f81ae7ff347a3757f4a29540df81372eaf153d1754408ac7",
     "src/devnous/copa_telmex/staff_capture_finality_authorization.py": "c18935f556e67d8f61914641b1d266e30367d96e9a7ce54408c00c7fe4330a58",
     "src/devnous/copa_telmex/staff_capture_finality_effect.py": "264cabb57e9e1a3d8dd1833f712ee9fa42731c2745af7e1be1832f1a3f9dc35f",
     "src/devnous/copa_telmex/staff_capture_finalizing_writer.py": "328277afc113b92fbec3fc3fae18f8e15dd8069422d9334a72738f3f87e9d17b",
     "src/devnous/copa_telmex/staff_capture_geometry.py": "8ea3a60e17dd4c7fa14eb1412e33f51fbc28a4ba4fa280b862148a3bfe39f763",
-    "src/devnous/copa_telmex/staff_capture_persistence.py": "b33fa8636691745440e757a945fe5b91f1d966e897dcc1d73020373c6a2a4755",
+    "src/devnous/copa_telmex/staff_capture_persistence.py": "11412baf60921a7e7505cd43c993a308ddde086c4581e0cc7ddc98329ff8389d",
     "src/devnous/copa_telmex/staff_capture_player_slots.py": "906ddb9bb0622b5a4c7f341f75fa0052de2f1a2318a3b592cfba54f03830638a",
     "src/devnous/copa_telmex/staff_capture_postgres.py": "6767ff93eba0e14ec77b426f794e2784403a7ce34afe2bc43e2b24b3604dab1c",
     "src/devnous/copa_telmex/staff_capture_private_sources.py": "d8007d5496c1c76693899e458570e2823df207635b98b4eb8a57a0c468c29693",
@@ -157,7 +158,7 @@
     "tests/integration/test_ctt_capture_payloads_postgres.py": "c009ffa1a0b58baf55c96ede1774e0783aca2d7a1ea4c24f71de2bd913f538f5",
     "tests/integration/test_ctt_exact_effect_persistence_postgres.py": "2f941089af81c3469b7a84fbe84b6bd53fb3bf2b0dd1e42af07e602ed217f5af",
     "tests/integration/test_ctt_full_runtime_postgres.py": "f6e173cec9e6a865982dec231a751e31aa7d6eaca50990a9d204fa4c7a5744f1",
-    "tests/integration/test_ctt_legacy_write_boundary_postgres.py": "3ac5fe4251155a1b2777722293f87d05ebaa1551955c2f21d4f62f3a165a1cc4",
+    "tests/integration/test_ctt_legacy_write_boundary_postgres.py": "dc82599bd1177be549e6afd6ea34300fd55c79b59a9ca09584ff1a1196655dbb",
     "tests/integration/test_ctt_migration_locale_postgres.py": "1a70b0a5fb2291a6e3b1592a4a3f030d5b85fc60256380145760078415a6a21a",
     "tests/integration/test_ctt_operational_schema_restore.py": "4eca7cc533b34e4e78dcb1b81aa88f8ceef022b6436bc528929a8cacae1892f9",
     "tests/integration/test_ctt_passkey_enrollment_postgres.py": "359026fd6bf0662c2f5d68f797c98053147e85c2dd98fba48fc0bcb4bb6adce2",
@@ -166,7 +167,7 @@
     "tests/integration/test_ctt_review_plan_scope_postgres.py": "0a56ed0832552d8889489558a1089b88aa2569a211474085759413bca70285ca",
     "tests/integration/test_ctt_review_proposals_postgres.py": "64af69e9852797ea241c8f8bd2c6923166b1a615d395133c438516c2c64d371a",
     "tests/integration/test_ctt_review_webauthn_postgres.py": "428ec2e9a7fab04eaf7a6dcb913c3507cf5f571fe74ef5c57ce08dadcb8982c8",
-    "tests/integration/test_ctt_review_workflow_postgres.py": "2cdfe1fdc80c58a0c1f3420e902b1d08caeab7cb479917e7068b1ffe529849b4",
+    "tests/integration/test_ctt_review_workflow_postgres.py": "e9ed65047f637bda809509db8d48590e7472bbedae46746a8f97eba1ab96ce0e",
     "tests/integration/test_ctt_signed_assertion_guard_postgres.py": "3fa283c0f9976592db07204168f613a9e99070a11d431f147eca8640eb6de74f",
     "tests/integration/test_ctt_signed_writer_postgres.py": "fcbbaee1f0670ac34eb8cc6ec7ea7b87237103a43babae512684f9c36c804c65",
     "tests/integration/test_ctt_source_admission_postgres.py": "c873e97ea079fda0cbe281a7f61ac7b8ea059b0140e3b4da6c5f310cd785d775",
@@ -180,7 +181,7 @@
     "tests/unit/test_ctt_legacy_registration_writer.py": "e84c617b781cef4cf1ef8a61693d68f9d58ea3b1acd1f50519ab5d496d086fff",
     "tests/unit/test_ctt_passkey_enrollment_operator.py": "3e0508fb2d4feafb153d2ac9cd4e7fcc4d59545d204f1e20ee9d73936f4e3fb1",
     "tests/unit/test_ctt_staff_capture_authorization.py": "f6c84c3df2a570986b1223351364960f33e26e6509c4245d009a39f089ed1721",
-    "tests/unit/test_ctt_staff_capture_effect.py": "a5ff6ca80b1de492f4050aa8a3b40ae521b6b1bfcbd54b65bec0a9969cf5e178",
+    "tests/unit/test_ctt_staff_capture_effect.py": "97823489a3b0f3ecbd03f48a61411803a174d8ac333e2bd7d7377928a6fc5338",
     "tests/unit/test_ctt_staff_capture_executor.py": "56fda655c7129b3464bd737d1ad817662f5d3856c0dab5163b2e7df2b13d5d76",
     "tests/unit/test_ctt_staff_capture_finality_authorization.py": "84924d3620f10f254a7f8db3354ef2745c518921c22dfa58be52e038cb6b010f",
     "tests/unit/test_ctt_staff_capture_finality_effect.py": "0d708fff60aea3c8d57573812735c876be4b405bfa12feb15409bcd1ae00ac7d",
@@ -232,7 +233,21 @@
     "real_source_preflight_pages": 22,
     "real_source_preflight_pdf": 7,
     "runtime_coverage_percent": 95,
-    "samchat_copa_and_kit_passed": 1519
+    "samchat_copa_and_kit_passed": 1519,
+    "sqlalchemy_compatibility": {
+      "additional_json_text_regression_cases_each_version": 9,
+      "first_github_unit_run": "failed: strict JSON type adaptation; reproduced and corrected; not accepted as baseline",
+      "focused_json_and_finality_cases_passed_each_version": 136,
+      "github_resolved_version": "2.1.6",
+      "postgresql_physical_suite": {
+        "failed": 0,
+        "includes": "10 workflow, 26 full runtime, 30 legacy boundary; four numeric-UID subprocesses assert actual imported SQLAlchemy version",
+        "passed": 66,
+        "skipped": 0,
+        "sqlalchemy": "2.1.6"
+      },
+      "production_version": "2.0.43"
+    }
   },
   "zaubern_merge": "9d9dd441880d8415cc71b68bdc6527ae70789c92",
   "zaubern_pr": "https://github.com/fmfg03/zaubern/pull/57"

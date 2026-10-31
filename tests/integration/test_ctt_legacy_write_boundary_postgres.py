@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 
 import asyncpg
 import pytest
+from sqlalchemy import JSON
 
 from devnous.copa_telmex.models import (
     Player,
@@ -145,7 +146,7 @@ def row(model):
         if column.nullable:
             value[column.name] = None
             continue
-        kind = column.type.python_type
+        kind = dict if isinstance(column.type, JSON) else column.type.python_type
         if kind is UUID:
             value[column.name] = str(uuid4())
         elif kind is int:

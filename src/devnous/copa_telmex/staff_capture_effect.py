@@ -18,6 +18,7 @@ import json
 import re
 from typing import Mapping
 
+from sqlalchemy import JSON
 from sqlalchemy.dialects import postgresql
 from uuid import UUID
 
@@ -70,7 +71,9 @@ def _row(value, model, review_plan=False):
             if not column.nullable:
                 raise ValueError("required value missing")
             continue
-        expected = column.type.python_type
+        # SQLAlchemy 2.1 reports object for JSON. This protocol still requires
+        # an evidence object; it never accepts arbitrary JSON scalars/arrays.
+        expected = dict if isinstance(column.type, JSON) else column.type.python_type
         if expected is UUID:
             if not _uuid(item):
                 raise ValueError("invalid identifier")

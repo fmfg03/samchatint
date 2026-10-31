@@ -110,6 +110,7 @@ async def operational_rpc_case(
         CollectedClientData,
     )
     import fido2
+    import sqlalchemy
     import staff_review_issuer_v2
 
     controller_uid, controller_gid = os.geteuid(), os.getegid()
@@ -254,9 +255,40 @@ print(json.dumps({'site': str(root), 'roots': sorted(roots)}))
             )
         elif source.is_file():
             shutil.copy2(source, packages / name)
+    # A caller may select an existing SQLAlchemy build through PYTHONPATH.
+    # Preserve that exact imported distribution in every real child process.
+    selected_sqlalchemy = importlib.metadata.distribution("SQLAlchemy")
+    assert Path(
+        selected_sqlalchemy.locate_file("sqlalchemy/__init__.py")
+    ).resolve() == (Path(sqlalchemy.__file__).resolve())
+    selected_roots = {
+        Path(str(item)).parts[0]
+        for item in selected_sqlalchemy.files or []
+        if Path(str(item)).parts
+    } - {"..", ".", "__pycache__"}
+    for old in [packages / "sqlalchemy", *packages.glob("sqlalchemy-*.dist-info")]:
+        if old.exists():
+            shutil.rmtree(old)
+    for name in sorted(selected_roots):
+        source = Path(selected_sqlalchemy.locate_file(name))
+        target = packages / name
+        if source.is_dir():
+            shutil.copytree(
+                source, target, ignore=shutil.ignore_patterns("__pycache__")
+            )
+        elif source.is_file():
+            shutil.copy2(source, target)
     privileged(["chmod", "-R", "a+rX", str(packages)])
     env["PYTHONPATH"] += os.pathsep + str(packages)
     child_python = str(Path(sys.executable).resolve())
+    assert (
+        subprocess.check_output(
+            [child_python, "-c", "import sqlalchemy; print(sqlalchemy.__version__)"],
+            env=env,
+            text=True,
+        ).strip()
+        == sqlalchemy.__version__
+    )
     directories = {role: isolated / role for role in roles}
     for path in directories.values():
         path.mkdir(mode=0o700)
