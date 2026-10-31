@@ -88,6 +88,24 @@ def mounted_routers():
     }
     tree = ast.parse(main.read_text())
     for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "register_staff_review_routes"
+            and node.args
+            and expr(node.args[0]) == "app"
+        ):
+            target = imported_symbol(main, node.func.id)
+            if target:
+                result[(str(target[0].relative_to(ROOT)), "app")] = [
+                    {
+                        "prefix": "",
+                        "evidence": f"{main.name}:{node.lineno}",
+                        "status": (
+                            "registration_function_static; runtime execution unverified"
+                        ),
+                    }
+                ]
         if not (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)

@@ -323,3 +323,21 @@ Reason: human-approved first delivery of registration read-source consolidation;
 2026-10-05: candidato local de consolidación de inscripción, base `d548d148f7521988587d6498b5461901c21a2ee3`. Catálogo explícito, proyección PostgreSQL compartida y exclusión de roster alterno. Evidencia: informe `docs/roadmap/ctt-postgres-registration-first-delivery.md`; 209 tests aprobados, cobertura de instrucciones modificadas 99,45 %, revisión independiente sin defectos pendientes. Calidad general parcial por deuda heredada de lint/tipos. Sin migración aplicada, despliegue ni importación; UAT pendiente.
 
 Evidence: `docs/roadmap/ctt-postgres-registration-first-delivery.md` and its scoped test and review receipts. This is an isolated-worktree candidate; merge, deployment, data application, authenticated UAT, and business acceptance remain separate.
+
+Aprobación humana: 2026-10-31, «aprobado hasta el deploy». Razón y evidencia: `docs/roadmap/ctt-protected-review-release-20261031.md`; texto literal revisado en `docs/roadmap/ctt-protected-review-canon-20261031.md`.
+
+### 2026-10-31 — Evidencia del candidato, pendiente promoción operativa
+
+El candidato añade propuestas privadas, enrolamiento supervisado y recuperación
+atómica del comprobante; monta ocho adaptadores públicos nuevos de revisión/
+passkey y reutiliza el guardado de correcciones para propuestas. La política
+pura de incidencias se extrajo conservando las funciones existentes. El
+inventario estático incorpora la fábrica de rutas y conserva el estado de
+ejecución productiva como no demostrado por inspección estática.
+
+El paquete de cierre contiene diff, hashes, aceptación PostgreSQL con fuentes,
+firmas y transporte reales y datos sintéticos, prueba Chromium con autenticador
+virtual, verificaciones de tipos/formato y revisiones independientes. Sus
+resultados exactos se consultan en el informe fechado del paquete. Esta evidencia
+no afirma que el servicio en producción haya cambiado ni que los once
+expedientes del piloto se hayan capturado.

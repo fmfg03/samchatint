@@ -607,3 +607,49 @@ Approved design, 2026-10-22: AMEX DIRECT sign-profile corrections preserve the o
 Fecha: 2026-10-23. Historia, especificación y este texto exacto aprobados explícitamente por el usuario en la conversación. Razón: permitir prestaciones con Control Presupuestal sin proyecto y cargos al socio sin imputación presupuestal. Evidencia: `docs/roadmap/amex-direct-account-treatment-20261023-story.md` y `docs/roadmap/amex-direct-account-treatment-20261023-spec.md`, sección 11. Diseño aprobado; implementación, publicación, migración, despliegue y aceptación conservan sus recibos separados.
 
 Las rutas contables de AMEX directo usan decisiones append-only, cabeza vigente y prueba de fuente/cuenta/contexto en el corte. La asignación presupuestal de una prestación conserva el scope real de la partida separado del proyecto operativo nulo y se ejecuta por el owner y autoridad presupuestales existentes; catálogos autorizados son explícitos y su ausencia no concede acceso global. La cuenta deudora comparte el contrato canónico AMEX de cargo completo al socio y no se proyecta como gasto presupuestal. Fuente efectiva, hashes, declaraciones fiscales tipadas, SQL guards y snapshots resuelven el mismo tratamiento y protegen concurrencia, no duplicidad e inmutabilidad. Fuentes legacy sin decisión mantienen su contrato; no hay backfill implícito. Esquema sólo por migración owner-run; evidencia nueva impide downgrade destructivo.
+
+Aprobación humana: 2026-10-31, «aprobado hasta el deploy». Razón y evidencia: `docs/roadmap/ctt-protected-review-release-20261031.md`; texto literal revisado en `docs/roadmap/ctt-protected-review-canon-20261031.md`.
+
+### 2026-10-31 — Fuente, revisión, identidad y finalidad separadas
+
+El app público conserva permisos de navegación y propuesta; no recibe las
+capacidades del operador, emisor o escritor protegido. El servicio privado
+resuelve cuenta/tenant/edición/principal/rol y versiones actuales mediante SQL,
+recalcula el hash de los valores reales del draft y coteja el catálogo privado
+firmado con el UUID técnico del expediente. Un hash o vínculo insertable por el
+app no es evidencia de aprobación.
+
+Los rectángulos del navegador son propuestas en píxeles originales. El servidor
+deriva geometría y fotografías desde snapshots CAS verificados y conserva el
+recorte físico existente de jugadores. La política de incidencias es compartida
+con el flujo vigente; se recalcula sobre valores y fotos y se revalida en SQL,
+incluidos duplicados e inventario de fotos comprometidas. La política acreditada
+se verifica por sus bytes y hash, sin escogerla desde requests.
+
+El plan inicial excluye recibos futuros. La revisión con passkey vincula ese
+plan y evidencia. El emisor verifica WebAuthn y persiste su comprobante firmado
+exacto dentro de la misma transacción de auditoría antes de responder. La
+recuperación reutiliza el comprobante privado y el mismo intento incluso si
+la respuesta del emisor se pierde antes de admitir el payload.
+
+El gate verifica evidencia y publica preautorización duradera; sólo después
+se completan referencias tardías y hashes derivados por las funciones reales
+de PostgreSQL. El efecto provisional y la capacidad final de activación usan
+dominios distintos. El escritor verifica ambas, relee las filas exactas y
+confirma personas ACTIVE, GENESIS, prueba, consumo, resultado y sesión oficial
+en la misma transacción. Un recibo del Bus puede sobrevivir a un rollback y
+no prueba un commit. No reutilizar una finalidad de una transacción revertida.
+
+Las propuestas/cabezas privadas aplican CAS y bloqueos ante edición, cancelación
+y captura. La lectura de resultado/expiración se serializa con el escritor y
+calcula vencimiento con el reloj PostgreSQL bajo ese bloqueo. La interfaz
+mantiene bloqueada una nueva aprobación mientras el resultado sea incierto y
+ofrece recuperar el mismo intento. El último chequeo precommit conserva la
+semántica temporal aprobada; no promete vigencia hasta el fsync físico.
+
+Las acciones públicas exigen cuenta vigente sin suplantación, CSRF, origen HTTPS
+pinneado y controles privados de objeto/edición. El canal interno liga método,
+ruta, nonce durable, tiempo y bytes con MAC; su respuesta liga también la
+petición exacta. No se entregan comprobantes de autoridad internos al navegador.
+Las fotografías preparadas permanecen privadas y sólo una referencia confirmada
+con finalidad permite su lectura publicada autorizada.

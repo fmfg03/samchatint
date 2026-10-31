@@ -463,3 +463,34 @@ AMEX directo permite que un operador autorizado de Contabilidad declare explíci
 Fecha: 2026-10-23. Historia, especificación y este texto exacto aprobados explícitamente por el usuario en la conversación. Razón: permitir prestaciones con Control Presupuestal sin proyecto y cargos al socio sin imputación presupuestal. Evidencia: `docs/roadmap/amex-direct-account-treatment-20261023-story.md` y `docs/roadmap/amex-direct-account-treatment-20261023-spec.md`, sección 11. Diseño aprobado; implementación, publicación, migración, despliegue y aceptación conservan sus recibos separados.
 
 AMEX directo distingue por decisión explícita el gasto de proyecto, la prestación absorbida por la empresa y el cargo a cuenta deudora del socio. Las prestaciones requieren Control Presupuestal: la autoridad configurada asigna una partida real y su mapping determina la cuenta, sin exigir ni fabricar proyecto o categoría operativos para el gasto. El cargo al socio exige cuenta deudora autorizada y motivo, y no consume presupuesto ni origina reembolso o gasto de prestación. La contrapartida permanece en la tarjeta. La clasificación no sustituye la evidencia fiscal ni reescribe vínculos o cortes; estados mixtos mantienen confirmación Finance y una póliza completa, con historia y unicidad preservadas.
+
+Aprobación humana: 2026-10-31, «aprobado hasta el deploy». Razón y evidencia: `docs/roadmap/ctt-protected-review-release-20261031.md`; texto literal revisado en `docs/roadmap/ctt-protected-review-canon-20261031.md`.
+
+### 2026-10-31 — Revisión de jugadores y cuerpo técnico en el piloto
+
+El circuito autorizado de ingreso conserva un plan privado versionado, vinculado
+a la edición, al documento y a sus bytes fuente exactos. Una revisión incompleta
+guarda observaciones y faltantes sin filas ejecutables. Una revisión completa
+expone los valores y recortes que la persona debe contrastar; corregirlos genera
+otra revisión e invalida los intentos anteriores. Ninguna casilla, OCR o bandera
+del navegador acredita identidad, fuente, ausencia o facultad.
+
+El acceso de navegación no otorga facultad de captura. Una cuenta se vincula a
+un principal y una edición mediante registro protegido independiente del app.
+El alta web de una passkey sólo produce una candidata; un operador separado
+activa la candidata exacta y sus vigencias tras contrastar su fingerprint.
+El perfil de plataforma aprobado admite passkeys sincronizadas y contador cero,
+con UV, firma, RP/origen pinneados, desafío de un solo uso y versiones vigentes.
+No existe fallback de autorización por contraseña, correo u OTP.
+
+La captura aprobada incorpora jugadores y los dos puestos técnicos conforme a
+la política acreditada de la edición. Los puestos requeridos, ausencias, fotos,
+incidencias y límites no los decide el app ni un fixture. La captura completa,
+su finalidad, el resultado duradero y la confirmación de la sesión pertenecen
+a una única transacción. Esta operación no concede elegibilidad deportiva
+externa ni autoriza cambios materiales posteriores.
+
+Un ensayo técnico con identidades sintéticas y un autenticador virtual no
+sustituye acreditación humana, configuración productiva, despliegue o aceptación
+del piloto. La configuración permanece cerrada hasta instalar y verificar los
+servicios privados y completar el enrolamiento supervisado real.

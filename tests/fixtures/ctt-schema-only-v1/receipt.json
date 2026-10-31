@@ -1,0 +1,9 @@
+{
+  "schema_only": true,
+  "function_count": 17,
+  "hashes": {
+    "ctt.dump": "d2fe1c00f1382b69dd10b2aea0ade2b0f9a7e7dc5ee153e6fdd58f0dd471d13a",
+    "functions.sql": "eab42591aa93d44ddeafbe7fb5e61a350ff6b19d8562474ca4e385c8a2249b90",
+    "role-names.json": "48daaefc9c1dc4766b6d5e00c069c74edb035a022bae93afff3b8c14249f047f"
+  }
+}

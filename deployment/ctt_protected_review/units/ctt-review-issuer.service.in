@@ -1,0 +1,31 @@
+[Unit]
+Description=Copa Telmex private WebAuthn assertion issuer
+After=network.target
+
+[Service]
+Type=simple
+User=ctt-review-issuer
+Group=ctt-review-issuer
+WorkingDirectory=@RUNTIME_ROOT@/samchat
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=@RUNTIME_ROOT@/samchat/src:@RUNTIME_ROOT@/zaubern/services/samchat-registration-gate:@RUNTIME_ROOT@/zaubern/services/evidence-bus:@RUNTIME_ROOT@/vendor
+ExecStartPre=@PYTHON@ -m deployment.ctt_protected_review.runtime --config @CONFIG_ROOT@/issuer/runtime.json --check
+ExecStart=@PYTHON@ -m deployment.ctt_protected_review.runtime --config @CONFIG_ROOT@/issuer/runtime.json
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=45
+TimeoutStopSec=120
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=@CONFIG_ROOT@/issuer
+InaccessiblePaths=@CONFIG_ROOT@/workflow @CONFIG_ROOT@/writer @CONFIG_ROOT@/bus
+InaccessiblePaths=@DATA_ROOT@/workflow @DATA_ROOT@/writer @DATA_ROOT@/bus
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target
