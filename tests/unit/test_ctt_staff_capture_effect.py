@@ -5,6 +5,7 @@ import json
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import JSON
 
 from devnous.copa_telmex.models import Player, Team, TeamStaff
 from devnous.copa_telmex.staff_capture_effect import (
@@ -20,7 +21,7 @@ def row(model):
     for column in model.__table__.columns:
         value[column.name] = None
         if not column.nullable:
-            kind = column.type.python_type
+            kind = dict if isinstance(column.type, JSON) else column.type.python_type
             if kind is UUID:
                 value[column.name] = str(uuid4())
             elif kind is int:
@@ -38,6 +39,51 @@ def row(model):
     if "postcommit_snapshot_hash" in value:
         value["postcommit_snapshot_hash"] = "sha256:" + "0" * 64
     return value
+
+
+@pytest.mark.parametrize("reported_type", [dict, object])
+def test_json_evidence_roundtrip_is_strict_across_sqlalchemy_versions(
+    monkeypatch, reported_type
+):
+    from devnous.copa_telmex.staff_capture_persistence import _observed, _value
+
+    monkeypatch.setattr(JSON, "python_type", property(lambda _: reported_type))
+    args = effect()
+    args["staff"][0]["row"]["evidence"] = {"source": {"page": 1}}
+    payload = json.loads(freeze_capture_effect(**args))
+    expected = payload["staff"][0]["row"]
+    encoded = {
+        column.name: _value(expected[column.name], column)
+        for column in TeamStaff.__table__.columns
+    }
+    assert type(encoded["evidence"]) is str
+    assert _observed(encoded, TeamStaff) == expected
+
+
+@pytest.mark.parametrize("bad", [[], "scalar", 1, True])
+def test_json_python_object_never_authorizes_non_object_evidence(monkeypatch, bad):
+    from devnous.copa_telmex.staff_capture_persistence import _observed, _value
+
+    monkeypatch.setattr(JSON, "python_type", property(lambda _: object))
+    args = effect()
+    args["staff"][0]["row"]["evidence"] = bad
+    with pytest.raises(CaptureDenied):
+        freeze_capture_effect(**args)
+    with pytest.raises(CaptureDenied):
+        _value(bad, TeamStaff.__table__.c.evidence)
+    record = row(TeamStaff)
+    record["evidence"] = json.dumps(bad)
+    with pytest.raises(CaptureDenied):
+        _observed(record, TeamStaff)
+
+
+@pytest.mark.parametrize(
+    "name", ["photo_data", "curp_validation_errors", "verification_notes"]
+)
+def test_declared_text_retains_exact_postgresql_catalog_type(name):
+    from devnous.copa_telmex.staff_capture_persistence import _column_signature
+
+    assert _column_signature(Player.__table__.c[name]) == ("text", -1, False)
 
 
 def effect():

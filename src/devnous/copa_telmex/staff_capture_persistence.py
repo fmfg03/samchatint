@@ -32,7 +32,7 @@ def _column_signature(column):
         name = "jsonb"
     elif isinstance(kind, JSON):
         name = "json"
-    elif isinstance(kind, Text):
+    elif isinstance(column.type, Text):
         name = "text"
     elif isinstance(kind, String):
         name = "character varying"
@@ -108,6 +108,10 @@ async def _check_boundary(conn):
 def _value(value, column):
     if value is None:
         return None
+    if isinstance(column.type, JSON):
+        if type(value) is not dict:
+            raise CaptureDenied("capture denied")
+        return json.dumps(value, ensure_ascii=False, allow_nan=False)
     kind = column.type.python_type
     if kind is UUID:
         return UUID(value)
@@ -115,8 +119,6 @@ def _value(value, column):
         return datetime.fromisoformat(value)
     if kind is date:
         return date.fromisoformat(value)
-    if kind is dict:
-        return json.dumps(value, ensure_ascii=False, allow_nan=False)
     return value
 
 
@@ -130,8 +132,11 @@ def _observed(record, model):
                 value = value.isoformat()
             elif kind is UUID:
                 value = str(value)
-            elif kind is dict and type(value) is str:
-                value = json.loads(value)
+            elif isinstance(column.type, JSON):
+                if type(value) is str:
+                    value = json.loads(value)
+                if type(value) is not dict:
+                    raise CaptureDenied("capture denied")
         result[column.name] = value
     return result
 

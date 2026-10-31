@@ -77,3 +77,23 @@ del host como confiable. El UID root preexistente del backend público queda com
 límite de infraestructura; esta liberación no endurece ni cambia el proceso
 financiero para ampliar ese modelo de amenaza. La UAT autenticada con dispositivo
 real y la aceptación deportiva siguen pendientes hasta que la persona las haga.
+
+## Compatibilidad comprobada durante el gate completo
+
+El primer gate completo detectó que su instalación sin pin resolvió SQLAlchemy
+2.1.6, mientras el entorno servido utiliza 2.0.43. La reproducción aislada
+confirmó dos diferencias del SDK: JSON.python_type devuelve object, y la
+adaptación de Text a _PGString pierde la subclase Text. Se reconocen los tipos
+SQL declarados para conservar evidencia dict estricta y la firma física TEXT;
+los valores escalares/listas continúan rechazados. No se permite object genérico
+ni se relaja la comparación con el catálogo de PostgreSQL. Las fábricas de prueba
+se ajustan al mismo tipo SQL y el ensayo con cuatro UIDs conserva la distribución
+SQLAlchemy realmente importada, comprobando la versión de cada hijo.
+
+Las nueve regresiones nuevas pasan con las dos versiones. La revisión
+independiente del delta no encontró hallazgos. El primer CI fallido y sus
+reproducciones se conservan como diagnóstico; no se aceptaron como baseline.
+Canon unchanged para este ajuste: mantiene el mismo esquema, wire, tipos de
+negocio, perfiles, fuentes y facultades ya aprobados; sólo corrige la adaptación
+del SDK y su verificación. Los textos de canon aprobados y sus hashes permanecen
+los de esta misma liberación.
