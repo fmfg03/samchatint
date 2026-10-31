@@ -279,12 +279,55 @@ print(json.dumps({'site': str(root), 'roots': sorted(roots)}))
         elif source.is_file():
             shutil.copy2(source, target)
     privileged(["chmod", "-R", "a+rX", str(packages)])
-    env["PYTHONPATH"] += os.pathsep + str(packages)
+    code = isolated / "code"
+    code.mkdir(mode=0o755)
+    copied_origins = {}
+
+    def copy_exact_tree(source, target):
+        shutil.copytree(
+            source,
+            target,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
+        for copied in target.rglob("*"):
+            if copied.is_file():
+                original = source / copied.relative_to(target)
+                assert (
+                    hashlib.sha256(copied.read_bytes()).digest()
+                    == hashlib.sha256(original.read_bytes()).digest()
+                )
+                copied_origins[str(copied.resolve())] = original.resolve()
+
+    copy_exact_tree(ROOT / "src", code / "src")
+    (code / "deployment").mkdir()
+    copy_exact_tree(
+        ROOT / "deployment/ctt_protected_review",
+        code / "deployment/ctt_protected_review",
+    )
+    governance = code / "governance-runtime"
+    (governance / "services").mkdir(parents=True)
+    copied_gate = governance / "services/samchat-registration-gate"
+    copied_bus = governance / "services/evidence-bus"
+    copy_exact_tree(gate_dir, copied_gate)
+    copy_exact_tree(gate_dir.parent / "evidence-bus", copied_bus)
+    schemas = gate_dir.parent.parent / "schemas"
+    if schemas.is_dir():
+        copy_exact_tree(schemas, governance / "schemas")
+    dependencies = code / "dependencies"
+    dependencies.mkdir()
+    copy_exact_tree(Path(fido2.__file__).parent, dependencies / "fido2")
+    fido_metadata = Path(importlib.metadata.distribution("fido2")._path)
+    copy_exact_tree(fido_metadata, dependencies / fido_metadata.name)
+    privileged(["chmod", "-R", "a+rX", str(code)])
+    env["PYTHONPATH"] = os.pathsep.join(
+        map(str, (code, code / "src", copied_gate, copied_bus, dependencies, packages))
+    )
     child_python = str(Path(sys.executable).resolve())
     assert (
         subprocess.check_output(
             [child_python, "-c", "import sqlalchemy; print(sqlalchemy.__version__)"],
             env=env,
+            cwd=code,
             text=True,
         ).strip()
         == sqlalchemy.__version__
@@ -407,7 +450,7 @@ print(json.dumps({'site': str(root), 'roots': sorted(roots)}))
     assert "gate_identity_key_file" not in specs["writer"]
 
     def launch(role, command):
-        options = dict(cwd=ROOT, env=env, stdin=subprocess.DEVNULL)
+        options = dict(cwd=code, env=env, stdin=subprocess.DEVNULL)
         if controller_uid == 0:
             options.update(
                 user=roles[role], group=roles[role], extra_groups=[shared_gid]
@@ -655,11 +698,36 @@ print(json.dumps({'site': str(root), 'roots': sorted(roots)}))
                     ]
                     assert files, "required private-process coverage is missing"
                     child_files.extend(files)
+                mapped_files = []
+                for path in child_files:
+                    child = CoverageData(basename=str(path))
+                    child.read()
+                    mapped_path = str(path) + ".mapped"
+                    mapped = CoverageData(basename=mapped_path)
+                    for context in child.measured_contexts():
+                        child.set_query_context(context)
+                        mapped.set_context(context)
+                        for filename in child.measured_files():
+                            original = copied_origins.get(filename)
+                            assert original is not None
+                            assert hashlib.sha256(
+                                Path(filename).read_bytes()
+                            ).digest() == (
+                                hashlib.sha256(original.read_bytes()).digest()
+                            )
+                            if child.has_arcs():
+                                mapped.add_arcs(
+                                    {str(original): child.arcs(filename) or []}
+                                )
+                            else:
+                                mapped.add_lines(
+                                    {str(original): child.lines(filename) or []}
+                                )
+                    mapped.write()
+                    mapped_files.append(mapped_path)
+                    if active_coverage is not None:
+                        active_coverage.get_data().update(mapped)
                 if active_coverage is not None:
-                    for path in child_files:
-                        child = CoverageData(basename=str(path))
-                        child.read()
-                        active_coverage.get_data().update(child)
                     active_coverage.save()
                 subprocess.run(
                     [
@@ -670,7 +738,7 @@ print(json.dumps({'site': str(root), 'roots': sorted(roots)}))
                         "--append",
                         "--data-file",
                         str(Path(coverage_target).absolute()),
-                        *map(str, child_files),
+                        *mapped_files,
                     ],
                     check=True,
                     capture_output=True,
