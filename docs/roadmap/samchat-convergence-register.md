@@ -22,9 +22,9 @@ canon edits silently.
 
 | Protected source path | SHA-256 at Line 0 baseline |
 | --- | --- |
-| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `4f369621a03290d320c9b9efbd5f16683bcfb6e50d99bc5bae1e3d8e7d45345e` |
-| `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `2c55cc807c464d5462bca3e9d092fcefe6f5f2f66f4498231d72a7b57d795985` |
-| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `543dc342e52e0525015e0720904411beab38ac8dc9ed8d4c011acaa13b838225` |
+| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `73c416a848be7f8a73295c7e4d399dae0a0970998ada5c108c86cc6aa2a94dec` |
+| `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `abdf07a860f63bd57a6df26fd0245a10f17a12856241c81c3cef2225fc9df1fa` |
+| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `8643209da98dcbc4c6edc07424042c559132211ed583956699aed87ebb8f46cc` |
 
 | Canon amendment date | Affected sources | Reason and evidence | Evidence state |
 | --- | --- | --- | --- |

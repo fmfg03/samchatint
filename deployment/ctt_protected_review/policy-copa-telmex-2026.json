@@ -1,0 +1,25 @@
+{
+  "workflow_id": "samchat_registration_identity_v2",
+  "policy_id": "samchat_registration_identity_policy_v2",
+  "policy_version": "2.0.0",
+  "effective_sal": "SAL-3",
+  "field_order": [
+    "full_name",
+    "birth_date",
+    "curp"
+  ],
+  "minimum_effective_pixels": 12000,
+  "allowed_roles": [
+    "superadmin"
+  ],
+  "minimum_roster_size": 16,
+  "maximum_roster_size": 35,
+  "required_staff_slots": [
+    1,
+    2
+  ],
+  "required_photo_kinds": [
+    "PLAYER"
+  ],
+  "policy_hash": "sha256:4c02da4d4981bedd60a34771236f0aa0db76c5392477413f3d03e68cc4e2e697"
+}

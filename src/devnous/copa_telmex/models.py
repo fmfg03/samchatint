@@ -2,7 +2,7 @@
 SQLAlchemy models for Copa Telmex registration system.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 
@@ -22,7 +22,7 @@ from sqlalchemy import (
     Integer,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -115,7 +115,10 @@ class TeamStaff(Base):
     birth_date = Column(Date)
     curp = Column(String(18))
     photo_path = Column(String(500))
-    evidence = Column(JSON, nullable=False, default=dict)
+    evidence = Column(
+        JSON().with_variant(JSONB(), "postgresql"),
+        nullable=False, default=dict,
+    )
     governance_state = Column(String(30), nullable=False, default="PENDING_FINALITY")
     governance_draft_id = Column(String(80), nullable=False)
     governance_draft_version = Column(Integer, nullable=False)
@@ -123,8 +126,14 @@ class TeamStaff(Base):
     roster_draft_binding = Column(String(80), nullable=False)
     preauthorization_receipt_id = Column(String(120), nullable=False)
     finality_receipt_id = Column(String(120))
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc), nullable=False,
+    )
+    updated_at = Column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc), nullable=False,
+    )
 
     team = relationship("Team", back_populates="staff")
 
