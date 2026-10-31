@@ -199,7 +199,7 @@
     "tests/unit/test_ctt_staff_photo_store.py": "8b2c91586c555c3774916453291fb2eb2a2ec4a8bba05e37c2e202501bc43108",
     "tests/unit/test_ctt_staff_review_challenge.py": "69ee5962de46a7d5151c19d73e250cbbea16ac5ea9e89d639dca7ac77a873112",
     "tests/unit/test_ctt_staff_review_plan_builder.py": "334a6f3b297edaba41efa389dbce9b1c9023f152e788d5823a8d8804c1b6331c",
-    "tests/unit/test_ctt_staff_review_routes.py": "a0c95871fd0c2e8f62eb124acbb76c3b90635f7b5b0bc39ffa7ce5bce2c2a478",
+    "tests/unit/test_ctt_staff_review_routes.py": "4171310151d386d20d1d09302f02cc7c06d27afe08eb5339a0ffddecec10fd55",
     "tests/unit/test_ctt_staff_review_workflow.py": "6f254360e8df61cf9f9d158be7cf6714d2b511b002468075fcf22f5926c9b3be",
     "tests/unit/test_ctt_staff_signed_assertion.py": "9486f678c6b770ceeecbf03b9c18835fecfc40ce04a0f3f4bf2af58f2c01527a",
     "tests/unit/test_ctt_staff_source_admission.py": "d38db0853d46d4bf17f8995ba9fd9aee84af49bc786d2dcacce92662f794150d",
@@ -237,7 +237,9 @@
       "independent_review": "PASS",
       "other_incidents_preserved": true,
       "protected_and_legacy_rendering_cases_passed": 2,
-      "raw_validation_and_ready_flags_unchanged": true
+      "raw_validation_and_ready_flags_unchanged": true,
+      "routes_unit_cases_passed": 58,
+      "style": "Black and Flake8 PASS after test-only formatting correction"
     },
     "legacy_socket_skips": 9,
     "operational_uid_case_separately_passed": 1,

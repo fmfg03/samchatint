@@ -585,9 +585,7 @@ def test_contract_notice_distinguishes_legacy_capture_without_removing_incidents
         "ready_to_commit": False,
     }
     before = copy.deepcopy(validation)
-    rendered = template.render(
-        validation=validation, protected_staff_review=protected
-    )
+    rendered = template.render(validation=validation, protected_staff_review=protected)
     assert "CURP sin revisar." in rendered
     assert ("usa la revisión protegida con passkey" in rendered) is protected
     assert ("El contrato anterior solo autoriza jugadores." in rendered) is (
