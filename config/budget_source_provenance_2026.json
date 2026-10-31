@@ -1,0 +1,617 @@
+{
+  "schema_version": "samchat.budget.source_provenance.v1",
+  "source_kind": "copa_20261028",
+  "currency": "MXN",
+  "tax_basis": "includes_vat",
+  "receipt": {
+    "status": "COMMITTED_VERIFIED",
+    "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+    "receipt_sha256": "e24cbdbc86dc2e27d4fbb6838761db4acd1931bc73afecfab502960030a344c9",
+    "after_sha256": "3d464b7d8a6169ca603a54e6b0beee01c76a491ce5ed68126551fb7c83994dbe",
+    "authorization_sha256": "d150a7ed1b3160aa69b98b84b6f8510596b03046a67647c68d3e44bdc92c69ba"
+  },
+  "lines": [
+    {
+      "id": "04971b1f-d57d-47cd-8c42-ec40ebb5f6ca",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "6fcdb1d0-5ad3-42a3-8453-91e6a0370d03",
+      "phase": "Fase Nacional",
+      "budget_amount": "314300.00",
+      "marker": {
+        "row": 16,
+        "amount": "314300.00",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "07e60012-8c5f-46ec-9c2c-2ee2fbbe3e35",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "421ada02-4fd7-4e81-b94e-6a787e989e1c",
+      "phase": "Fase Estatal",
+      "budget_amount": "979200.00",
+      "marker": {
+        "row": 8,
+        "amount": "979200.00",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "0de10fe7-7eda-46cf-a3d5-712662b48d19",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "390ec286-340f-41be-ba85-3a9428ec7941",
+      "phase": "Fase Colectiva",
+      "budget_amount": "57963.80",
+      "marker": {
+        "row": 4,
+        "amount": "57963.80",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "1222df99-9c3e-4075-b8bb-55b44258c286",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "f93850c3-043c-4090-a0f2-8e4d2a7c30c1",
+      "phase": "Viaje de campeones",
+      "budget_amount": "318481.65",
+      "marker": {
+        "row": 41,
+        "amount": "318481.65",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "20dc4d29-023c-445c-b39c-a689470b6166",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "f94e2c40-4879-40c2-b8c8-ecf8af2b6d75",
+      "phase": "Fase Nacional",
+      "budget_amount": "8800.00",
+      "marker": {
+        "row": 35,
+        "amount": "8800.00",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "23323e33-d6ad-4055-920e-d75c608a9aec",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "858cd802-6baf-42db-bc57-0ed4e8b8ffc7",
+      "phase": "Fase Estatal",
+      "budget_amount": "1976.38",
+      "marker": {
+        "row": 10,
+        "amount": "1976.38",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "28b04b55-abe4-4033-825d-2f5e19b1e0bd",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "a2e50230-5738-44ff-99a2-0f4653047561",
+      "phase": "Fase Nacional",
+      "budget_amount": "29948.09",
+      "marker": {
+        "row": 30,
+        "amount": "29948.09",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "2a09b055-5dfb-446c-b075-142be9d5f943",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "0f310bd0-56ba-4f2b-92ef-e57b32848127",
+      "phase": "Fase Nacional",
+      "budget_amount": "145536.95",
+      "marker": {
+        "row": 23,
+        "amount": "145536.95",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "2ae6a7c1-97b9-4beb-8d5b-4d353ae057d5",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "5a127fbd-f0fe-47c5-8161-78690a666263",
+      "phase": "Fase Nacional",
+      "budget_amount": "6582.90",
+      "marker": {
+        "row": 37,
+        "amount": "6582.90",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "2e32ac4a-fc02-4975-9289-c4f6f06b4489",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "a2fdd180-d9a8-4a31-8fc0-d1b847a13aaa",
+      "phase": "Fase Nacional",
+      "budget_amount": "15120.00",
+      "marker": {
+        "row": 32,
+        "amount": "15120.00",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "32b7a19d-fa65-4581-9f7f-8ea7acf7e2ed",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "5babec06-24be-4cc9-a519-4bc7dabb8597",
+      "phase": "Fase Nacional",
+      "budget_amount": "2495188.52",
+      "marker": {
+        "row": 13,
+        "amount": "2495188.52",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "35f4f9c2-6044-4812-a716-398ff80a5bfd",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "02529ce3-9253-424c-81dc-964f6565285b",
+      "phase": "Fase Nacional",
+      "budget_amount": "210000.00",
+      "marker": {
+        "row": 11,
+        "amount": "210000.00",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "390a0e9f-3ad2-49f9-9385-0bbd5e01ba18",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "3d44cff8-1c74-4fc4-b0ec-765b2a343aac",
+      "phase": "Fase Nacional",
+      "budget_amount": "172308.55",
+      "marker": {
+        "row": 18,
+        "amount": "172308.55",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "3a6b8305-0cd2-47f1-9d57-a1176865def5",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "87f1f287-9e40-4c56-a96e-361fc2e6c4fc",
+      "phase": "Viaje de campeones",
+      "budget_amount": "2457.23",
+      "marker": {
+        "row": 44,
+        "amount": "2457.23",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "3d67e235-140d-4393-9d48-3814c1642560",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "b78260b9-7673-40ef-b2ab-24676b8e98d7",
+      "phase": "Fase Estatal",
+      "budget_amount": "2010000.00",
+      "marker": {
+        "row": 7,
+        "amount": "2010000.00",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "4bb7d410-b621-4406-94b9-4a0015c75ebc",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "5350bf4d-79d3-456c-837a-39b628e3f98d",
+      "phase": "Fase Nacional",
+      "budget_amount": "150367.62",
+      "marker": {
+        "row": 26,
+        "amount": "150367.62",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "4bfcdaa1-e9d6-4f0e-a084-1957776712cb",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "e041dbed-34f3-4966-973d-dc607a4232e9",
+      "phase": "Viaje de campeones",
+      "budget_amount": "25762.42",
+      "marker": {
+        "row": 42,
+        "amount": "25762.42",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "50c94338-f2f4-4c12-8a5f-1c547ca4f1df",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "afeb7c3c-20f2-407e-8f92-6facc1c2e64e",
+      "phase": "Fase Nacional",
+      "budget_amount": "152668.94",
+      "marker": {
+        "row": 21,
+        "amount": "152668.94",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "51b2b9ad-d092-4c94-9bd7-cfb8c66c5c2b",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "9eddcd37-ce89-4ffe-b4f6-1c5194efca6c",
+      "phase": "Fase Nacional",
+      "budget_amount": "372970.69",
+      "marker": {
+        "row": 24,
+        "amount": "372970.69",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "5cfc51b3-bd4b-4589-af7a-0a7286e07c86",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "cfb4d536-273e-4c57-834e-1af47eabb4d3",
+      "phase": "Fase Nacional",
+      "budget_amount": "747004.11",
+      "marker": {
+        "row": 12,
+        "amount": "747004.11",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "617aa19a-d65f-4bf6-bb77-5a6841ef4c10",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "2785afb7-c1f1-45ec-8661-c85d230bd921",
+      "phase": "Fase Nacional",
+      "budget_amount": "32736.00",
+      "marker": {
+        "row": 20,
+        "amount": "32736.00",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "624cc913-6c80-43ba-ae16-3a082f1dfad0",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "2572f102-8f45-41d8-919e-493dacd6e6a8",
+      "phase": "Fase Nacional",
+      "budget_amount": "482.76",
+      "marker": {
+        "row": 39,
+        "amount": "482.76",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "65c56f3b-7a25-4de8-8abd-920a011fd537",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "5955b0b5-841f-4d9f-ac8b-a0e498ae4606",
+      "phase": "Fase Colectiva",
+      "budget_amount": "77285.06",
+      "marker": {
+        "row": 2,
+        "amount": "77285.06",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "69dbd1cf-f257-43be-84d3-65228f3f089c",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "2776a6ae-1eb8-46aa-bfc1-b874dc69716a",
+      "phase": "Fase Colectiva",
+      "budget_amount": "57963.80",
+      "marker": {
+        "row": 3,
+        "amount": "57963.80",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "6bf49d17-3986-4c47-ad35-f132f20cdfc6",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "0c1e8bc6-d655-4e7f-badb-322471fce7ef",
+      "phase": "Fase Nacional",
+      "budget_amount": "15950.00",
+      "marker": {
+        "row": 31,
+        "amount": "15950.00",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "6d8ac292-0bf6-4e33-9bed-30a371f2ad6a",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "f2372550-c91e-4947-a291-e12a5cb9ac1b",
+      "phase": "Fase Nacional",
+      "budget_amount": "124271.56",
+      "marker": {
+        "row": 17,
+        "amount": "124271.56",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "70660420-e5cc-4ad2-8f78-8b79d481f632",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "bb11805b-6d7d-446b-98a3-7e45a162718a",
+      "phase": "Fase Estatal",
+      "budget_amount": "30000.00",
+      "marker": {
+        "row": 6,
+        "amount": "30000.00",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "7a01f0f2-1397-497c-b454-767bbecc77f2",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "ee1ce2cd-7882-4ecf-bd00-da4e9f04dd36",
+      "phase": "Fase Nacional",
+      "budget_amount": "121794.11",
+      "marker": {
+        "row": 22,
+        "amount": "121794.11",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "81fcbdb6-1736-4809-80f6-79e5e5a5ea87",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "dbd3ed56-e4f5-456f-bca2-810fea07c030",
+      "phase": "Fase Estatal",
+      "budget_amount": "4493998.00",
+      "marker": {
+        "row": 5,
+        "amount": "4493998.00",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "8e3b5ec8-064b-491d-a236-8fdbf177fe49",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "77362a47-4ae7-4435-99b3-3c2e32494ef4",
+      "phase": "Fase Nacional",
+      "budget_amount": "1284.48",
+      "marker": {
+        "row": 38,
+        "amount": "1284.48",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "9dbb1c5d-4499-474e-9e40-32ffa0804941",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "e126e146-6b75-4e8d-9af2-84b9d18603e2",
+      "phase": "Fase Nacional",
+      "budget_amount": "3028746.55",
+      "marker": {
+        "row": 14,
+        "amount": "3028746.55",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "a2c334f6-518f-4ef6-906a-687a39b00bf8",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "ec1fde07-bda6-42af-aee3-a181b0353d94",
+      "phase": "Fase Nacional",
+      "budget_amount": "23576.00",
+      "marker": {
+        "row": 28,
+        "amount": "23576.00",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "a37855a2-f5a7-48a7-9918-d764adf826e3",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "6a82bf5f-505a-49d5-8982-6cc9ed79076a",
+      "phase": "Viaje de campeones",
+      "budget_amount": "385960.53",
+      "marker": {
+        "row": 40,
+        "amount": "385960.53",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "a51bc412-fb43-4b43-85cf-b67b25f48416",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "a77721e7-d5cb-4753-8e32-f6d7a63d36ff",
+      "phase": "Viaje de campeones",
+      "budget_amount": "3275.44",
+      "marker": {
+        "row": 43,
+        "amount": "3275.44",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "b0507bb9-ef2a-4899-bc17-bc77dd34ec72",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "27ea5178-35cd-4a76-8b64-6359859f6639",
+      "phase": "Fase Nacional",
+      "budget_amount": "707160.00",
+      "marker": {
+        "row": 15,
+        "amount": "707160.00",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "b2afaa53-128b-457f-88aa-8986936de3f8",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "551aa7bb-5f3f-4e46-ba00-58c3a0d0bf35",
+      "phase": "Fase Nacional",
+      "budget_amount": "6600.00",
+      "marker": {
+        "row": 36,
+        "amount": "6600.00",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "bd86b41d-10e2-41ce-9ddd-36fc6c2874f9",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "fc4888a4-cad8-4381-9bc0-42e755fd972b",
+      "phase": "Fase Nacional",
+      "budget_amount": "12987.38",
+      "marker": {
+        "row": 25,
+        "amount": "12987.38",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "be60408a-5f81-46fc-bf74-cd8aa50872bb",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "df5f0c7b-7056-451c-a616-ab0a033f175b",
+      "phase": "Fase Estatal",
+      "budget_amount": "8302.12",
+      "marker": {
+        "row": 9,
+        "amount": "8302.12",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "c018d90d-0325-4e76-b083-05da7190eac6",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "c62fede8-5d71-4fae-b26b-852746d7c374",
+      "phase": "Fase Nacional",
+      "budget_amount": "9151.74",
+      "marker": {
+        "row": 34,
+        "amount": "9151.74",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "d58fbf92-1f24-4968-bd8a-e7f4f66a6d8a",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "c36db226-6e3a-4459-8d8a-02b86df7e123",
+      "phase": "Fase Nacional",
+      "budget_amount": "49375.04",
+      "marker": {
+        "row": 19,
+        "amount": "49375.04",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "f26b74a3-4514-48ed-b33c-523d0a2a3458",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "eb13318d-ba9f-4334-875e-831b876677cb",
+      "phase": "Fase Nacional",
+      "budget_amount": "9737.50",
+      "marker": {
+        "row": 33,
+        "amount": "9737.50",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "fb6d3487-b458-4bd3-8ef3-bd15a79ac623",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "59dc6c6b-2445-4340-bb19-8e6b0371393c",
+      "phase": "Fase Nacional",
+      "budget_amount": "34300.00",
+      "marker": {
+        "row": 27,
+        "amount": "34300.00",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    },
+    {
+      "id": "fd40b924-7f1d-45e6-aa95-6c8c0a2b4b6f",
+      "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "budget_concept_id": "1b877a42-f293-4092-ab61-ca93e0f27797",
+      "phase": "Fase Nacional",
+      "budget_amount": "19716.00",
+      "marker": {
+        "row": 29,
+        "amount": "19716.00",
+        "plan_sha256": "f3ab2d74494f31355a2fe757542ccfdc08297e62058251cc37af064515605a8a",
+        "source_sha256": "8e5cc20592595cc92ca1869046b124672ae05624fdf9ce44a9329ab709aee09d"
+      }
+    }
+  ]
+}

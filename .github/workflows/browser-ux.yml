@@ -26,7 +26,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Free hosted runner disk space
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          rm -rf "$HOME/.cache/pip"
+          mkdir -p "$HOME/.cache/pip"
+          df -h /
+
       - name: Install browser test dependencies
+        env:
+          PIP_NO_CACHE_DIR: "1"
         run: bash scripts/ci/install-cpu-test-dependencies.sh python -r requirements-browser.txt
 
       - name: Install Chromium
