@@ -95,6 +95,9 @@ jobs:
           PIP_NO_CACHE_DIR: "1"
         run: python -m pip install -r requirements.txt -r requirements-test.txt
 
+      - name: Verify and prepare exact CTT kit test fixtures
+        run: python scripts/ci/check-ctt-test-fixtures.py --prepare "/tmp/ctt-ci-unit-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --github-env "$GITHUB_ENV"
+
       - name: Run isolated private-plugin unit tests
         run: |
           python -m venv .venv-private-plugin
@@ -106,12 +109,14 @@ jobs:
       - name: Run unit tests
         run: |
           set +e
-          python -m pytest tests/unit \
+          python -m pytest tests/unit deployment/ctt_protected_review/tests \
             --cov-config=.github/coverage-repository.ini \
             --ignore=tests/unit/private_plugin \
             --ignore=tests/unit/readonly_gateway \
             --cov=src \
             --cov=copa_telmex_dashboard \
+            --cov=deployment.ctt_protected_review \
+            --cov=scripts \
             --cov-report= \
             --cov-fail-under=0 \
             --timeout=60 \
@@ -249,6 +254,11 @@ jobs:
           PIP_NO_CACHE_DIR: "1"
         run: python -m pip install -r requirements.txt
 
+      - name: Install approved CTT test dependency and verify fixture bindings
+        run: |
+          python -m pip install fido2==2.2.1 "jsonschema>=4.0,<5"
+          python scripts/ci/check-ctt-test-fixtures.py --prepare "/tmp/ctt-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --github-env "$GITHUB_ENV"
+
       - name: Run isolated private-plugin PostgreSQL integration tests
         run: |
           python -m venv .venv-private-plugin
@@ -262,27 +272,53 @@ jobs:
           TEST_AMEX_DATABASE_URL: postgresql+asyncpg://test_user:test_password@127.0.0.1:55471/devnous_test
         run: |
           python -m pytest tests/integration \
+            -k 'not operational_rpc' \
             --cov-config=.github/coverage-repository.ini \
             --ignore=tests/integration/private_plugin \
             --cov=src \
             --cov=copa_telmex_dashboard \
+            --cov=deployment.ctt_protected_review \
+            --cov=scripts \
             --cov-report= \
             --cov-fail-under=0 \
             --timeout=120 \
             --durations=20 \
             --junitxml=reports/integration-3.12.xml
 
+      - name: Run mandatory CTT operational RPC with four separate numeric UIDs
+        run: |
+          sudo env \
+            PYTHONPATH="$PYTHONPATH" \
+            CTT_SCHEMA_ONLY_DIRECTORY="$CTT_SCHEMA_ONLY_DIRECTORY" \
+            CTT_GATE_SOURCE="$CTT_GATE_SOURCE" \
+            CTT_FIDO2_PATH="$CTT_FIDO2_PATH" \
+            OPENAI_API_KEY=test-key ANTHROPIC_API_KEY=test-key \
+            COVERAGE_FILE="$GITHUB_WORKSPACE/reports/ctt-operational.coverage" \
+            "$(command -v python)" -m pytest \
+              'tests/integration/test_ctt_review_workflow_postgres.py::test_private_prepare_to_official_committed_session[operational_rpc]' \
+              --cov-config=.github/coverage-repository.ini \
+              --cov=src --cov=copa_telmex_dashboard \
+              --cov=deployment.ctt_protected_review \
+              --cov=scripts \
+              --cov-report= --cov-fail-under=0 --timeout=120 \
+              --junitxml=reports/ctt-operational.xml
+
+      - name: Require complete CTT PostgreSQL acceptance without skipped cohorts
+        run: python scripts/ci/check-ctt-test-fixtures.py --check-junit reports/integration-3.12.xml --additional-junit reports/ctt-operational.xml
+
       - name: Combine integration coverage including isolated plugin tests
         run: |
           mv .coverage .coverage.repository.integration
-          python -m coverage combine .coverage.repository.integration reports/private-plugin/integration.coverage
+          python -m coverage combine .coverage.repository.integration reports/private-plugin/integration.coverage reports/ctt-operational.coverage
 
       - name: Upload integration-test report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: integration-tests-python-3.12
-          path: reports/integration-3.12.xml
+          path: |
+            reports/integration-3.12.xml
+            reports/ctt-operational.xml
           if-no-files-found: error
 
       - name: Upload integration coverage data

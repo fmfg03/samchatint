@@ -221,6 +221,30 @@ from devnous.tournaments.core.ocr_integrity import (
     normalize_ctt_template_image,
     slugify_filename,
 )
+
+from devnous.copa_telmex.registration_review_policy import (
+    MINIMUM_ELIGIBLE_PLAYERS,
+    REGISTRATION_INCIDENTS_SCHEMA_VERSION,
+    PHOTO_DUPLICATE_MAX_HASH_DISTANCE,
+    _player_has_usable_signal,
+    _draft_player_ref,
+    _new_registration_incident,
+    _append_player_incident,
+    _photo_duplicate_incident_type,
+    _build_photo_duplicate_incidents,
+    _merge_player_incidents,
+    _build_registration_incident_policy,
+    _split_player_name,
+    _parse_birth_date,
+    _normalize_curp_for_storage,
+    _birth_date_has_two_digit_year,
+)
+from devnous.copa_telmex.staff_review_routes import register_staff_review_routes
+from devnous.copa_telmex.staff_review_operations_channel import (
+    StaffReviewClientSettings,
+    configure_staff_review_client,
+    close_staff_review_client,
+)
 from devnous.tournaments.core.ctt_slot_montage import player_photo_box
 from devnous.tournaments.instances.copa_telmex.ctt_canonical_promotion import (
     CanonicalPromotionError,
@@ -255,9 +279,6 @@ REVIEW_TOURNAMENT_OPTIONS: List[Tuple[str, str]] = [
     ("homeless-world-cup", "Homeless World Cup"),
 ]
 
-MINIMUM_ELIGIBLE_PLAYERS = 16
-REGISTRATION_INCIDENTS_SCHEMA_VERSION = "registration_incidents.v1"
-PHOTO_DUPLICATE_MAX_HASH_DISTANCE = 4
 
 
 def _review_draft_version(draft: Any) -> int:
@@ -825,331 +846,20 @@ def _dedupe_review_items(items: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
     return deduped
 
 
-def _player_has_usable_signal(player: Dict[str, Any]) -> bool:
-    name = (player.get("name") or "").strip()
-    birth_date = (player.get("birth_date") or "").strip()
-    curp = (player.get("curp") or "").strip()
-    return bool(
-        name
-        or birth_date
-        or curp
-        or bool(player.get("needs_review"))
-        or float(player.get("confidence") or 0.0) > 0.0
-    )
 
 
-def _draft_player_ref(player_index: int) -> str:
-    return f"draft-player-{player_index:02d}"
 
 
-def _new_registration_incident(
-    *,
-    player_ref: str,
-    incident_type: str,
-    blocks_player_eligibility: bool,
-    message: str,
-    evidence: Optional[Dict[str, Any]] = None,
-    requires_operations_review: bool = True,
-) -> Dict[str, Any]:
-    normalized_evidence = evidence or {}
-    incident_binding = json.dumps(
-        {
-            "player_ref": player_ref,
-            "incident_type": incident_type,
-            "blocks_player_eligibility": bool(blocks_player_eligibility),
-            "evidence": normalized_evidence,
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return {
-        "incident_id": "reg-incident-" + hashlib.sha256(incident_binding).hexdigest(),
-        "player_ref": player_ref,
-        "incident_type": incident_type,
-        "blocks_player_eligibility": bool(blocks_player_eligibility),
-        "blocks_team_registration": False,
-        "requires_operations_review": bool(requires_operations_review),
-        "message": message,
-        "evidence": normalized_evidence,
-        "status": "OPEN",
-    }
 
 
-def _append_player_incident(
-    incidents_by_player: Dict[int, List[Dict[str, Any]]],
-    player_index: int,
-    *,
-    incident_type: str,
-    blocks_player_eligibility: bool,
-    message: str,
-    evidence: Optional[Dict[str, Any]] = None,
-    requires_operations_review: bool = True,
-) -> None:
-    incidents_by_player.setdefault(player_index, []).append(
-        _new_registration_incident(
-            player_ref=_draft_player_ref(player_index),
-            incident_type=incident_type,
-            blocks_player_eligibility=blocks_player_eligibility,
-            message=message,
-            evidence=evidence,
-            requires_operations_review=requires_operations_review,
-        )
-    )
 
 
-def _photo_duplicate_incident_type(
-    left: Dict[str, Any],
-    right: Dict[str, Any],
-) -> Optional[Tuple[str, Optional[int]]]:
-    left_sha = left.get("photo_sha256")
-    right_sha = right.get("photo_sha256")
-    if left_sha and right_sha and left_sha == right_sha:
-        return "PHOTO_EXACT_DUPLICATE", 0
-    distance = hamming_distance_hex(
-        left.get("photo_ahash"),
-        right.get("photo_ahash"),
-    )
-    if distance <= PHOTO_DUPLICATE_MAX_HASH_DISTANCE:
-        return "PHOTO_PERCEPTUAL_DUPLICATE", distance
-    return None
 
 
-def _build_photo_duplicate_incidents(
-    *,
-    players_payload: List[Dict[str, Any]],
-    photo_artifacts: Optional[Dict[int, Dict[str, Any]]] = None,
-    existing_photo_records: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[int, List[Dict[str, Any]]]:
-    incidents_by_player: Dict[int, List[Dict[str, Any]]] = {}
-    artifacts = photo_artifacts or {}
-    indexes = sorted(idx for idx in artifacts if artifacts.get(idx))
-
-    for pos, left_idx in enumerate(indexes):
-        left = artifacts.get(left_idx) or {}
-        for right_idx in indexes[pos + 1 :]:
-            right = artifacts.get(right_idx) or {}
-            match = _photo_duplicate_incident_type(left, right)
-            if not match:
-                continue
-            incident_type, distance = match
-            left_name = (
-                players_payload[left_idx - 1].get("name")
-                if left_idx - 1 < len(players_payload)
-                else None
-            ) or ""
-            right_name = (
-                players_payload[right_idx - 1].get("name")
-                if right_idx - 1 < len(players_payload)
-                else None
-            ) or ""
-            _append_player_incident(
-                incidents_by_player,
-                left_idx,
-                incident_type=incident_type,
-                blocks_player_eligibility=True,
-                message="La fotografia coincide con otro jugador del draft actual.",
-                evidence={
-                    "matching_player_ref": _draft_player_ref(right_idx),
-                    "matching_player_name": right_name,
-                    "hash_distance": distance,
-                    "scope": "current_draft",
-                },
-            )
-            _append_player_incident(
-                incidents_by_player,
-                right_idx,
-                incident_type=incident_type,
-                blocks_player_eligibility=True,
-                message="La fotografia coincide con otro jugador del draft actual.",
-                evidence={
-                    "matching_player_ref": _draft_player_ref(left_idx),
-                    "matching_player_name": left_name,
-                    "hash_distance": distance,
-                    "scope": "current_draft",
-                },
-            )
-
-    for idx in indexes:
-        artifact = artifacts.get(idx) or {}
-        for existing in existing_photo_records or []:
-            if not hashes_look_duplicate(
-                sha256_left=artifact.get("photo_sha256"),
-                sha256_right=existing.get("photo_sha256"),
-                ahash_left=artifact.get("photo_ahash"),
-                ahash_right=existing.get("photo_ahash"),
-                max_distance=PHOTO_DUPLICATE_MAX_HASH_DISTANCE,
-            ):
-                continue
-            match = _photo_duplicate_incident_type(artifact, existing)
-            if not match:
-                continue
-            incident_type, distance = match
-            _append_player_incident(
-                incidents_by_player,
-                idx,
-                incident_type=incident_type,
-                blocks_player_eligibility=True,
-                message="La fotografia coincide con otro jugador del torneo.",
-                evidence={
-                    "matching_player_ref": existing.get("player_ref"),
-                    "matching_player_name": existing.get("player_name"),
-                    "matching_team_ref": existing.get("team_ref"),
-                    "matching_team_name": existing.get("team_name"),
-                    "hash_distance": distance,
-                    "scope": "tournament_slug",
-                    "tournament_slug": existing.get("tournament_slug"),
-                },
-            )
-            break
-
-    return incidents_by_player
 
 
-def _merge_player_incidents(
-    *incident_maps: Dict[int, List[Dict[str, Any]]],
-) -> Dict[int, List[Dict[str, Any]]]:
-    merged: Dict[int, List[Dict[str, Any]]] = {}
-    for incident_map in incident_maps:
-        for idx, incidents in (incident_map or {}).items():
-            merged.setdefault(idx, []).extend(list(incidents or []))
-    return merged
 
 
-def _build_registration_incident_policy(
-    extraction: Dict[str, Any],
-    *,
-    minimum_roster: int = MINIMUM_ELIGIBLE_PLAYERS,
-    photo_artifacts: Optional[Dict[int, Dict[str, Any]]] = None,
-    existing_photo_records: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    players = [
-        player
-        for player in list(extraction.get("players") or [])
-        if _player_has_usable_signal(player)
-    ]
-    base_incidents: Dict[int, List[Dict[str, Any]]] = {}
-
-    for idx, player in enumerate(players, 1):
-        name = (player.get("name") or "").strip()
-        birth_date = (player.get("birth_date") or "").strip()
-        raw_curp = (player.get("curp") or "").strip().upper()
-        curp, curp_truncated = _normalize_curp_for_storage(raw_curp)
-        confidence = float(player.get("confidence") or 0.0)
-        needs_review = bool(player.get("needs_review"))
-
-        if not name:
-            _append_player_incident(
-                base_incidents,
-                idx,
-                incident_type="PLAYER_MISSING_NAME",
-                blocks_player_eligibility=True,
-                message=f"El jugador {idx} no tiene nombre usable.",
-                evidence={"field": "name"},
-            )
-        if (
-            not birth_date
-            or _birth_date_has_two_digit_year(birth_date)
-            or _parse_birth_date(birth_date) is None
-        ):
-            _append_player_incident(
-                base_incidents,
-                idx,
-                incident_type="PLAYER_INVALID_BIRTHDATE",
-                blocks_player_eligibility=True,
-                message=(
-                    f"El jugador {idx} tiene una fecha de nacimiento "
-                    "invalida o ambigua."
-                ),
-                evidence={"field": "birth_date", "observed_value": birth_date},
-            )
-        if raw_curp and (curp_truncated or len(curp or "") != 18):
-            _append_player_incident(
-                base_incidents,
-                idx,
-                incident_type="CURP_TRUNCATED_OR_INVALID_SEVERE",
-                blocks_player_eligibility=True,
-                message=f"El CURP del jugador {idx} esta truncado o no es confiable.",
-                evidence={"field": "curp", "observed_value": raw_curp},
-            )
-        if confidence < 0.7 or needs_review:
-            _append_player_incident(
-                base_incidents,
-                idx,
-                incident_type="LOW_CONFIDENCE_FIELD",
-                blocks_player_eligibility=False,
-                message=f"El jugador {idx} requiere revision por baja confianza OCR.",
-                evidence={"confidence": confidence, "needs_review": needs_review},
-            )
-
-    incidents_by_player = _merge_player_incidents(
-        base_incidents,
-        _build_photo_duplicate_incidents(
-            players_payload=players,
-            photo_artifacts=photo_artifacts,
-            existing_photo_records=existing_photo_records,
-        ),
-    )
-
-    cleared_players = 0
-    pending_nonblocking_players = 0
-    pending_blocking_players = 0
-    player_results: List[Dict[str, Any]] = []
-    for idx, player in enumerate(players, 1):
-        incidents = list(incidents_by_player.get(idx) or [])
-        blocks_player = any(
-            bool(item.get("blocks_player_eligibility")) for item in incidents
-        )
-        if not incidents:
-            status = "CLEARED"
-            counts_toward_minimum = True
-            cleared_players += 1
-        else:
-            status = "INCIDENT_PENDING"
-            counts_toward_minimum = not blocks_player
-            if blocks_player:
-                pending_blocking_players += 1
-            else:
-                pending_nonblocking_players += 1
-
-        player_results.append(
-            {
-                "player_ref": _draft_player_ref(idx),
-                "player_index": idx,
-                "name": (player.get("name") or "").strip(),
-                "birth_date": (player.get("birth_date") or "").strip(),
-                "eligibility_status": status,
-                "counts_toward_minimum": counts_toward_minimum,
-                "incidents": incidents,
-            }
-        )
-
-    eligible_players = cleared_players + pending_nonblocking_players
-    incident_count = sum(
-        len(item.get("incidents") or []) for item in player_results
-    )
-    if eligible_players < minimum_roster:
-        team_decision = "PENDING_MINIMUM_ROSTER"
-    elif incident_count:
-        team_decision = "REGISTERED_WITH_INCIDENTS"
-    else:
-        team_decision = "REGISTERED"
-
-    return {
-        "schema_version": REGISTRATION_INCIDENTS_SCHEMA_VERSION,
-        "minimum_roster": minimum_roster,
-        "team_decision": team_decision,
-        "summary": {
-            "total_players": len(players),
-            "cleared_players": cleared_players,
-            "pending_nonblocking_players": pending_nonblocking_players,
-            "pending_blocking_players": pending_blocking_players,
-            "rejected_players": 0,
-            "eligible_players": eligible_players,
-            "incident_count": incident_count,
-        },
-        "player_results": player_results,
-    }
 
 
 def _players_blocked_by_incident_policy(
@@ -2232,6 +1942,46 @@ async def serve_photo_asset(path: str, request: Request):
         _ensure_legacy_copa_dashboard_access(request)
     return FileResponse(str(asset_path))
 
+
+@app.get("/api/registration-photos/{photo_sha256}", include_in_schema=False)
+async def serve_committed_registration_photo(photo_sha256: str, request: Request):
+    """A staged private photo is visible only through a committed v2 reference."""
+    _ensure_legacy_copa_dashboard_access(request)
+    if re.fullmatch(r"[0-9a-f]{64}", photo_sha256) is None:
+        raise HTTPException(status_code=404, detail="Photo unavailable")
+    try:
+        from devnous.copa_telmex.staff_photo_store import PrivateReviewPhotoStore
+
+        configured_root = os.environ.get("CTT_REVIEW_PHOTO_ROOT")
+        if not configured_root:
+            raise ValueError("photo storage unavailable")
+        root = Path(configured_root)
+        if not root.is_absolute() or root.resolve().is_relative_to(
+            photos_dir.resolve()
+        ):
+            raise ValueError("private photos must remain outside the web root")
+        async with async_session_maker() as session:
+            committed = (
+                await session.execute(
+                    text("SELECT public.ctt_photo_is_committed(:photo_sha256)"),
+                    {"photo_sha256": photo_sha256},
+                )
+            ).scalar_one()
+        if committed is not True:
+            raise ValueError("photo is not committed")
+        raw = PrivateReviewPhotoStore(root).read(photo_sha256 + ".jpg")
+        return Response(
+            raw,
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    except Exception:
+        raise HTTPException(status_code=404, detail="Photo unavailable") from None
+
+
 # Mount static files directory for general static files (manuals, etc.)
 static_dir = Path(__file__).parent / "static"
 static_dir.mkdir(exist_ok=True)
@@ -2531,6 +2281,8 @@ def _public_storage_path(image_path: Optional[str]) -> Optional[str]:
     clean = str(image_path or "").strip().replace("\\", "/")
     if not clean:
         return None
+    if re.fullmatch(r"ctt-photo:[0-9a-f]{64}", clean):
+        return "/api/registration-photos/" + clean[len("ctt-photo:") :]
     if clean.startswith("/photos/"):
         return clean
     if clean.startswith("/"):
@@ -3312,34 +3064,10 @@ def _build_review_player_photo_previews(
     return previews
 
 
-def _split_player_name(full_name: str) -> Tuple[str, str]:
-    clean = " ".join((full_name or "").split()).strip()
-    if not clean:
-        return "", ""
-    parts = clean.split()
-    if len(parts) == 1:
-        return parts[0], ""
-    return parts[0], " ".join(parts[1:])
 
 
-def _parse_birth_date(value: Optional[str]) -> Optional[date]:
-    text = (value or "").strip()
-    if not text:
-        return None
-    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
-            continue
-    return None
 
 
-def _normalize_curp_for_storage(value: Optional[str]) -> Tuple[Optional[str], bool]:
-    cleaned = "".join(ch for ch in str(value or "").strip().upper() if ch.isalnum())
-    if not cleaned:
-        return None, False
-    truncated = len(cleaned) > 18
-    return cleaned[:18], truncated
 
 
 def _review_event_timestamp() -> tuple[datetime, str]:
@@ -3815,10 +3543,11 @@ async def _execute_regs07_mutation(
         database_transaction_id = "postgres-tx:" + str(
             (await session.execute(text("SELECT txid_current()"))).scalar_one()
         )
-        for field, value in updates.items():
-            setattr(entity, field, value)
-        entity.postcommit_revision = proposal.proposed_revision
-        entity.postcommit_snapshot_hash = proposal.proposed_snapshot_hash
+        if not copa_db.uses_legacy_sql_boundary:
+            for field, value in updates.items():
+                setattr(entity, field, value)
+            entity.postcommit_revision = proposal.proposed_revision
+            entity.postcommit_snapshot_hash = proposal.proposed_snapshot_hash
         try:
             finality_response = await client.finalize_postcommit_mutation(
                 build_postcommit_finality_request(
@@ -3866,7 +3595,15 @@ async def _execute_regs07_mutation(
                 ),
                 {"execution_id": str(execution_id)},
             )
-        await session.flush([entity])
+        if copa_db.uses_legacy_sql_boundary:
+            await copa_db.apply_postcommit_projection(
+                entity,
+                base_revision=proposal.base_revision,
+                base_hash=proposal.base_snapshot_hash,
+                updates=updates,
+            )
+        else:
+            await session.flush([entity])
         await session.commit()
         return {
             "success": True,
@@ -4097,15 +3834,6 @@ def _build_commit_audit_envelope(
     }
 
 
-def _birth_date_has_two_digit_year(value: Optional[str]) -> bool:
-    text = (value or "").strip()
-    if not text:
-        return False
-    for separator in ("/", "-", "."):
-        parts = text.split(separator)
-        if len(parts) == 3 and len(parts[-1]) == 2 and all(part.isdigit() for part in parts):
-            return True
-    return False
 
 
 def _apply_review_form_edits(form_data: Any, base_extraction: Dict[str, Any]) -> Dict[str, Any]:
@@ -4616,6 +4344,21 @@ async def copa_telmex_spa(path: str = ""):
 @app.on_event("startup")
 async def startup_event():
     """Startup event - test database connection and create tables"""
+    enabled = os.getenv("CTT_STAFF_REVIEW_ENABLED", "0")
+    if enabled not in {"0", "1"}:
+        raise ValueError("CTT_STAFF_REVIEW_ENABLED must be 0 or 1")
+    configure_staff_review_client(
+        app,
+        StaffReviewClientSettings(
+            enabled=enabled == "1",
+            base_url=os.getenv("CTT_STAFF_REVIEW_URL", ""),
+            key_path=(
+                Path(os.environ["CTT_STAFF_REVIEW_KEY_PATH"])
+                if enabled == "1" and os.getenv("CTT_STAFF_REVIEW_KEY_PATH")
+                else None
+            ),
+        ),
+    )
     try:
         # Create all tables (including CFDIReport)
         async with db_engine.begin() as conn:
@@ -4656,6 +4399,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Shutdown event - stop SAT jobs and close database connections"""
+    await close_staff_review_client(app)
     try:
         await shutdown_background_jobs()
     except Exception as exc:
@@ -6184,10 +5928,16 @@ async def view_registration_review_session(request: Request, session_id: str):
             )
 
         assets = [_session_asset_payload(asset) for asset in review_session.assets]
+        protected_staff_context = {}
+        if extraction.get("staff"):
+            protected_staff_context = await _protected_staff_review_context(
+                request, str(session_uuid)
+            )
         return templates.TemplateResponse(
             "registration_review_detail.html",
             {
                 "request": request,
+                **protected_staff_context,
                 "review_session": review_session,
                 "assets": assets,
                 "team": extraction.get("team") or {},
@@ -6205,12 +5955,17 @@ async def view_registration_review_session(request: Request, session_id: str):
                 "page_append_request_id": str(uuid4()),
                 "edit_request_id": str(uuid4()),
             },
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
         )
 
 
 @app.post("/api/registration-review/{session_id}/edit")
 async def edit_registration_review_session(session_id: str, request: Request):
     """Adjudicate and atomically consume exact human field approvals."""
+    if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() == "application/json":
+        # The private writer needs its own locks. Never hold an application
+        # write transaction while awaiting the protected proposal service.
+        return await _staff_review_routes.prepare_request(request, session_id)
     _ensure_registration_review_access(request)
     actor = _review_session_actor(request)
     if not actor.get("user_id"):
@@ -7904,16 +7659,13 @@ async def commit_registration_review_session(session_id: str, request: Request):
                         "blocking_incident_count": 0,
                     }
                 )
-                player.finality_receipt_id = copa_db.record_player_finality(
-                    player, finality
-                )
+                await copa_db.finalize_player(player, finality)
             except (RegistrationGovernanceDenied, PersistenceAuthorityDenied) as exc:
                 raise _review_error(
                     "governance_finality_denied",
                     "Zaubern no confirmó la finalidad; no se guardó ningún jugador.",
                     extra={"reason_code": exc.reason_code},
                 ) from exc
-            player.governance_state = "ACTIVE"
 
         commit_audit = _build_commit_audit_envelope(
             review_session=review_session,
@@ -8140,6 +7892,41 @@ async def delete_team(team_id: str, request: Request):
         status_code=409,
         extra={"entity_id": team_id},
     )
+
+
+_staff_review_routes = register_staff_review_routes(
+    app,
+    ensure_access=_ensure_registration_review_access,
+    actor_from_request=_review_session_actor,
+    refresh_actor=_refresh_review_actor,
+    session_factory=async_session_maker,
+    client_resolver=lambda request: getattr(
+        request.app.state, "ctt_staff_review_client", None
+    ),
+    expected_origin="https://sam.chat",
+)
+
+
+async def _protected_staff_review_context(request: Request, session_id: str) -> dict:
+    """Render a closed state when the protected service is not configured."""
+    try:
+        return await _staff_review_routes.view_context(request, session_id)
+    except HTTPException as error:
+        if error.status_code in {401, 403}:
+            raise
+        return {
+            "staff_review_csrf": request.session.get("ctt_staff_review_csrf", ""),
+            "staff_review_view": {
+                "session_id": session_id, "proposal_id": None,
+                "state": "unavailable", "team": {}, "players": [],
+                "staff": [], "pages": [], "ready_to_approve": False,
+                "passkey": {"status": "not_enrolled"},
+                "blockers": [{
+                    "code": "REVIEW_UNAVAILABLE",
+                    "message": "La revisión protegida no está disponible. No se puede aprobar la captura.",
+                }],
+            },
+        }
 
 
 if __name__ == "__main__":
