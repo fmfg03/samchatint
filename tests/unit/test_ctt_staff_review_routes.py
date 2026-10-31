@@ -1,6 +1,7 @@
 """Public review boundary only; private authority is tested in PostgreSQL suites."""
 
 import copy
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -555,3 +556,39 @@ def test_origin_configuration_cannot_be_derived_from_request_host(boundary, orig
     dependencies = {**boundary.dependencies, "expected_origin": origin}
     with pytest.raises(ValueError):
         StaffReviewRoutes(**dependencies)
+
+
+@pytest.mark.parametrize("protected", [False, True])
+def test_contract_notice_distinguishes_legacy_capture_without_removing_incidents(
+    protected,
+):
+    from jinja2 import Environment, select_autoescape
+
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "templates/registration_review_detail.html"
+    ).read_text()
+    section = source.split("{% if validation.blockers %}", 1)[1].split(
+        "{% if validation.issues %}", 1
+    )[0]
+    template = Environment(autoescape=select_autoescape(default=True)).from_string(
+        "{% if validation.blockers %}" + section
+    )
+    validation = {
+        "blockers": [
+            {
+                "code": "STAFF_GOVERNANCE_CONTRACT_REQUIRED",
+                "message": "El contrato anterior solo autoriza jugadores.",
+            },
+            {"code": "CURP_REVIEW_PENDING", "message": "CURP sin revisar."},
+        ],
+        "ready_to_commit": False,
+    }
+    before = copy.deepcopy(validation)
+    rendered = template.render(validation=validation, protected_staff_review=protected)
+    assert "CURP sin revisar." in rendered
+    assert ("usa la revisión protegida con passkey" in rendered) is protected
+    assert ("El contrato anterior solo autoriza jugadores." in rendered) is (
+        not protected
+    )
+    assert validation == before

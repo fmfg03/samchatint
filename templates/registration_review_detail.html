@@ -891,7 +891,11 @@
                 {% for blocker in validation.blockers %}
                 <div class="issue-alert" data-level="error">
                     <div class="issue-level">Bloqueo</div>
+                    {% if protected_staff_review and blocker.code == 'STAFF_GOVERNANCE_CONTRACT_REQUIRED' %}
+                    <div>La captura anterior admite jugadores. Para incluir el cuerpo técnico, usa la revisión protegida con passkey de arriba.</div>
+                    {% else %}
                     <div>{{ blocker.message }}</div>
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
