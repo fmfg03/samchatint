@@ -450,6 +450,7 @@ def synthetic_assertion(challenge, *, platform):
     [
         "success",
         "two_staff",
+        "national_missing_curp",
         "rollback",
         "revoked",
         "version",
@@ -480,10 +481,12 @@ def test_full_runtime_writes_or_rolls_back_real_rows(
     from evidence_receipt import issue_evidence_receipt
     from devnous.copa_telmex.registration_governance import _derive_geometry
 
+    national = scenario == "national_missing_curp"
     corrupt = scenario == "rollback"
     denied = scenario not in {
         "success",
         "two_staff",
+        "national_missing_curp",
         "finality_bus_reply_lost",
         "finality_rollback_retry",
     }
@@ -517,20 +520,55 @@ def test_full_runtime_writes_or_rolls_back_real_rows(
                     (182, "Director tecnico - Synthetic Coach"),
                     (204, "1980-01-01 BBBB800101HDFXXX01"),
                 ):
+                    if national:
+                        value = value.replace(
+                            "AAAA000101HDFXXX01", "CURP: no proporcionada"
+                        )
+                        value = value.replace(
+                            "BBBB800101HDFXXX01", "CURP: no proporcionada"
+                        )
                     first.insert_text((72, position), value)
+                if national:
+                    first.insert_text((72, 270), "Jugador 4 - Synthetic Second Player")
+                    first.insert_text((72, 292), "2000-01-01 CURP: no proporcionada")
                 first.draw_rect(
                     fitz.Rect(450, 50, 530, 150), fill=(0.2, 0.5, 0.8), color=None
                 )
+                if national:
+                    first.draw_rect(
+                        fitz.Rect(450, 250, 530, 350),
+                        fill=(0.8, 0.3, 0.2),
+                        color=None,
+                    )
                 second = document.new_page()
                 second.insert_text(
                     (72, 72),
                     (
-                        "Auxiliar - Synthetic Assistant 1985-01-01 CCCC850101HDFXXX01"
-                        if scenario == "two_staff"
+                        (
+                            "Auxiliar - Synthetic Assistant 1985-01-01 "
+                            "CURP: no proporcionada"
+                            if national
+                            else "Auxiliar - Synthetic Assistant 1985-01-01 "
+                            "CCCC850101HDFXXX01"
+                        )
+                        if scenario == "two_staff" or national
                         else "Auxiliar: sin identidad declarada"
                     ),
                 )
                 pdf = document.tobytes()
+            if national:
+                manifest["documents"][0]["extraction"]["players"] = [
+                    dict(
+                        name=name,
+                        birth_date="2000-01-01",
+                        curp=None,
+                        slot_ref=f"page:1:jugador_{slot}",
+                    )
+                    for slot, name in (
+                        (3, "Synthetic Player"),
+                        (4, "Synthetic Second Player"),
+                    )
+                ]
             manifest["documents"][0]["pdf_sha256"] = hashlib.sha256(pdf).hexdigest()
             root, originals = tmp_path / "sources", tmp_path / "originals"
             root.mkdir(mode=0o700)
@@ -582,10 +620,15 @@ def test_full_runtime_writes_or_rolls_back_real_rows(
                     ),
                 )
             args = effect()
-            if scenario == "two_staff":
+            if scenario == "two_staff" or national:
                 assistant = copy.deepcopy(args["staff"][0]["row"])
                 assistant.update(id=str(uuid4()), staff_slot=2, role="auxiliar")
                 args["staff"][1].update(presence="PRESENT", row=assistant)
+            if national:
+                second_player = copy.deepcopy(args["players"][0])
+                second_player.update(id=str(uuid4()), roster_index=2)
+                args["players"].append(second_player)
+                args["player_source_refs"].append("page:1:jugador_4")
             args["scope"] = scope
             args["team"].update(
                 id=str(scope.team_id), tournament_slug=scope.tournament_slug
@@ -624,6 +667,10 @@ def test_full_runtime_writes_or_rolls_back_real_rows(
                 )
                 for field in LATE_AUTHORITY_FIELDS:
                     row[field] = None
+            if national:
+                for row in args["players"] + [s["row"] for s in args["staff"]]:
+                    row["curp"] = None
+                args["players"][1]["last_name"] = "Second Player"
             for row in [args["team"]] + args["players"]:
                 for field in DATABASE_DERIVED_FIELDS:
                     row[field] = None
@@ -644,6 +691,18 @@ def test_full_runtime_writes_or_rolls_back_real_rows(
                 maximum_roster_size=25,
                 required_staff_slots=[1],
             )
+            if national:
+                policy.update(
+                    policy_version="2.1.0",
+                    phase_binding=dict(
+                        phase="NACIONAL",
+                        tenant_id=scope.tenant_id,
+                        edition_id=str(scope.edition_id),
+                        manifest_sha256=scope.manifest_sha256,
+                    ),
+                    optional_curp_kinds=["PLAYER", "STAFF"],
+                    required_staff_slots=[1, 2],
+                )
             policy["policy_hash"] = (
                 "sha256:" + hashlib.sha256(canonical(policy)).hexdigest()
             )
@@ -679,6 +738,24 @@ def test_full_runtime_writes_or_rolls_back_real_rows(
                     ocr_confidence=1.0,
                     created_at="2026-10-30T12:00:00.123456",
                 )
+            player_photos = {args["players"][0]["id"]: photo_geometry}
+            if national:
+                second_geometry = _derive_geometry(
+                    SimpleNamespace(image_path=page_path, sha256=page.image_sha256[7:]),
+                    {"x": 450, "y": 250, "width": 80, "height": 100},
+                )
+                assert second_geometry is not None
+                second_photo = derive_rectangular_review_photo(
+                    page_path.read_bytes(), second_geometry, max_page_bytes=1_000_000
+                )
+                assert second_photo.sha256 != photo.sha256
+                assert photo_store.stage(second_photo) == second_photo.photo_path
+                args["players"][1].update(
+                    photo_path=second_photo.photo_path,
+                    photo_sha256=second_photo.sha256,
+                    photo_ahash=second_photo.ahash,
+                )
+                player_photos[args["players"][1]["id"]] = second_geometry
             members = []
             for player in args["players"]:
                 members.append(
@@ -689,13 +766,17 @@ def test_full_runtime_writes_or_rolls_back_real_rows(
                         presence="PRESENT",
                         source_page_index=1,
                         fields={
-                            field: geometry(scope.source_pages[0], 50)
+                            field: geometry(
+                                scope.source_pages[0],
+                                250 if player["roster_index"] == 2 else 50,
+                            )
                             for field in policy["field_order"]
+                            if not national or field != "curp"
                         },
                         absence_geometry=None,
                         photo_evidence={
                             "mode": "SOURCE_RECTANGLE",
-                            "geometry": photo_geometry,
+                            "geometry": player_photos[player["id"]],
                         },
                     )
                 )
@@ -716,6 +797,7 @@ def test_full_runtime_writes_or_rolls_back_real_rows(
                                     160 if page_index == 1 else 50,
                                 )
                                 for field in policy["field_order"]
+                                if not national or field != "curp"
                             }
                             if present
                             else {}
@@ -1302,14 +1384,14 @@ def test_full_runtime_writes_or_rolls_back_real_rows(
                         "copa_telmex_team_staff",
                         "ctt_staff_private.effect_staff_writes",
                     }
-                    else 1
+                    else len(args["players"]) if table == "copa_telmex_players" else 1
                 ), table
             assert (
                 await admin.fetchval(
                     "SELECT count(*) FROM "
                     "public.copa_telmex_registration_postcommit_entity_versions"
                 )
-                == 2 * expected
+                == (1 + len(args["players"])) * expected
             )
             assert await admin.fetchval(
                 "SELECT public.ctt_photo_is_committed($1)", photo.sha256
@@ -1327,6 +1409,20 @@ def test_full_runtime_writes_or_rolls_back_real_rows(
                 assert len(finality_calls) == 1
             elif scenario == "finality_expired":
                 assert len(finality_calls) >= 2
+            if national:
+                for table in ("copa_telmex_players", "copa_telmex_team_staff"):
+                    assert (
+                        await admin.fetchval(
+                            "SELECT count(*) FROM " + table + " WHERE curp IS NULL"
+                        )
+                        == 2
+                    )
+                    assert (
+                        await admin.fetchval(
+                            "SELECT count(*) FROM " + table + " WHERE curp = ''"
+                        )
+                        == 0
+                    )
             if not denied:
                 for table in (
                     "public.copa_telmex_players",
@@ -1345,14 +1441,16 @@ def test_full_runtime_writes_or_rolls_back_real_rows(
                     )
                 assert (
                     await admin.fetchval(
-                        "SELECT postcommit_revision FROM public.copa_telmex_players"
+                        "SELECT bool_and(postcommit_revision=1) "
+                        "FROM public.copa_telmex_players"
                     )
-                    == 1
+                    is True
                 )
                 assert (
                     await admin.fetchval(
-                        "SELECT p.postcommit_snapshot_hash="
-                        "public.regs07_snapshot_hash(public.regs07_player_snapshot(p)) "
+                        "SELECT bool_and(p.postcommit_snapshot_hash="
+                        "public.regs07_snapshot_hash("
+                        "public.regs07_player_snapshot(p))) "
                         "FROM public.copa_telmex_players p"
                     )
                     is True
