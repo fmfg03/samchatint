@@ -288,6 +288,51 @@ def test_allocation(invoice, available, applied, remainder):
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "paid_amount",
+    [
+        "36429.169999999998253770172595977783203125",
+        "36429.170000000001746229827404022216796875",
+    ],
+)
+@pytest.mark.parametrize("reserved", ["0.00", "10000.01"])
+async def test_advance_balances_and_allocation_use_cents(paid_amount, reserved):
+    # Test Python normalization directly; SQLite would erase the raw residue.
+    advance = SimpleNamespace(
+        id=uuid4(),
+        estado="pagado",
+        pagado_en=datetime(2026, 10, 28),
+        monto_solicitado=Decimal(paid_amount),
+    )
+    children = [
+        SimpleNamespace(
+            estado="control_presupuestal", supplier_advance_applied=Decimal(reserved)
+        )
+    ]
+    result = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: children))
+    session = SimpleNamespace(execute=AsyncMock(return_value=result))
+
+    balances = await service.advance_balances(session, advance)
+    available = Decimal("36429.17") - Decimal(reserved)
+    assert balances == {
+        "paid": Decimal("36429.17"),
+        "reserved": Decimal(reserved),
+        "applied": Decimal("0.00"),
+        "available": available,
+        "pending": Decimal("36429.17"),
+    }
+    assert service.invoice_allocation(available, balances["available"]) == (
+        available,
+        Decimal("0.00"),
+    )
+    assert service.invoice_allocation(available + Decimal("0.01"), available) == (
+        available,
+        Decimal("0.01"),
+    )
+    assert advance.monto_solicitado == Decimal(paid_amount)
+
+
 @pytest.mark.parametrize("value", [None, "bad", "NaN", "Infinity", "-1", "0"])
 def test_invalid_invoice_amount(value):
     with pytest.raises(SolicitudValidationError):
