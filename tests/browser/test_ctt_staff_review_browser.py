@@ -384,3 +384,56 @@ def test_native_registration_and_assertion_keep_pending_activation_and_uncertain
     assert panel.state.verified_assertions == 1
     assert panel.page.evaluate("Object.keys(localStorage)") == []
     assert panel.page.evaluate("location.origin") == "https://sam.chat"
+
+
+@pytest.mark.parametrize(
+    "status,message",
+    [
+        ("PENDING_OPERATOR_REVIEW", "activación"),
+        ("ACTIVE", "acreditada"),
+        ("EXPIRED", "venció"),
+        ("REVOKED", "revocada"),
+    ],
+)
+def test_repeat_enrollment_without_challenge_shows_current_state(
+    panel, status, message
+):
+    from devnous.copa_telmex.staff_review_workflow import ReviewWorkflowService
+
+    response = ReviewWorkflowService._enrollment_view(
+        dict(
+            enrollment_id=str(uuid4()),
+            status=status,
+            grants_faculty=False,
+            fingerprint="sha256:synthetic-existing-candidate",
+        )
+    )
+    panel.page.route(
+        "**/staff-passkey/begin",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(response)
+        ),
+    )
+    panel.page.add_init_script(
+        "window.registrationCalls=0;"
+        "Object.defineProperty(navigator.credentials,'create',"
+        "{value:async()=>{window.registrationCalls++;throw Error('unexpected ceremony')}})"
+    )
+    open_panel(panel)
+    panel.page.locator("[data-enrollment-fingerprint]").evaluate(
+        "node => {node.textContent = 'sha256:previous-candidate'}"
+    )
+    panel.page.get_by_role("button", name="Registrar passkey del dispositivo").click()
+    expect(panel.page.locator("[data-review-status]")).to_contain_text(message)
+    expect(panel.page.locator("[data-review-error]")).to_be_hidden()
+    assert panel.page.evaluate("window.registrationCalls") == 0
+    assert not any(
+        path.endswith("/staff-passkey/complete") for path, _ in panel.state.calls
+    )
+    if status == "PENDING_OPERATOR_REVIEW":
+        expect(panel.page.locator("[data-enrollment-fingerprint]")).to_contain_text(
+            "sha256:synthetic-existing-candidate"
+        )
+    if status in ("EXPIRED", "REVOKED"):
+        expect(panel.page.locator("[data-enrollment-status]")).to_contain_text(message)
+        expect(panel.page.locator("[data-enrollment-fingerprint]")).to_have_text("")
