@@ -93,7 +93,7 @@ def panel(page):
             route.abort()
             return
         path = request.url.split("https://sam.chat", 1)[1]
-        if path == "/static/js/ctt_staff_review.js":
+        if path.split("?", 1)[0] == "/static/js/ctt_staff_review.js":
             route.fulfill(
                 status=200,
                 content_type="text/javascript; charset=utf-8",
@@ -368,6 +368,10 @@ def test_native_registration_and_assertion_keep_pending_activation_and_uncertain
     panel.page.locator("[data-review-confirm]").check()
     panel.page.get_by_role("button", name="Aprobar y capturar con passkey").click()
     expect(panel.page.locator("[data-review-status]")).to_contain_text("mismo intento")
+    expect(panel.page.locator("[data-review-status]")).to_contain_text(
+        "resultado aún no está confirmado"
+    )
+    assert any("/staff-approval/status?" in path for path, _ in panel.state.calls)
     assert panel.state.verified_assertions == 1
     assert sum(path.endswith("/assertion") for path, _ in panel.state.calls) == 1
     expect(
