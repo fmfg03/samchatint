@@ -27,12 +27,13 @@ TEST_HELPERS = frozenset(
         "services/evidence-bus/tests/v2_fixtures.py",
         "services/samchat-registration-gate/tests/test_staff_capture_gate_v2.py",
         "services/samchat-registration-gate/tests/test_staff_capture_finality_v2.py",
+        "services/samchat-registration-gate/tests/test_staff_capture_national_curp_v2.py",
     }
 )
 REQUIRED_COHORTS = {
-    "test_ctt_review_workflow_postgres": 10,
+    "test_ctt_review_workflow_postgres": 11,
     "test_ctt_passkey_enrollment_postgres": 19,
-    "test_ctt_full_runtime_postgres": 26,
+    "test_ctt_full_runtime_postgres": 28,
     "test_ctt_assertion_proof_recovery_postgres": 11,
 }
 
@@ -169,18 +170,20 @@ def check_junit(path: Path, additional: Path | None = None):
             raise ValueError(
                 "required CTT acceptance cohort missing, skipped or failed: " + cohort
             )
-    operational = [
-        case
-        for case in cases
-        if case.get("classname", "").split(".")[-1]
-        == "test_ctt_review_workflow_postgres"
-        and case.get("name", "")
-        == "test_private_prepare_to_official_committed_session[operational_rpc]"
-    ]
-    if len(operational) != 1:
-        raise ValueError(
-            "required CTT acceptance: operational RPC scenario must run once"
-        )
+    for scenario in ("operational_rpc", "operational_rpc_national"):
+        operational = [
+            case
+            for case in cases
+            if case.get("classname", "").split(".")[-1]
+            == "test_ctt_review_workflow_postgres"
+            and case.get("name", "")
+            == f"test_private_prepare_to_official_committed_session[{scenario}]"
+        ]
+        if len(operational) != 1:
+            raise ValueError(
+                "required CTT acceptance: operational RPC scenario must run once: "
+                + scenario
+            )
 
 
 def main():

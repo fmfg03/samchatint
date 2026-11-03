@@ -296,6 +296,7 @@ jobs:
             COVERAGE_FILE="$GITHUB_WORKSPACE/reports/ctt-operational.coverage" \
             "$(command -v python)" -m pytest \
               'tests/integration/test_ctt_review_workflow_postgres.py::test_private_prepare_to_official_committed_session[operational_rpc]' \
+              'tests/integration/test_ctt_review_workflow_postgres.py::test_private_prepare_to_official_committed_session[operational_rpc_national]' \
               --cov-config=.github/coverage-repository.ini \
               --cov=src --cov=copa_telmex_dashboard \
               --cov=deployment.ctt_protected_review \

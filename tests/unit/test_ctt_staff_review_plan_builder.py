@@ -396,3 +396,202 @@ def test_initial_missing_values_remain_blank_and_blocked(prepared):
     preview = json.loads(result.preview_bytes)
     assert preview["players"][0]["first_name"] == ""
     assert not preview["ready_to_approve"]
+
+
+def national_builder(prepared, mutate=None):
+    old, context, _, _ = prepared
+    policy = copy.deepcopy(old._policy)
+    policy.pop("policy_hash")
+    policy.update(
+        policy_version="2.1.0",
+        effective_sal="SAL-3",
+        field_order=["full_name", "birth_date", "curp"],
+        phase_binding=dict(
+            phase="NACIONAL",
+            tenant_id=context["tenant_id"],
+            edition_id=context["edition_id"],
+            manifest_sha256=context["manifest_sha256"],
+        ),
+        optional_curp_kinds=["PLAYER", "STAFF"],
+    )
+    if mutate:
+        mutate(policy)
+    policy["policy_hash"] = "sha256:" + hashlib.sha256(canonical(policy)).hexdigest()
+    return ReviewPlanBuilder(
+        review_key=old._key,
+        policy_artifact=policy,
+        expected_policy_hash=policy["policy_hash"],
+        photo_store=old._photos,
+        gate=SimpleNamespace(
+            _policy_hash=policy["policy_hash"], _max_page_bytes=1000000
+        ),
+    )
+
+
+def use_national(prepared):
+    builder = national_builder(prepared)
+    old = prepared[0]
+    # Snapshot factory closes over this trusted builder object.
+    old.__dict__.update(builder.__dict__)
+    return old
+
+
+def test_national_absent_curps_are_null_without_fictitious_evidence(prepared):
+    builder = use_national(prepared)
+    _, context, proposal, snapshot = prepared
+    changes = completed_changes(*prepared)
+    for player in changes["players"][:2]:
+        player["curp"] = ""
+        player["boxes"].pop("curp")
+    for index, staff in enumerate(changes["staff"]):
+        staff.update(
+            presence="PRESENT",
+            first_name="Synthetic",
+            last_name=f"Coach {index}",
+            birth_date="1980-01-01",
+            curp=None,
+            boxes=copy.deepcopy(changes["players"][0]["boxes"]),
+        )
+    result = builder.build(context, changes, snapshot(), proposal)
+    preview = json.loads(result.preview_bytes)
+    assert preview["ready_to_approve"]
+    assert preview["identity_policy"] == {
+        "phase": "NACIONAL",
+        "optional_curp_kinds": ["PLAYER", "STAFF"],
+    }
+    plan = json.loads(result.review_bytes)
+    assert [p["curp"] for p in plan["players"][:2]] == [None, None]
+    assert all(p["curp_valid"] is False for p in plan["players"][:2])
+    assert [s["row"]["curp"] for s in plan["staff"]] == [None, None]
+    evidence = json.loads(result.evidence_bytes)["members"]
+    for member in evidence[:2] + evidence[-2:]:
+        assert set(member["fields"]) == {"full_name", "birth_date"}
+    assert "curp" in evidence[2]["fields"]
+
+
+@pytest.mark.parametrize("field", ["tenant_id", "edition_id", "manifest_sha256"])
+def test_national_scope_mismatch_denied(prepared, field):
+    builder = use_national(prepared)
+    _, context, proposal, _ = prepared
+    context[field] = str(uuid4()) if field == "edition_id" else "unmatched"
+    with pytest.raises(CaptureDenied):
+        builder.initial_scope(context, proposal)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda p: p.pop("phase_binding"),
+        lambda p: p.update(effective_sal="SAL-2"),
+        lambda p: p.update(field_order=["full_name", "birth_date"]),
+        lambda p: p.pop("optional_curp_kinds"),
+        lambda p: p.update(policy_version="2.0.0"),
+        lambda p: p["phase_binding"].update(phase="ESTATAL"),
+        lambda p: p["phase_binding"].update(extra=True),
+        lambda p: p["phase_binding"].update(manifest_sha256="SHA256:" + "b" * 64),
+        lambda p: p["phase_binding"].update(edition_id="not-uuid"),
+        lambda p: p.update(optional_curp_kinds=["PLAYER", "PLAYER"]),
+        lambda p: p.update(optional_curp_kinds=["OTHER"]),
+    ],
+)
+def test_national_malformed_profile_rejected_independently(prepared, mutation):
+    with pytest.raises(ValueError):
+        national_builder(prepared, mutation)
+
+
+@pytest.mark.parametrize("national", [False, True])
+@pytest.mark.parametrize(
+    "failure", ["invalid_curp", "missing_geometry", "missing_name", "missing_birth"]
+)
+def test_national_preserves_present_and_required_field_checks(
+    prepared, national, failure
+):
+    builder = use_national(prepared) if national else prepared[0]
+    _, context, proposal, snapshot = prepared
+    changes = completed_changes(*prepared)
+    player = changes["players"][0]
+    if failure == "invalid_curp":
+        player["curp"] = "SHORT"
+    elif failure == "missing_geometry":
+        player["boxes"].pop("curp")
+    elif failure == "missing_name":
+        player.update(first_name="", last_name="")
+    else:
+        player["birth_date"] = ""
+    result = builder.build(context, changes, snapshot(), proposal)
+    assert not json.loads(result.preview_bytes)["ready_to_approve"]
+
+
+def test_legacy_missing_curp_still_blocks(prepared):
+    builder, context, proposal, snapshot = prepared
+    changes = completed_changes(*prepared)
+    changes["players"][0]["curp"] = ""
+    result = builder.build(context, changes, snapshot(), proposal)
+    assert not json.loads(result.preview_bytes)["ready_to_approve"]
+
+
+def test_deployed_national_policy_and_preserved_strict_artifact():
+    from pathlib import Path
+
+    directory = Path(__file__).resolve().parents[2] / "deployment/ctt_protected_review"
+    strict = directory / "policy-copa-telmex-2026-strict-v2.json"
+    national = json.loads((directory / "policy-copa-telmex-2026.json").read_bytes())
+    strict_policy = json.loads(strict.read_bytes())
+    assert strict_policy["policy_version"] == "2.0.0"
+    assert strict_policy["policy_hash"] == (
+        "sha256:4c02da4d4981bedd60a34771236f0aa0db76c5392477413f3d03e68cc4e2e697"
+    )
+    assert national["policy_version"] == "2.1.0"
+    assert national["field_order"] == strict_policy["field_order"]
+    assert national["effective_sal"] == strict_policy["effective_sal"] == "SAL-3"
+    assert national["phase_binding"] == dict(
+        phase="NACIONAL",
+        tenant_id="samchat-prod",
+        edition_id="47bcc601-929a-4a8a-9005-99f10ee1aa58",
+        manifest_sha256="9a4bcaa149bccaafbc479ce7b70b225b6df"
+        "155a97761ee56c2c079d202c3ee67",
+    )
+    for policy in (national, strict_policy):
+        pinned = policy.pop("policy_hash")
+        assert pinned == "sha256:" + hashlib.sha256(canonical(policy)).hexdigest()
+
+
+def test_semver_without_exception_extensions_remains_strict(prepared):
+    builder = national_builder(
+        prepared, lambda p: (p.pop("phase_binding"), p.pop("optional_curp_kinds"))
+    )
+    old, context, proposal, snapshot = prepared
+    old.__dict__.update(builder.__dict__)
+    changes = completed_changes(*prepared)
+    changes["players"][0]["curp"] = None
+    result = old.build(context, changes, snapshot(), proposal)
+    preview = json.loads(result.preview_bytes)
+    assert not preview["ready_to_approve"]
+    assert preview["identity_policy"] == {"phase": None, "optional_curp_kinds": []}
+
+
+@pytest.mark.parametrize(
+    "optional_kind,missing_kind", [("PLAYER", "STAFF"), ("STAFF", "PLAYER")]
+)
+def test_optional_curp_exception_is_limited_to_declared_kinds(
+    prepared, optional_kind, missing_kind
+):
+    builder = national_builder(
+        prepared, lambda p: p.update(optional_curp_kinds=[optional_kind])
+    )
+    old, context, proposal, snapshot = prepared
+    old.__dict__.update(builder.__dict__)
+    changes = completed_changes(*prepared)
+    if missing_kind == "PLAYER":
+        changes["players"][0]["curp"] = None
+    else:
+        changes["staff"][0].update(
+            presence="PRESENT",
+            first_name="Synthetic",
+            last_name="Coach",
+            birth_date="1980-01-01",
+            curp=None,
+            boxes=copy.deepcopy(changes["players"][0]["boxes"]),
+        )
+    result = old.build(context, changes, snapshot(), proposal)
+    assert not json.loads(result.preview_bytes)["ready_to_approve"]

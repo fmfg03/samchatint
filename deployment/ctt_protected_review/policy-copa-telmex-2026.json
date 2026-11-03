@@ -1,7 +1,7 @@
 {
   "workflow_id": "samchat_registration_identity_v2",
   "policy_id": "samchat_registration_identity_policy_v2",
-  "policy_version": "2.0.0",
+  "policy_version": "2.1.0",
   "effective_sal": "SAL-3",
   "field_order": [
     "full_name",
@@ -21,5 +21,15 @@
   "required_photo_kinds": [
     "PLAYER"
   ],
-  "policy_hash": "sha256:4c02da4d4981bedd60a34771236f0aa0db76c5392477413f3d03e68cc4e2e697"
+  "phase_binding": {
+    "phase": "NACIONAL",
+    "tenant_id": "samchat-prod",
+    "edition_id": "47bcc601-929a-4a8a-9005-99f10ee1aa58",
+    "manifest_sha256": "9a4bcaa149bccaafbc479ce7b70b225b6df155a97761ee56c2c079d202c3ee67"
+  },
+  "optional_curp_kinds": [
+    "PLAYER",
+    "STAFF"
+  ],
+  "policy_hash": "sha256:74ad5397752c5cfcc2fb0d144a5220b89c8d04f5745d0b2b278e897b2cf033ac"
 }

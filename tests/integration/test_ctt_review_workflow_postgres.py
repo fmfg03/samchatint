@@ -584,6 +584,11 @@ print(json.dumps({'site': str(root), 'roots': sorted(roots)}))
             assert initial["state"] == "unpublished"
             view = await client.prepare(account, scope.session_id, None, changes)
             assert view["ready_to_approve"] is True, view["blockers"]
+            if "phase_binding" in policy:
+                assert view["identity_policy"] == {
+                    "phase": "NACIONAL",
+                    "optional_curp_kinds": ["PLAYER", "STAFF"],
+                }
             challenge = await client.challenge(
                 account, scope.session_id, UUID(view["proposal_id"]), True
             )
@@ -665,6 +670,20 @@ print(json.dumps({'site': str(root), 'roots': sorted(roots)}))
             )
             == 1
         )
+        if "phase_binding" in policy:
+            for table in ("copa_telmex_players", "copa_telmex_team_staff"):
+                assert (
+                    await admin.fetchval(
+                        "SELECT count(*) FROM public." + table + " WHERE curp IS NULL"
+                    )
+                    == 2
+                )
+                assert (
+                    await admin.fetchval(
+                        "SELECT count(*) FROM public." + table + " WHERE curp = ''"
+                    )
+                    == 0
+                )
         journal_size = subprocess.check_output(
             prefix + ["stat", "-c", "%s", str(directories["bus"] / "bus.jsonl")],
             text=True,
@@ -752,6 +771,7 @@ print(json.dumps({'site': str(root), 'roots': sorted(roots)}))
     [
         "success",
         "operational_rpc",
+        "operational_rpc_national",
         "short_faculty",
         "incomplete_revision",
         "lost_issuer_reply",
@@ -784,6 +804,8 @@ def test_private_prepare_to_official_committed_session(
         AuthenticationResponse,
         AuthenticatorAssertionResponse,
     )
+
+    national = scenario == "operational_rpc_national"
 
     async def run():
         socket, database = full_pg
@@ -861,9 +883,15 @@ def test_private_prepare_to_official_committed_session(
                 for local in range(8):
                     slot, y = (page_index - 1) * 8 + local + 1, 35 + local * 78
                     name = f"Persona Apellido{slot}"
-                    curp = f"AAAA000101HDFXXX{slot:02d}"
+                    curp = (
+                        None
+                        if national and slot <= 2
+                        else f"AAAA000101HDFXXX{slot:02d}"
+                    )
                     page.insert_text(
-                        (60, y + 15), f"{name} 2000-01-01 {curp}", fontsize=9
+                        (60, y + 15),
+                        f"{name} 2000-01-01 {curp or 'CURP: no proporcionada'}",
+                        fontsize=9,
                     )
                     rng = random.Random(slot)
                     image = Image.new("RGB", (8, 8))
@@ -891,7 +919,9 @@ def test_private_prepare_to_official_committed_session(
                             "curp": curp,
                             "source_page_index": page_index,
                             "boxes": {
-                                key: box for key in ("full_name", "birth_date", "curp")
+                                key: box
+                                for key in ("full_name", "birth_date", "curp")
+                                if curp is not None or key != "curp"
                             },
                             "photo_box": {
                                 "page_index": page_index,
@@ -913,10 +943,11 @@ def test_private_prepare_to_official_committed_session(
                         }
                     )
                 staff_slot = page_index
+                staff_curp = None if national else f"BBBB800101HDFXXX0{staff_slot}"
                 page.insert_text(
                     (60, 730),
                     f"Tecnico Apellido{staff_slot} 1980-01-01 "
-                    f"BBBB800101HDFXXX0{staff_slot}",
+                    f"{staff_curp or 'CURP: no proporcionada'}",
                 )
                 box = {
                     "page_index": page_index,
@@ -933,10 +964,12 @@ def test_private_prepare_to_official_committed_session(
                         "first_name": "Tecnico",
                         "last_name": f"Apellido{staff_slot}",
                         "birth_date": "1980-01-01",
-                        "curp": f"BBBB800101HDFXXX0{staff_slot}",
+                        "curp": staff_curp,
                         "source_page_index": page_index,
                         "boxes": {
-                            key: box for key in ("full_name", "birth_date", "curp")
+                            key: box
+                            for key in ("full_name", "birth_date", "curp")
+                            if staff_curp is not None or key != "curp"
                         },
                     }
                 )
@@ -1122,10 +1155,21 @@ def test_private_prepare_to_official_committed_session(
                 required_staff_slots=[1, 2],
                 required_photo_kinds=["PLAYER"],
             )
+            if national:
+                policy.update(
+                    policy_version="2.1.0",
+                    phase_binding=dict(
+                        phase="NACIONAL",
+                        tenant_id=scope.tenant_id,
+                        edition_id=str(scope.edition_id),
+                        manifest_sha256=scope.manifest_sha256,
+                    ),
+                    optional_curp_kinds=["PLAYER", "STAFF"],
+                )
             policy["policy_hash"] = (
                 "sha256:" + hashlib.sha256(canonical(policy)).hexdigest()
             )
-            if scenario == "operational_rpc":
+            if scenario in {"operational_rpc", "operational_rpc_national"}:
                 monkeypatch.syspath_prepend(str(ROOT))
                 await operational_rpc_case(
                     socket=socket,

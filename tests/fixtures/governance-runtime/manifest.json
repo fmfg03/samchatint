@@ -14,25 +14,29 @@
     "services/samchat-registration-gate/evidence_receipt.py": "01c26f9bce235e7815fe75f6148df69a2e15f6702aaef85ab2a85f8f381c43a8",
     "services/samchat-registration-gate/registration_gate.py": "dbbcde4e06171935db61db3be99a54c09a668ca6997dd13225dcf1c651a5b9bf",
     "services/samchat-registration-gate/staff_capture_finality_gate_v2.py": "4becbe5b8421f70283b282fe7c7adf54edfdf9a117b185f476a14ee2cd5a6f65",
-    "services/samchat-registration-gate/staff_capture_gate_v2.py": "f580c9a7ac738d0ce4256486bd3495c20796f31e7104ecdc97851c5f5907c3ab",
+    "services/samchat-registration-gate/staff_capture_gate_v2.py": "afa749df613cebacf1c897c6ad3f6db0919127552a2890a609e9a40006ad2506",
     "services/samchat-registration-gate/staff_db_proof_v2.py": "5e8321aa2a837b8e25457f2bfa7d56235ae89455241f38102c8189f3065f4b1d",
     "services/samchat-registration-gate/staff_review_enrollment_v2.py": "a67c7a18f9bd321845ca92a68e112b2e224e30326732310b4575b87ed6c619bb",
     "services/samchat-registration-gate/staff_review_http_v2.py": "31bf3a27322bee8fc92c5130363807e872e70f3dc5a030a30ab973fb0c218959",
     "services/samchat-registration-gate/staff_review_issuer_v2.py": "617b2c022c8ca4d72e16bb0b8fdccf903e59f848eef41fddc835070fe843a17a",
     "services/samchat-registration-gate/staff_review_webauthn_v2.py": "92d02258c59e06796c0c0b3e013db5a3dfcfcdcdd64a11b320ccd4563073dff2",
     "services/samchat-registration-gate/tests/test_staff_capture_finality_v2.py": "65f9a48359fd5e252aeb66c59a6cf69db4397c716189be234352593f48c70dc9",
-    "services/samchat-registration-gate/tests/test_staff_capture_gate_v2.py": "1fa8e85c0583985635c3fbb50a934114f2b9c8d2c4dd916b780cd94ee64c0a6a"
+    "services/samchat-registration-gate/tests/test_staff_capture_gate_v2.py": "1fa8e85c0583985635c3fbb50a934114f2b9c8d2c4dd916b780cd94ee64c0a6a",
+    "services/samchat-registration-gate/tests/test_staff_capture_national_curp_v2.py": "d71514fa213a0caac468b1fb5ed976de36d284ee01011d85458144fc81e47d01"
   },
   "formatting_correction": "2026-10-31: remove trailing whitespace on blank lines in evidence-bus/main.py; identical Python AST; final hash records formatting only",
   "purpose": "test-only exact approved source snapshot; never production configuration",
   "schema": "ctt.ci.governance-runtime-fixture.v1",
-  "source_base_commit": "ecef0b2aa85dfea801d9146f576322bad95f984f",
-  "source_main_observed": "5e9234368c8f0cc6b8d2f30d7637f8c291ecc2ae",
+  "source_artifact": "releases/ctt-protected-review-v2-20261103",
+  "source_base_commit": "9d9dd441880d8415cc71b68bdc6527ae70789c92",
+  "source_main_observed": "c9e5230e3b6e93a8501b6b54b78a5ea0e7477aec",
   "source_repository": "https://github.com/fmfg03/zaubern",
-  "source_state": "approved candidate changes identified by exact hashes, not claimed to belong to base commit",
+  "source_runtime_commit": "c9e5230e3b6e93a8501b6b54b78a5ea0e7477aec",
+  "source_state": "Approved exact-hash snapshot; Gate matches the published national artifact at source_runtime_commit, preserved files retain original provenance, tests are explicitly inventoried",
   "test_helper_files": [
     "services/evidence-bus/tests/v2_fixtures.py",
     "services/samchat-registration-gate/tests/test_staff_capture_finality_v2.py",
-    "services/samchat-registration-gate/tests/test_staff_capture_gate_v2.py"
+    "services/samchat-registration-gate/tests/test_staff_capture_gate_v2.py",
+    "services/samchat-registration-gate/tests/test_staff_capture_national_curp_v2.py"
   ]
 }
