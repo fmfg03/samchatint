@@ -5,6 +5,17 @@ import { readFileSync } from 'node:fs';
 const { PGlite } = await import(process.argv[2]);
 const db = new PGlite();
 await db.exec(`CREATE TABLE documentos(id uuid PRIMARY KEY,tipo text,estado text,empleado_id uuid,proveedor_cliente_id uuid,beneficiario_empleado_id uuid,cuenta_gastos_id uuid,monto_solicitado numeric,monto_total numeric,currency text,torneo_id uuid,proyecto_otro text,fase text,pagado_en timestamptz,cfdi_report_id uuid); CREATE TABLE accounting_polizas(id uuid PRIMARY KEY,origen text,numero_poliza text);`);
+// Audit CHECK is owner-managed and absent from ORM-created unit fixtures.
+await db.exec(`CREATE TABLE aprobaciones(id uuid PRIMARY KEY,accion text NOT NULL,CONSTRAINT aprobaciones_accion_check CHECK (accion IN ('enviar','aprobar')));`);
+await db.exec(readFileSync('database/migrations/20261010_late_support_audit_actions.sql', 'utf8'));
+await assert.rejects(db.query(`INSERT INTO aprobaciones VALUES ('20000000-0000-0000-0000-000000000001','comprobar_anticipo_proveedor')`), /aprobaciones_accion_check/);
+const auditMigration = readFileSync('database/migrations/20261103_supplier_advance_audit_action.sql', 'utf8');
+await db.exec(auditMigration);
+await db.exec(auditMigration);
+await db.query(`INSERT INTO aprobaciones VALUES ('20000000-0000-0000-0000-000000000001','comprobar_anticipo_proveedor')`);
+await db.query(`INSERT INTO aprobaciones VALUES ('20000000-0000-0000-0000-000000000002','enviar')`);
+await assert.rejects(db.query(`INSERT INTO aprobaciones VALUES ('20000000-0000-0000-0000-000000000003','unknown_action')`), /aprobaciones_accion_check/);
+console.log('PASS: deployed audit CHECK reproduced, supplier event admitted, migration repeatable, legacy action retained and unknown action rejected.');
 const migration=readFileSync('database/migrations/20261008_supplier_advances.sql','utf8');
 await db.exec(migration); await db.exec(migration);
 const id=n=>`10000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
