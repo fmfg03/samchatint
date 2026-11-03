@@ -137,3 +137,42 @@ or approved silently.
 
 
 PR review corrections (2026-10-08): supplier advances are MXN only; creation, edits, invoice approval and bank postings fail closed without verified FX conversion. Supplier flags select supplier-transfer authorization thresholds independently of optional invoice number, urgency or free-form text. Invoice expenses are explicitly excluded from generic transfer COI exports because that path cannot represent the separate accrual/application/payment journals; those accounting events remain persisted, and a dedicated combined export is not included. One PDF upload creates one supporting attachment. New invoice submissions schedule the canonical Budget Control notification only after commit; browser replays do not schedule another notification.
+
+
+## Cent precision correction — 2026-11-03
+
+Story and technical specification approved in this session. Implementation is
+an isolated repository candidate, not a production migration or Finance UAT.
+See `docs/sprints/anticipo-proveedores-precision-001-spec.md`.
+
+Apply `database/migrations/20261103_supplier_advance_cent_precision.sql` after
+`20261008_supplier_advances.sql`. The new transaction replaces only the guard
+function: its paid-balance cap uses `round(parent.monto_solicitado, 2)`, matching
+Python `money()`/ROUND_HALF_UP for positive MXN amounts. No historical amounts,
+documents or journals are rewritten. Parent locking, active reservations,
+identity, confirmed-payment and evidence protections remain unchanged.
+
+Before any separately authorized production activation, inspect the current
+function/schema, preserve its exact definition and validate a database backup.
+Apply through the owner and verify the definition and the incident comparison
+with READ ONLY queries. Restore the saved prior function transactionally if
+rollback is required; that restores the precision defect and does not undo any
+legitimate new invoice document. Do not remove or rewrite those documents.
+
+The regression suite reproduces the previous trigger failure for the exact raw
+incident amount, then applies the new migration twice and verifies full and
+partial applications, residues on both sides of a cent, rejection of a real
+0.01 excess, and preservation of the original stored amount. The original SQL
+protection tests run against the corrected function. Four new Python cases
+verify cent balances/allocation directly without SQLite erasing the residue.
+
+Validation on an isolated checkout: 43 pytest cases passed. The SQL suite passed
+on disposable native PostgreSQL 16 using the existing PGlite-compatible test
+interface and a temporary local adapter; no production connection was used.
+Black, JavaScript syntax and diff hygiene passed. Full-file isort and flake8
+still report pre-existing issues; see the specification closeout for attribution
+and exact commands. Runtime source, API and dependencies are unchanged.
+
+Canon unchanged: this precision correction preserves the canonical write owner,
+financial limit and authority boundaries; it aligns the SQL comparison with the
+existing monetary precision rather than creating a new financial workflow.
