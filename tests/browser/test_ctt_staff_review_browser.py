@@ -437,3 +437,22 @@ def test_repeat_enrollment_without_challenge_shows_current_state(
     if status in ("EXPIRED", "REVOKED"):
         expect(panel.page.locator("[data-enrollment-status]")).to_contain_text(message)
         expect(panel.page.locator("[data-enrollment-fingerprint]")).to_have_text("")
+
+
+@pytest.mark.parametrize(
+    "phase,optional", [("NACIONAL", True), ("ESTATAL", False), (None, False)]
+)
+def test_curp_label_only_marks_trusted_national_profile_optional(
+    panel, phase, optional
+):
+    panel.state.view["identity_policy"] = {
+        "phase": phase,
+        "optional_curp_kinds": ["PLAYER", "STAFF"],
+    }
+    open_panel(panel)
+    label = "CURP (opcional en fase nacional)" if optional else "CURP"
+    expect(panel.page.get_by_label(label, exact=True)).to_have_count(3)
+    if not optional:
+        expect(
+            panel.page.get_by_label("CURP (opcional en fase nacional)", exact=True)
+        ).to_have_count(0)

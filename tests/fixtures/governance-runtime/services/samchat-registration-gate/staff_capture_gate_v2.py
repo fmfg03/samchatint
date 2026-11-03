@@ -10,7 +10,9 @@ Private evidence format: ``ctt.capture.identity-evidence.v1`` has ``members``
 in plan-player order followed by staff slots 1 and 2, and ``incident_state``
 containing a nonnegative ``blocking_incident_count``. Each member has exactly
 kind, row_id, slot, presence, source_page_index, fields and absence_geometry.
-PRESENT fields map the three configured identity fields to complete geometry;
+PRESENT fields map required identity fields to complete geometry; the pinned
+2.1.0 NACIONAL profile permits exact NULL CURP for configured person kinds
+without a CURP field or a fictitious decision. Other profiles remain strict;
 ABSENT staff has no row or fields and has explicit verified absence geometry.
 Values are always read from the reviewed rows, never from evidence parameters.
 A row with photo_path requires photo_evidence: SOURCE_RECTANGLE with geometry,
@@ -247,8 +249,38 @@ class StaffCaptureGateV2(StaffCaptureFinalityMixin):
         }
         if not required_policy_keys <= set(policy) or set(
             policy
-        ) - required_policy_keys - {"required_photo_kinds"}:
+        ) - required_policy_keys - {
+            "required_photo_kinds",
+            "phase_binding",
+            "optional_curp_kinds",
+        }:
             _deny()
+        phase_keys = {"phase_binding", "optional_curp_kinds"}
+        if phase_keys & set(policy):
+            if not phase_keys <= set(policy) or policy["policy_version"] != "2.1.0":
+                _deny()
+            phase = policy["phase_binding"]
+            kinds = policy["optional_curp_kinds"]
+            if (
+                type(phase) is not dict
+                or set(phase) != {"phase", "tenant_id", "edition_id", "manifest_sha256"}
+                or type(phase["phase"]) is not str
+                or phase["phase"] != "NACIONAL"
+                or type(phase["tenant_id"]) is not str
+                or not _SLUG.fullmatch(phase["tenant_id"])
+                or type(phase["edition_id"]) is not str
+                or str(UUID(phase["edition_id"])) != phase["edition_id"]
+                or type(phase["manifest_sha256"]) is not str
+                or not re.fullmatch(r"[0-9a-f]{64}", phase["manifest_sha256"])
+                or type(kinds) is not list
+                or not kinds
+                or any(
+                    type(kind) is not str or kind not in ("PLAYER", "STAFF")
+                    for kind in kinds
+                )
+                or kinds != sorted(set(kinds))
+            ):
+                _deny()
         photo_kinds = policy.get("required_photo_kinds", [])
         if (
             type(photo_kinds) is not list
@@ -290,6 +322,15 @@ class StaffCaptureGateV2(StaffCaptureFinalityMixin):
         ):
             _deny()
 
+    def _scope_matches_policy(self, scope):
+        phase = self._policy.get("phase_binding")
+        return phase is None or (
+            phase["phase"] == "NACIONAL"
+            and scope.tenant_id == phase["tenant_id"]
+            and str(scope.edition_id) == phase["edition_id"]
+            and scope.manifest_sha256 == phase["manifest_sha256"]
+        )
+
     def _review(
         self, scope, attempt_id, review_bytes, signed_review, issued_at, expires_at
     ):
@@ -303,6 +344,7 @@ class StaffCaptureGateV2(StaffCaptureFinalityMixin):
             or not 0 < expires_at - issued_at <= 300
             or not issued_at <= int(time.time()) < expires_at
             or scope.policy_hash != self._policy_hash
+            or not self._scope_matches_policy(scope)
             or scope.actor_role not in self._policy["allowed_roles"]
             or not hmac.compare_digest(
                 bind_review_plan(review_bytes, self._review_key),
@@ -500,13 +542,22 @@ class StaffCaptureGateV2(StaffCaptureFinalityMixin):
                     _deny()
                 self._geometry(page, member["absence_geometry"], snapshot)
             else:
+                required_fields = tuple(
+                    field
+                    for field in FIELDS
+                    if not (
+                        field == "curp"
+                        and row["curp"] is None
+                        and kind in self._policy.get("optional_curp_kinds", [])
+                    )
+                )
                 if (
                     type(fields) is not dict
-                    or set(fields) != set(FIELDS)
+                    or set(fields) != set(required_fields)
                     or member["absence_geometry"] is not None
                 ):
                     _deny("STAFF_FIELD_EVIDENCE_MISSING")
-                for field in FIELDS:
+                for field in required_fields:
                     value = (
                         " ".join(
                             str(row[name] or "").strip()
@@ -516,6 +567,8 @@ class StaffCaptureGateV2(StaffCaptureFinalityMixin):
                         else row[field]
                     )
                     if type(value) is not str or not value.strip():
+                        _deny("STAFF_FIELD_EVIDENCE_MISSING")
+                    if field == "curp" and (len(value) != 18 or not value.isalnum()):
                         _deny("STAFF_FIELD_EVIDENCE_MISSING")
                     self._geometry(page, fields[field], snapshot)
                     decision = {

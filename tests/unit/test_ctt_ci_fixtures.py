@@ -154,6 +154,22 @@ def junit(path, *, attack=None):
                     "test_private_prepare_to_official_committed_session["
                     "operational_rpc]",
                 )
+            if cohort == "test_ctt_review_workflow_postgres" and i == 1:
+                case.set(
+                    "name",
+                    "test_private_prepare_to_official_committed_session[operational_rpc_national]",
+                )
+            if attack == "missing_national" and i == 1:
+                case.set("name", "different_scenario")
+            if (
+                attack == "duplicated_national"
+                and cohort == "test_ctt_review_workflow_postgres"
+                and i == 2
+            ):
+                case.set(
+                    "name",
+                    "test_private_prepare_to_official_committed_session[operational_rpc_national]",
+                )
             if attack == "missing_operational" and i == 0:
                 case.set("name", "different_scenario")
             if attack in {"skipped", "failure", "error"} and i == 0:
@@ -164,7 +180,16 @@ def junit(path, *, attack=None):
 
 
 @pytest.mark.parametrize(
-    "attack", ["missing", "skipped", "failure", "error", "missing_operational"]
+    "attack",
+    [
+        "missing",
+        "skipped",
+        "failure",
+        "error",
+        "missing_operational",
+        "missing_national",
+        "duplicated_national",
+    ],
 )
 def test_required_acceptance_cannot_be_absent_skipped_or_failed(tmp_path, attack):
     path = tmp_path / "report.xml"

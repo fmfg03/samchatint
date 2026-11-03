@@ -653,3 +653,10 @@ ruta, nonce durable, tiempo y bytes con MAC; su respuesta liga también la
 petición exacta. No se entregan comprobantes de autoridad internos al navegador.
 Las fotografías preparadas permanecen privadas y sólo una referencia confirmada
 con finalidad permite su lectura publicada autorizada.
+
+
+### 2026-11-03 — CURP opcional en el perfil nacional del piloto
+
+Aprobación humana expresa: «aprobado», 2026-11-03, sobre la especificación y estos textos literales. Razón: corrección del requisito por fase aclarado por la persona responsable. Evidencia y alcance: `docs/roadmap/ctt-national-curp-optional-20261103.md`. Diseño autorizado; validación, publicación y despliegue requieren sus propios recibos.
+
+El perfil nacional opcional vincula tenant/edición/fase y clases de persona mediante la política fijada por bytes/hash. Builder y Gate independiente verifican la misma obligación por campo. CURP ausente se persiste NULL y no genera una decisión de verificación ficticia; el perfil estricto conserva la exigencia anterior. El scope firmado liga la política y el plan nuevo; no se reutiliza autoridad de una revisión con política anterior. Permanecen los controles de fuente, passkey, versiones, fotografía y finalidad atómica.

@@ -5,7 +5,7 @@
     const TEAM = {
         name: 'Equipo', state: 'Estado', municipality: 'Municipio', gender: 'Rama',
         category: 'Categoría', league: 'Liga', representative_name: 'Representante',
-        contact_phone: 'Teléfono de contacto', contact_email: 'Correo de contacto',
+        contact_phone: 'Teléfono de contacto (opcional)', contact_email: 'Correo de contacto (opcional)',
     };
     const VALUES = {
         first_name: 'Nombre', last_name: 'Apellidos', birth_date: 'Fecha de nacimiento', curp: 'CURP',
@@ -163,7 +163,15 @@
             if (['uncertain', 'capturing'].includes(view.capture_state) && this.attemptId) this.poll(3);
         }
 
+        optionalCurp(kind) {
+            const policy = this.view?.identity_policy;
+            const personKind = kind === 'players' ? 'PLAYER' : kind === 'staff' ? 'STAFF' : null;
+            return policy?.phase === 'NACIONAL' && Array.isArray(policy.optional_curp_kinds)
+                && policy.optional_curp_kinds.includes(personKind);
+        }
+
         input(container, label, key, value, kind, index) {
+            if (key === 'curp' && this.optionalCurp(kind)) label += ' (opcional en fase nacional)';
             const wrapper = document.createElement('label');
             wrapper.textContent = label;
             const input = document.createElement('input');
@@ -230,7 +238,7 @@
                     const keys = kind === 'staff' ? Object.keys(SOURCES) : Object.keys(SOURCES).filter(key => key !== 'absence_box');
                     for (const field of keys) {
                         const option = document.createElement('option'); option.value = this.targets.length;
-                        option.textContent = `${this.memberLabel(kind, member)} · ${SOURCES[field]}`;
+                        option.textContent = `${this.memberLabel(kind, member)} · ${SOURCES[field]}${field === 'curp' && this.optionalCurp(kind) ? ' (opcional)' : ''}`;
                         target.appendChild(option); this.targets.push({ kind, index, field });
                     }
                 }

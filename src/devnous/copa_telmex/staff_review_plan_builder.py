@@ -41,7 +41,6 @@ from .staff_photo_store import (
 )
 from .staff_review_challenge import ReviewScope, SourcePage, canonical_scope_bytes
 
-
 _FIELDS = ("full_name", "birth_date", "curp")
 _TEAM = (
     "name",
@@ -106,6 +105,42 @@ class PreparedProposal:
     capture_nonce: UUID
 
 
+def _identity_profile(policy):
+    """Validate the optional national exception independently of Gate state."""
+    binding = policy.get("phase_binding")
+    kinds = policy.get("optional_curp_kinds")
+    if "phase_binding" not in policy and "optional_curp_kinds" not in policy:
+        return None, ()
+    if (
+        policy.get("policy_version") != "2.1.0"
+        or policy.get("effective_sal") != "SAL-3"
+        or policy.get("field_order") != list(_FIELDS)
+        or type(binding) is not dict
+        or set(binding) != {"phase", "tenant_id", "edition_id", "manifest_sha256"}
+        or binding.get("phase") != "NACIONAL"
+        or type(binding.get("tenant_id")) is not str
+        or not binding["tenant_id"].strip()
+        or type(kinds) is not list
+        or not kinds
+        or any(type(k) is not str or k not in {"PLAYER", "STAFF"} for k in kinds)
+        or kinds != sorted(set(kinds))
+    ):
+        raise ValueError("invalid national identity profile")
+    try:
+        if str(UUID(binding["edition_id"])) != binding["edition_id"]:
+            raise ValueError()
+        digest = binding["manifest_sha256"]
+        if (
+            type(digest) is not str
+            or len(digest) != 64
+            or any(c not in "0123456789abcdef" for c in digest)
+        ):
+            raise ValueError()
+    except (ValueError, TypeError, AttributeError):
+        raise ValueError("invalid national identity binding") from None
+    return deepcopy(binding), tuple(kinds)
+
+
 def _materialize(model, values):
     entity = model(**values)
     result = {}
@@ -148,6 +183,9 @@ class ReviewPlanBuilder:
             or getattr(gate, "_policy_hash", None) != expected_policy_hash
         ):
             raise ValueError("pinned operational review policy required")
+        self._phase_binding, self._optional_curp_kinds = _identity_profile(
+            policy_artifact
+        )
         self._key = review_key
         self._policy = deepcopy(policy_artifact)
         self._policy_hash = expected_policy_hash
@@ -182,6 +220,11 @@ class ReviewPlanBuilder:
                     hashlib.sha256,
                 ).hexdigest()
             )
+            if self._phase_binding and any(
+                context[key] != self._phase_binding[key]
+                for key in ("tenant_id", "edition_id", "manifest_sha256")
+            ):
+                _deny()
             draft, session = context["draft"], context["session"]
             return ReviewScope(
                 tenant_id=context["tenant_id"],
@@ -461,6 +504,12 @@ class ReviewPlanBuilder:
                                 if field == "full_name"
                                 else member.get(field, "")
                             )
+                            if (
+                                field == "curp"
+                                and value in (None, "")
+                                and kind in self._optional_curp_kinds
+                            ):
+                                continue
                             if not value:
                                 raise ValueError("field missing")
                             if field == "birth_date" and (
@@ -606,6 +655,11 @@ class ReviewPlanBuilder:
                             key: member[key]
                             for key in ("first_name", "last_name", "curp")
                         }
+                        if kind in self._optional_curp_kinds and values["curp"] in (
+                            None,
+                            "",
+                        ):
+                            values["curp"] = None
                         values.update(
                             birth_date=_parse_birth_date(member["birth_date"]),
                             id=uuid5(proposal_id, f"{kind}:{index}"),
@@ -684,6 +738,10 @@ class ReviewPlanBuilder:
         )
         snapshot.verify_unchanged()
         preview = dict(
+            identity_policy={
+                "phase": "NACIONAL" if self._phase_binding else None,
+                "optional_curp_kinds": list(self._optional_curp_kinds),
+            },
             team=team,
             players=players,
             staff=staff,

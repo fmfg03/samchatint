@@ -1,0 +1,15 @@
+{
+  "schema": "ctt.national-phase-policy-provenance.v1",
+  "date": "2026-11-03",
+  "authority": "responsible user explicit business rule and specification/canon/deployment approval in conversation",
+  "rule": "CURP optional for players, director tecnico and auxiliar in the national phase",
+  "reference": "docs/roadmap/ctt-national-curp-optional-20261103.md",
+  "policy_version": "2.1.0",
+  "policy_hash": "sha256:74ad5397752c5cfcc2fb0d144a5220b89c8d04f5745d0b2b278e897b2cf033ac",
+  "previous_strict_policy": "policy-copa-telmex-2026-strict-v2.json",
+  "preserved_official_constraints_provenance": "policy-source-20261031.json",
+  "scope": "tenant, edition and admitted pilot manifest bound in immutable policy",
+  "absence": "SQL NULL; no invented or verified CURP",
+  "external_sports_eligibility_claim": false,
+  "general_SAL3_equivalence_claim": false
+}

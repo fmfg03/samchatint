@@ -494,3 +494,10 @@ Un ensayo técnico con identidades sintéticas y un autenticador virtual no
 sustituye acreditación humana, configuración productiva, despliegue o aceptación
 del piloto. La configuración permanece cerrada hasta instalar y verificar los
 servicios privados y completar el enrolamiento supervisado real.
+
+
+### 2026-11-03 — CURP opcional en el perfil nacional del piloto
+
+Aprobación humana expresa: «aprobado», 2026-11-03, sobre la especificación y estos textos literales. Razón: corrección del requisito por fase aclarado por la persona responsable. Evidencia y alcance: `docs/roadmap/ctt-national-curp-optional-20261103.md`. Diseño autorizado; validación, publicación y despliegue requieren sus propios recibos.
+
+Para la fase nacional fijada explícitamente en el perfil operativo de Copa Telmex2026, la CURP es opcional para las jugadoras, el director técnico y el auxiliar. Su ausencia se conserva como dato no proporcionado y no bloquea por sí sola la captura operativa. Una CURP aportada conserva validación y evidencia de fuente. La regla no se extiende a la fase estatal ni acredita elegibilidad externa.
