@@ -492,6 +492,24 @@
             try {
                 const start = await this.request('/staff-passkey/begin', {});
                 this.enrollmentId = start.enrollment_id;
+                const enrollmentState = String(start.status || start.state || '').toLowerCase();
+                const existingStates = {
+                    pending_operator_review: 'La credencial candidata ya está registrada. Compara su huella con el responsable para solicitar la activación.',
+                    pending_activation: 'La credencial candidata ya está registrada. Compara su huella con el responsable para solicitar la activación.',
+                    active: 'Tu passkey ya está acreditada. Se solicitará al aprobar este plan.',
+                    expired: 'El registro de passkey venció. Solicita una nueva invitación al responsable.',
+                    not_enrolled: 'El registro de passkey venció o fue revocado. Consulta con el responsable.',
+                    revoked: 'La passkey fue revocada. Consulta con el responsable.',
+                };
+                if (Object.hasOwn(existingStates, enrollmentState)) {
+                    if (['pending_operator_review', 'pending_activation', 'active'].includes(enrollmentState)) this.showPasskey(start);
+                    else {
+                        this.find('[data-enrollment-status]').textContent = existingStates[enrollmentState];
+                        this.find('[data-enrollment-fingerprint]').textContent = '';
+                    }
+                    this.message(existingStates[enrollmentState]);
+                    return;
+                }
                 const credential = await navigator.credentials.create(options(start, true));
                 const candidate = await this.request('/staff-passkey/complete', { enrollment_id: this.enrollmentId, registration: serialize(credential, true) });
                 this.showPasskey(candidate);
