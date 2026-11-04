@@ -658,6 +658,10 @@
                 <div data-review-members></div>
             </fieldset>
             <label class="ctt-review-check">
+                <input type="checkbox" data-review-team-confirm>
+                <span>He comparado los datos del equipo y confirmo los puestos propuestos como presentes. Los puestos inciertos o ausentes requieren revisión individual.</span>
+            </label>
+            <label class="ctt-review-check">
                 <input type="checkbox" data-review-confirm>
                 <span>He comparado este plan y sus fuentes y confirmo los datos y la presencia o ausencia de cada puesto.</span>
             </label>
@@ -673,7 +677,7 @@
             <select id="ctt-source-target" class="ctt-source-select" data-source-target></select>
             <label for="ctt-source-page">Página de la fuente</label>
             <select id="ctt-source-page" class="ctt-source-select" data-source-page></select>
-            <p class="ctt-review-note" data-source-help>Selecciona un dato para ver su fuente. Al corregir, arrastra sobre la página para proponer su recorte.</p>
+            <p class="ctt-review-note" data-source-help>El sistema propone las fuentes que puede verificar. Selecciona un dato para consultarlas; usa la selección manual solo para pendientes o datos incorrectos.</p>
             <div class="ctt-source-stage" data-source-stage hidden>
                 <img data-source-image alt="Página fuente de la revisión">
                 <canvas data-source-canvas aria-label="Seleccionar rectángulo de fuente"></canvas>
@@ -704,7 +708,7 @@
     <noscript><p role="alert">Esta revisión requiere JavaScript y una passkey. No se realizará ninguna captura desde este formulario.</p></noscript>
     <script type="application/json" data-review-initial>{{ staff_review_view|tojson }}</script>
 </section>
-<script src="/static/js/ctt_staff_review.js?v=1f32bbd67003aa3e" defer></script>
+<script src="/static/js/ctt_staff_review.js?v=5797f5372bddaba3" defer></script>
 {% endif %}
 <!-- protected-review-widget:end -->
 

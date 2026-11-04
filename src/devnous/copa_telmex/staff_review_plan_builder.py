@@ -10,6 +10,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import date, datetime
@@ -17,6 +18,14 @@ from io import BytesIO
 from uuid import UUID, uuid4, uuid5
 
 from PIL import Image
+
+from devnous.tournaments.core.ctt_batch_photo_alignment import (
+    extract_batch_photo,
+    parse_batch_slot,
+    prepare_batch_cards,
+    prepare_batch_page,
+    resolve_batch_card,
+)
 
 from .models import Player, Team, TeamStaff
 from .registration_review_policy import (
@@ -34,7 +43,7 @@ from .staff_capture_effect import (
 )
 from .staff_capture_executor import CaptureDenied
 from .staff_capture_geometry import verify_staff_geometry
-from .staff_capture_player_slots import resolve_player_slots
+from .staff_capture_player_slots import ResolvedPlayerSlot, resolve_player_slots
 from .staff_photo_store import (
     derive_batch_review_photo,
     derive_rectangular_review_photo,
@@ -342,19 +351,140 @@ class ReviewPlanBuilder:
             "birth_date": parsed.isoformat() if parsed else birth,
             "curp": (raw.get("curp") or "").strip().upper(),
             "source_page_index": page_index,
-            "boxes": {},
+            "boxes": deepcopy(raw.get("boxes") or {}),
+            "manual_fields": [
+                field for field in _FIELDS if field in (raw.get("boxes") or {})
+            ],
+            **{
+                key: deepcopy(raw[key])
+                for key in ("photo_box", "absence_box")
+                if key in raw
+            },
         }
 
-    def build(self, context, changes, snapshot, proposal_id):
+    @staticmethod
+    def _staff_pages(source, scope):
+        result = {}
+        for slot, role in enumerate(("director_tecnico", "auxiliar"), 1):
+            entries = [
+                item
+                for item in source.get("staff", [])
+                if type(item.get("slot")) is int and item["slot"] == slot
+            ]
+            if len(entries) != 1 or entries[0].get("role") != role:
+                continue
+            ref = entries[0].get("slot_ref")
+            match = (
+                re.fullmatch(r"page:([1-9][0-9]*):(director_tecnico|auxiliar)", ref)
+                if type(ref) is str
+                else None
+            )
+            if not match or match[2] != role:
+                continue
+            pages = [
+                page for page in scope.source_pages if page.pdf_page == int(match[1])
+            ]
+            if len(pages) == 1:
+                result[slot] = pages[0]
+        return result
+
+    def _seed_cards(self, players, staff, slots, staff_pages, pages, snapshot, cached):
+        for kind, members in (("PLAYER", players), ("STAFF", staff)):
+            for index, member in enumerate(members, 1):
+                page = pages.get(member.get("source_page_index"))
+                physical = (
+                    slots[index - 1]
+                    if kind == "PLAYER" and slots and index <= len(slots)
+                    else None
+                )
+                expected_page = staff_pages.get(index) if kind == "STAFF" else None
+                member["source_card"] = {"status": "uncertain", "box": None}
+                if page is None or (
+                    kind == "PLAYER"
+                    and (physical is None or physical.asset_id != page.asset_id)
+                    or kind == "STAFF"
+                    and page != expected_page
+                ):
+                    continue
+                if page.asset_id not in cached:
+                    with Image.open(
+                        BytesIO(snapshot.page_assets[page.asset_id])
+                    ) as image:
+                        retained = image.copy()
+                    cached[page.asset_id] = (
+                        retained,
+                        prepare_batch_cards(retained, page.page_index),
+                    )
+                image, prepared = cached[page.asset_id]
+                if prepared is None:
+                    continue
+                box = resolve_batch_card(
+                    image,
+                    page_index=page.page_index,
+                    role="player" if kind == "PLAYER" else member["role"],
+                    slot=physical.source_slot if physical else index,
+                    prepared=prepared,
+                )
+                if box is None:
+                    continue
+                box = {"page_index": page.page_index, **box}
+                try:
+                    self._geometry(box, page, snapshot)
+                except (ValueError, TypeError, KeyError):
+                    continue
+                member["source_card"] = {"status": "verified", "box": box}
+                if type(member.get("boxes")) is not dict:
+                    continue
+                for field in _FIELDS:
+                    if (
+                        field == "curp"
+                        and not member.get("curp")
+                        and kind in self._optional_curp_kinds
+                    ):
+                        continue
+                    if field not in member.get("manual_fields", []) and member[
+                        "boxes"
+                    ].get(field) in (None, {}):
+                        member["boxes"][field] = deepcopy(box)
+
+    @staticmethod
+    def _batch_photo_status(scope, snapshot, ref, cached):
+        parsed = parse_batch_slot(ref, [page.pdf_page for page in scope.source_pages])
+        if parsed is None:
+            return "error"
+        page_index, slot = parsed
+        page = next(
+            page for page in scope.source_pages if page.page_index == page_index
+        )
+        if page.asset_id not in cached:
+            with Image.open(BytesIO(snapshot.page_assets[page.asset_id])) as source:
+                image = source.convert("RGB")
+            cached[page.asset_id] = (image, prepare_batch_page(image, page_index))
+        image, prepared = cached[page.asset_id]
+        if prepared is None:
+            return "uncertain"
+        _, status = extract_batch_photo(
+            image,
+            page_index=page_index,
+            slot=slot,
+            prepared=prepared,
+        )
+        return status if status in ("missing", "uncertain") else "error"
+
+    def build(self, context, changes, snapshot, proposal_id, *, stage_photos=True):
         """Prepare exact bytes, or a blocked observation without executable rows."""
         try:
-            return self._build(context, changes, snapshot, proposal_id)
+            if type(stage_photos) is not bool:
+                _deny()
+            return self._build(
+                context, changes, snapshot, proposal_id, stage_photos=stage_photos
+            )
         except CaptureDenied:
             raise
         except Exception:
             _deny()
 
-    def _build(self, context, changes, snapshot, proposal_id):
+    def _build(self, context, changes, snapshot, proposal_id, *, stage_photos):
         scope = self.initial_scope(context, proposal_id)
         snapshot.verify_unchanged()
         if snapshot.scope_bytes != canonical_scope_bytes(scope):
@@ -369,21 +499,69 @@ class ReviewPlanBuilder:
         previous = context.get("previous_preview")
         blockers = []
 
-        def block(code, message):
-            item = {"code": code, "message": message}
+        def block(
+            code, message, *, kind="TEAM", slot=None, field=None, page_index=None
+        ):
+            item = {
+                "code": code,
+                "message": message,
+                "kind": kind,
+                "slot": slot,
+                "field": field,
+                "navigation_target": {
+                    "kind": kind,
+                    "slot": slot,
+                    "field": field,
+                    "source_page_index": (
+                        page_index
+                        if type(page_index) is int and page_index > 0
+                        else None
+                    ),
+                },
+            }
             if item not in blockers:
                 blockers.append(item)
 
-        if type(changes) is not dict or set(changes) - {"team", "players", "staff"}:
+        if type(changes) is not dict or set(changes) - {
+            "team",
+            "players",
+            "staff",
+            "confirm_present_staff",
+        }:
+            _deny()
+        if (
+            "confirm_present_staff" in changes
+            and type(changes["confirm_present_staff"]) is not bool
+        ):
             _deny()
         physical = source.get("players") or []
+        staff_pages = self._staff_pages(source, scope)
         refs = [p.get("slot_ref") for p in physical]
-        slots = None
+        slots: tuple[ResolvedPlayerSlot | None, ...] | None = None
         try:
             slots = resolve_player_slots(physical, scope)
         except CaptureDenied:
             block(
                 "PLAYER_SOURCE_MISSING", "Falta la referencia física de algún jugador."
+            )
+            # Keep valid, unique physical references visible for review while
+            # the complete resolver still blocks any executable plan.
+            previews: list[ResolvedPlayerSlot | None] = []
+            for player in physical:
+                try:
+                    previews.append(resolve_player_slots([player], scope)[0])
+                except CaptureDenied:
+                    previews.append(None)
+            identities = [
+                (item.asset_id, item.source_slot) if item else None for item in previews
+            ]
+            slots = tuple(
+                (
+                    item
+                    if item and identities.count((item.asset_id, item.source_slot)) == 1
+                    else None
+                )
+                for item in previews
             )
         if len(candidate.get("players") or []) != len(physical):
             block(
@@ -393,11 +571,12 @@ class ReviewPlanBuilder:
         players = []
         for index, raw in enumerate(candidate.get("players") or [], 1):
             page_index = 0
-            if slots and index <= len(slots):
+            resolved = slots[index - 1] if slots and index <= len(slots) else None
+            if resolved is not None:
                 page_index = next(
                     p.page_index
                     for p in scope.source_pages
-                    if p.asset_id == slots[index - 1].asset_id
+                    if p.asset_id == resolved.asset_id
                 )
             players.append(self._initial_member(raw, index, page_index))
         staff = []
@@ -406,14 +585,98 @@ class ReviewPlanBuilder:
                 (s for s in candidate.get("staff", []) if s.get("slot") == slot), {}
             )
             member = self._initial_member(
-                staff_raw, slot, staff_raw.get("source_page_index", 0)
+                staff_raw,
+                slot,
+                staff_raw.get("source_page_index")
+                or (staff_pages[slot].page_index if slot in staff_pages else 0),
             )
-            member.update(role=role, presence="UNCERTAIN", presence_confirmed=False)
+            declared = staff_raw.get("presence")
+            declared = (
+                declared.upper()
+                if type(declared) is str
+                and declared
+                in ("present", "absent", "uncertain", "PRESENT", "ABSENT", "UNCERTAIN")
+                else None
+            )
+            presence = declared if declared in ("ABSENT", "UNCERTAIN") else "UNCERTAIN"
+            original_staff: dict = next(
+                (item for item in source.get("staff", []) if item.get("slot") == slot),
+                {},
+            )
+            if (
+                declared == "PRESENT"
+                and original_staff.get("presence") in ("PRESENT", "present")
+                and member["first_name"]
+                and member["birth_date"]
+            ):
+                presence = "PRESENT"
+            member.update(role=role, presence=presence, presence_confirmed=False)
             staff.append(member)
         team = {key: (candidate.get("team") or {}).get(key) or "" for key in _TEAM}
         if previous:
             team = deepcopy(previous["team"])
             players, staff = deepcopy(previous["players"]), deepcopy(previous["staff"])
+        source_binding = _sha(
+            _canonical(
+                {
+                    "manifest": scope.manifest_sha256,
+                    "pdf": scope.pdf_sha256,
+                    "pages": [page.image_sha256 for page in scope.source_pages],
+                }
+            )
+        )
+        source_changed = bool(
+            previous and previous.get("source_binding") != source_binding
+        )
+        if source_changed:
+            for kind, members in (("PLAYER", players), ("STAFF", staff)):
+                for member in members:
+                    old_card = member.get("source_card", {}).get("box")
+                    if type(member.get("boxes")) is dict:
+                        for field in _FIELDS:
+                            if (
+                                field not in member.get("manual_fields", [])
+                                and old_card
+                                and member["boxes"].get(field) == old_card
+                            ):
+                                member["boxes"].pop(field)
+                    if kind == "STAFF":
+                        member["presence_confirmed"] = False
+                    block(
+                        "SOURCE_CHANGED",
+                        "La fuente cambió; contrasta nuevamente esta persona.",
+                        kind=kind,
+                        slot=member["slot"],
+                        field="source_page_index",
+                        page_index=member.get("source_page_index"),
+                    )
+        pages = {page.page_index: page for page in scope.source_pages}
+        card_cache: dict = {}
+        self._seed_cards(
+            players, staff, slots, staff_pages, pages, snapshot, card_cache
+        )
+        if not previous:
+            for member in staff:
+                if (
+                    member["presence"] == "PRESENT"
+                    and member["source_card"]["status"] != "verified"
+                ):
+                    member["presence"] = "UNCERTAIN"
+        for member in staff:
+            original: dict = next(
+                (
+                    item
+                    for item in source.get("staff", [])
+                    if item.get("slot") == member["slot"]
+                ),
+                {},
+            )
+            member["presence_proposed"] = bool(
+                member.get("presence") == "PRESENT"
+                and original.get("presence") in ("PRESENT", "present")
+                and member["source_card"]["status"] == "verified"
+            )
+        baseline = deepcopy(staff)
         if "team" in changes:
             if type(changes["team"]) is not dict or set(changes["team"]) - set(_TEAM):
                 _deny()
@@ -435,7 +698,70 @@ class ReviewPlanBuilder:
             for member, update in zip(members, updates):
                 if type(update) is not dict or set(update) - set(_MEMBER) - {"slot"}:
                     _deny()
+                before = {
+                    key: member.get(key)
+                    for key in _MEMBER
+                    if key != "presence_confirmed"
+                }
+                if "boxes" in update and type(update["boxes"]) is dict:
+                    manual = set(member.get("manual_fields", []))
+                    for field in _FIELDS:
+                        if (member.get("boxes") or {}).get(field) != update[
+                            "boxes"
+                        ].get(field):
+                            manual.add(field)
+                    member["manual_fields"] = sorted(manual)
                 member.update(deepcopy(update))
+                after = {
+                    key: member.get(key)
+                    for key in _MEMBER
+                    if key != "presence_confirmed"
+                }
+                if (
+                    kind == "staff"
+                    and before != after
+                    and baseline[member["slot"] - 1].get("presence_confirmed") is True
+                ):
+                    member["presence_confirmed"] = False
+        if changes.get("confirm_present_staff") is True:
+            for before, member in zip(baseline, staff):
+                unchanged = all(
+                    before.get(key) == member.get(key)
+                    for key in _MEMBER
+                    if key != "presence_confirmed"
+                )
+                if member.get("presence") == "PRESENT":
+                    eligible = (
+                        before.get("presence") == "PRESENT"
+                        and before["presence_proposed"] is True
+                    )
+                    member["presence_confirmed"] = unchanged and (
+                        before.get("presence_confirmed") is True or eligible
+                    )
+                elif member.get("presence") == "UNCERTAIN":
+                    member["presence_confirmed"] = False
+        if source_changed:
+            for member in staff:
+                member["presence_confirmed"] = False
+        self._seed_cards(
+            players, staff, slots, staff_pages, pages, snapshot, card_cache
+        )
+        for member in staff:
+            original = next(
+                (
+                    item
+                    for item in source.get("staff", [])
+                    if item.get("slot") == member["slot"]
+                ),
+                {},
+            )
+            member["presence_proposed"] = bool(
+                member.get("presence") == "PRESENT"
+                and original.get("presence") in ("PRESENT", "present")
+                and member["source_card"]["status"] == "verified"
+                and member.get("first_name")
+                and member.get("birth_date")
+            )
         if not team.get("name", "").strip():
             block("TEAM_NAME_MISSING", "Falta el nombre del equipo.")
         if (
@@ -454,18 +780,51 @@ class ReviewPlanBuilder:
             )
         pages = {p.page_index: p for p in scope.source_pages}
         evidence_members, prepared_photos, photo_artifacts = [], {}, {}
+        photo_status_cache: dict = {}
         for kind, members in (("PLAYER", players), ("STAFF", staff)):
             for index, member in enumerate(members, 1):
                 member.pop("photo_preview", None)
+
+                def member_block(code, message, field=None):
+                    block(
+                        code,
+                        message,
+                        kind=kind,
+                        slot=index,
+                        field=field,
+                        page_index=member.get("source_page_index"),
+                    )
+
                 presence = "PRESENT" if kind == "PLAYER" else member.get("presence")
+                member["photo_status"] = (
+                    "missing"
+                    if presence == "PRESENT"
+                    and kind in self._policy.get("required_photo_kinds", [])
+                    else "not_required"
+                )
                 page_index = member.get("source_page_index")
                 page = pages.get(page_index) if type(page_index) is int else None
-                if kind == "PLAYER" and slots and index <= len(slots):
-                    if not page or page.asset_id != slots[index - 1].asset_id:
-                        block(
+                resolved = slots[index - 1] if slots and index <= len(slots) else None
+                if kind == "PLAYER":
+                    if resolved is None:
+                        member_block(
+                            "PLAYER_SOURCE_MISSING",
+                            "Corrige la referencia física de este jugador en la fuente "
+                            "o el manifiesto; debe ser válida y única.",
+                            "source_page_index",
+                        )
+                    elif not page or page.asset_id != resolved.asset_id:
+                        member_block(
                             "PLAYER_SOURCE_MISMATCH",
                             "La página debe coincidir con el espacio físico.",
                         )
+                if kind == "STAFF" and page != staff_pages.get(index):
+                    member_block(
+                        "STAFF_SOURCE_MISMATCH",
+                        "La página y el puesto deben coincidir "
+                        "con su referencia física.",
+                        "source_page_index",
+                    )
                 row_id = (
                     str(uuid5(proposal_id, f"{kind}:{index}"))
                     if presence == "PRESENT"
@@ -481,62 +840,79 @@ class ReviewPlanBuilder:
                     absence_geometry=None,
                 )
                 if kind == "STAFF" and member.get("presence_confirmed") is not True:
-                    block(
+                    member_block(
                         "STAFF_CONFIRMATION_REQUIRED",
                         "Confirma presencia o ausencia del cuerpo técnico.",
                     )
-                try:
-                    if page is None:
-                        raise ValueError("page missing")
-                    if presence == "ABSENT" and kind == "STAFF":
+                if page is None:
+                    member_block(
+                        "FIELD_EVIDENCE_REQUIRED",
+                        "Falta una página original válida.",
+                        "source_page_index",
+                    )
+                elif presence == "ABSENT" and kind == "STAFF":
+                    try:
                         evidence["absence_geometry"] = self._geometry(
                             member.get("absence_box"), page, snapshot
                         )
-                    elif presence == "PRESENT":
-                        for field in _FIELDS:
-                            value = (
-                                " ".join(
-                                    [
-                                        member.get("first_name", ""),
-                                        member.get("last_name", ""),
-                                    ]
-                                ).strip()
-                                if field == "full_name"
-                                else member.get(field, "")
-                            )
-                            if (
-                                field == "curp"
-                                and value in (None, "")
-                                and kind in self._optional_curp_kinds
-                            ):
-                                continue
+                    except (ValueError, KeyError, TypeError):
+                        member_block(
+                            "FIELD_EVIDENCE_REQUIRED",
+                            "Señala y contrasta la ausencia en su ficha original.",
+                            "absence_box",
+                        )
+                elif presence == "PRESENT":
+                    for field in _FIELDS:
+                        value = (
+                            " ".join(
+                                [
+                                    member.get("first_name", ""),
+                                    member.get("last_name", ""),
+                                ]
+                            ).strip()
+                            if field == "full_name"
+                            else member.get(field, "")
+                        )
+                        if (
+                            field == "curp"
+                            and value in (None, "")
+                            and kind in self._optional_curp_kinds
+                        ):
+                            continue
+                        try:
                             if not value:
-                                raise ValueError("field missing")
+                                raise ValueError("missing")
                             if field == "birth_date" and (
                                 _birth_date_has_two_digit_year(_policy_date(value))
                                 or not _parse_birth_date(value)
                             ):
-                                raise ValueError("date missing")
+                                raise ValueError("invalid date")
                             if field == "curp" and (
                                 len(value) != 18 or not value.isalnum()
                             ):
-                                raise ValueError("curp missing")
+                                raise ValueError("invalid curp")
                             evidence["fields"][field] = self._geometry(
                                 member.get("boxes", {}).get(field), page, snapshot
                             )
-                    else:
-                        raise ValueError("presence unknown")
-                except (ValueError, KeyError, TypeError):
-                    block(
+                        except (ValueError, KeyError, TypeError):
+                            member_block(
+                                "FIELD_EVIDENCE_REQUIRED",
+                                "Falta el dato o una fuente original válida "
+                                "para este campo.",
+                                field,
+                            )
+                else:
+                    member_block(
                         "FIELD_EVIDENCE_REQUIRED",
-                        "Completa los campos y sus recortes en la página original.",
+                        "Resuelve la presencia del integrante antes de confirmar.",
+                        "presence",
                     )
                 if (
                     kind == "STAFF"
                     and index in self._policy.get("required_staff_slots", [])
                     and presence != "PRESENT"
                 ):
-                    block(
+                    member_block(
                         "STAFF_REQUIRED",
                         "La política requiere este integrante del cuerpo técnico.",
                     )
@@ -557,7 +933,11 @@ class ReviewPlanBuilder:
                                 "mode": "SOURCE_RECTANGLE",
                                 "geometry": geometry,
                             }
-                        elif kind == "PLAYER" and index <= len(refs):
+                        elif (
+                            kind == "PLAYER"
+                            and resolved is not None
+                            and index <= len(refs)
+                        ):
                             photo = derive_batch_review_photo(snapshot, refs[index - 1])
                             photo_evidence = {
                                 "mode": "BATCH_PLAYER_SLOT",
@@ -566,7 +946,20 @@ class ReviewPlanBuilder:
                         else:
                             photo = None
                         if photo:
-                            self._photos.stage(photo)
+                            member["photo_status"] = "photo"
+                            try:
+                                if stage_photos:
+                                    self._photos.stage(photo)
+                            except Exception:
+                                member["photo_status"] = "error"
+                                member_block(
+                                    "PHOTO_STORAGE_FAILED",
+                                    "No se pudo guardar la foto derivada. "
+                                    "Reintenta sin cambiar el recorte.",
+                                    "photo",
+                                )
+                                evidence_members.append(evidence)
+                                continue
                             prepared_photos[(kind, index)] = photo
                             evidence["photo_evidence"] = photo_evidence
                             member["photo_preview"] = (
@@ -580,18 +973,49 @@ class ReviewPlanBuilder:
                                     photo_ahash=photo.ahash,
                                 )
                         elif kind in self._policy.get("required_photo_kinds", []):
-                            block(
+                            member_block(
                                 "PHOTO_REQUIRED",
                                 "Falta una fotografía derivada del PDF.",
+                                "photo",
                             )
                     except (CaptureDenied, ValueError, KeyError, TypeError):
+                        status = "error"
+                        if (
+                            kind == "PLAYER"
+                            and not member.get("photo_box")
+                            and index <= len(refs)
+                        ):
+                            try:
+                                status = self._batch_photo_status(
+                                    scope, snapshot, refs[index - 1], photo_status_cache
+                                )
+                            except Exception:
+                                status = "error"
+                        member["photo_status"] = (
+                            status
+                            if member.get("photo_box")
+                            or kind in self._policy.get("required_photo_kinds", [])
+                            else "not_required"
+                        )
                         if member.get("photo_box") or kind in self._policy.get(
                             "required_photo_kinds", []
                         ):
-                            block(
-                                "PHOTO_SOURCE_INVALID",
-                                "Revisa el recorte de fotografía en la fuente.",
-                            )
+                            code, message = {
+                                "missing": (
+                                    "PHOTO_MISSING",
+                                    "No se detectó una foto en este espacio; "
+                                    "contrasta la fuente.",
+                                ),
+                                "uncertain": (
+                                    "PHOTO_UNCERTAIN",
+                                    "La foto de este espacio requiere revisión.",
+                                ),
+                                "error": (
+                                    "PHOTO_SOURCE_INVALID",
+                                    "No se pudo derivar la foto de la fuente original.",
+                                ),
+                            }[status]
+                            member_block(code, message, "photo")
                 evidence_members.append(evidence)
         policy_players = []
         raw_players = candidate.get("players") or []
@@ -738,6 +1162,7 @@ class ReviewPlanBuilder:
         )
         snapshot.verify_unchanged()
         preview = dict(
+            source_binding=source_binding,
             identity_policy={
                 "phase": "NACIONAL" if self._phase_binding else None,
                 "optional_curp_kinds": list(self._optional_curp_kinds),
