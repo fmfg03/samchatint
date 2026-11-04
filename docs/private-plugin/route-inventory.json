@@ -3568,11 +3568,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "5567e2749928",
+      "id": "ebb237b93aa7",
       "source": "src/devnous/copa_telmex/staff_review_routes.py",
-      "line": 424,
+      "line": 444,
       "handler": "view",
-      "source_sha256": "a7235273b1ef28c37629a85eeaa1dc4bc6c461276a84352957b1782978d18ca7",
+      "source_sha256": "90456ae716200e53755bf2797063f85888be90b728a55edd8af5d0148bdd4554",
       "method": "GET",
       "paths": [
         "/api/registration-review/{session_id}/staff-approval"
@@ -3600,7 +3600,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/copa_telmex/staff_review_routes.py:view",
-      "proposed_tool": "registration_view_get_5567e2",
+      "proposed_tool": "registration_view_get_ebb237",
       "scope_proposal": "registration:read; never grants business authority",
       "object_parameters": [
         "session_id"
@@ -3618,11 +3618,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "988b6d615574",
+      "id": "abf062331340",
       "source": "src/devnous/copa_telmex/staff_review_routes.py",
-      "line": 432,
+      "line": 452,
       "handler": "status",
-      "source_sha256": "a7235273b1ef28c37629a85eeaa1dc4bc6c461276a84352957b1782978d18ca7",
+      "source_sha256": "90456ae716200e53755bf2797063f85888be90b728a55edd8af5d0148bdd4554",
       "method": "GET",
       "paths": [
         "/api/registration-review/{session_id}/staff-approval/status"
@@ -3650,7 +3650,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/copa_telmex/staff_review_routes.py:status",
-      "proposed_tool": "registration_status_get_988b6d",
+      "proposed_tool": "registration_status_get_abf062",
       "scope_proposal": "registration:read; never grants business authority",
       "object_parameters": [
         "session_id",
@@ -3669,11 +3669,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "6279631f7ed0",
+      "id": "f538140a3364",
       "source": "src/devnous/copa_telmex/staff_review_routes.py",
-      "line": 445,
+      "line": 465,
       "handler": "source",
-      "source_sha256": "a7235273b1ef28c37629a85eeaa1dc4bc6c461276a84352957b1782978d18ca7",
+      "source_sha256": "90456ae716200e53755bf2797063f85888be90b728a55edd8af5d0148bdd4554",
       "method": "GET",
       "paths": [
         "/api/registration-review/{session_id}/staff-approval/source/{proposal_id}/{page_index}"
@@ -3701,7 +3701,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/copa_telmex/staff_review_routes.py:source",
-      "proposed_tool": "registration_source_get_627963",
+      "proposed_tool": "registration_source_get_f53814",
       "scope_proposal": "registration:read; never grants business authority",
       "object_parameters": [
         "session_id",
@@ -3721,11 +3721,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "c77343dff69f",
+      "id": "ca2cfc0e63a2",
       "source": "src/devnous/copa_telmex/staff_review_routes.py",
-      "line": 469,
+      "line": 489,
       "handler": "challenge",
-      "source_sha256": "a7235273b1ef28c37629a85eeaa1dc4bc6c461276a84352957b1782978d18ca7",
+      "source_sha256": "90456ae716200e53755bf2797063f85888be90b728a55edd8af5d0148bdd4554",
       "method": "POST",
       "paths": [
         "/api/registration-review/{session_id}/staff-approval/challenge"
@@ -3753,7 +3753,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/copa_telmex/staff_review_routes.py:challenge",
-      "proposed_tool": "registration_challenge_post_c77343",
+      "proposed_tool": "registration_challenge_post_ca2cfc",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "session_id"
@@ -3774,11 +3774,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "394d71d9746f",
+      "id": "86403d64ec73",
       "source": "src/devnous/copa_telmex/staff_review_routes.py",
-      "line": 489,
+      "line": 509,
       "handler": "assertion",
-      "source_sha256": "a7235273b1ef28c37629a85eeaa1dc4bc6c461276a84352957b1782978d18ca7",
+      "source_sha256": "90456ae716200e53755bf2797063f85888be90b728a55edd8af5d0148bdd4554",
       "method": "POST",
       "paths": [
         "/api/registration-review/{session_id}/staff-approval/assertion"
@@ -3806,7 +3806,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/copa_telmex/staff_review_routes.py:assertion",
-      "proposed_tool": "registration_assertion_post_394d71",
+      "proposed_tool": "registration_assertion_post_86403d",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "session_id"
@@ -3827,11 +3827,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "c3760a885a8b",
+      "id": "d433e24f1fd1",
       "source": "src/devnous/copa_telmex/staff_review_routes.py",
-      "line": 518,
+      "line": 538,
       "handler": "enrollment_begin",
-      "source_sha256": "a7235273b1ef28c37629a85eeaa1dc4bc6c461276a84352957b1782978d18ca7",
+      "source_sha256": "90456ae716200e53755bf2797063f85888be90b728a55edd8af5d0148bdd4554",
       "method": "POST",
       "paths": [
         "/api/registration-review/{session_id}/staff-passkey/begin"
@@ -3859,7 +3859,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/copa_telmex/staff_review_routes.py:enrollment_begin",
-      "proposed_tool": "registration_enrollment_begin_post_c3760a",
+      "proposed_tool": "registration_enrollment_begin_post_d433e2",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "session_id"
@@ -3880,11 +3880,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "3c62289aec95",
+      "id": "348ef72e996b",
       "source": "src/devnous/copa_telmex/staff_review_routes.py",
-      "line": 531,
+      "line": 551,
       "handler": "enrollment_complete",
-      "source_sha256": "a7235273b1ef28c37629a85eeaa1dc4bc6c461276a84352957b1782978d18ca7",
+      "source_sha256": "90456ae716200e53755bf2797063f85888be90b728a55edd8af5d0148bdd4554",
       "method": "POST",
       "paths": [
         "/api/registration-review/{session_id}/staff-passkey/complete"
@@ -3912,7 +3912,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/copa_telmex/staff_review_routes.py:enrollment_complete",
-      "proposed_tool": "registration_enrollment_complete_post_3c6228",
+      "proposed_tool": "registration_enrollment_complete_post_348ef7",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "session_id"
@@ -3933,11 +3933,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "0421b5e8e7c4",
+      "id": "df5a4b822f14",
       "source": "src/devnous/copa_telmex/staff_review_routes.py",
-      "line": 554,
+      "line": 574,
       "handler": "enrollment_status",
-      "source_sha256": "a7235273b1ef28c37629a85eeaa1dc4bc6c461276a84352957b1782978d18ca7",
+      "source_sha256": "90456ae716200e53755bf2797063f85888be90b728a55edd8af5d0148bdd4554",
       "method": "POST",
       "paths": [
         "/api/registration-review/{session_id}/staff-passkey/status"
@@ -3965,7 +3965,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/copa_telmex/staff_review_routes.py:enrollment_status",
-      "proposed_tool": "registration_enrollment_status_post_0421b5",
+      "proposed_tool": "registration_enrollment_status_post_df5a4b",
       "scope_proposal": "registration:write; never grants business authority",
       "object_parameters": [
         "session_id"
