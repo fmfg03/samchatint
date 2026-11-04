@@ -76,7 +76,14 @@ def prepared(tmp_path, monkeypatch):
         )
         for i in range(1, 17)
     ]
-    extraction = dict(team={"name": "Synthetic"}, players=players, staff=[])
+    extraction = dict(
+        team={"name": "Synthetic"},
+        players=players,
+        staff=[
+            dict(slot=slot, role=role, slot_ref=f"page:1:{role}", presence="UNCERTAIN")
+            for slot, role in enumerate(("director_tecnico", "auxiliar"), 1)
+        ],
+    )
     context = dict(
         tenant_id="synthetic",
         roster_slug="sample",
@@ -146,9 +153,23 @@ def completed_changes(builder, context, proposal, snapshot):
             field: dict(page_index=page, x=10, y=10, width=200, height=100)
             for field in ("full_name", "birth_date", "curp")
         }
-        player.pop("photo_preview", None)
+        for key in (
+            "photo_preview",
+            "photo_status",
+            "source_card",
+            "manual_fields",
+            "presence_proposed",
+        ):
+            player.pop(key, None)
     for staff in changes["staff"]:
         staff.pop("role")
+        for key in (
+            "photo_status",
+            "source_card",
+            "manual_fields",
+            "presence_proposed",
+        ):
+            staff.pop(key, None)
         staff.update(
             presence="ABSENT",
             presence_confirmed=True,
@@ -595,3 +616,471 @@ def test_optional_curp_exception_is_limited_to_declared_kinds(
         )
     result = old.build(context, changes, snapshot(), proposal)
     assert not json.loads(result.preview_bytes)["ready_to_approve"]
+
+
+@pytest.fixture
+def automatic(prepared):
+    """Real original-grid measurements, retaining source values without OCR."""
+    from dataclasses import replace
+    from test_ctt_batch_photo_alignment import _page
+
+    builder, context, proposal, old_snapshot = prepared
+    raw_pages = []
+    for item in context["source_pages"]:
+        stream = BytesIO()
+        _page(back=item["page_index"] == 2).save(stream, "PNG")
+        raw_pages.append(stream.getvalue())
+        item.update(
+            image_sha256="sha256:" + hashlib.sha256(stream.getvalue()).hexdigest(),
+            width=612,
+            height=792,
+        )
+    for index, staff in enumerate(context["draft"]["extraction"]["staff"]):
+        staff.update(
+            presence="present",
+            first_name=f"Tecnico{index}",
+            last_name="Literal",
+            birth_date="1980-01-01",
+            curp=f"ABCD800101HDFRRN{index:02d}",
+        )
+
+    def snapshot(proposal_id=proposal):
+        original = old_snapshot(proposal_id)
+        scope = builder.initial_scope(context, proposal_id)
+        return replace(
+            original,
+            page_assets=MappingProxyType(
+                {page.asset_id: raw for page, raw in zip(scope.source_pages, raw_pages)}
+            ),
+        )
+
+    return builder, context, proposal, snapshot
+
+
+def test_verified_cards_seed_every_field_without_manual_boxes_or_confirmation(
+    automatic,
+):
+    builder, context, proposal, snapshot = automatic
+    original = copy.deepcopy(context["draft"]["extraction"])
+    result = builder.build(context, {}, snapshot(), proposal)
+    preview = json.loads(result.preview_bytes)
+    assert context["draft"]["extraction"] == original
+    assert all(
+        item["source_card"]["status"] == "verified"
+        for item in preview["players"] + preview["staff"]
+    )
+    assert all(
+        item["presence"] == "PRESENT"
+        and item["presence_proposed"]
+        and not item["presence_confirmed"]
+        for item in preview["staff"]
+    )
+    assert {item["code"] for item in preview["blockers"]} == {
+        "STAFF_CONFIRMATION_REQUIRED"
+    }
+    first = preview["players"][0]
+    assert first["first_name"] == "Synthetic"
+    assert first["birth_date"] == "2000-01-01"
+    assert (
+        first["boxes"]["full_name"]
+        == first["boxes"]["birth_date"]
+        == first["boxes"]["curp"]
+    )
+    context["previous_preview"] = preview
+    confirmed = builder.build(
+        context, {"confirm_present_staff": True}, snapshot(), proposal
+    )
+    assert json.loads(confirmed.preview_bytes)["ready_to_approve"]
+    evidence = json.loads(confirmed.evidence_bytes)["members"]
+    assert all(
+        member["fields"]["full_name"]["effective_pixels"] >= 12000
+        for member in evidence
+    )
+    assert all(
+        member["fields"]["full_name"]["coordinate_frame"] == "ORIGINAL"
+        for member in evidence
+    )
+
+
+@pytest.mark.parametrize("value", [1, "true", None, [], {}])
+def test_team_confirmation_requires_literal_boolean(automatic, value):
+    builder, context, proposal, snapshot = automatic
+    with pytest.raises(CaptureDenied):
+        builder.build(context, {"confirm_present_staff": value}, snapshot(), proposal)
+
+
+def test_manual_rectangle_and_literal_edit_survive_auto_preparation(automatic):
+    builder, context, proposal, snapshot = automatic
+    first = builder.build(context, {}, snapshot(), proposal)
+    context["previous_preview"] = json.loads(first.preview_bytes)
+    players = [
+        {"slot": item["slot"]} for item in context["previous_preview"]["players"]
+    ]
+    manual = dict(page_index=1, x=50, y=335, width=240, height=70)
+    players[0].update(first_name="  Nombre literal  ", boxes={"full_name": manual})
+    edited = builder.build(context, {"players": players}, snapshot(), proposal)
+    preview = json.loads(edited.preview_bytes)
+    assert preview["players"][0]["first_name"] == "  Nombre literal  "
+    assert preview["players"][0]["boxes"]["full_name"] == manual
+    assert preview["players"][0]["boxes"].get("birth_date") is None
+    context["previous_preview"] = preview
+    again = builder.build(context, {}, snapshot(), proposal)
+    assert json.loads(again.preview_bytes)["players"][0] == preview["players"][0]
+
+
+def test_manual_clear_remains_missing_after_prepare_and_next_prepare(automatic):
+    builder, context, proposal, snapshot = automatic
+    first = builder.build(context, {}, snapshot(), proposal)
+    context["previous_preview"] = json.loads(first.preview_bytes)
+    players = [
+        {"slot": item["slot"]} for item in context["previous_preview"]["players"]
+    ]
+    players[0]["boxes"] = {}
+    cleared = builder.build(context, {"players": players}, snapshot(), proposal)
+    preview = json.loads(cleared.preview_bytes)
+    assert preview["players"][0]["boxes"] == {}
+    assert preview["players"][0]["manual_fields"] == ["birth_date", "curp", "full_name"]
+    context["previous_preview"] = preview
+    again = json.loads(builder.build(context, {}, snapshot(), proposal).preview_bytes)
+    assert again["players"][0]["boxes"] == {}
+    failures = [
+        item
+        for item in again["blockers"]
+        if item["kind"] == "PLAYER" and item["slot"] == 1
+    ]
+    assert {item["field"] for item in failures} == {"full_name", "birth_date", "curp"}
+    assert all(item["navigation_target"]["source_page_index"] == 1 for item in failures)
+
+
+@pytest.mark.parametrize("state", ["UNCERTAIN", "ABSENT", None])
+def test_mutable_staff_present_cannot_replace_immutable_uncertainty(automatic, state):
+    builder, context, proposal, snapshot = automatic
+    original = context["draft"]["extraction"]
+    context["draft"]["review_edits"] = copy.deepcopy(original)
+    original["staff"][0]["presence"] = state
+    context["draft"]["review_edits"]["staff"][0]["presence"] = "PRESENT"
+    result = builder.build(
+        context, {"confirm_present_staff": True}, snapshot(), proposal
+    )
+    member = json.loads(result.preview_bytes)["staff"][0]
+    assert member["presence"] == "UNCERTAIN" and not member["presence_confirmed"]
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "page:2:director_tecnico",
+        "page:1:auxiliar",
+        "director_tecnico",
+        "page:99:director_tecnico",
+    ],
+)
+def test_staff_automatic_presence_requires_exact_physical_role_reference(
+    automatic, reference
+):
+    builder, context, proposal, snapshot = automatic
+    context["draft"]["extraction"]["staff"][0]["slot_ref"] = reference
+    result = builder.build(
+        context, {"confirm_present_staff": True}, snapshot(), proposal
+    )
+    member = json.loads(result.preview_bytes)["staff"][0]
+    assert member["presence"] == "UNCERTAIN" and not member["presence_confirmed"]
+    assert member["source_card"]["status"] == "uncertain"
+
+
+def test_edit_of_confirmed_staff_invalidates_confirmation_and_global_cannot_reconfirm(
+    automatic,
+):
+    builder, context, proposal, snapshot = automatic
+    first = builder.build(
+        context, {"confirm_present_staff": True}, snapshot(), proposal
+    )
+    context["previous_preview"] = json.loads(first.preview_bytes)
+    changes = {
+        "staff": [{"slot": 1, "first_name": "Correction"}, {"slot": 2}],
+        "confirm_present_staff": True,
+    }
+    result = json.loads(
+        builder.build(context, changes, snapshot(), proposal).preview_bytes
+    )
+    assert result["staff"][0]["presence_confirmed"] is False
+    assert not result["ready_to_approve"]
+
+
+def test_changed_source_discards_old_automatic_boxes_and_invalidates_confirmation(
+    automatic,
+):
+    builder, context, proposal, snapshot = automatic
+    first = builder.build(
+        context, {"confirm_present_staff": True}, snapshot(), proposal
+    )
+    context["previous_preview"] = json.loads(first.preview_bytes)
+    context["previous_preview"]["source_binding"] = "sha256:" + "0" * 64
+    old = context["previous_preview"]["players"][0]
+    old["source_card"]["box"]["x"] += 1
+    old["boxes"] = {
+        key: copy.deepcopy(old["source_card"]["box"])
+        for key in ("full_name", "birth_date", "curp")
+    }
+    result = json.loads(builder.build(context, {}, snapshot(), proposal).preview_bytes)
+    assert (
+        result["players"][0]["boxes"]["full_name"]["x"]
+        == old["boxes"]["full_name"]["x"] - 1
+    )
+    assert all(not member["presence_confirmed"] for member in result["staff"])
+    assert not result["ready_to_approve"]
+    assert any(item["code"] == "SOURCE_CHANGED" for item in result["blockers"])
+
+
+@pytest.mark.parametrize(
+    "state,code",
+    [
+        ("missing", "PHOTO_MISSING"),
+        ("uncertain", "PHOTO_UNCERTAIN"),
+        ("error", "PHOTO_SOURCE_INVALID"),
+    ],
+)
+def test_photo_source_exception_is_identified_by_person(
+    automatic, monkeypatch, state, code
+):
+    builder, context, proposal, snapshot = automatic
+    builder._policy["required_photo_kinds"] = ["PLAYER"]
+
+    def detector(*args, **kwargs):
+        if state == "error":
+            raise OSError("private path must not be shown")
+        return None, state
+
+    monkeypatch.setattr(
+        "devnous.copa_telmex.staff_review_plan_builder.extract_batch_photo", detector
+    )
+    monkeypatch.setattr(
+        "devnous.copa_telmex.staff_review_plan_builder.prepare_batch_page",
+        lambda *a: object(),
+    )
+    result = json.loads(builder.build(context, {}, snapshot(), proposal).preview_bytes)
+    failure = next(item for item in result["blockers"] if item["code"] == code)
+    assert (
+        failure["kind"] == "PLAYER"
+        and failure["slot"] == 1
+        and failure["field"] == "photo"
+    )
+    assert "private path" not in json.dumps(result)
+
+
+def test_photo_staging_failure_is_recoverable_without_requesting_another_crop(
+    prepared, monkeypatch
+):
+    builder, context, proposal, snapshot = prepared
+    changes = completed_changes(*prepared)
+    changes["players"][0]["photo_box"] = dict(
+        page_index=1, x=20, y=20, width=72, height=72
+    )
+
+    def broken(*args):
+        raise CaptureDenied("sealed storage failed")
+
+    monkeypatch.setattr(builder._photos, "stage", broken)
+    result = json.loads(
+        builder.build(context, changes, snapshot(), proposal).preview_bytes
+    )
+    failure = next(
+        item for item in result["blockers"] if item["code"] == "PHOTO_STORAGE_FAILED"
+    )
+    assert failure["navigation_target"]["slot"] == 1
+    assert result["players"][0]["photo_status"] == "error"
+    assert not result["ready_to_approve"]
+
+
+def test_global_confirmation_preserves_an_unchanged_individual_staff_decision(
+    automatic,
+):
+    builder, context, proposal, snapshot = automatic
+    context["draft"]["extraction"]["staff"][1]["presence"] = "UNCERTAIN"
+    first = builder.build(context, {}, snapshot(), proposal)
+    context["previous_preview"] = json.loads(first.preview_bytes)
+    individual = builder.build(
+        context,
+        {
+            "staff": [
+                {"slot": 1},
+                {"slot": 2, "presence": "PRESENT", "presence_confirmed": True},
+            ]
+        },
+        snapshot(),
+        proposal,
+    )
+    context["previous_preview"] = json.loads(individual.preview_bytes)
+    assert context["previous_preview"]["staff"][1]["presence_proposed"] is False
+    assert context["previous_preview"]["staff"][1]["presence_confirmed"] is True
+    result = json.loads(
+        builder.build(
+            context, {"confirm_present_staff": True}, snapshot(), proposal
+        ).preview_bytes
+    )
+    assert result["ready_to_approve"]
+    assert all(member["presence_confirmed"] for member in result["staff"])
+
+
+def test_optional_staff_photo_does_not_show_a_false_missing_exception(automatic):
+    builder, context, proposal, snapshot = automatic
+    builder._policy["required_photo_kinds"] = ["PLAYER"]
+    result = json.loads(builder.build(context, {}, snapshot(), proposal).preview_bytes)
+    assert all(member["photo_status"] == "not_required" for member in result["staff"])
+    assert not any(
+        item["kind"] == "STAFF" and item["field"] == "photo"
+        for item in result["blockers"]
+    )
+
+
+def test_repeated_individual_flag_cannot_reconfirm_changed_values_in_same_request(
+    automatic,
+):
+    builder, context, proposal, snapshot = automatic
+    initial = builder.build(
+        context, {"confirm_present_staff": True}, snapshot(), proposal
+    )
+    context["previous_preview"] = json.loads(initial.preview_bytes)
+    assert context["previous_preview"]["staff"][0]["presence_confirmed"] is True
+    result = json.loads(
+        builder.build(
+            context,
+            {
+                "staff": [
+                    {"slot": 1, "first_name": "Corrected", "presence_confirmed": True},
+                    {"slot": 2},
+                ]
+            },
+            snapshot(),
+            proposal,
+        ).preview_bytes
+    )
+    assert result["staff"][0]["presence_confirmed"] is False
+    assert not result["ready_to_approve"]
+    context["previous_preview"] = result
+    confirmed = json.loads(
+        builder.build(
+            context,
+            {
+                "staff": [
+                    {"slot": 1, "presence_confirmed": True},
+                    {"slot": 2},
+                ]
+            },
+            snapshot(),
+            proposal,
+        ).preview_bytes
+    )
+    assert confirmed["staff"][0]["presence_confirmed"] is True
+    assert confirmed["ready_to_approve"]
+
+
+def test_read_only_inspection_derives_preview_without_staging_private_photos(
+    prepared, monkeypatch
+):
+    builder, context, proposal, snapshot = prepared
+    changes = completed_changes(*prepared)
+    changes["players"][0]["photo_box"] = dict(
+        page_index=1, x=20, y=20, width=72, height=72
+    )
+    calls = []
+    monkeypatch.setattr(builder._photos, "stage", lambda photo: calls.append(photo))
+    view = json.loads(
+        builder.build(
+            context, changes, snapshot(), proposal, stage_photos=False
+        ).preview_bytes
+    )
+    assert view["players"][0]["photo_preview"].startswith("data:image/jpeg;base64,")
+    assert view["players"][0]["photo_status"] == "photo"
+    assert calls == []
+    builder.build(context, changes, snapshot(), proposal)
+    assert len(calls) == 1
+
+
+def test_source_change_cannot_reuse_individual_flags_or_global_confirmation(automatic):
+    builder, context, proposal, snapshot = automatic
+    first = builder.build(
+        context, {"confirm_present_staff": True}, snapshot(), proposal
+    )
+    context["previous_preview"] = json.loads(first.preview_bytes)
+    context["previous_preview"]["source_binding"] = "sha256:" + "0" * 64
+    changed = json.loads(
+        builder.build(
+            context,
+            {
+                "staff": [
+                    {"slot": 1, "presence_confirmed": True},
+                    {"slot": 2, "presence_confirmed": True},
+                ],
+                "confirm_present_staff": True,
+            },
+            snapshot(),
+            proposal,
+        ).preview_bytes
+    )
+    assert all(not member["presence_confirmed"] for member in changed["staff"])
+    assert not changed["ready_to_approve"]
+
+
+@pytest.mark.parametrize("failure", ["missing", "duplicate"])
+def test_bad_player_reference_keeps_other_unique_sources_reviewable_without_execution(
+    automatic, failure
+):
+    builder, context, proposal, snapshot = automatic
+    extraction = context["draft"]["extraction"]
+    original = copy.deepcopy(extraction["players"])
+    bad_slots = {1}
+    if failure == "missing":
+        extraction["players"][0].pop("slot_ref")
+    else:
+        extraction["players"][0]["slot_ref"] = extraction["players"][1]["slot_ref"]
+        bad_slots.add(2)
+    result = builder.build(context, {}, snapshot(), proposal)
+    view = json.loads(result.preview_bytes)
+    assert not view["ready_to_approve"]
+    assert (
+        json.loads(result.review_bytes)["schema"] == "ctt.review.incomplete-proposal.v1"
+    )
+    player_failures = [item for item in view["blockers"] if item["kind"] == "PLAYER"]
+    assert {item["slot"] for item in player_failures} == bad_slots
+    for index, member in enumerate(view["players"]):
+        assert member["curp"] == original[index]["curp"]
+        assert member["birth_date"] == original[index]["birth_date"]
+        if member["slot"] not in bad_slots:
+            assert member["source_card"]["status"] == "verified"
+            assert (
+                member["boxes"]["full_name"]["page_index"]
+                == member["source_page_index"]
+            )
+
+
+def test_duplicate_reference_with_previous_preview_does_not_reuse_automatic_photo(
+    automatic, monkeypatch
+):
+    builder, context, proposal, snapshot = automatic
+    context["previous_preview"] = json.loads(
+        builder.build(context, {}, snapshot(), proposal).preview_bytes
+    )
+    players = context["draft"]["extraction"]["players"]
+    players[0]["slot_ref"] = players[1]["slot_ref"]
+    attempted = []
+
+    def absent_photo(retained, ref):
+        attempted.append(ref)
+        raise CaptureDenied("no synthetic photo")
+
+    monkeypatch.setattr(
+        "devnous.copa_telmex.staff_review_plan_builder.derive_batch_review_photo",
+        absent_photo,
+    )
+    result = builder.build(context, {}, snapshot(), proposal)
+    view = json.loads(result.preview_bytes)
+    assert not view["ready_to_approve"]
+    assert players[1]["slot_ref"] not in attempted
+    failures = [
+        item
+        for item in view["blockers"]
+        if item["code"] == "PLAYER_SOURCE_MISSING" and item["kind"] == "PLAYER"
+    ]
+    assert {item["slot"] for item in failures} == {1, 2}
+    assert all("photo_preview" not in member for member in view["players"][:2])

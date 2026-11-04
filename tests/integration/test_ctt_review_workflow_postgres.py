@@ -34,6 +34,7 @@ from test_ctt_full_runtime_postgres import (
     public_review_source,
 )
 from test_ctt_staff_security_postgres import PORT
+from devnous.copa_telmex.batch_admission import sha256_value
 from devnous.copa_telmex.staff_capture_runtime import assemble_capture_runtime
 from devnous.copa_telmex.staff_review_runtime import (
     assemble_review_issuer,
@@ -582,6 +583,21 @@ print(json.dumps({'site': str(root), 'roots': sorted(roots)}))
             )
             initial = await client.view(account, scope.session_id)
             assert initial["state"] == "unpublished"
+            if "phase_binding" in policy:
+                assert all(
+                    member["source_card"]["status"] == "verified"
+                    for member in initial["players"] + initial["staff"]
+                ), [
+                    (kind, member["slot"], member["source_card"]["status"])
+                    for kind in ("players", "staff")
+                    for member in initial[kind]
+                    if member["source_card"]["status"] != "verified"
+                ]
+                assert all(
+                    member["presence_proposed"] and not member["presence_confirmed"]
+                    for member in initial["staff"]
+                )
+                assert changes == {"confirm_present_staff": True}
             view = await client.prepare(account, scope.session_id, None, changes)
             assert view["ready_to_approve"] is True, view["blockers"]
             if "phase_binding" in policy:
@@ -879,29 +895,55 @@ def test_private_prepare_to_official_committed_session(
             }
             players = []
             for page_index in (1, 2):
-                page = document.new_page(width=595, height=842)
+                page = document.new_page(
+                    width=612 if national else 595, height=792 if national else 842
+                )
+                if national:
+                    top, rows = (238, 5) if page_index == 1 else (115, 6)
+                    for x in (46, 122, 311, 385, 565):
+                        page.draw_line((x, top), (x, top + rows * 97), width=2)
+                    for row in range(rows + 1):
+                        page.draw_line(
+                            (46, top + row * 97), (565, top + row * 97), width=2
+                        )
                 for local in range(8):
                     slot, y = (page_index - 1) * 8 + local + 1, 35 + local * 78
+                    left, photo_x, photo_y, photo_w, photo_h = 55, 480, y, 72, 72
+                    if national:
+                        row = local // 2 + (1 if page_index == 1 else 0)
+                        left, y = (46 if local % 2 == 0 else 311), top + row * 97
+                        photo_x, photo_y, photo_w, photo_h = left + 5, y + 5, 64, 84
                     name = f"Persona Apellido{slot}"
                     curp = (
                         None
                         if national and slot <= 2
                         else f"AAAA000101HDFXXX{slot:02d}"
                     )
-                    page.insert_text(
-                        (60, y + 15),
-                        f"{name} 2000-01-01 {curp or 'CURP: no proporcionada'}",
-                        fontsize=9,
-                    )
+                    if national:
+                        for offset, value in (
+                            (20, name),
+                            (35, "2000-01-01"),
+                            (48, curp or "CURP: no proporcionada"),
+                        ):
+                            page.insert_text((left + 80, y + offset), value, fontsize=6)
+                    else:
+                        page.insert_text(
+                            (60, y + 15),
+                            f"{name} 2000-01-01 {curp or 'CURP: no proporcionada'}",
+                            fontsize=9,
+                        )
                     rng = random.Random(slot)
                     image = Image.new("RGB", (8, 8))
                     image.putdata(
                         [(v, v, v) for v in [rng.randrange(256) for _ in range(64)]]
                     )
                     encoded = BytesIO()
-                    image.resize((72, 72)).save(encoded, format="PNG")
+                    image.resize((photo_w, photo_h)).save(encoded, format="PNG")
                     page.insert_image(
-                        fitz.Rect(480, y, 552, y + 72), stream=encoded.getvalue()
+                        fitz.Rect(
+                            photo_x, photo_y, photo_x + photo_w, photo_y + photo_h
+                        ),
+                        stream=encoded.getvalue(),
                     )
                     box = {
                         "page_index": page_index,
@@ -925,10 +967,10 @@ def test_private_prepare_to_official_committed_session(
                             },
                             "photo_box": {
                                 "page_index": page_index,
-                                "x": 480,
-                                "y": y,
-                                "width": 72,
-                                "height": 72,
+                                "x": photo_x,
+                                "y": photo_y,
+                                "width": photo_w,
+                                "height": photo_h,
                             },
                         }
                     )
@@ -944,11 +986,15 @@ def test_private_prepare_to_official_committed_session(
                     )
                 staff_slot = page_index
                 staff_curp = None if national else f"BBBB800101HDFXXX0{staff_slot}"
-                page.insert_text(
-                    (60, 730),
-                    f"Tecnico Apellido{staff_slot} 1980-01-01 "
-                    f"{staff_curp or 'CURP: no proporcionada'}",
-                )
+                if not national:
+                    # Legacy rectangular fixture puts staff below the roster.
+                    # National staff are already drawn inside the front cards;
+                    # a duplicate footer here crosses the last printed border.
+                    page.insert_text(
+                        (60, 730),
+                        f"Tecnico Apellido{staff_slot} 1980-01-01 "
+                        f"{staff_curp or 'CURP: no proporcionada'}",
+                    )
                 box = {
                     "page_index": page_index,
                     "x": 55,
@@ -973,10 +1019,42 @@ def test_private_prepare_to_official_committed_session(
                         },
                     }
                 )
+            if national:
+                first = document[0]
+                for slot in (1, 2):
+                    for offset, value in (
+                        (20, f"Tecnico Apellido{slot}"),
+                        (35, "1980-01-01"),
+                        (48, "CURP: no proporcionada"),
+                    ):
+                        first.insert_text(
+                            ((46 if slot == 1 else 311) + 80, 238 + offset),
+                            value,
+                            fontsize=6,
+                        )
             pdf = document.tobytes()
             document.close()
             extraction = manifest["documents"][0]["extraction"]
             extraction["team"], extraction["players"] = changes["team"], players
+            for slot, role in enumerate(("director_tecnico", "auxiliar"), 1):
+                item = extraction["staff"][slot - 1]
+                item.update(
+                    slot_ref=f"page:{1 if national else slot}:{role}",
+                    presence="present",
+                    first_name="Tecnico",
+                    last_name=f"Apellido{slot}",
+                    birth_date="1980-01-01",
+                    curp=None if national else f"BBBB800101HDFXXX0{slot}",
+                )
+                item["staff_entry_id"] = sha256_value(
+                    {key: item[key] for key in ("role", "slot", "slot_ref", "evidence")}
+                )
+            if national:
+                # These exact photo selections are already in the protected
+                # draft. The request supplies no identity or photo rectangles.
+                for player, reviewed in zip(players, changes["players"]):
+                    player["photo_box"] = reviewed["photo_box"]
+                changes = {"confirm_present_staff": True}
             manifest["documents"][0]["pdf_sha256"] = hashlib.sha256(pdf).hexdigest()
             source_root, original_root, photo_root = [
                 tmp_path / name for name in ("sources", "originals", "photos")

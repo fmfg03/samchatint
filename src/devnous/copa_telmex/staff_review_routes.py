@@ -97,7 +97,12 @@ def _uuid(value: Any) -> UUID:
 
 def _proposal_changes(value: Any) -> dict:
     """Only proposed business values and source rectangles cross this boundary."""
-    if type(value) is not dict or set(value) - {"team", "players", "staff"}:
+    if type(value) is not dict or set(value) - {
+        "team",
+        "players",
+        "staff",
+        "confirm_present_staff",
+    }:
         raise _error(
             400, "INVALID_PROPOSAL", "La propuesta contiene campos no permitidos."
         )
@@ -120,6 +125,11 @@ def _proposal_changes(value: Any) -> dict:
                 raise ValueError
 
     try:
+        if (
+            "confirm_present_staff" in value
+            and type(value["confirm_present_staff"]) is not bool
+        ):
+            raise ValueError
         team = value.get("team", {})
         if type(team) is not dict or set(team) - TEAM_FIELDS:
             raise ValueError
@@ -141,7 +151,17 @@ def _proposal_changes(value: Any) -> dict:
                     raise ValueError
                 slots.add(slot)
                 page_index = member.get("source_page_index")
-                if type(page_index) is not int or not 1 <= page_index <= 10000:
+                unresolved_staff = (
+                    kind == "staff"
+                    and member.get("presence") == "UNCERTAIN"
+                    and member.get("presence_confirmed") is False
+                    and member.get("boxes", {}) == {}
+                    and member.get("photo_box") is None
+                    and member.get("absence_box") is None
+                )
+                if type(page_index) is not int or not (
+                    1 <= page_index <= 10000 or page_index == 0 and unresolved_staff
+                ):
                     raise ValueError
                 for name in ("first_name", "last_name", "birth_date", "curp"):
                     if (

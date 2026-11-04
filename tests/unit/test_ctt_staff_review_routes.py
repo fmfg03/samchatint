@@ -402,6 +402,102 @@ def test_preparing_values_and_rectangles_does_not_accept_database_rows(boundary)
     assert b.state.calls[0][3][0] == b.proposal
 
 
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_team_presence_confirmation_reaches_private_prepare(boundary, confirmed):
+    changes = proposal()
+    changes["confirm_present_staff"] = confirmed
+    response = post(
+        boundary,
+        "/edit",
+        {"expected_proposal_id": str(boundary.proposal), "changes": changes},
+    )
+    assert response.status_code == 200
+    assert boundary.state.calls[0][0] == "prepare"
+    assert boundary.state.calls[0][3][1] == changes
+
+
+@pytest.mark.parametrize("invalid", [1, 0, "true", None, [], {}])
+def test_team_presence_confirmation_requires_an_explicit_boolean(invalid):
+    changes = proposal()
+    changes["confirm_present_staff"] = invalid
+    with pytest.raises(HTTPException) as error:
+        _proposal_changes(changes)
+    assert error.value.status_code == 400
+
+
+def unresolved_staff_proposal():
+    changes = proposal()
+    changes["staff"][0].update(
+        source_page_index=0,
+        presence="UNCERTAIN",
+        presence_confirmed=False,
+        boxes={},
+        photo_box=None,
+        absence_box=None,
+    )
+    return changes
+
+
+def test_unresolved_staff_can_prepare_observations_without_claiming_evidence(boundary):
+    changes = unresolved_staff_proposal()
+    response = post(
+        boundary,
+        "/edit",
+        {"expected_proposal_id": None, "changes": changes},
+    )
+    assert response.status_code == 200
+    assert boundary.state.calls[0][0] == "prepare"
+    assert boundary.state.calls[0][3] == (None, changes)
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"presence": "PRESENT"},
+        {"presence": "ABSENT"},
+        {"presence_confirmed": True},
+        {"boxes": {"full_name": None}},
+        {"photo_box": {"page_index": 1, "x": 0, "y": 0, "width": 1, "height": 1}},
+        {"absence_box": {"page_index": 1, "x": 0, "y": 0, "width": 1, "height": 1}},
+    ],
+)
+def test_unselected_staff_page_cannot_claim_presence_or_geometry(update):
+    changes = unresolved_staff_proposal()
+    changes["staff"][0].update(update)
+    with pytest.raises(HTTPException) as error:
+        _proposal_changes(changes)
+    assert error.value.status_code == 400
+
+
+def test_player_source_page_cannot_be_unselected():
+    changes = proposal()
+    changes["players"][0].update(source_page_index=0, boxes={})
+    with pytest.raises(HTTPException) as error:
+        _proposal_changes(changes)
+    assert error.value.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"manual_fields": []},
+        {"source_card": {"status": "verified"}},
+        {"photo_status": "photo"},
+        {"presence_proposed": True},
+    ],
+)
+def test_browser_cannot_submit_server_derived_evidence_metadata(boundary, metadata):
+    changes = proposal()
+    changes["staff"][0].update(metadata)
+    response = post(
+        boundary,
+        "/edit",
+        {"expected_proposal_id": str(boundary.proposal), "changes": changes},
+    )
+    assert response.status_code == 400
+    assert not boundary.state.calls
+
+
 @pytest.mark.parametrize(
     "attack",
     [

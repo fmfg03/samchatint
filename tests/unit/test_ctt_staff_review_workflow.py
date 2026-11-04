@@ -344,3 +344,36 @@ def test_pending_status_requires_real_boolean_count(flag):
     }
     with pytest.raises(CaptureDenied):
         _blocking_incident_count(validation, [1])
+
+
+@pytest.mark.asyncio
+async def test_initial_view_uses_read_only_photo_preparation():
+    import json
+    from contextlib import contextmanager
+    from unittest.mock import Mock
+
+    snapshot = object()
+
+    @contextmanager
+    def retained(*args):
+        yield snapshot
+
+    context = {}
+    builder = SimpleNamespace(
+        initial_scope=Mock(return_value=object()),
+        build=Mock(
+            return_value=SimpleNamespace(
+                preview_bytes=json.dumps({"staff": [], "blockers": []}).encode()
+            )
+        ),
+    )
+    store = SimpleNamespace(
+        resolve_source_scope=AsyncMock(), load_context=AsyncMock(return_value=context)
+    )
+    workflow = service(store=store, builder=builder)
+    workflow._snapshot = retained
+    result = await workflow.view(uuid4(), uuid4())
+    assert result["state"] == "unpublished"
+    assert result["ready_to_approve"] is False
+    assert builder.build.call_args.kwargs == {"stage_photos": False}
+    assert builder.build.call_args.args[2] is snapshot
