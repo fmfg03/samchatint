@@ -45,6 +45,7 @@ def panel(page):
                 "slot": 1,
                 "role": "director_tecnico",
                 "presence": "PRESENT",
+                "presence_proposed": True,
                 "presence_confirmed": True,
                 **person,
             },
@@ -52,6 +53,7 @@ def panel(page):
                 "slot": 2,
                 "role": "auxiliar",
                 "presence": "ABSENT",
+                "presence_proposed": False,
                 "presence_confirmed": True,
                 **person,
             },
@@ -421,7 +423,8 @@ def test_repeat_enrollment_without_challenge_shows_current_state(
     panel.page.add_init_script(
         "window.registrationCalls=0;"
         "Object.defineProperty(navigator.credentials,'create',"
-        "{value:async()=>{window.registrationCalls++;throw Error('unexpected ceremony')}})"
+        "{value:async()=>{window.registrationCalls++;"
+        "throw Error('unexpected ceremony')}})"
     )
     open_panel(panel)
     panel.page.locator("[data-enrollment-fingerprint]").evaluate(
@@ -460,3 +463,169 @@ def test_curp_label_only_marks_trusted_national_profile_optional(
         expect(
             panel.page.get_by_label("CURP (opcional en fase nacional)", exact=True)
         ).to_have_count(0)
+
+
+def test_explicit_team_confirmation_only_affirms_proposed_present_slots(panel):
+    panel.state.view["ready_to_approve"] = False
+    panel.state.view["staff"][0]["presence_confirmed"] = False
+    panel.state.view["staff"][1]["presence"] = "UNCERTAIN"
+    panel.state.view["staff"][1]["presence_confirmed"] = False
+    open_panel(panel)
+    team = panel.page.locator("[data-review-team-confirm]")
+    present = panel.page.locator('[data-presence-confirmed="0"]')
+    uncertain = panel.page.locator('[data-presence-confirmed="1"]')
+    expect(team).not_to_be_checked()
+    expect(present).not_to_be_checked()
+    team.check()
+    expect(present).to_be_checked()
+    expect(uncertain).not_to_be_checked()
+    with panel.page.expect_response(lambda response: response.url.endswith("/edit")):
+        panel.page.get_by_role("button", name="Preparar revisión", exact=True).click()
+    assert panel.state.changes["changes"]["confirm_present_staff"] is True
+    assert panel.state.changes["changes"]["staff"][0]["presence_confirmed"] is True
+    assert panel.state.changes["changes"]["staff"][1]["presence_confirmed"] is False
+    assert panel.state.changes["changes"]["staff"][1]["presence"] == "UNCERTAIN"
+    assert (
+        panel.state.changes["changes"]["players"][0]["boxes"]
+        == panel.state.view["players"][0]["boxes"]
+    )
+    assert not any(path.endswith("/assertion") for path, _ in panel.state.calls)
+
+
+def test_any_edit_invalidates_team_confirmation_and_old_approval(panel):
+    panel.state.view["ready_to_approve"] = False
+    panel.state.view["staff"][0]["presence_confirmed"] = False
+    open_panel(panel)
+    panel.page.locator("[data-review-team-confirm]").check()
+    expect(panel.page.locator('[data-presence-confirmed="0"]')).to_be_checked()
+    panel.page.get_by_label("Equipo", exact=True).fill("Equipo corregido")
+    expect(panel.page.locator("[data-review-team-confirm]")).not_to_be_checked()
+    expect(panel.page.locator('[data-presence-confirmed="0"]')).not_to_be_checked()
+    expect(
+        panel.page.get_by_role("button", name="Aprobar y capturar con passkey")
+    ).to_be_disabled()
+
+
+def test_exception_navigates_to_person_field_source(panel):
+    panel.state.view["ready_to_approve"] = False
+    panel.state.view["blockers"] = [
+        {
+            "code": "FIELD_EVIDENCE_REQUIRED",
+            "kind": "PLAYER",
+            "slot": 1,
+            "field": "birth_date",
+            "navigation_target": {
+                "kind": "PLAYER",
+                "slot": 1,
+                "field": "birth_date",
+                "source_page_index": 1,
+            },
+            "message": "Falta la fuente.",
+        }
+    ]
+    open_panel(panel)
+    panel.page.get_by_role(
+        "button", name="Jugador 1 · Fecha de nacimiento: Falta la fuente."
+    ).click()
+    expect(panel.page.locator("[data-source-target] option:checked")).to_have_text(
+        "Jugador 1 · Fecha de nacimiento"
+    )
+    expect(panel.page.locator("[data-source-canvas]")).to_be_visible()
+
+
+def test_individual_staff_confirmation_is_invalidated_by_staff_edit(panel):
+    panel.state.view["ready_to_approve"] = False
+    open_panel(panel)
+    confirmation = panel.page.locator('[data-presence-confirmed="0"]')
+    expect(confirmation).to_be_checked()
+    panel.page.locator(
+        '[data-kind="staff"][data-index="0"][data-value="first_name"]'
+    ).fill("Cambio")
+    expect(confirmation).not_to_be_checked()
+
+
+def test_photo_status_distinguishes_missing_uncertain_and_technical_error(panel):
+    panel.state.view["players"] = [
+        {**panel.state.view["players"][0], "slot": i, "photo_status": status}
+        for i, status in enumerate(("missing", "uncertain", "error"), 1)
+    ]
+    open_panel(panel)
+    members = panel.page.locator("[data-review-members]")
+    expect(members).to_contain_text("No se detectó una fotografía")
+    expect(members).to_contain_text("La fotografía necesita revisión")
+    expect(members).to_contain_text("No se pudo preparar la fotografía")
+
+
+def test_global_confirmation_cannot_affirm_newly_selected_presence(panel):
+    panel.state.view["ready_to_approve"] = False
+    panel.state.view["staff"][1]["presence"] = "UNCERTAIN"
+    panel.state.view["staff"][1]["presence_confirmed"] = False
+    open_panel(panel)
+    panel.page.locator('[data-presence="1"]').select_option("PRESENT")
+    panel.page.locator("[data-review-team-confirm]").click()
+    expect(panel.page.locator("[data-review-team-confirm]")).not_to_be_checked()
+    expect(panel.page.locator('[data-presence-confirmed="1"]')).not_to_be_checked()
+    expect(panel.page.locator("[data-review-status]")).to_contain_text(
+        "Confirma individualmente"
+    )
+
+
+def test_prepared_staff_confirmation_survives_refresh_from_server(panel):
+    panel.state.view["ready_to_approve"] = False
+    panel.state.view["staff"][0]["presence_confirmed"] = False
+
+    def save(route):
+        changes = route.request.post_data_json["changes"]
+        panel.state.view["staff"][0]["presence_confirmed"] = changes["staff"][0][
+            "presence_confirmed"
+        ]
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(panel.state.view),
+        )
+
+    panel.page.route("**/edit", save)
+    open_panel(panel)
+    panel.page.locator("[data-review-team-confirm]").check()
+    with panel.page.expect_response(lambda response: response.url.endswith("/edit")):
+        panel.page.get_by_role("button", name="Preparar revisión", exact=True).click()
+    panel.page.get_by_role("button", name="Consultar revisión", exact=True).click()
+    expect(panel.page.locator('[data-presence-confirmed="0"]')).to_be_checked()
+    expect(panel.page.locator("[data-review-team-confirm]")).not_to_be_checked()
+
+
+def test_global_confirmation_requires_source_backed_presence_proposal(panel):
+    panel.state.view["ready_to_approve"] = False
+    panel.state.view["staff"][0]["presence_proposed"] = False
+    panel.state.view["staff"][0]["presence_confirmed"] = False
+    open_panel(panel)
+    panel.page.locator("[data-review-team-confirm]").check()
+    expect(panel.page.locator('[data-presence-confirmed="0"]')).not_to_be_checked()
+
+
+@pytest.mark.parametrize("field", ["source_page_index", None])
+def test_person_exception_without_specific_field_opens_person_source(panel, field):
+    panel.state.view["ready_to_approve"] = False
+    panel.state.view["blockers"] = [
+        {
+            "code": "STAFF_REQUIRED",
+            "kind": "STAFF",
+            "slot": 1,
+            "field": field,
+            "message": "Revisa el puesto.",
+            "navigation_target": {
+                "kind": "STAFF",
+                "slot": 1,
+                "field": field,
+                "source_page_index": 1,
+            },
+        }
+    ]
+    open_panel(panel)
+    panel.page.get_by_role(
+        "button", name="Director técnico · Nombre completo: Revisa el puesto."
+    ).click()
+    expect(panel.page.locator("[data-source-target] option:checked")).to_have_text(
+        "Director técnico · Nombre completo"
+    )

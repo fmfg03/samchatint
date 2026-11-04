@@ -7,16 +7,16 @@ the existing trusted writer can produce a committed result.
 
 from __future__ import annotations
 
-import base64
 import asyncio
+import base64
 import hashlib
 import hmac
-from contextlib import contextmanager
-from copy import deepcopy
 import json
-from pathlib import Path
 import secrets
 import time
+from contextlib import contextmanager
+from copy import deepcopy
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from .staff_capture_authorization import verify_capture_authorization
@@ -223,7 +223,9 @@ class ReviewWorkflowService:
         proposal_id = uuid4()
         scope = self._builder.initial_scope(context, proposal_id)
         with self._snapshot(context, scope, proposal_id) as snapshot:
-            prepared = self._builder.build(context, {}, snapshot, proposal_id)
+            prepared = self._builder.build(
+                context, {}, snapshot, proposal_id, stage_photos=False
+            )
         preview = json.loads(prepared.preview_bytes)
         preview.update(
             session_id=str(session_id), proposal_id=None, state="unpublished"

@@ -83,6 +83,7 @@
             this.find('[data-review-prepare]').addEventListener('click', () => this.prepare());
             this.find('[data-review-refresh]').addEventListener('click', () => this.refresh());
             this.find('[data-review-confirm]').addEventListener('change', () => this.controls());
+            this.find('[data-review-team-confirm]').addEventListener('change', () => this.confirmTeam());
             this.find('[data-review-approve]').addEventListener('click', () => this.approve());
             this.find('[data-review-result]').addEventListener('click', () => this.poll(0));
             this.find('[data-review-retry]').addEventListener('click', () => this.retryCapture());
@@ -92,7 +93,12 @@
             this.find('[data-source-page]').addEventListener('change', () => this.changePage());
             this.find('[data-source-apply]').addEventListener('click', () => this.applyCoordinates());
             this.find('[data-source-clear]').addEventListener('click', () => this.setRectangle(null));
-            this.find('[data-review-fields]').addEventListener('input', () => this.changed());
+            this.find('[data-review-fields]').addEventListener('input', event => {
+                const input = event.target;
+                const staffIndex = input.dataset.kind === 'staff' && input.dataset.value !== undefined
+                    ? Number(input.dataset.index) : null;
+                this.changed(staffIndex);
+            });
             this.pointerEvents();
             window.addEventListener('pagehide', () => clearTimeout(this.pollTimer));
             try { this.applyView(JSON.parse(this.find('[data-review-initial]').textContent)); }
@@ -145,6 +151,9 @@
             this.capturePending = view.capture_state === 'uncertain';
             this.enrollmentId = view.passkey?.enrollment_id || this.enrollmentId;
             this.find('[data-review-confirm]').checked = false;
+            this.find('[data-review-team-confirm]').checked = false;
+            this.globalConfirmedSlots = [];
+            this.changedStaffSlots = new Set();
             this.renderFields();
             this.renderSources();
             this.showPasskey(view.passkey || {});
@@ -152,7 +161,25 @@
             blockers.replaceChildren();
             for (const blocker of view.blockers || []) {
                 const item = document.createElement('li');
-                item.textContent = blocker.message || 'Dato o fuente pendiente de revisar.';
+                const location = blocker.navigation_target || blocker;
+                const kind = location.kind === 'PLAYER' ? 'players' : location.kind === 'STAFF' ? 'staff' : null;
+                const members = kind ? this.draft[kind] || [] : [];
+                const index = members.findIndex(member => member.slot === location.slot);
+                const field = location.field === 'photo' ? 'photo_box'
+                    : location.field === 'presence' ? 'absence_box'
+                        : ['first_name', 'last_name', 'source_page_index', null, undefined].includes(location.field)
+                            ? 'full_name' : location.field;
+                const targetIndex = this.targets.findIndex(target => target.kind === kind && target.index === index && target.field === field);
+                const prefix = index >= 0 ? `${this.memberLabel(kind, members[index])}${SOURCES[field] ? ` · ${SOURCES[field]}` : ''}: ` : '';
+                const message = prefix + (blocker.message || 'Dato o fuente pendiente de revisar.');
+                if (targetIndex >= 0 && this.view.proposal_id) {
+                    const button = document.createElement('button'); button.type = 'button';
+                    button.textContent = message; button.addEventListener('click', () => {
+                        this.find('[data-source-target]').value = String(targetIndex);
+                        this.selectTarget(location.source_page_index || undefined); this.find('[data-source-target]').focus();
+                    });
+                    item.appendChild(button);
+                } else item.textContent = message;
                 blockers.appendChild(item);
             }
             this.controls();
@@ -202,6 +229,15 @@
                         const image = document.createElement('img'); image.src = member.photo_preview;
                         image.alt = `Fotografía propuesta: ${title.textContent}`; image.className = 'ctt-review-photo'; card.appendChild(image);
                     }
+                    const photoMessages = {
+                        missing: 'No se detectó una fotografía en esta casilla; revisa la fuente.',
+                        uncertain: 'La fotografía necesita revisión en la fuente.',
+                        error: 'No se pudo preparar la fotografía. Vuelve a preparar la revisión; se conserva el recorte.',
+                    };
+                    if (Object.hasOwn(photoMessages, member.photo_status)) {
+                        const note = document.createElement('p'); note.className = 'ctt-review-note';
+                        note.textContent = photoMessages[member.photo_status]; card.appendChild(note);
+                    }
                     const values = document.createElement('div'); values.className = 'ctt-review-fields'; card.appendChild(values);
                     for (const [key, label] of Object.entries(VALUES)) this.input(values, label, key, member[key], kind, index);
                     if (kind === 'staff') {
@@ -218,7 +254,7 @@
                         confirmation.appendChild(checkbox);
                         confirmation.appendChild(document.createTextNode('He contrastado la presencia o ausencia de este puesto con su fuente.'));
                         card.appendChild(confirmation);
-                        presence.addEventListener('change', () => { checkbox.checked = false; this.changed(); });
+                        presence.addEventListener('change', () => { checkbox.checked = false; this.changed(index); });
                         checkbox.addEventListener('change', () => this.changed());
                     }
                     members.appendChild(card);
@@ -291,7 +327,7 @@
             selection.member.boxes = {};
             selection.member.photo_box = null;
             if (selection.kind === 'staff') selection.member.absence_box = null;
-            this.changed(); this.selectTarget();
+            this.changed(selection.kind === 'staff' ? selection.index : null); this.selectTarget();
             this.message('La página cambió. Vuelve a seleccionar las fuentes de esta persona.');
         }
 
@@ -300,7 +336,7 @@
             if (!selection || !this.editing || this.busy) return;
             if (['photo_box', 'absence_box'].includes(selection.field)) selection.member[selection.field] = rectangle;
             else { selection.member.boxes ||= {}; selection.member.boxes[selection.field] = rectangle; }
-            this.changed(); this.draw();
+            this.changed(selection.kind === 'staff' ? selection.index : null); this.draw();
         }
 
         applyCoordinates() {
@@ -354,7 +390,44 @@
             }
         }
 
-        changed() {
+        confirmTeam() {
+            const checked = this.find('[data-review-team-confirm]').checked;
+            if (checked && (this.view?.staff || []).some((member, index) =>
+                (member.presence !== 'PRESENT' && this.find(`[data-presence="${index}"]`)?.value === 'PRESENT')
+                || (member.presence === 'PRESENT' && this.changedStaffSlots.has(index)))) {
+                this.find('[data-review-team-confirm]').checked = false;
+                this.message('Confirma individualmente los puestos modificados y prepara la revisión antes de confirmar el equipo.');
+                return;
+            }
+            const slots = [];
+            for (const [index, member] of (this.view?.staff || []).entries()) {
+                const presence = this.find(`[data-presence="${index}"]`);
+                const confirmation = this.find(`[data-presence-confirmed="${index}"]`);
+                if (member.presence === 'PRESENT' && member.presence_proposed === true && presence?.value === 'PRESENT' && confirmation) {
+                    confirmation.checked = checked;
+                    slots.push(index);
+                }
+            }
+            this.globalConfirmedSlots = checked ? slots : [];
+            this.dirty = true;
+            this.find('[data-review-confirm]').checked = false;
+            this.controls();
+        }
+
+        changed(staffIndex = null) {
+            if (Number.isInteger(staffIndex)) {
+                this.changedStaffSlots.add(staffIndex);
+                const confirmation = this.find(`[data-presence-confirmed="${staffIndex}"]`);
+                if (confirmation) confirmation.checked = false;
+            }
+            if (this.find('[data-review-team-confirm]').checked) {
+                this.find('[data-review-team-confirm]').checked = false;
+                for (const index of this.globalConfirmedSlots || []) {
+                    const confirmation = this.find(`[data-presence-confirmed="${index}"]`);
+                    if (confirmation) confirmation.checked = false;
+                }
+                this.globalConfirmedSlots = [];
+            }
             this.dirty = true;
             this.find('[data-review-confirm]').checked = false;
             this.controls();
@@ -362,6 +435,7 @@
 
         changes() {
             const result = { team: {}, players: [], staff: [] };
+            if (this.find('[data-review-team-confirm]').checked) result.confirm_present_staff = true;
             for (const input of this.root.querySelectorAll('[data-value]')) {
                 if (input.dataset.kind === 'team') result.team[input.dataset.value] = input.value;
             }
@@ -387,6 +461,7 @@
             this.find('[data-review-edit]').disabled = this.busy || closed || this.editing;
             this.find('[data-review-prepare]').disabled = this.busy || closed || !this.editing;
             this.find('[data-review-refresh]').disabled = this.busy;
+            this.find('[data-review-team-confirm]').disabled = this.busy || !this.editing || closed;
             const active = String(this.view?.passkey?.status || '').toLowerCase() === 'active';
             this.find('[data-review-approve]').disabled = this.busy || closed || this.editing || this.dirty
                 || this.view.ready_to_approve !== true || !this.view.proposal_id || !active || !this.canUsePasskey
