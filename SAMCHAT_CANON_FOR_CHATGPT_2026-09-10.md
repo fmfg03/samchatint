@@ -501,3 +501,10 @@ servicios privados y completar el enrolamiento supervisado real.
 Aprobación humana expresa: «aprobado», 2026-11-03, sobre la especificación y estos textos literales. Razón: corrección del requisito por fase aclarado por la persona responsable. Evidencia y alcance: `docs/roadmap/ctt-national-curp-optional-20261103.md`. Diseño autorizado; validación, publicación y despliegue requieren sus propios recibos.
 
 Para la fase nacional fijada explícitamente en el perfil operativo de Copa Telmex2026, la CURP es opcional para las jugadoras, el director técnico y el auxiliar. Su ausencia se conserva como dato no proporcionado y no bloquea por sí sola la captura operativa. Una CURP aportada conserva validación y evidencia de fuente. La regla no se extiende a la fase estatal ni acredita elegibilidad externa.
+
+
+### 2026-11-06 — Fotografía opcional en el perfil nacional
+
+Aprobación humana expresa: «aprobado», 2026-11-06, sobre la especificación técnica y este texto literal. Razón: la persona responsable aclaró que en fase nacional se permite registrar sin fotografía. Evidencia y alcance: `docs/roadmap/ctt-national-photo-optional-20261106.md`. Implementación aprobada; pruebas, CI, despliegue y aceptación humana requieren sus recibos.
+
+En el perfil operativo nacional de Copa Telmex2026 autorizado por la persona responsable, la fotografía de las jugadoras es opcional. Su ausencia queda visible como pendiente y no bloquea por sí sola la captura; las fotografías aportadas conservan verificación de fuente e integridad. Esta excepción no se extiende al perfil estricto o a la fase estatal y no acredita elegibilidad externa. La confirmación explícita del plan y la passkey humana se conservan.

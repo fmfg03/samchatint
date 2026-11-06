@@ -660,3 +660,10 @@ con finalidad permite su lectura publicada autorizada.
 Aprobación humana expresa: «aprobado», 2026-11-03, sobre la especificación y estos textos literales. Razón: corrección del requisito por fase aclarado por la persona responsable. Evidencia y alcance: `docs/roadmap/ctt-national-curp-optional-20261103.md`. Diseño autorizado; validación, publicación y despliegue requieren sus propios recibos.
 
 El perfil nacional opcional vincula tenant/edición/fase y clases de persona mediante la política fijada por bytes/hash. Builder y Gate independiente verifican la misma obligación por campo. CURP ausente se persiste NULL y no genera una decisión de verificación ficticia; el perfil estricto conserva la exigencia anterior. El scope firmado liga la política y el plan nuevo; no se reutiliza autoridad de una revisión con política anterior. Permanecen los controles de fuente, passkey, versiones, fotografía y finalidad atómica.
+
+
+### 2026-11-06 — Fotografía opcional en el perfil nacional
+
+Aprobación humana expresa: «aprobado», 2026-11-06, sobre la especificación técnica y este texto literal. Razón: la persona responsable aclaró que en fase nacional se permite registrar sin fotografía. Evidencia y alcance: `docs/roadmap/ctt-national-photo-optional-20261106.md`. Implementación aprobada; pruebas, CI, despliegue y aceptación humana requieren sus recibos.
+
+La obligación fotográfica se evalúa con la política nacional fijada por hash y vinculada a tenant/edición/manifiesto. Builder y Gate aplican la misma regla: una fotografía opcional no incorporada conserva NULL y no genera evidencia ficticia; una fotografía aportada conserva validación y persistencia verificables. Se prepara una propuesta nueva bajo la política vigente, sin reutilizar autoridad de otra política. No cambian las comprobaciones de fuente, identidad, facultad, WebAuthn o finalidad atómica.
