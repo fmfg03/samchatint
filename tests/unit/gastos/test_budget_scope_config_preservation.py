@@ -340,3 +340,80 @@ async def test_extra_provenance_and_matching_scope_are_preserved(monkeypatch):
     metadata = json.loads(params["metadata"])
     assert metadata["source_row"] == 17
     assert metadata["applicable_phase_labels"] == ["Montaje"]
+
+
+@pytest.mark.parametrize("etapas,categorias", [(None, None), ([], []), ([" "], [])])
+def test_unconfigured_budget_accepts_only_the_existing_form_defaults(
+    etapas, categorias
+):
+    from devnous.gastos.services.tournament_phase_service import (
+        get_tournament_budget_scope_labels,
+        get_tournament_etapas,
+        get_tournament_scope_labels,
+    )
+
+    row = {"etapas": etapas, "categorias": categorias}
+    offered = get_tournament_scope_labels(row) or get_tournament_etapas(row)
+    assert get_tournament_budget_scope_labels(row) == offered
+    for label in offered:
+        service._validate_budget_scope_labels([label], row)
+    with pytest.raises(ValueError, match="ya no está configurado"):
+        service._validate_budget_scope_labels(["Unknown"], row)
+
+
+def test_category_configuration_does_not_enable_unoffered_defaults():
+    with pytest.raises(ValueError, match="ya no está configurado"):
+        service._validate_budget_scope_labels(
+            ["Colectiva"], {"etapas": [], "categorias": ["Juvenil"]}
+        )
+    service._validate_budget_scope_labels(
+        ["Juvenil"], {"etapas": [], "categorias": ["Juvenil"]}
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active", [True, False])
+async def test_configuring_phases_cannot_orphan_a_used_default(owner_guards, active):
+    tournament = project()
+    tournament.etapas = None
+    tournament.categorias = None
+    session = Session(
+        tournament,
+        [
+            {
+                "id": "default-scoped",
+                "concept_name": "Staff",
+                "active": active,
+                "metadata": service.build_budget_concept_scope_metadata(["Colectiva"]),
+            }
+        ],
+    )
+    result = await update(session, {"etapas": "Custom"}, etapas="Custom")
+    error = parse_qs(urlsplit(result.headers["location"]).query)["error_msg"][0]
+    assert "Reasigne primero su alcance" in error
+    assert session.commits == 0 and session.rollbacks == 1
+    assert tournament.etapas is None and tournament.categorias is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("configured", [False, True])
+async def test_default_reference_survives_an_effective_option_preserving_transition(
+    owner_guards, configured
+):
+    tournament = project()
+    tournament.etapas = ["Colectiva"] if configured else None
+    tournament.categorias = []
+    session = Session(
+        tournament,
+        [
+            {
+                "id": "default-scoped",
+                "concept_name": "Staff",
+                "metadata": service.build_budget_concept_scope_metadata(["Colectiva"]),
+            }
+        ],
+    )
+    selected = "" if configured else "Colectiva\nCustom"
+    result = await update(session, {"etapas": selected}, etapas=selected)
+    assert "success_msg" in parse_qs(urlsplit(result.headers["location"]).query)
+    assert session.commits == 1 and session.rollbacks == 0

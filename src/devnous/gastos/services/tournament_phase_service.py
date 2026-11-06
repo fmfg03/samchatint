@@ -83,3 +83,8 @@ def get_tournament_etapas(source: Any) -> List[str]:
             return cleaned
 
     return DEFAULT_TOURNAMENT_ETAPAS.copy()
+
+
+def get_tournament_budget_scope_labels(source: Any) -> List[str]:
+    """Use the same effective phase options as the tournament budget form."""
+    return get_tournament_scope_labels(source) or get_tournament_etapas(source)

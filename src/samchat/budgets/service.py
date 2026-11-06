@@ -19,6 +19,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from devnous.gastos.services.amex_accounting_identity_service import accounting_expense_sql
+from devnous.gastos.services.tournament_phase_service import (
+    get_tournament_budget_scope_labels,
+)
 
 from samchat.budgets.deduplication import (
     budget_concept_semantic_identity,
@@ -3190,8 +3193,7 @@ def _validate_budget_scope_labels(
     """Accept explicit labels only from the current, locked project config."""
     configured = {
         _safe_str(value).casefold()
-        for group in ("etapas", "categorias")
-        for value in (tournament.get(group) or [])
+        for value in get_tournament_budget_scope_labels(tournament)
         if _safe_str(value)
     }
     unknown = [

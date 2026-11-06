@@ -98,6 +98,7 @@ from ..services.import_proveedores_service import (
 )
 from ..services.import_runa_payroll_service import import_runa_payroll_workbook
 from ..services.tournament_phase_service import (
+    get_tournament_budget_scope_labels,
     get_tournament_etapas,
     get_tournament_scope_labels,
     get_tournament_scope_options,
@@ -13276,10 +13277,10 @@ async def update_tournament(
         )
 
         if scope_changed:
-            before_labels = get_tournament_scope_labels(tournament)
+            before_labels = get_tournament_budget_scope_labels(tournament)
             next_labels = {
                 label.casefold()
-                for label in get_tournament_scope_labels(
+                for label in get_tournament_budget_scope_labels(
                     {"etapas": etapas_list, "categorias": categorias_list}
                 )
             }
