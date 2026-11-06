@@ -7,60 +7,59 @@ This is technical acceptance, not a real person's device ceremony or UAT.
 """
 
 import asyncio
-from dataclasses import replace
 import hashlib
-from io import BytesIO
 import logging
 import os
-from pathlib import Path
 import random
 import secrets
 import time
-from uuid import UUID, NAMESPACE_URL, uuid4, uuid5
+from dataclasses import replace
+from io import BytesIO
+from pathlib import Path
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import asyncpg
+import fitz
+import httpx
+import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-import fitz
-import httpx
 from PIL import Image
-import pytest
-
 from test_ctt_full_runtime_postgres import (
-    full_pg as _full_pg,
     canonical,
-    pub,
-    public_review_source,
 )
+from test_ctt_full_runtime_postgres import full_pg as _full_pg
+from test_ctt_full_runtime_postgres import pub, public_review_source
 from test_ctt_staff_security_postgres import PORT
+
 from devnous.copa_telmex.batch_admission import sha256_value
 from devnous.copa_telmex.staff_capture_runtime import assemble_capture_runtime
-from devnous.copa_telmex.staff_review_runtime import (
-    assemble_review_issuer,
-    assemble_review_workflow,
-)
 from devnous.copa_telmex.staff_capture_transport import (
-    CaptureUnixClient,
     CaptureTransportUncertain,
+    CaptureUnixClient,
 )
 from devnous.copa_telmex.staff_capture_transport_store import PostgresTransportNonces
 from devnous.copa_telmex.staff_review_issuer_client import ReviewIssuerClient
 from devnous.copa_telmex.staff_review_operations_channel import (
-    StaffReviewOperationsClient,
-    create_staff_review_operations_app,
-    StaffReviewOperationsUnavailable,
     StaffReviewOperationDenied,
+    StaffReviewOperationsClient,
+    StaffReviewOperationsUnavailable,
+    create_staff_review_operations_app,
+)
+from devnous.copa_telmex.staff_review_runtime import (
+    assemble_review_issuer,
+    assemble_review_workflow,
 )
 from devnous.copa_telmex.staff_signed_assertion import (
-    PLATFORM_PROFILE,
     PLATFORM_POLICY_HASH,
+    PLATFORM_PROFILE,
 )
 from devnous.copa_telmex.staff_source_admission import (
     SourceAdmissionLimits,
+    admit_prepared_sources,
     prepare_source_admission,
     sign_source_admission,
-    admit_prepared_sources,
 )
 
 pytest_plugins = ("test_ctt_staff_security_postgres",)
@@ -102,6 +101,9 @@ async def operational_rpc_case(
     import tempfile
     from urllib.parse import urlencode
 
+    import fido2
+    import sqlalchemy
+    import staff_review_issuer_v2
     from cryptography.hazmat.primitives import serialization
     from fido2.utils import websafe_decode
     from fido2.webauthn import (
@@ -110,9 +112,6 @@ async def operational_rpc_case(
         AuthenticatorData,
         CollectedClientData,
     )
-    import fido2
-    import sqlalchemy
-    import staff_review_issuer_v2
 
     controller_uid, controller_gid = os.geteuid(), os.getegid()
     prefix = [] if controller_uid == 0 else ["sudo", "-n"]
@@ -598,8 +597,34 @@ print(json.dumps({'site': str(root), 'roots': sorted(roots)}))
                     for member in initial["staff"]
                 )
                 assert changes == {"confirm_present_staff": True}
+            optional_photo = (
+                "phase_binding" in policy and policy["required_photo_kinds"] == []
+            )
+            expected_photo_hashes = {}
+            if optional_photo:
+                pending_slots = {2, 5, 7, 9, 10, 12, 13, 15}
+                assert {
+                    member["slot"]
+                    for member in initial["players"]
+                    if member["photo_status"] == "pending"
+                } == pending_slots
+                for member in initial["players"]:
+                    if member["slot"] in pending_slots:
+                        assert member.get("photo_preview") is None
+                    else:
+                        assert member["photo_status"] == "photo"
+                        expected_photo_hashes[member["last_name"]] = hashlib.sha256(
+                            base64.b64decode(member["photo_preview"].split(",", 1)[1])
+                        ).hexdigest()
+                assert len(expected_photo_hashes) == 8
+                assert not any(
+                    item["code"].startswith("PHOTO_") for item in initial["blockers"]
+                )
             view = await client.prepare(account, scope.session_id, None, changes)
             assert view["ready_to_approve"] is True, view["blockers"]
+            if optional_photo:
+                assert view["players"] == initial["players"]
+                assert len(view["blockers"]) == 0
             if "phase_binding" in policy:
                 assert view["identity_policy"] == {
                     "phase": "NACIONAL",
@@ -700,6 +725,31 @@ print(json.dumps({'site': str(root), 'roots': sorted(roots)}))
                     )
                     == 0
                 )
+        if optional_photo:
+            rows = await admin.fetch(
+                "SELECT last_name, photo_path, photo_sha256, photo_ahash, photo_data "
+                "FROM public.copa_telmex_players WHERE governance_state='ACTIVE'"
+            )
+            absent = [row for row in rows if row["photo_path"] is None]
+            provided = [row for row in rows if row["photo_path"] is not None]
+            assert len(absent) == 8 and len(provided) == 8
+            for row in absent:
+                assert all(
+                    row[field] is None
+                    for field in (
+                        "photo_path",
+                        "photo_sha256",
+                        "photo_ahash",
+                        "photo_data",
+                    )
+                )
+            assert {
+                row["last_name"]: row["photo_sha256"] for row in provided
+            } == expected_photo_hashes
+            assert all(
+                row["photo_path"] == "ctt-photo:" + row["photo_sha256"]
+                for row in provided
+            )
         journal_size = subprocess.check_output(
             prefix + ["stat", "-c", "%s", str(directories["bus"] / "bus.jsonl")],
             text=True,
@@ -788,6 +838,7 @@ print(json.dumps({'site': str(root), 'roots': sorted(roots)}))
         "success",
         "operational_rpc",
         "operational_rpc_national",
+        "operational_rpc_national_optional_photo",
         "short_faculty",
         "incomplete_revision",
         "lost_issuer_reply",
@@ -802,9 +853,9 @@ def test_private_prepare_to_official_committed_session(
     full_pg, tmp_path, monkeypatch, scenario
 ):
     monkeypatch.syspath_prepend(str(ROOT / "tests/unit"))
-    from test_ctt_staff_capture_source_adapter import candidate
-    from staff_capture_gate_v2 import StaffCaptureGateV2
     import staff_review_issuer_v2
+    from staff_capture_gate_v2 import StaffCaptureGateV2
+    from test_ctt_staff_capture_source_adapter import candidate
 
     monkeypatch.syspath_prepend(
         str(Path(staff_review_issuer_v2.__file__).parents[1] / "evidence-bus")
@@ -815,13 +866,18 @@ def test_private_prepare_to_official_committed_session(
     from fido2.utils import websafe_decode
     from fido2.webauthn import (
         AttestedCredentialData,
-        AuthenticatorData,
-        CollectedClientData,
         AuthenticationResponse,
         AuthenticatorAssertionResponse,
+        AuthenticatorData,
+        CollectedClientData,
     )
 
-    national = scenario == "operational_rpc_national"
+    optional_photo = scenario == "operational_rpc_national_optional_photo"
+    national = scenario in {
+        "operational_rpc_national",
+        "operational_rpc_national_optional_photo",
+    }
+    missing_photo_slots = {2, 5, 7, 9, 10, 12, 13, 15} if optional_photo else set()
 
     async def run():
         socket, database = full_pg
@@ -939,12 +995,13 @@ def test_private_prepare_to_official_committed_session(
                     )
                     encoded = BytesIO()
                     image.resize((photo_w, photo_h)).save(encoded, format="PNG")
-                    page.insert_image(
-                        fitz.Rect(
-                            photo_x, photo_y, photo_x + photo_w, photo_y + photo_h
-                        ),
-                        stream=encoded.getvalue(),
-                    )
+                    if slot not in missing_photo_slots:
+                        page.insert_image(
+                            fitz.Rect(
+                                photo_x, photo_y, photo_x + photo_w, photo_y + photo_h
+                            ),
+                            stream=encoded.getvalue(),
+                        )
                     box = {
                         "page_index": page_index,
                         "x": 55,
@@ -965,13 +1022,17 @@ def test_private_prepare_to_official_committed_session(
                                 for key in ("full_name", "birth_date", "curp")
                                 if curp is not None or key != "curp"
                             },
-                            "photo_box": {
-                                "page_index": page_index,
-                                "x": photo_x,
-                                "y": photo_y,
-                                "width": photo_w,
-                                "height": photo_h,
-                            },
+                            "photo_box": (
+                                None
+                                if slot in missing_photo_slots
+                                else {
+                                    "page_index": page_index,
+                                    "x": photo_x,
+                                    "y": photo_y,
+                                    "width": photo_w,
+                                    "height": photo_h,
+                                }
+                            ),
                         }
                     )
                     players.append(
@@ -1231,7 +1292,7 @@ def test_private_prepare_to_official_committed_session(
                 minimum_roster_size=16,
                 maximum_roster_size=35,
                 required_staff_slots=[1, 2],
-                required_photo_kinds=["PLAYER"],
+                required_photo_kinds=[] if optional_photo else ["PLAYER"],
             )
             if national:
                 policy.update(
@@ -1247,7 +1308,11 @@ def test_private_prepare_to_official_committed_session(
             policy["policy_hash"] = (
                 "sha256:" + hashlib.sha256(canonical(policy)).hexdigest()
             )
-            if scenario in {"operational_rpc", "operational_rpc_national"}:
+            if scenario in {
+                "operational_rpc",
+                "operational_rpc_national",
+                "operational_rpc_national_optional_photo",
+            }:
                 monkeypatch.syspath_prepend(str(ROOT))
                 await operational_rpc_case(
                     socket=socket,

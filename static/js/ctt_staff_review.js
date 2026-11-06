@@ -230,6 +230,7 @@
                         image.alt = `Fotografía propuesta: ${title.textContent}`; image.className = 'ctt-review-photo'; card.appendChild(image);
                     }
                     const photoMessages = {
+                        pending: 'Sin fotografía — opcional en fase nacional',
                         missing: 'No se detectó una fotografía en esta casilla; revisa la fuente.',
                         uncertain: 'La fotografía necesita revisión en la fuente.',
                         error: 'No se pudo preparar la fotografía. Vuelve a preparar la revisión; se conserva el recorte.',

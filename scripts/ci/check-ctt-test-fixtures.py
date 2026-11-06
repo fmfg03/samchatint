@@ -13,10 +13,10 @@ import importlib.metadata
 import importlib.util
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
+from pathlib import Path
 from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -31,7 +31,7 @@ TEST_HELPERS = frozenset(
     }
 )
 REQUIRED_COHORTS = {
-    "test_ctt_review_workflow_postgres": 11,
+    "test_ctt_review_workflow_postgres": 12,
     "test_ctt_passkey_enrollment_postgres": 19,
     "test_ctt_full_runtime_postgres": 28,
     "test_ctt_assertion_proof_recovery_postgres": 11,
@@ -170,7 +170,11 @@ def check_junit(path: Path, additional: Path | None = None):
             raise ValueError(
                 "required CTT acceptance cohort missing, skipped or failed: " + cohort
             )
-    for scenario in ("operational_rpc", "operational_rpc_national"):
+    for scenario in (
+        "operational_rpc",
+        "operational_rpc_national",
+        "operational_rpc_national_optional_photo",
+    ):
         operational = [
             case
             for case in cases

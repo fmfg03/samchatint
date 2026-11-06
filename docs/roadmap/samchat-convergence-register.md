@@ -22,12 +22,13 @@ canon edits silently.
 
 | Protected source path | SHA-256 at Line 0 baseline |
 | --- | --- |
-| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `2b56c5956bc7342df6e452dd5f5e09a01ba9e72c8912be01968c7bb01f7798c2` |
+| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `3f74f23da4bebd4fbd61098f353afae8b11186747fb86c07f3906215edb26c34` |
 | `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `abdf07a860f63bd57a6df26fd0245a10f17a12856241c81c3cef2225fc9df1fa` |
-| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `8efda4290df3c228e6a62a0463b131a5aec8913558f9c37c715cc22867c09a02` |
+| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `708c8e43a8520c298e21a197992817068de8c455465f3f87c073e871158928e2` |
 
 | Canon amendment date | Affected sources | Reason and evidence | Evidence state |
 | --- | --- | --- | --- |
+| 2026-11-06 | Product and Engineering canons | Exact texts and technical specification explicitly approved by responsible user («aprobado»): national player photography is optional; missing photograph remains NULL and visible pending, supplied photographs keep source/integrity checks. Profile binds tenant/edition/manifest; strict profile, passkey and finality preserved. Evidence: docs/roadmap/ctt-national-photo-optional-20261106.md. Sweep unchanged: historical inventory remains true. | Approved design; tests, publication, deployment and human acceptance require separate receipts. |
 | 2026-10-27 | Engineering canon, section 20 | Explicitly human-approved separation of CTT append-only table ownership from the runtime role. Reason: native FK checks failed with 42501 when the runtime owned the tables with UPDATE revoked. Evidence: 20261027_copa_telmex_batch_table_owner.sql and real-login/production-owner regressions. Product and sweep unchanged: no new draft, team or eligibility authority. | Design and exact canon text approved; application and authenticated UAT require separate evidence. |
 | 2026-10-27 | Engineering canon, section 20 | Human-approved correction of CTT admission concurrency: transaction-scoped advisory locking preserves SELECT/INSERT-only batch privileges. Reason: authenticated pilot failed with PostgreSQL 42501 on FOR UPDATE. Evidence: docs/roadmap/ctt-pilot-batch-admission.md and runtime-role PostgreSQL regressions. Product and sweep unchanged: no change to draft/team/eligibility authority or historical inventory. | Approved scope and canon text; isolated implementation under validation, not merged, deployed or business accepted. |
 | 2026-10-14 | Product and Engineering canons | Explicit human approval of distribution revision rules (`Sentinel_e34dca62ad888191ae00a160c9ee5b09`); Git publication authorized separately (`Sentinel_a80479c5cb1081919315d4fa293a5777`). Preserve financial lines, amounts and history; approved reconciled successor, week-start month, full-month YTD, fixed categories N/D pending Finance. Evidence: `docs/roadmap/budget-distribution-20261014-candidate.md`. Sweep unchanged: historical inventory, no production observation. | Approved candidate and publication; CI, merge, deployment, identified-case UAT and Finance crosswalk remain pending. |
