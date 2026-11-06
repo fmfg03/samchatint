@@ -1,0 +1,575 @@
+{
+  "schema": "hwc-subproject-repair-proposal.v1",
+  "status": "APPROVED_SCOPE_NOT_APPLIED",
+  "source": "/root/samchat/catalogo_presupuestal (3).xlsx",
+  "source_sha256": "75da03a5853199c3fab3db96699ed1950bb6b637b2702630b8bbcfb24e3d4eae",
+  "tournament_id": "c3b247f1-e3fc-4f4a-8995-56a5880f86a6",
+  "version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+  "scope_updates": [
+    {
+      "concept_id": "ba9491fb-4ac3-412f-983f-ccdb318e59d2",
+      "concept_name": "Servicio de Ambulancia montaje del evento",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Servicios Médicos",
+      "active": true
+    },
+    {
+      "concept_id": "5bb21d0e-23af-4f64-86e9-1c7645cfb070",
+      "concept_name": "Traslado piramides de Teotihuacán",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Transportes",
+      "active": true
+    },
+    {
+      "concept_id": "48c5aea2-54d7-45b4-96db-6330eb4a7298",
+      "concept_name": "Varios Audio, video y electricidad.",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "011f0d75-1d66-49cb-85b4-c92f9ad6cbbc",
+      "concept_name": "200 metros Fibra óptica",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "398301aa-b57c-4c18-99b2-12abe5dc1d4a",
+      "concept_name": "Audio canchas 2 y 3",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "41818ee6-e2aa-4a2c-b9b0-e5a0ff95933c",
+      "concept_name": "Audio Vestidores se utilizó para charlas técnicas",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "46a136ea-561d-4acf-b841-ce2263e5587a",
+      "concept_name": "Bocinas preamplificadas para área de comida en el gran Hotel de la CDMX",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "e97d462d-cf06-49e9-bf76-0a80dcd2c37b",
+      "concept_name": "Bolsa de lavandería",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Lavandería",
+      "active": true
+    },
+    {
+      "concept_id": "00a86463-afd3-48d5-8356-e5d50d6e4b0c",
+      "concept_name": "Capacitaciones",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "ff38e104-cda2-4543-9002-37603a93bb58",
+      "concept_name": "Caseta Sanitarias para jugadores",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Sanitarios Moviles",
+      "active": true
+    },
+    {
+      "concept_id": "74d8e183-9eae-484c-a1d7-23f7c6333f12",
+      "concept_name": "Casetas Sanitarias VIP",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Sanitarios Moviles",
+      "active": true
+    },
+    {
+      "concept_id": "de98f19f-6d63-47cf-b54f-671bba7a5a29",
+      "concept_name": "Casetas santitarias desmontaje",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Sanitarios Moviles",
+      "active": true
+    },
+    {
+      "concept_id": "3c2c5f14-c655-4048-a0ed-cd91862ea8df",
+      "concept_name": "Casetas santitarias montaje",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Sanitarios Moviles",
+      "active": true
+    },
+    {
+      "concept_id": "0ca264c4-d36f-44cc-b99f-01330b13a273",
+      "concept_name": "Coordinador General",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Transportes",
+      "active": true
+    },
+    {
+      "concept_id": "f9ae6130-0dc9-4f80-8ba3-8b638c973bf2",
+      "concept_name": "Extintor CO2",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Seguridad Privada y Protección Civil",
+      "active": true
+    },
+    {
+      "concept_id": "d8924865-2b19-4645-97e3-0b4247c66f1a",
+      "concept_name": "Extintor PQS",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Seguridad Privada y Protección Civil",
+      "active": true
+    },
+    {
+      "concept_id": "60a12dc6-e03d-4743-840f-c628604a998b",
+      "concept_name": "Hotel Exe Alameda",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Hospedaje y alimentos",
+      "active": true
+    },
+    {
+      "concept_id": "5bbdec45-ce3a-45d5-aade-64abfba90dc4",
+      "concept_name": "Hotel Fontan",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Hospedaje y alimentos",
+      "active": true
+    },
+    {
+      "concept_id": "5ca4ed8d-7858-4b65-859d-2391edd38def",
+      "concept_name": "Hotel Lepanto",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Hospedaje y alimentos",
+      "active": true
+    },
+    {
+      "concept_id": "7b432347-7b69-4424-b037-55caaf4bcb20",
+      "concept_name": "Hotel San Francisco",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Hospedaje y alimentos",
+      "active": true
+    },
+    {
+      "concept_id": "4a8c2575-6fef-4974-8196-86548e14e68c",
+      "concept_name": "Impresos",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "8cdfb905-bbff-4491-bca7-3bbd8dc1f860",
+      "concept_name": "Paramédicos",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Servicios Médicos",
+      "active": true
+    },
+    {
+      "concept_id": "4f8fa7ea-73a7-467f-a378-db40905cbf8a",
+      "concept_name": "Personal Operativo",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Operación",
+      "active": true
+    },
+    {
+      "concept_id": "5ad03e33-3ff5-49ce-95fe-358dd75a37e1",
+      "concept_name": "Servicio de Ambulancia desmontaje de evento",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Servicios Médicos",
+      "active": true
+    },
+    {
+      "concept_id": "ee03dbc6-41de-4c55-b8a9-2af678cfde45",
+      "concept_name": "Servicio de Ambulancia para encuentros",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Servicios Médicos",
+      "active": true
+    },
+    {
+      "concept_id": "312ce1ae-f495-44bb-9bca-6415f68a6440",
+      "concept_name": "Servicio de lavanderia de uniforme tipo deportivo (short, playera y calcetas)",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Lavandería",
+      "active": true
+    },
+    {
+      "concept_id": "ca45595a-524d-4468-bce1-698402683002",
+      "concept_name": "Servicio de Limpieza general",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Servicio de Limpieza",
+      "active": true
+    },
+    {
+      "concept_id": "41c11459-387a-43a1-b80d-23ae90d9e7e7",
+      "concept_name": "Servicio de recolección y entrega en hoteles asignados por el cliente (zona centro)",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Lavandería",
+      "active": true
+    },
+    {
+      "concept_id": "c3202430-ea73-4380-b11a-e85ba4f35cb9",
+      "concept_name": "Servicios Internet",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "3722ed21-f90b-4fdf-a9df-54ed89711330",
+      "concept_name": "Staff de seguridad (guardia de elementos en diferentes turnos)",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Seguridad Privada y Protección Civil",
+      "active": true
+    },
+    {
+      "concept_id": "19ca50af-8fb2-427c-b41c-d589654daa83",
+      "concept_name": "Traslado AICM - Hotel Auto (llegada de VIP)",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Transportes",
+      "active": true
+    },
+    {
+      "concept_id": "e1726214-260b-4203-980f-fbc2601064d4",
+      "concept_name": "Traslado AICM - Hotel Sprinters (llegada de equipos a la competencia)",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Transportes",
+      "active": true
+    },
+    {
+      "concept_id": "e85f188e-7f9e-4b73-bdc5-41c5ec706271",
+      "concept_name": "Traslado AICM - Hotel Van (llegada staff Internacional)",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Transportes",
+      "active": true
+    },
+    {
+      "concept_id": "04704732-7b9f-4df9-b949-7aa529b5082e",
+      "concept_name": "Traslado Hotel - AICM Auto (regreso de VIP)",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Transportes",
+      "active": true
+    },
+    {
+      "concept_id": "22c92d76-cf79-4d8d-be8c-a71b6325a6de",
+      "concept_name": "Traslado Hotel - AICM Sprinter (regreso de equipos a pais de origen)",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Transportes",
+      "active": true
+    },
+    {
+      "concept_id": "fb0f709d-2fca-4610-8912-f1cd088177ec",
+      "concept_name": "Traslado Hotel - AICM Transit (regreso de staff a pais de origen)",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Transportes",
+      "active": true
+    },
+    {
+      "concept_id": "8fde2556-47f5-4b39-be4e-0a6f57b2ef88",
+      "concept_name": "Viaticos de alimentos para coordinadores",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Transportes",
+      "active": true
+    },
+    {
+      "concept_id": "144602ed-2992-4e9a-935f-7e508b2f1625",
+      "concept_name": "Primas Seguros",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "a75822de-3990-473b-b4c7-2614bbcedc64",
+      "concept_name": "Programa especial de Protección Civil con registro de tercer acreditado",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Seguridad Privada y Protección Civil",
+      "active": true
+    },
+    {
+      "concept_id": "6450734e-cbfb-4257-ae9d-4a15a289f395",
+      "concept_name": "Atención a jugadores (Teotihuacan, CMLL)",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "e989b9f6-265e-4f2b-9949-a2245d5c0731",
+      "concept_name": "Coctel Clausura: Pantalla led 3.5 X 2MT 2.9MM",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "9c61188b-d0d5-49eb-96dc-b90afcfa71ce",
+      "concept_name": "Traslado piramides de Teotihuacán (50% de los participantes)",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Transportes",
+      "active": true
+    },
+    {
+      "concept_id": "8edf8f69-5969-4c4c-b47e-d6ff9363af42",
+      "concept_name": "Traslado Salón del Deporte TELMEX (50% de los participantes)",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Transportes",
+      "active": true
+    },
+    {
+      "concept_id": "0d15d28c-4efe-4187-a495-835edd868c85",
+      "concept_name": "Food For Films",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Hospedaje y alimentos",
+      "active": true
+    },
+    {
+      "concept_id": "a6330411-a26a-489c-b344-15219085682a",
+      "concept_name": "Hotel Novotel",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Hospedaje y alimentos",
+      "active": true
+    },
+    {
+      "concept_id": "af46f5ab-1c52-4718-a334-78f60510a70c",
+      "concept_name": "Coordiandor AICM T1 y T2",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Transportes",
+      "active": true
+    },
+    {
+      "concept_id": "d495a8a5-3b90-40c3-9f3d-61566ff125cf",
+      "concept_name": "Guías Bilingües",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Guías Bilingües y Voluntarios",
+      "active": true
+    },
+    {
+      "concept_id": "bff31337-66b9-4d71-bf77-372d3468ad4e",
+      "concept_name": "Hotel Best Western Estoril",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Hospedaje y alimentos",
+      "active": true
+    },
+    {
+      "concept_id": "d1c4d193-d1a9-4cf8-a461-70b3536effc3",
+      "concept_name": "Hotel Best Western Majestic",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Hospedaje y alimentos",
+      "active": true
+    },
+    {
+      "concept_id": "b0700d0a-a966-4fb8-a17c-6b0371f8c90e",
+      "concept_name": "Hotel en Aeropuerto para coordinadores",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Transportes",
+      "active": true
+    },
+    {
+      "concept_id": "39b332b4-1fab-4642-bbc7-cfadb0a0bde2",
+      "concept_name": "Pack de bienvenida",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "e88ffbb4-b8a3-4764-8fff-977fec130cca",
+      "concept_name": "Pagos Arbitros",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "b940dafc-59f9-47ab-8c76-c3e2ef319367",
+      "concept_name": "Pantalla de proyeccion salon usos Multiples",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "c4ae1d1c-a083-405a-ae4f-116804bfdfd4",
+      "concept_name": "Papelería y art de oficina",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "4adf9ddf-dc51-401b-879f-07242acbfc1e",
+      "concept_name": "Playeras, Gorras, etc",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "8ae956e1-e723-47b3-b70a-40529dade6cb",
+      "concept_name": "Producción Time Lapse El costo no incluye habitacion con vista a la plaza",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "e5cb82e4-9cd8-4762-bcc9-37509ce44a60",
+      "concept_name": "Voluntarios",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Guías Bilingües y Voluntarios",
+      "active": true
+    },
+    {
+      "concept_id": "035f73e5-ab1c-4534-b25a-0fa30e13ff62",
+      "concept_name": "Desayuno embajadores: Pantalla led 3.5 X 2MT (2.9MM)",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "8af7c975-e3ee-476a-8850-a3448e40307b",
+      "concept_name": "Distribución eléctrica",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "6148f6be-991b-4704-b3e0-fb679b1c7b74",
+      "concept_name": "Gastos Varios publicidad",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "646c5e53-3108-4897-9313-d5b7e0d7bd50",
+      "concept_name": "Kit de higiene para participantes",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "b5e105a4-c665-4562-a597-37d291e581af",
+      "concept_name": "Lavamanos para jugadores",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Sanitarios Moviles",
+      "active": true
+    },
+    {
+      "concept_id": "ddf6d6c3-b2ec-42da-a0be-f3a684e35cca",
+      "concept_name": "Montaje General",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje General",
+      "active": true
+    },
+    {
+      "concept_id": "75fdc656-ea37-4772-8b03-dd5c3aad4d46",
+      "concept_name": "Oficina, almacén, bodegas y casetas móviles",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "5f31a896-e460-439d-b8ba-2c9eaf4919b7",
+      "concept_name": "Viajes de supervisión / Scouting",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Gastos Preoperativos",
+      "active": true
+    },
+    {
+      "concept_id": "53d1e14e-5bd9-4f72-8ea6-a8c018e089f1",
+      "concept_name": "PANTALLA LED 55\" / PLASMA",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "2bc55953-82db-4211-8438-8d99f81f91b2",
+      "concept_name": "Derechos de piso en el AICM",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Transportes",
+      "active": true
+    },
+    {
+      "concept_id": "9f4e7fcb-77e1-49a2-96c5-fed570e38852",
+      "concept_name": "Paquete de identificación de riesgos estructurales",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Seguridad Privada y Protección Civil",
+      "active": true
+    },
+    {
+      "concept_id": "e77e4c16-a65f-405e-9e0b-ef664c884c22",
+      "concept_name": "Personal Administrativo",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Operación",
+      "active": true
+    },
+    {
+      "concept_id": "0df5d073-0aef-4ca9-9249-d3c0051f2a6c",
+      "concept_name": "Personal de Valet",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Sanitarios Moviles",
+      "active": true
+    },
+    {
+      "concept_id": "dd814c93-8ba8-4c2e-a792-40ba5afa6522",
+      "concept_name": "Plantas Generadoras de energía",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "48a6369f-8ec2-40d9-8b22-d70fe82e9577",
+      "concept_name": "Radios de comunicación (operacióin general)",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Montaje, Ops, Varios",
+      "active": true
+    },
+    {
+      "concept_id": "fb41fe5a-82b0-490a-bdc0-2fc74b719c0c",
+      "concept_name": "Radios de comunicación para elementos de seguridad",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Seguridad Privada y Protección Civil",
+      "active": true
+    },
+    {
+      "concept_id": "062be208-214a-41a8-a424-e323c80e866f",
+      "concept_name": "Traslado Salón del Deporte TELMEX",
+      "scope_before": "Todas las fases / subproyectos",
+      "scope_after": "Transportes",
+      "active": true
+    }
+  ],
+  "zero_line_phase_updates": [
+    {
+      "line_id": "0728a2f8-a64d-49fe-b53b-c2e93762b9c2",
+      "budget_concept_id": "5f31a896-e460-439d-b8ba-2c9eaf4919b7",
+      "amount": "0.00",
+      "phase_before": "Hospedaje y alimentos",
+      "phase_after": "Gastos Preoperativos"
+    }
+  ],
+  "documents_preserved": 11,
+  "expenses_preserved": 20,
+  "historical_scope_gaps": {
+    "documents": 3,
+    "expenses": 13
+  },
+  "untouched_active_concepts": [
+    {
+      "id": "3cc96596-ea55-469c-b193-2557604c2a94",
+      "name": "Viajes de supervisión / Scouting"
+    },
+    {
+      "id": "5c30efbf-2555-470a-aa3d-f06a70a0ac8a",
+      "name": "HWC"
+    }
+  ],
+  "approval": {
+    "status": "STORY_AND_SPEC_APPROVED",
+    "answer": "continua",
+    "source": "User reply to concrete approval request for HWC74+zero-line+shared-route correction",
+    "spec_sha256": "b5dc10c77c7390cc2729a7ee88ffcc3d6f83ce94c6e80a796c60120fd60f8c88",
+    "plan_sha256": "91d1790f1e6a38aaee40ae79ebf1463dd765b491c22fe927ed15cc3be72f54d1",
+    "source_sha256": "75da03a5853199c3fab3db96699ed1950bb6b637b2702630b8bbcfb24e3d4eae",
+    "recorded_at": "2026-11-05T18:15:39.033715+00:00",
+    "final_diff_approval": "pending after implementation and validation",
+    "production_application": "not_performed"
+  },
+  "actor_empleado_id": "e3d13040-2360-420f-98a1-516440ef63c3",
+  "expected_totals": {
+    "16793f0e-4697-4a28-8f42-b563da8cc7d8": "3686827.60",
+    "c3b247f1-e3fc-4f4a-8995-56a5880f86a6": "30384939.78",
+    "67c556df-f953-4f99-8cab-87ed4d111b05": "17471291.92"
+  },
+  "expected_weeks": {
+    "16793f0e-4697-4a28-8f42-b563da8cc7d8": 40,
+    "c3b247f1-e3fc-4f4a-8995-56a5880f86a6": 52,
+    "67c556df-f953-4f99-8cab-87ed4d111b05": 52
+  }
+}
