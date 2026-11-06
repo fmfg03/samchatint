@@ -2,9 +2,9 @@
 
 import importlib.util
 import json
-from pathlib import Path
 import shutil
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from xml.etree import ElementTree
 
@@ -159,6 +159,32 @@ def junit(path, *, attack=None):
                     "name",
                     "test_private_prepare_to_official_committed_session[operational_rpc_national]",
                 )
+            if cohort == "test_ctt_review_workflow_postgres" and i == 2:
+                case.set(
+                    "name",
+                    "test_private_prepare_to_official_committed_session[operational_rpc_national_optional_photo]",
+                )
+            if (
+                attack == "missing_optional_photo"
+                and cohort == "test_ctt_review_workflow_postgres"
+                and i == 2
+            ):
+                case.set("name", "different_scenario")
+            if (
+                attack == "duplicated_optional_photo"
+                and cohort == "test_ctt_review_workflow_postgres"
+                and i == 3
+            ):
+                case.set(
+                    "name",
+                    "test_private_prepare_to_official_committed_session[operational_rpc_national_optional_photo]",
+                )
+            if (
+                attack == "skipped_optional_photo"
+                and cohort == "test_ctt_review_workflow_postgres"
+                and i == 2
+            ):
+                ElementTree.SubElement(case, "skipped")
             if attack == "missing_national" and i == 1:
                 case.set("name", "different_scenario")
             if (
@@ -189,6 +215,9 @@ def junit(path, *, attack=None):
         "missing_operational",
         "missing_national",
         "duplicated_national",
+        "missing_optional_photo",
+        "duplicated_optional_photo",
+        "skipped_optional_photo",
     ],
 )
 def test_required_acceptance_cannot_be_absent_skipped_or_failed(tmp_path, attack):
@@ -233,18 +262,28 @@ def test_normal_and_privileged_junit_are_both_mandatory(tmp_path):
     root = ElementTree.parse(normal).getroot()
     suite = root.find("testsuite")
     assert suite is not None
-    operational = next(
-        case for case in suite if case.get("name", "").endswith("[operational_rpc]")
-    )
-    suite.remove(operational)
+    scenarios = {
+        "operational_rpc",
+        "operational_rpc_national",
+        "operational_rpc_national_optional_photo",
+    }
+    operational = [
+        case
+        for case in suite
+        if any(case.get("name", "").endswith("[" + name + "]") for name in scenarios)
+    ]
+    assert len(operational) == 3
+    for case in operational:
+        suite.remove(case)
     ElementTree.ElementTree(root).write(normal)
     separate = ElementTree.Element("testsuites")
-    ElementTree.SubElement(separate, "testsuite").append(operational)
+    privileged_suite = ElementTree.SubElement(separate, "testsuite")
+    privileged_suite.extend(operational)
     ElementTree.ElementTree(separate).write(privileged)
     with pytest.raises(ValueError):
         bootstrap.check_junit(normal)
     bootstrap.check_junit(normal, privileged)
-    operational.set("classname", "wrong_cohort")
+    operational[0].set("classname", "wrong_cohort")
     ElementTree.ElementTree(separate).write(privileged)
     with pytest.raises(ValueError):
         bootstrap.check_junit(normal, privileged)

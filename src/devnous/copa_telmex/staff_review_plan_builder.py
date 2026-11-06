@@ -796,12 +796,18 @@ class ReviewPlanBuilder:
                     )
 
                 presence = "PRESENT" if kind == "PLAYER" else member.get("presence")
-                member["photo_status"] = (
-                    "missing"
-                    if presence == "PRESENT"
-                    and kind in self._policy.get("required_photo_kinds", [])
-                    else "not_required"
+                required_photo = kind in self._policy.get("required_photo_kinds", [])
+                optional_national_photo = (
+                    kind == "PLAYER"
+                    and self._phase_binding is not None
+                    and not required_photo
                 )
+                if optional_national_photo:
+                    member["photo_status"] = "pending"
+                elif presence == "PRESENT" and required_photo:
+                    member["photo_status"] = "missing"
+                else:
+                    member["photo_status"] = "not_required"
                 page_index = member.get("source_page_index")
                 page = pages.get(page_index) if type(page_index) is int else None
                 resolved = slots[index - 1] if slots and index <= len(slots) else None
@@ -972,7 +978,7 @@ class ReviewPlanBuilder:
                                     photo_sha256=photo.sha256,
                                     photo_ahash=photo.ahash,
                                 )
-                        elif kind in self._policy.get("required_photo_kinds", []):
+                        elif required_photo:
                             member_block(
                                 "PHOTO_REQUIRED",
                                 "Falta una fotografía derivada del PDF.",
@@ -991,14 +997,25 @@ class ReviewPlanBuilder:
                                 )
                             except Exception:
                                 status = "error"
-                        member["photo_status"] = (
-                            status
-                            if member.get("photo_box")
-                            or kind in self._policy.get("required_photo_kinds", [])
-                            else "not_required"
+                        pending_photo = (
+                            optional_national_photo
+                            and not member.get("photo_box")
+                            and status in ("missing", "uncertain")
                         )
-                        if member.get("photo_box") or kind in self._policy.get(
-                            "required_photo_kinds", []
+                        if pending_photo:
+                            member["photo_status"] = "pending"
+                        elif (
+                            member.get("photo_box")
+                            or required_photo
+                            or optional_national_photo
+                        ):
+                            member["photo_status"] = status
+                        else:
+                            member["photo_status"] = "not_required"
+                        if (
+                            member.get("photo_box")
+                            or required_photo
+                            or (optional_national_photo and not pending_photo)
                         ):
                             code, message = {
                                 "missing": (
