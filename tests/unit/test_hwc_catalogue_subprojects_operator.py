@@ -414,3 +414,389 @@ def test_missing_active_runtime_fails_closed_without_secrets(monkeypatch):
     )
     with pytest.raises(ValueError, match="Active serving process unavailable"):
         cli.serving_environment()
+
+
+def test_source_identity_includes_reviewed_operator_and_pinned_configuration():
+    identity = cli.source_identity()
+    assert set(identity["files"]) == set(cli.CODE)
+    assert identity["files"][cli.CONFIG] == cli.CONFIG_SHA
+
+
+@pytest.mark.parametrize("tamper", [None, "source", "spec", "plan", "identities"])
+def test_inputs_bind_approval_bytes_source_and_exact_scope(
+    monkeypatch, tmp_path, tamper
+):
+    import hashlib
+
+    data = json.loads((ROOT / cli.CONFIG).read_text())
+    source = tmp_path / "source.xlsx"
+    source.write_bytes(b"controlled original source fixture")
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    (artifacts / "plan.json").write_bytes(b'{"approved": true}')
+    spec = tmp_path / cli.SPEC
+    spec.parent.mkdir(parents=True)
+    spec.write_bytes(b"approved spec fixture")
+    data["source"] = str(source)
+    data["source_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+    approval = data["approval"]
+    approval["source_sha256"] = data["source_sha256"]
+    approval["spec_sha256"] = hashlib.sha256(spec.read_bytes()).hexdigest()
+    approval["plan_sha256"] = hashlib.sha256(
+        (artifacts / "plan.json").read_bytes()
+    ).hexdigest()
+    (artifacts / "approval.json").write_text(json.dumps(approval))
+    if tamper == "identities":
+        data["scope_updates"][1]["concept_id"] = data["scope_updates"][0]["concept_id"]
+    config = tmp_path / cli.CONFIG
+    config.parent.mkdir()
+    config.write_text(json.dumps(data))
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setattr(cli, "ARTIFACTS", artifacts)
+    monkeypatch.setattr(
+        cli, "CONFIG_SHA", hashlib.sha256(config.read_bytes()).hexdigest()
+    )
+    if tamper in ("source", "spec", "plan"):
+        target = {"source": source, "spec": spec, "plan": artifacts / "plan.json"}[
+            tamper
+        ]
+        target.write_bytes(b"changed after approval")
+    if tamper:
+        with pytest.raises(ValueError, match="changed|required"):
+            cli.inputs()
+    else:
+        assert cli.inputs() == data
+
+
+@pytest.mark.parametrize(
+    "restart,duplicate", [(False, False), (True, False), (False, True)]
+)
+def test_service_environment_reads_only_required_process_keys(
+    monkeypatch, restart, duplicate
+):
+    outputs = iter(
+        [
+            "MainPID=123\nActiveState=active\n",
+            f"MainPID={456 if restart else 123}\nActiveState=active\n",
+        ]
+    )
+    monkeypatch.setattr(cli.subprocess, "check_output", lambda *a, **k: next(outputs))
+    raw = (
+        b"DATABASE_URL=fake\0POSTGRESQL_URL=fake\0"
+        b"SAMCHAT_ENV_FILE=/etc/samchat/samchat.env\0UNRELATED=private\0"
+    )
+    if duplicate:
+        raw += b"DATABASE_URL=other\0"
+
+    def read(path):
+        assert str(path) == "/proc/123/environ"
+        return raw
+
+    monkeypatch.setattr(Path, "read_bytes", read)
+    if restart or duplicate:
+        with pytest.raises(ValueError, match="changed|unavailable"):
+            cli.serving_environment()
+    else:
+        pid, environment = cli.serving_environment()
+        assert pid == "123"
+        assert set(environment) == {
+            "DATABASE_URL",
+            "POSTGRESQL_URL",
+            "SAMCHAT_ENV_FILE",
+        }
+        assert "private" not in repr(environment)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_captures_every_protected_and_budget_table_in_stable_order():
+    class Rows:
+        def __init__(self, table):
+            self.table = table
+
+        def scalars(self):
+            return [{"id": self.table}]
+
+    statements = []
+
+    async def execute(statement):
+        sql = str(statement)
+        statements.append(sql)
+        table = sql.split(" FROM ")[1].split()[0]
+        assert sql.endswith("ORDER BY to_jsonb(t)::text")
+        return Rows(table)
+
+    from types import SimpleNamespace
+
+    state = await cli.snapshot(SimpleNamespace(execute=execute))
+    assert tuple(state) == cli.TABLES
+    assert len(statements) == len(cli.TABLES)
+    assert all(state[table] == [{"id": table}] for table in cli.TABLES)
+
+
+@pytest.mark.asyncio
+async def test_build_plan_checks_actor_and_selected_version_before_snapshot(
+    monkeypatch,
+):
+    data, before, _ = fixture()
+    calls = []
+
+    async def actor(session, actor_id):
+        calls.append("actor")
+        assert actor_id == cli.ACTOR
+
+    async def version(session, version_id, **kwargs):
+        calls.append("version")
+        assert version_id == cli.VERSION
+        assert kwargs == {"require_selected": True}
+
+    async def snapshot(session):
+        assert calls == ["actor", "version"]
+        return before
+
+    monkeypatch.setattr(cli.overlay, "_require_budget_actor", actor)
+    monkeypatch.setattr(cli.overlay, "_version", version)
+    monkeypatch.setattr(cli, "snapshot", snapshot)
+    monkeypatch.setattr(cli, "verify_effective", AsyncMock(return_value={"week": 52}))
+    plan = await cli.build_plan(object(), {"commit": "reviewed"}, data)
+    assert plan["completed"] is False
+    assert plan["before"] == before
+    assert plan["effective_before"] == {"week": 52}
+    assert plan["actor"] == cli.ACTOR
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [None, "economic", "audit"])
+async def test_verify_requires_preserved_economics_and_exact_audit(
+    monkeypatch, failure
+):
+    data, before, after = fixture()
+    after["budget_version_audit_log"] = [
+        {
+            "id": "repair-audit",
+            "event_type": cli.EVENT,
+            "budget_version_id": cli.VERSION,
+            "actor_empleado_id": cli.ACTOR,
+            "payload": {
+                "config_sha256": cli.CONFIG_SHA,
+                "source_sha256": data["source_sha256"],
+                "scope_updates": data["scope_updates"],
+                "zero_line_phase_updates": data["zero_line_phase_updates"],
+            },
+        }
+    ]
+    if failure == "audit":
+        after["budget_version_audit_log"][0]["payload"]["source_sha256"] = "wrong"
+    monkeypatch.setattr(cli, "snapshot", AsyncMock(return_value=after))
+    monkeypatch.setattr(
+        cli,
+        "verify_effective",
+        AsyncMock(return_value={"week": 51 if failure == "economic" else 52}),
+    )
+    plan = {"before": before, "effective_before": {"week": 52}}
+    if failure:
+        with pytest.raises(ValueError, match="income changed|canonical repair audit"):
+            await cli.verify(object(), plan, data)
+    else:
+        result = await cli.verify(object(), plan, data)
+        assert result["protected_preserved"] is True
+        assert result["Borrador_preserved"] is True
+        assert result["scope_count"] == 74
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "preview",
+        "apply",
+        "repeat",
+        "stale",
+        "source_drift",
+        "backend_drift",
+        "wrong_connected",
+        "owner_failure",
+        "postcommit_failure",
+    ],
+)
+async def test_run_transaction_authority_receipts_and_failure_boundaries(
+    monkeypatch, tmp_path, scenario
+):
+    """Exercise CLI orchestration; real owner rollback is covered by PG tests."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    data, before, _ = fixture()
+    events, statements, listeners = [], [], []
+    source = {"commit": "a" * 40, "files": {"operator": "reviewed"}}
+    plan = {"before": before, "completed": scenario == "repeat"}
+    backend = {"mode": "production", "database": "devnous_db", "main_pid": "123"}
+    args = cli.parser().parse_args(["--output-dir", str(tmp_path)])
+    args.apply = scenario != "preview"
+    args.expected_commit = source["commit"]
+    args.expected_hash = cli.digest({**plan, "backend": backend})
+    if scenario == "stale":
+        args.expected_hash = "stale"
+    monkeypatch.setattr(cli, "inputs", lambda: data)
+    source_calls = 0
+
+    def identity():
+        nonlocal source_calls
+        source_calls += 1
+        if scenario == "source_drift" and source_calls > 1:
+            return {"commit": "changed"}
+        return source
+
+    monkeypatch.setattr(cli, "source_identity", identity)
+    backend_calls = 0
+
+    def binding(args):
+        nonlocal backend_calls
+        backend_calls += 1
+        if scenario == "backend_drift" and backend_calls > 2:
+            return "different-private-url", {**backend, "main_pid": "456"}
+        return "private-url-never-saved", backend
+
+    monkeypatch.setattr(cli, "production_backend", binding)
+    serving = []
+    monkeypatch.setattr(cli, "require_serving", serving.append)
+
+    def listen(engine, name):
+        assert name == "before_cursor_execute"
+
+        def register(callback):
+            listeners.append(callback)
+            return callback
+
+        return register
+
+    monkeypatch.setattr(cli.event, "listens_for", listen)
+
+    class Connection:
+        @asynccontextmanager
+        async def begin(self):
+            events.append("outer_begin")
+            try:
+                yield
+            except Exception:
+                events.append("outer_rollback")
+                raise
+            else:
+                events.append("outer_commit")
+
+        async def execute(self, statement, parameters=None):
+            statements.append((str(statement), parameters))
+            context = SimpleNamespace(compiled_parameters=[parameters or {}])
+            listeners[0](None, None, str(statement), parameters, context, False)
+
+        async def scalar(self, statement):
+            assert str(statement) == "SELECT current_database()"
+            return "other_db" if scenario == "wrong_connected" else "devnous_db"
+
+    connection = Connection()
+
+    class Engine:
+        url = SimpleNamespace(database="devnous_db")
+        sync_engine = object()
+
+        @asynccontextmanager
+        async def connect(self):
+            yield connection
+
+        async def dispose(self):
+            events.append("disposed")
+
+    engine = Engine()
+    monkeypatch.setattr(cli, "create_async_engine", lambda *a, **k: engine)
+
+    class Session:
+        def __init__(self, *args, **kwargs):
+            if kwargs:
+                assert kwargs == {
+                    "bind": connection,
+                    "join_transaction_mode": "create_savepoint",
+                }
+            else:
+                assert args == (engine,)
+                events.append("postcommit_readback")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def execute(self, statement, parameters=None):
+            await connection.execute(statement, parameters)
+
+        async def commit(self):
+            events.append("savepoint_commit")
+
+    monkeypatch.setattr(cli, "AsyncSession", Session)
+    monkeypatch.setattr(cli, "build_plan", AsyncMock(return_value=plan))
+
+    async def owners(session, planned, approved, **kwargs):
+        assert approved is data
+        assert planned["backend"] == backend
+        events.append("owners")
+        if scenario == "owner_failure":
+            raise RuntimeError("Owner rejected fixture")
+        return {"idempotent": scenario == "repeat", "revisions": []}
+
+    monkeypatch.setattr(cli, "apply_owners", owners)
+    verifications = []
+
+    async def verify(session, planned, approved):
+        verifications.append("verify")
+        if scenario == "postcommit_failure" and len(verifications) == 2:
+            raise ValueError("Readback mismatch")
+        return {"protected_preserved": True}
+
+    monkeypatch.setattr(cli, "verify", verify)
+    failures = {
+        "stale": "Plan drifted",
+        "source_drift": "Source/code changed",
+        "backend_drift": "Serving backend changed",
+        "wrong_connected": "connected database",
+        "owner_failure": "Owner rejected",
+        "postcommit_failure": "Readback mismatch",
+    }
+    if scenario in failures:
+        with pytest.raises((ValueError, RuntimeError), match=failures[scenario]):
+            await cli.run(args)
+        assert not list(tmp_path.glob("receipt-*.json"))
+        if scenario != "postcommit_failure":
+            assert "outer_rollback" in events
+            assert "outer_commit" not in events
+    else:
+        receipt = await cli.run(args)
+        assert receipt["status"] == (
+            "PREVIEW" if not args.apply else "COMMITTED_VERIFIED"
+        )
+        if args.apply:
+            assert events.index("savepoint_commit") < events.index("outer_commit")
+            assert events.index("outer_commit") < events.index("postcommit_readback")
+            assert len(verifications) == 2
+            assert len(list(tmp_path.glob("receipt-*.json"))) == 1
+            assert len(list(tmp_path.glob("pending-*.json"))) == 1
+            assert len(list(tmp_path.glob("committed-*.json"))) == 1
+        else:
+            assert "owners" not in events
+            assert not verifications
+            assert all(
+                "FOR UPDATE" not in sql and "FOR SHARE" not in sql
+                for sql, _ in statements
+            )
+    assert events[-1] == "disposed"
+    assert serving == ([source["commit"]] if args.apply else [])
+    assert "SERIALIZABLE" in statements[0][0]
+    assert ("READ ONLY" in statements[0][0]) == (not args.apply)
+    for path in tmp_path.glob("*.json"):
+        assert "private-url" not in path.read_text()
+    if args.apply and scenario != "wrong_connected":
+        lock_sql = [sql for sql, _ in statements]
+        assert "FOR SHARE" in lock_sql[3]
+        assert "pg_advisory_xact_lock" in lock_sql[4]
+        concept_locks = [
+            params for sql, params in statements if "FROM budget_concepts" in sql
+        ]
+        assert concept_locks == [{"ids": sorted(cli.APPROVED_CONCEPT_IDS)}]
