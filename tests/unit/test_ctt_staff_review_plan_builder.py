@@ -562,7 +562,12 @@ def test_deployed_national_policy_and_preserved_strict_artifact():
     assert strict_policy["policy_hash"] == (
         "sha256:4c02da4d4981bedd60a34771236f0aa0db76c5392477413f3d03e68cc4e2e697"
     )
+    assert strict_policy["required_photo_kinds"] == ["PLAYER"]
     assert national["policy_version"] == "2.1.0"
+    assert national["required_photo_kinds"] == []
+    assert national["policy_hash"] == (
+        "sha256:70d058d16e901a24effbef408fdba5a44be7dfdd0a4ac93a63760ccd036ec205"
+    )
     assert national["field_order"] == strict_policy["field_order"]
     assert national["effective_sal"] == strict_policy["effective_sal"] == "SAL-3"
     assert national["phase_binding"] == dict(
@@ -622,6 +627,7 @@ def test_optional_curp_exception_is_limited_to_declared_kinds(
 def automatic(prepared):
     """Real original-grid measurements, retaining source values without OCR."""
     from dataclasses import replace
+
     from test_ctt_batch_photo_alignment import _page
 
     builder, context, proposal, old_snapshot = prepared
@@ -930,6 +936,177 @@ def test_optional_staff_photo_does_not_show_a_false_missing_exception(automatic)
     assert not any(
         item["kind"] == "STAFF" and item["field"] == "photo"
         for item in result["blockers"]
+    )
+
+
+def _national_optional_photo_detection(monkeypatch, state):
+    def detector(*args, **kwargs):
+        if state == "error":
+            raise OSError("sealed image detail must not escape")
+        return None, state
+
+    monkeypatch.setattr(
+        "devnous.copa_telmex.staff_review_plan_builder.extract_batch_photo", detector
+    )
+    monkeypatch.setattr(
+        "devnous.copa_telmex.staff_review_plan_builder.prepare_batch_page",
+        lambda *args: object(),
+    )
+
+
+@pytest.mark.parametrize("state", ["missing", "uncertain"])
+def test_national_optional_auto_photos_are_pending_null_without_photo_evidence(
+    automatic, monkeypatch, state
+):
+    builder = use_national(automatic)
+    _, context, proposal, snapshot = automatic
+    _national_optional_photo_detection(monkeypatch, state)
+    result = builder.build(
+        context, {"confirm_present_staff": True}, snapshot(), proposal
+    )
+    preview = json.loads(result.preview_bytes)
+    assert preview["ready_to_approve"] and preview["blockers"] == []
+    assert all(member["photo_status"] == "pending" for member in preview["players"])
+    assert all("photo_preview" not in member for member in preview["players"])
+    assert all(member["photo_status"] == "not_required" for member in preview["staff"])
+    rows = json.loads(result.review_bytes)["players"]
+    assert all(
+        row[key] is None
+        for row in rows
+        for key in ("photo_path", "photo_sha256", "photo_ahash")
+    )
+    members = json.loads(result.evidence_bytes)["members"]
+    assert all("photo_evidence" not in member for member in members)
+
+
+def test_national_optional_photo_integrity_failure_still_blocks(automatic, monkeypatch):
+    builder = use_national(automatic)
+    _, context, proposal, snapshot = automatic
+    _national_optional_photo_detection(monkeypatch, "error")
+    preview = json.loads(
+        builder.build(
+            context, {"confirm_present_staff": True}, snapshot(), proposal
+        ).preview_bytes
+    )
+    assert not preview["ready_to_approve"]
+    assert all(member["photo_status"] == "error" for member in preview["players"])
+    assert {block["code"] for block in preview["blockers"]} == {"PHOTO_SOURCE_INVALID"}
+    assert "sealed image detail" not in json.dumps(preview)
+
+
+def test_national_optional_manual_photo_geometry_failure_still_blocks(
+    automatic, monkeypatch
+):
+    builder = use_national(automatic)
+    _, context, proposal, snapshot = automatic
+    _national_optional_photo_detection(monkeypatch, "missing")
+    players = [{"slot": slot} for slot in range(1, 17)]
+    players[0]["photo_box"] = dict(page_index=1, x=10000, y=20, width=72, height=72)
+    preview = json.loads(
+        builder.build(
+            context,
+            {"confirm_present_staff": True, "players": players},
+            snapshot(),
+            proposal,
+        ).preview_bytes
+    )
+    assert not preview["ready_to_approve"]
+    assert preview["players"][0]["photo_status"] == "error"
+    assert any(
+        block["code"] == "PHOTO_SOURCE_INVALID" and block["slot"] == 1
+        for block in preview["blockers"]
+    )
+
+
+def test_national_optional_existing_photo_and_values_survive_next_prepare(
+    automatic, monkeypatch
+):
+    builder = use_national(automatic)
+    _, context, proposal, snapshot = automatic
+    original = copy.deepcopy(context["draft"]["extraction"])
+    _national_optional_photo_detection(monkeypatch, "missing")
+    players = [{"slot": slot} for slot in range(1, 17)]
+    players[0]["photo_box"] = dict(page_index=1, x=51, y=340, width=64, height=82)
+    first = builder.build(
+        context,
+        {"confirm_present_staff": True, "players": players},
+        snapshot(),
+        proposal,
+    )
+    previous = json.loads(first.preview_bytes)
+    assert previous["ready_to_approve"]
+    assert previous["players"][0]["photo_status"] == "photo"
+    context["previous_preview"] = previous
+    second = builder.build(context, {}, snapshot(), proposal)
+    again = json.loads(second.preview_bytes)
+    assert again["ready_to_approve"]
+    assert again["players"] == previous["players"]
+    assert again["staff"] == previous["staff"]
+    assert context["draft"]["extraction"] == original
+    first_row = json.loads(first.review_bytes)["players"][0]
+    second_row = json.loads(second.review_bytes)["players"][0]
+    assert first_row["photo_path"] == second_row["photo_path"]
+    assert first_row["photo_sha256"] == second_row["photo_sha256"]
+
+
+def test_national_optional_photo_staging_failure_still_blocks(automatic, monkeypatch):
+    builder = use_national(automatic)
+    _, context, proposal, snapshot = automatic
+    _national_optional_photo_detection(monkeypatch, "missing")
+    players = [{"slot": slot} for slot in range(1, 17)]
+    players[0]["photo_box"] = dict(page_index=1, x=51, y=340, width=64, height=82)
+
+    def broken(*args):
+        raise CaptureDenied("sealed storage failure")
+
+    monkeypatch.setattr(builder._photos, "stage", broken)
+    preview = json.loads(
+        builder.build(
+            context,
+            {"confirm_present_staff": True, "players": players},
+            snapshot(),
+            proposal,
+        ).preview_bytes
+    )
+    assert not preview["ready_to_approve"]
+    assert preview["players"][0]["photo_status"] == "error"
+    assert any(
+        block["code"] == "PHOTO_STORAGE_FAILED" and block["slot"] == 1
+        for block in preview["blockers"]
+    )
+
+
+def test_national_pending_status_never_retains_an_old_photo_preview(
+    automatic, monkeypatch
+):
+    builder = use_national(automatic)
+    _, context, proposal, snapshot = automatic
+    _national_optional_photo_detection(monkeypatch, "missing")
+    first = builder.build(
+        context, {"confirm_present_staff": True}, snapshot(), proposal
+    )
+    context["previous_preview"] = json.loads(first.preview_bytes)
+    context["previous_preview"]["players"][0][
+        "photo_preview"
+    ] = "data:image/jpeg;base64,stale"
+    again = json.loads(builder.build(context, {}, snapshot(), proposal).preview_bytes)
+    assert again["players"][0]["photo_status"] == "pending"
+    assert "photo_preview" not in again["players"][0]
+
+
+def test_legacy_optional_photo_does_not_gain_national_pending_status(
+    automatic, monkeypatch
+):
+    builder, context, proposal, snapshot = automatic
+    _national_optional_photo_detection(monkeypatch, "missing")
+    preview = json.loads(
+        builder.build(
+            context, {"confirm_present_staff": True}, snapshot(), proposal
+        ).preview_bytes
+    )
+    assert preview["identity_policy"]["phase"] is None
+    assert all(
+        member["photo_status"] == "not_required" for member in preview["players"]
     )
 
 

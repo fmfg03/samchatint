@@ -5,18 +5,18 @@ workflow/PostgreSQL suites own those boundaries; no live request leaves here.
 """
 
 import base64
-from io import BytesIO
 import json
 import logging
-from pathlib import Path
 import secrets
+from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from jinja2 import Environment, select_autoescape
 from PIL import Image
 from playwright.sync_api import expect
-import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -200,9 +200,9 @@ def panel(page):
             )
         elif path == base + "/staff-passkey/begin":
             from fido2.webauthn import (
+                AuthenticatorAttachment,
                 PublicKeyCredentialUserEntity,
                 UserVerificationRequirement,
-                AuthenticatorAttachment,
             )
 
             offered, state.registration = state.server.register_begin(
@@ -217,8 +217,9 @@ def panel(page):
             )
             reply(route, {"enrollment_id": enrollment, "options": dict(offered)})
         elif path == base + "/staff-passkey/complete":
-            from fido2.webauthn import RegistrationResponse
             from hashlib import sha256
+
+            from fido2.webauthn import RegistrationResponse
 
             observed = state.server.register_complete(
                 state.registration, RegistrationResponse.from_dict(body["registration"])
@@ -554,6 +555,97 @@ def test_photo_status_distinguishes_missing_uncertain_and_technical_error(panel)
     expect(members).to_contain_text("No se detectó una fotografía")
     expect(members).to_contain_text("La fotografía necesita revisión")
     expect(members).to_contain_text("No se pudo preparar la fotografía")
+
+
+def national_photos_pending(panel):
+    """A trusted review response with eight absent photos and eight real previews."""
+    person = panel.state.view["players"][0]
+    players = []
+    for slot in range(1, 17):
+        player = {**person, "slot": slot, "photo_status": "pending"}
+        if slot % 2 == 0:
+            stream = BytesIO()
+            Image.new("RGB", (8, 8), (slot, 80, 160)).save(stream, format="PNG")
+            player.update(
+                photo_status="photo",
+                photo_preview="data:image/png;base64,"
+                + base64.b64encode(stream.getvalue()).decode(),
+            )
+        players.append(player)
+    panel.state.view["players"] = players
+    panel.state.view["identity_policy"] = {
+        "phase": "NACIONAL",
+        "optional_curp_kinds": ["PLAYER", "STAFF"],
+    }
+    for member in panel.state.view["staff"]:
+        member.update(
+            presence="PRESENT", presence_proposed=True, presence_confirmed=True
+        )
+
+
+def test_national_pending_photos_are_informative_and_keep_plan_confirmation(panel):
+    national_photos_pending(panel)
+    open_panel(panel)
+    members = panel.page.locator("[data-review-members]")
+    expect(
+        members.get_by_text("Sin fotografía — opcional en fase nacional", exact=True)
+    ).to_have_count(8)
+    expect(members.locator("img.ctt-review-photo")).to_have_count(8)
+    expect(members.locator('input[type="checkbox"]')).to_have_count(2)
+    expect(panel.page.locator("[data-review-blockers] li")).to_have_count(0)
+    for index, player in enumerate(panel.state.view["players"]):
+        if player["photo_status"] == "photo":
+            expect(
+                members.locator(".ctt-review-member").nth(index).locator("img")
+            ).to_have_attribute("src", player["photo_preview"])
+    approve = panel.page.get_by_role("button", name="Aprobar y capturar con passkey")
+    expect(panel.page.locator("[data-review-confirm]")).not_to_be_checked()
+    expect(approve).to_be_disabled()
+    panel.page.locator("[data-review-confirm]").check()
+    expect(approve).to_be_enabled()
+    assert not any(
+        path.endswith(("/challenge", "/assertion")) for path, _ in panel.state.calls
+    )
+
+
+def test_preparing_pending_photos_keeps_values_and_omits_server_policy_metadata(panel):
+    national_photos_pending(panel)
+    panel.state.view["ready_to_approve"] = False
+    open_panel(panel)
+    panel.page.locator("[data-review-team-confirm]").check()
+    with panel.page.expect_response(lambda response: response.url.endswith("/edit")):
+        panel.page.get_by_role("button", name="Preparar revisión", exact=True).click()
+    submitted = panel.state.changes
+    assert submitted["expected_proposal_id"] == panel.state.view["proposal_id"]
+    changes = submitted["changes"]
+    assert changes["confirm_present_staff"] is True
+    assert len(changes["players"]) == 16
+    assert all(member["presence_confirmed"] for member in changes["staff"])
+    for original, update in zip(panel.state.view["players"], changes["players"]):
+        for field in ("slot", "first_name", "last_name", "birth_date", "curp", "boxes"):
+            assert update[field] == original[field]
+        assert not set(update) & {
+            "photo_status",
+            "photo_preview",
+            "source_card",
+            "manual_fields",
+            "policy_hash",
+            "required_photo_kinds",
+            "identity_policy",
+        }
+    assert not set(changes) & {
+        "identity_policy",
+        "policy_hash",
+        "required_photo_kinds",
+        "phase",
+    }
+    expect(panel.page.locator("[data-review-confirm]")).not_to_be_checked()
+    expect(
+        panel.page.get_by_role("button", name="Aprobar y capturar con passkey")
+    ).to_be_disabled()
+    assert not any(
+        path.endswith(("/challenge", "/assertion")) for path, _ in panel.state.calls
+    )
 
 
 def test_global_confirmation_cannot_affirm_newly_selected_presence(panel):
