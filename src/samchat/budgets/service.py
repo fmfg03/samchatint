@@ -3184,11 +3184,90 @@ async def clear_budget_concept_scope_for_tournament(
     return updated
 
 
+def _validate_budget_scope_labels(
+    scope_labels: list[str], tournament: dict[str, Any]
+) -> None:
+    """Accept explicit labels only from the current, locked project config."""
+    configured = {
+        _safe_str(value).casefold()
+        for group in ("etapas", "categorias")
+        for value in (tournament.get(group) or [])
+        if _safe_str(value)
+    }
+    unknown = [
+        _safe_str(value)
+        for value in scope_labels
+        if _safe_str(value) and _safe_str(value).casefold() not in configured
+    ]
+    if unknown:
+        raise ValueError(
+            "El subproyecto/fase ya no está configurado en el proyecto: "
+            + ", ".join(dict.fromkeys(unknown))
+            + ". Actualice la selección antes de guardar."
+        )
+
+
+async def validate_budget_scope_removal(
+    session: AsyncSession,
+    *,
+    tournament_id: str,
+    removed_labels: list[str],
+) -> None:
+    """Validate removals while the caller holds the project's FOR UPDATE lock.
+
+    Catalogue scope writers hold FOR SHARE on that same row before reading its
+    current configuration. Active and retired scope references are preserved.
+    """
+    if not removed_labels:
+        return
+    rows = (
+        (
+            await session.execute(
+                text(
+                    """SELECT id, concept_name, metadata
+                    FROM budget_concepts
+                    WHERE tournament_id = :tournament_id
+                    ORDER BY id"""
+                ),
+                {"tournament_id": _safe_str(tournament_id)},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    for label in removed_labels:
+        aliases = _budget_scope_aliases(label)
+        referenced = []
+        for row in rows:
+            metadata = row.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            keys = {
+                _safe_str(key)
+                for field in ("applicable_phase_keys", "applicable_subproject_keys")
+                for key in (metadata.get(field) or [])
+            }
+            labels = {
+                _safe_str(value).casefold()
+                for field in ("applicable_phase_labels", "applicable_subproject_labels")
+                for value in (metadata.get(field) or [])
+            }
+            if aliases & keys or _safe_str(label).casefold() in labels:
+                referenced.append(_safe_str(row.get("concept_name")) or str(row["id"]))
+        if referenced:
+            raise ValueError(
+                f"No se puede retirar la fase/subproyecto «{label}»: "
+                f"la utilizan {len(referenced)} partida(s) "
+                f"({', '.join(referenced[:3])}). "
+                "Reasigne primero su alcance en Presupuestos."
+            )
+
+
 async def _resolve_tournament_for_budget_concept(
     session: AsyncSession,
     *,
     tournament_id: str,
-) -> dict[str, str]:
+    lock_scope: bool = False,
+) -> dict[str, Any]:
     clean_id = _safe_str(tournament_id)
     if not clean_id:
         raise ValueError("Debe seleccionar un proyecto.")
@@ -3202,6 +3281,7 @@ async def _resolve_tournament_for_budget_concept(
                 WHERE id = :tournament_id
                 LIMIT 1
                 """
+                    + (" FOR SHARE" if lock_scope else "")
                 ),
                 {"tournament_id": clean_id},
             )
@@ -3351,6 +3431,7 @@ async def create_budget_concept(
     tournament = await _resolve_tournament_for_budget_concept(
         session,
         tournament_id=tournament_id,
+        lock_scope=True,
     )
     clean_name = _safe_str(concept_name)
     resolved_concept_key = _safe_str(concept_key) or _normalize_budget_key(clean_name)
@@ -3390,7 +3471,20 @@ async def create_budget_concept(
         tournament_categorias=tournament.get("categorias") or [],
     )
     if isinstance(extra_metadata, dict):
+        if any(
+            key in extra_metadata and extra_metadata[key] != metadata[key]
+            for key in _BUDGET_SCOPE_METADATA_KEYS
+        ):
+            raise ValueError(
+                "La metadata no puede sustituir el alcance de la partida; "
+                "use las fases/subproyectos configurados."
+            )
         metadata.update(extra_metadata)
+    _validate_budget_scope_labels(
+        list(metadata.get("applicable_phase_labels") or [])
+        + list(metadata.get("applicable_subproject_labels") or []),
+        tournament,
+    )
     resolved_cuenta_id: Optional[str] = None
     clean_cuenta = _safe_str(cuenta_contable_id)
     if clean_cuenta:
@@ -3477,12 +3571,43 @@ async def update_budget_concept(
     )
     if current is None:
         raise ValueError("Partida presupuestal no encontrada.")
+    tournament = None
+    if scope_labels is not None or tournament_id is not None:
+        current_tid = _safe_str(current.get("tournament_id"))
+        target_tid = (
+            _safe_str(tournament_id) if tournament_id is not None else current_tid
+        )
+        # Lock both projects in stable order when moving a concept. Re-read its
+        # metadata after the lock so a concurrent edit cannot be overwritten.
+        contexts = {}
+        for locked_tid in sorted({current_tid, target_tid} - {""}):
+            contexts[locked_tid] = await _resolve_tournament_for_budget_concept(
+                session, tournament_id=locked_tid, lock_scope=True
+            )
+        refreshed = await get_budget_concept(
+            session, concept_id=concept_id, ensure_schema=False
+        )
+        if (
+            refreshed is None
+            or _safe_str(refreshed.get("tournament_id")) != current_tid
+        ):
+            raise ValueError("La partida cambió de proyecto; vuelva a intentarlo.")
+        current = refreshed
+        tournament = contexts.get(target_tid)
+        if tournament is None:
+            raise ValueError("Debe seleccionar un proyecto.")
+        if scope_labels is not None:
+            _validate_budget_scope_labels(scope_labels, tournament)
+        elif target_tid != current_tid:
+            metadata = current.get("metadata") or {}
+            _validate_budget_scope_labels(
+                list(metadata.get("applicable_phase_labels") or [])
+                + list(metadata.get("applicable_subproject_labels") or []),
+                tournament,
+            )
     updates: dict[str, Any] = {}
     if tournament_id is not None:
-        tournament = await _resolve_tournament_for_budget_concept(
-            session,
-            tournament_id=tournament_id,
-        )
+        assert tournament is not None
         updates["tournament_id"] = tournament["tournament_id"]
         updates["tournament_code"] = tournament["tournament_code"]
         updates["tournament_name"] = tournament["tournament_name"]
@@ -3537,33 +3662,13 @@ async def update_budget_concept(
         stored_metadata = (
             current.get("metadata") if isinstance(current.get("metadata"), dict) else {}
         )
-        tournament_etapas = None
-        if tournament_id is not None:
-            tournament = await _resolve_tournament_for_budget_concept(
-                session,
-                tournament_id=tournament_id,
-            )
-            tournament_etapas = tournament.get("etapas")
-        elif updates.get("tournament_id"):
-            tournament = await _resolve_tournament_for_budget_concept(
-                session,
-                tournament_id=str(updates.get("tournament_id")),
-            )
-            tournament_etapas = tournament.get("etapas")
-        else:
-            current_tid = _safe_str(current.get("tournament_id"))
-            if current_tid:
-                tournament = await _resolve_tournament_for_budget_concept(
-                    session,
-                    tournament_id=current_tid,
-                )
-                tournament_etapas = tournament.get("etapas")
+        assert tournament is not None
         updates["metadata"] = json.dumps(
             _merge_budget_concept_scope_metadata(
                 stored_metadata,
                 scope_labels,
-                tournament_etapas=tournament_etapas,
-                tournament_categorias=[],
+                tournament_etapas=tournament.get("etapas"),
+                tournament_categorias=tournament.get("categorias") or [],
             ),
             ensure_ascii=False,
         )

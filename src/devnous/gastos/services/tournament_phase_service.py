@@ -62,7 +62,7 @@ def tournament_scope_config_changed(
     after = get_tournament_scope_options(
         {"etapas": next_etapas, "categorias": next_categorias}
     )
-    return before != after
+    return any(set(before[group]) != set(after[group]) for group in before)
 
 
 def get_tournament_etapas(source: Any) -> List[str]:

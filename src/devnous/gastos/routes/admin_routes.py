@@ -233,7 +233,6 @@ from samchat.budgets.service import (
     build_budget_scenario_player,
     build_budget_snapshot,
     bulk_save_budget_concepts,
-    clear_budget_concept_scope_for_tournament,
     create_budget_line,
     ensure_budget_schema,
     hide_budget_concept,
@@ -246,6 +245,7 @@ from samchat.budgets.service import (
     list_budget_lines,
     list_budget_tournament_commitments,
     list_budget_versions,
+    validate_budget_scope_removal,
     list_monthly_allocations_for_lines,
     replace_budget_line_monthly_allocations,
     resolve_definitive_budget_version,
@@ -13233,12 +13233,35 @@ async def update_tournament(
                 )
             )
 
+        # Omitted fields are not an instruction to clear configured labels.
+        if "etapas" not in form_data:
+            etapas_list = tournament.etapas
+        if "categorias" not in form_data:
+            categorias_list = tournament.categorias
         scope_changed = tournament_scope_config_changed(
             previous_etapas=tournament.etapas,
             previous_categorias=tournament.categorias,
             next_etapas=etapas_list,
             next_categorias=categorias_list,
         )
+
+        if scope_changed:
+            before_labels = get_tournament_scope_labels(tournament)
+            next_labels = {
+                label.casefold()
+                for label in get_tournament_scope_labels(
+                    {"etapas": etapas_list, "categorias": categorias_list}
+                )
+            }
+            await validate_budget_scope_removal(
+                session,
+                tournament_id=str(tournament.id),
+                removed_labels=[
+                    label
+                    for label in before_labels
+                    if label.casefold() not in next_labels
+                ],
+            )
 
         tournament.name = normalized_name
         tournament.description = description.strip() if description else None
@@ -13251,29 +13274,9 @@ async def update_tournament(
         tournament.form_visibility_areas = visibility_areas or None
         tournament.active = active
 
-        cleared_partidas = 0
-        if scope_changed:
-            cleared_partidas = await clear_budget_concept_scope_for_tournament(
-                session,
-                tournament_id=str(tournament.id),
-                commit=False,
-            )
-
         await session.commit()
 
         success_msg = "Torneo actualizado exitosamente."
-        if scope_changed:
-            if cleared_partidas:
-                success_msg += (
-                    f" Se reseteó el subproyecto/fase en {cleared_partidas} "
-                    "partida(s) presupuestal(es); revísalas en Presupuestos si "
-                    "necesitas acotarlas de nuevo."
-                )
-            else:
-                success_msg += (
-                    " Las partidas presupuestales de este proyecto aplican a "
-                    "todas las fases/subproyectos."
-                )
         return _admin_torneos_redirect(success_msg=success_msg)
     except HTTPException:
         await session.rollback()
