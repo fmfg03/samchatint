@@ -48,9 +48,9 @@ _LABELED_AMOUNT_PATTERNS: Dict[str, List[str]] = {
         rf"[ \t]*(?:MXN)?(?=[ \t]*(?:\r?$|IVA\b|ISR\b|Total\b))",
     ],
     "traslados": [
-        rf"(?i)total\s+impuestos\s+trasladados\s*[:\-]?"
+        rf"(?i)total\s+(?:impuestos|imptos\.?)\s+trasladados\s*[:\-]?"
         rf"\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
-        rf"(?i)impuestos\s+trasladados\s*[:\-]?"
+        rf"(?i)(?:impuestos|imptos\.?)\s+trasladados\s*[:\-]?"
         rf"\s*{_MONEY_PREFIX}\s*{_AMOUNT_CAPTURE}",
         rf"(?i)(?<![\w/])(?<!sin\s)(?:i\.?\s*v\.?\s*a\.?|iva)"
         rf"(?:\s+\d{{1,2}}(?:\.\d+)?%?)?\s*[:\-]?"
