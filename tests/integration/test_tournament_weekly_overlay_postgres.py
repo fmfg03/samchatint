@@ -1240,6 +1240,16 @@ async def test_admin_tournament_route_uses_effective_plan_and_suppresses_conflic
         "version_name": "Annual approved",
     }
     monkeypatch.setattr(routes, "ensure_budget_schema", AsyncMock())
+    # This partial schema tests the real weekly reader/overlay, not catalogue
+    # or governance. Those boundaries have registered-route and restored-DB tests.
+    from devnous.gastos.services import tournament_authority_service
+
+    monkeypatch.setattr(routes, "list_budget_concepts", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        tournament_authority_service,
+        "require_ungoverned_gastos_project",
+        AsyncMock(),
+    )
     monkeypatch.setattr(
         routes,
         "resolve_budget_tournament_context",
@@ -1313,6 +1323,7 @@ async def test_admin_tournament_route_uses_effective_plan_and_suppresses_conflic
         async def invoke():
             return await endpoint(
                 tournament_key=LIGA,
+                request=SimpleNamespace(scope={"session": {}}, session={}),
                 session=SessionProxy(session),
                 current_empleado=user,
                 edition_year=2026,

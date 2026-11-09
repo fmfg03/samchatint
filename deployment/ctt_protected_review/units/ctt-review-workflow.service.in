@@ -1,0 +1,35 @@
+[Unit]
+Description=Copa Telmex private review workflow and accredited finality gate
+Requires=ctt-review-issuer.service ctt-review-bus.service
+After=network.target ctt-review-issuer.service ctt-review-bus.service
+
+[Service]
+Type=simple
+User=ctt-review
+Group=ctt-review
+SupplementaryGroups=ctt-review-transport ctt-review-photos
+WorkingDirectory=@RUNTIME_ROOT@/samchat
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=@RUNTIME_ROOT@/samchat/src:@RUNTIME_ROOT@/zaubern/services/samchat-registration-gate:@RUNTIME_ROOT@/zaubern/services/evidence-bus:@RUNTIME_ROOT@/vendor
+ExecStartPre=@PYTHON@ -m deployment.ctt_protected_review.runtime --config @CONFIG_ROOT@/workflow/runtime.json --check
+ExecStart=@PYTHON@ -m deployment.ctt_protected_review.runtime --config @CONFIG_ROOT@/workflow/runtime.json
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=45
+TimeoutStopSec=120
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=@CONFIG_ROOT@/workflow @DATA_ROOT@/workflow
+ReadWritePaths=@DATA_ROOT@/photos
+InaccessiblePaths=@CONFIG_ROOT@/issuer @CONFIG_ROOT@/writer @CONFIG_ROOT@/bus
+InaccessiblePaths=@DATA_ROOT@/writer @DATA_ROOT@/bus
+InaccessiblePaths=/etc/zaubern /var/lib/zaubern-evidence-bus
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

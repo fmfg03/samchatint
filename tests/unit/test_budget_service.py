@@ -634,6 +634,7 @@ async def test_create_budget_concept_persists_scope(monkeypatch) -> None:
                 "tournament_id": "tor-1",
                 "tournament_code": "CTT",
                 "tournament_name": "Copa Telmex Telcel",
+                "etapas": ["Estatal"],
             }
         ),
     )
@@ -863,7 +864,7 @@ async def test_update_budget_concept_scope_only_preserves_catalog_concept_key(
     )
     monkeypatch.setattr(
         "samchat.budgets.service.get_budget_concept",
-        AsyncMock(side_effect=[current, updated]),
+        AsyncMock(side_effect=[current, current, updated]),
     )
     monkeypatch.setattr(
         "samchat.budgets.service._resolve_tournament_for_budget_concept",

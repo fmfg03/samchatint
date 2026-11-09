@@ -295,7 +295,8 @@ def test_detail_routes_governed_conflicts_through_regs05_controls() -> None:
     assert 'name="canonical_value"' not in html
 
 
-def test_committed_detail_disables_decisions_and_omits_reject_dialog() -> None:
+@pytest.mark.parametrize("protected", [False, True])
+def test_committed_detail_disables_decisions_and_omits_reject_dialog(protected) -> None:
     template = _environment().get_template("registration_review_detail.html")
 
     html = template.render(
@@ -311,14 +312,34 @@ def test_committed_detail_disables_decisions_and_omits_reject_dialog() -> None:
         manager={},
         players=[],
         notes="",
-        validation={"blockers": [], "issues": [], "ready_to_commit": True},
+        validation={
+            "blockers": [
+                {
+                    "code": "STAFF_GOVERNANCE_CONTRACT_REQUIRED",
+                    "message": "Synthetic player-only contract blocker.",
+                },
+                {"code": "SOURCE_MISSING", "message": "Synthetic old source blocker."},
+            ],
+            "issues": [],
+            "ready_to_commit": False,
+        },
         layout_regions={},
         overall_confidence="100%",
         canonical_review=None,
         tournament_options=[],
+        protected_staff_review=protected,
     )
 
-    assert "Revisión capturada." in html
+    assert "Captura completada" in html
+    assert 'id="ctt-capture-complete"' in html
+    assert "data-capture-complete" in html
+    assert "Capturado" in html
+    assert "La captura anterior admite jugadores" not in html
+    assert "Synthetic old source blocker." not in html
+    assert "Synthetic player-only contract blocker." not in html
+    assert "Borrador editable" not in html
+    assert "Para corregir y capturar utiliza" not in html
+    assert "<fieldset disabled" in html
     assert 'data-action="modify" disabled' in html
     assert 'data-action="reject" data-open-reject disabled' in html
     assert "La revisión ya fue capturada" in html

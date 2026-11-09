@@ -1,0 +1,17 @@
+{
+  "absence": "SQL NULL; no invented photograph, hash or verification; visible pending status",
+  "authority": "responsible user explicit national-photo rule and technical specification/exact canon approval in conversation",
+  "date": "2026-11-06",
+  "external_sports_eligibility_claim": false,
+  "general_SAL3_equivalence_claim": false,
+  "policy_hash": "sha256:70d058d16e901a24effbef408fdba5a44be7dfdd0a4ac93a63760ccd036ec205",
+  "policy_version": "2.1.0",
+  "preserved_official_constraints_provenance": "policy-source-20261031.json",
+  "previous_national_policy_hash": "sha256:74ad5397752c5cfcc2fb0d144a5220b89c8d04f5745d0b2b278e897b2cf033ac",
+  "previous_national_policy_provenance": "policy-source-20261103.json",
+  "previous_strict_policy": "policy-copa-telmex-2026-strict-v2.json",
+  "reference": "docs/roadmap/ctt-national-photo-optional-20261106.md",
+  "rule": "National phase permits players without photograph; preserve existing verified photographs and optional CURP for players and staff",
+  "schema": "ctt.national-phase-policy-provenance.v1",
+  "scope": "tenant, edition and admitted national pilot manifest bound in immutable policy"
+}

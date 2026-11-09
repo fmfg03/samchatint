@@ -66,6 +66,27 @@
         border-color: #fca5a5;
         background: #fef2f2;
     }
+    .status-pill[data-status="committed"] {
+        background: #dcfce7;
+        color: #166534;
+    }
+    .capture-complete {
+        display: grid;
+        gap: 8px;
+        margin: 18px 0;
+        padding: 20px;
+        border: 1px solid #86efac;
+        border-left: 5px solid #15803d;
+        border-radius: 12px;
+        background: #f0fdf4;
+        color: #14532d;
+        scroll-margin-top: 96px;
+    }
+    .capture-complete[hidden] { display: none; }
+    .capture-complete:focus { outline: 3px solid #15803d; outline-offset: 3px; }
+    .capture-complete strong { font-size: 1.2rem; }
+    .capture-complete p { margin: 0; }
+    .capture-complete a { color: #166534; font-weight: 700; }
     .decision-button,
     .workspace-link,
     .filter-button,
@@ -560,14 +581,15 @@
 
 {% set session_rejected = review_session.status == 'rejected' %}
 {% set session_committed = review_session.status == 'committed' %}
-{% set can_commit = validation.ready_to_commit and not session_rejected and not session_committed %}
+{% set protected_staff_review = staff_review_view is defined and staff_review_view is not none %}
+{% set can_commit = validation.ready_to_commit and not session_rejected and not session_committed and not protected_staff_review %}
 <main class="review-shell">
 <section class="review-hero" aria-labelledby="review-title">
     <div>
         <p class="review-kicker">Mesa de calidad · Copa Telmex</p>
         <h2 id="review-title" class="review-title">Revisión {{ review_session.id }}</h2>
         <div class="review-meta">
-            <span class="status-pill" data-status="{{ review_session.status }}"><strong>Estado:</strong> {{ review_session.status }}</span>
+            <span class="status-pill" data-status="{{ review_session.status }}"><strong>Estado:</strong> {{ 'Capturado' if session_committed else review_session.status }}</span>
             <span class="metric-pill"><strong>Proveedor:</strong> {{ review_session.provider }}</span>
             <span class="metric-pill"><strong>Torneo:</strong> {{ review_session.tournament_slug or 'Sin definir' }}</span>
             <span class="metric-pill"><strong>Confianza:</strong> {{ overall_confidence }}</span>
@@ -577,9 +599,12 @@
         {% if session_committed %}
         <button type="button" class="decision-button" data-action="modify" disabled>Modificar datos</button>
         {% else %}
-        <a href="#editable-draft" class="decision-button" data-action="modify">Modificar datos</a>
+        <a href="{{ '#ctt-staff-review' if protected_staff_review else '#editable-draft' }}" class="decision-button" data-action="modify">Modificar datos</a>
         {% endif %}
         <button type="button" class="decision-button" data-action="reject" data-open-reject {% if session_committed %}disabled{% endif %}>Rechazar revisión</button>
+        {% if protected_staff_review and not session_committed %}
+        <a href="#ctt-staff-review" class="decision-button" data-action="approve">Revisar y confirmar con passkey</a>
+        {% else %}
         <button
             type="submit"
             form="review-edit-form"
@@ -589,14 +614,24 @@
             data-commit-button="1"
             {% if not can_commit %}disabled title="{% if session_committed %}La revisión ya fue capturada{% elif session_rejected %}Modifica o reprocesa la revisión antes de capturar{% else %}Corrige los bloqueos antes de capturar{% endif %}"{% endif %}
         >Aprobar y capturar</button>
+        {% endif %}
     </div>
+</section>
+
+<section id="ctt-capture-complete" class="capture-complete" data-capture-complete
+         data-capture-state="{{ 'committed' if session_committed else 'pending' }}"
+         role="status" aria-live="polite" aria-atomic="true" tabindex="-1"
+         {% if not session_committed %}hidden{% endif %}>
+    <strong>Captura completada</strong>
+    <p>El expediente está registrado y queda en modo de consulta.</p>
+    <a href="/registration-review">Volver a la bandeja de revisiones</a>
 </section>
 
 <nav class="workspace-nav" aria-label="Secciones de la revisión">
     <a class="workspace-link" href="/registration-review">← Bandeja</a>
     {% if canonical_review %}<a class="workspace-link" href="#differences">Diferencias</a>{% endif %}
     <a class="workspace-link" href="#document-panel">Documento</a>
-    <a class="workspace-link" href="#editable-draft">Borrador editable</a>
+    <a class="workspace-link" href="#editable-draft">{{ 'Borrador de origen' if session_committed else 'Borrador editable' }}</a>
     <form action="/api/registration-review/{{ review_session.id }}/reprocess" method="post"
           onsubmit="return confirm('Esto ejecutará una nueva pasada OCR y comparará sus resultados contra la versión actual. ¿Continuar?');">
         <input type="hidden" name="base_draft_id" value="{{ review_session.draft.id if review_session.draft is defined else '' }}">
@@ -607,14 +642,112 @@
     </form>
 </nav>
 
+<!-- protected-review-widget:start -->
+{% if protected_staff_review and not session_committed %}
+<style>
+    .ctt-protected-panel { padding: 20px; margin: 18px 0; border: 1px solid var(--review-line, #dbe4ee); border-radius: 16px; background: #fff; }
+    .ctt-protected-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+    .ctt-review-member { border: 1px solid #dbe4ee; border-radius: 12px; padding: 14px; margin: 12px 0; }
+    .ctt-review-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .ctt-review-fields label { display: grid; gap: 5px; font-weight: 600; }
+    .ctt-review-fields input, .ctt-review-fields select, .ctt-source-select { width: 100%; padding: 8px; box-sizing: border-box; }
+    .ctt-review-check { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0; }
+    .ctt-review-check input { flex: 0 0 auto; margin-top: 4px; }
+    .ctt-source-stage { position: relative; line-height: 0; border: 1px solid #dbe4ee; margin: 12px 0; }
+    .ctt-source-stage img { width: 100%; height: auto; display: block; }
+    .ctt-source-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+    .ctt-source-preview { max-width: 100%; max-height: 160px; border: 1px solid #dbe4ee; object-fit: contain; }
+    .ctt-review-photo { width: 70px; height: 90px; object-fit: contain; border: 1px solid #dbe4ee; }
+    .ctt-review-note { color: #475569; line-height: 1.5; }
+    .ctt-review-error { padding: 12px; color: #991b1b; background: #fef2f2; border-radius: 8px; }
+    .ctt-review-blockers { color: #92400e; padding-left: 22px; }
+    .ctt-review-fingerprint { display: block; overflow-wrap: anywhere; margin: 8px 0; }
+    .ctt-review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    .ctt-review-coordinates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+    .ctt-review-coordinates label { display: grid; gap: 4px; }
+    @media (max-width: 900px) { .ctt-protected-grid { grid-template-columns: minmax(0, 1fr); } }
+    @media (max-width: 480px) { .ctt-review-fields { grid-template-columns: minmax(0, 1fr); } }
+</style>
+<section id="ctt-staff-review" class="ctt-protected-panel" aria-labelledby="ctt-review-title"
+         data-session-id="{{ review_session.id }}" data-csrf="{{ staff_review_csrf }}">
+    <h3 id="ctt-review-title">Revisión y confirmación con passkey</h3>
+    <p class="ctt-review-note">Compara los datos con sus fuentes. Las correcciones preparan otra revisión; todavía no capturan personas ni conceden elegibilidad.</p>
+    <p data-review-status role="status" aria-live="polite">Cargando la revisión protegida…</p>
+    <p data-review-error class="ctt-review-error" role="alert" hidden></p>
+    <ul data-review-blockers class="ctt-review-blockers" aria-label="Pendientes para confirmar"></ul>
+    <div class="ctt-protected-grid">
+        <div>
+            <div class="ctt-review-actions">
+                <button type="button" class="decision-button" data-review-edit>Corregir propuesta</button>
+                <button type="button" class="decision-button" data-review-prepare>Preparar revisión</button>
+                <button type="button" class="decision-button" data-review-refresh>Consultar revisión</button>
+            </div>
+            <fieldset data-review-fields disabled style="border: 0; padding: 0; min-width: 0;">
+                <legend>Valores de la propuesta</legend>
+                <div data-review-team></div>
+                <div data-review-members></div>
+            </fieldset>
+            <label class="ctt-review-check">
+                <input type="checkbox" data-review-team-confirm>
+                <span>He comparado los datos del equipo y confirmo los puestos propuestos como presentes. Los puestos inciertos o ausentes requieren revisión individual.</span>
+            </label>
+            <label class="ctt-review-check">
+                <input type="checkbox" data-review-confirm>
+                <span>He comparado este plan y sus fuentes y confirmo los datos y la presencia o ausencia de cada puesto.</span>
+            </label>
+            <div class="ctt-review-actions">
+                <button type="button" class="decision-button" data-review-approve disabled>Aprobar y capturar con passkey</button>
+                <button type="button" class="decision-button" data-review-result hidden>Consultar resultado</button>
+                <button type="button" class="decision-button" data-review-retry hidden>Reintentar el mismo intento</button>
+            </div>
+        </div>
+        <div>
+            <h4>Fuente de la revisión</h4>
+            <label for="ctt-source-target">Dato o puesto que comparar</label>
+            <select id="ctt-source-target" class="ctt-source-select" data-source-target></select>
+            <label for="ctt-source-page">Página de la fuente</label>
+            <select id="ctt-source-page" class="ctt-source-select" data-source-page></select>
+            <p class="ctt-review-note" data-source-help>El sistema propone las fuentes que puede verificar. Selecciona un dato para consultarlas; usa la selección manual solo para pendientes o datos incorrectos.</p>
+            <div class="ctt-source-stage" data-source-stage hidden>
+                <img data-source-image alt="Página fuente de la revisión">
+                <canvas data-source-canvas aria-label="Seleccionar rectángulo de fuente"></canvas>
+            </div>
+            <img data-source-preview class="ctt-source-preview" alt="Vista de la selección propuesta" hidden>
+            <details>
+                <summary>Ajustar la selección por coordenadas</summary>
+                <div class="ctt-review-coordinates">
+                    <label>Posición horizontal <input type="number" min="0" data-rect="x"></label>
+                    <label>Posición vertical <input type="number" min="0" data-rect="y"></label>
+                    <label>Ancho <input type="number" min="1" data-rect="width"></label>
+                    <label>Alto <input type="number" min="1" data-rect="height"></label>
+                </div>
+                <button type="button" class="decision-button" data-source-apply>Usar selección</button>
+                <button type="button" class="decision-button" data-source-clear>Quitar selección</button>
+            </details>
+        </div>
+    </div>
+    <section aria-labelledby="ctt-passkey-title">
+        <h4 id="ctt-passkey-title">Tu passkey</h4>
+        <p class="ctt-review-note" data-enrollment-status>La credencial debe estar acreditada por el responsable antes de capturar.</p>
+        <output class="ctt-review-fingerprint" data-enrollment-fingerprint aria-label="Huella de la credencial candidata"></output>
+        <div class="ctt-review-actions">
+            <button type="button" class="decision-button" data-enrollment-begin>Registrar passkey del dispositivo</button>
+            <button type="button" class="decision-button" data-enrollment-status-button hidden>Consultar activación</button>
+        </div>
+    </section>
+    <noscript><p role="alert">Esta revisión requiere JavaScript y una passkey. No se realizará ninguna captura desde este formulario.</p></noscript>
+    <script type="application/json" data-review-initial>{{ staff_review_view|tojson }}</script>
+</section>
+{% endif %}
+{% if protected_staff_review or session_committed %}
+<script src="/static/js/ctt_staff_review.js?v=7a8ca863d0ad848f" defer></script>
+{% endif %}
+<!-- protected-review-widget:end -->
+
 {% if session_rejected %}
 <div class="rejected-banner" role="alert">
     <strong>Revisión rechazada.</strong> La evidencia se conserva, pero el commit está bloqueado.
     Modifica el borrador o reprocesa las páginas para reabrirla.
-</div>
-{% elif session_committed %}
-<div class="rejected-banner" role="status">
-    <strong>Revisión capturada.</strong> El expediente queda en modo de consulta y no admite más decisiones ni cambios.
 </div>
 {% endif %}
 
@@ -785,12 +918,16 @@
                 <button type="submit" class="btn" style="border: none; cursor: pointer; background: #1d4ed8;" {% if session_committed or page_append_request_id is not defined %}disabled{% endif %}>Subir y anexar</button>
             </form>
             <h4 style="margin-bottom: 10px;">Señales de revisión</h4>
-            {% if validation.blockers %}
+            {% if validation.blockers and not session_committed %}
             <div class="issue-summary" style="margin-bottom: 14px;">
                 {% for blocker in validation.blockers %}
                 <div class="issue-alert" data-level="error">
                     <div class="issue-level">Bloqueo</div>
+                    {% if protected_staff_review and blocker.code == 'STAFF_GOVERNANCE_CONTRACT_REQUIRED' %}
+                    <div>La captura anterior admite jugadores. Para incluir el cuerpo técnico, usa la revisión protegida con passkey de arriba.</div>
+                    {% else %}
                     <div>{{ blocker.message }}</div>
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
@@ -814,11 +951,12 @@
 
     <section id="editable-draft" class="review-card" aria-labelledby="editable-draft-title">
         <form id="review-edit-form" action="/api/registration-review/{{ review_session.id }}/edit" method="post">
+            <fieldset {% if protected_staff_review or session_committed %}disabled{% endif %} style="border: 0; padding: 0; min-width: 0;">
             <input type="hidden" name="draft_version" value="{{ review_session.draft.draft_version if review_session.draft is defined else 1 }}">
             <input type="hidden" name="draft_content_hash" value="{{ review_session.draft.content_hash if review_session.draft is defined else '' }}">
             <input type="hidden" name="edit_request_id" value="{{ edit_request_id }}">
-            <h3 id="editable-draft-title" style="margin-bottom: 6px;">Borrador editable</h3>
-            <p style="margin: 0 0 16px; color: #64748b;">Estos son los únicos valores que se guardan al capturar.</p>
+            <h3 id="editable-draft-title" style="margin-bottom: 6px;">{{ 'Borrador de origen' if session_committed else 'Borrador editable' }}</h3>
+            <p style="margin: 0 0 16px; color: #64748b;">{% if session_committed %}Borrador de origen conservado para consulta. La captura ya está completada.{% elif protected_staff_review %}Borrador de origen conservado para consulta. Para corregir y capturar utiliza la revisión con passkey de arriba.{% else %}Estos son los únicos valores que se guardan al capturar.{% endif %}</p>
             <h4 style="margin-bottom: 14px;">Datos del equipo</h4>
             <div class="field-grid" style="margin-bottom: 16px;">
                 <div>
@@ -879,7 +1017,11 @@
 
             {% if staff %}
             <h3 style="margin: 20px 0 14px;">Cuerpo técnico</h3>
+            {% if session_committed %}
+            <p style="color: #64748b;">Datos del cuerpo técnico conservados en el borrador de origen para consulta. El expediente está cerrado para cambios.</p>
+            {% else %}
             <p style="color: #92400e;">Estos cargos se conservan en el draft. Su captura permanece bloqueada hasta que gobernanza los autorice explícitamente.</p>
+            {% endif %}
             <div class="field-grid" style="margin-bottom: 16px;">
                 {% for member in staff %}
                 <div>
@@ -933,7 +1075,9 @@
                         </div>
                         {% if player.photo_preview_url %}
                         <small style="color: #64748b;">
-                            {% if player.photo_preview_mode == 'ctt_batch_aligned' %}
+                            {% if session_committed %}
+                            Foto del borrador de origen, disponible para consulta.
+                            {% elif player.photo_preview_mode == 'ctt_batch_aligned' %}
                             Compara esta foto con la casilla del documento.
                             {% elif player.photo_preview_mode in ['ctt_explicit', 'ctt_explicit_binding'] %}
                             Foto recortada con la caja explícita de su casilla. Se guarda al capturar.
@@ -999,6 +1143,7 @@
                 >Aprobar y capturar</button>
                 <a href="/api/registration-review/{{ review_session.id }}" class="btn" style="background: #0f766e;" target="_blank" rel="noopener">Ver JSON</a>
             </div>
+            </fieldset>
         </form>
     </section>
 </div>

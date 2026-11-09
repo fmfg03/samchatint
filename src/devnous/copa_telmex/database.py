@@ -4,6 +4,7 @@ Database operations for Copa Telmex registration system.
 import logging
 from datetime import datetime, date
 from typing import Any, Dict, List, Optional, Set
+from types import SimpleNamespace
 from uuid import UUID
 
 from sqlalchemy import (
@@ -16,9 +17,13 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Team, Player, OCRRegistration, ValidationLog
+from .models import Team, TeamStaff, Player, OCRRegistration, ValidationLog
 from .persistence_authority import (
     PersistenceAuthorityDenied,
+)
+from .legacy_registration_writer import (
+    LegacyRegistrationWriter,
+    uses_legacy_sql_boundary,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,7 +32,7 @@ _SESSION_GUARD_KEY = "copa_telmex_persistence_authority_guard"
 
 
 class _SessionPersistenceAuthorityGuard:
-    """Guard Team/Player flushes made through a CopaTelmexDB-owned session."""
+    """Guard registration entity flushes in a CopaTelmexDB-owned session."""
 
     def __init__(self, session: AsyncSession):
         self.token = object()
@@ -51,7 +56,7 @@ class _SessionPersistenceAuthorityGuard:
         if self.capability is None:
             raise PersistenceAuthorityDenied(
                 "PERSISTENCE_AUTHORITY_REQUIRED",
-                "Team and Player mutations require transaction-scoped governance authority",
+                "Registration mutations require transaction-scoped governance authority",
             )
         return self.capability
 
@@ -69,12 +74,22 @@ class _SessionPersistenceAuthorityGuard:
             entity
             for collection in (session.new, session.dirty, session.deleted)
             for entity in collection
-            if isinstance(entity, (Team, Player))
+            if isinstance(entity, (Team, Player, TeamStaff))
         ]
         if not protected:
             return
         capability = self.require()
+        # Relationship changes can schedule delete-orphan or synchronize the
+        # foreign key after this listener runs, before column history changes.
+        for entity in protected:
+            state = sqlalchemy_inspect(entity)
+            if isinstance(entity, Team) and state.attrs.staff.history.has_changes():
+                self._deny_staff_mutation()
+            if isinstance(entity, TeamStaff) and state.attrs.team.history.has_changes():
+                self._deny_staff_mutation()
         for entity in session.deleted:
+            if isinstance(entity, TeamStaff):
+                self._deny_staff_mutation()
             if isinstance(entity, (Team, Player)):
                 capability.deny_delete(entity, token=self.token)
         for entity in session.new:
@@ -82,6 +97,8 @@ class _SessionPersistenceAuthorityGuard:
                 capability.authorize_team_create(entity, token=self.token)
             elif isinstance(entity, Player):
                 capability.authorize_player_create(entity, token=self.token)
+            elif isinstance(entity, TeamStaff):
+                self._deny_staff_mutation()
         for entity in session.dirty:
             if entity in session.new or entity in session.deleted:
                 continue
@@ -92,6 +109,16 @@ class _SessionPersistenceAuthorityGuard:
                 capability.authorize_team_update(entity, fields, token=self.token)
             elif isinstance(entity, Player):
                 capability.authorize_player_update(entity, fields, token=self.token)
+            elif isinstance(entity, TeamStaff):
+                self._deny_staff_mutation()
+
+    @staticmethod
+    def _deny_staff_mutation() -> None:
+        """Deny until a separately verified staff capability is integrated."""
+        raise PersistenceAuthorityDenied(
+            "STAFF_GOVERNANCE_CONTRACT_REQUIRED",
+            "technical-staff mutations require explicit staff authority",
+        )
 
     def _after_transaction(self, _session) -> None:
         self.invalidate()
@@ -140,6 +167,69 @@ class CopaTelmexDB:
         return self._persistence_guard.require().record_player_finality(
             player, finality_result, token=self._persistence_guard.token
         )
+
+    @property
+    def uses_legacy_sql_boundary(self) -> bool:
+        return uses_legacy_sql_boundary(self.session)
+
+    async def finalize_player(self, player: Player, finality_result: Dict[str, Any]):
+        """Apply the existing exact finality capability through its SQL entrypoint."""
+        receipt_id = self.record_player_finality(player, finality_result)
+        proposed = SimpleNamespace(
+            **{
+                column.name: getattr(player, column.name)
+                for column in Player.__table__.columns
+                if column.name not in {"governance_state", "finality_receipt_id"}
+            },
+            governance_state="ACTIVE",
+            finality_receipt_id=receipt_id,
+        )
+        self._persistence_guard.require().authorize_player_update(
+            proposed,
+            {"governance_state", "finality_receipt_id"},
+            token=self._persistence_guard.token,
+        )
+        if self.uses_legacy_sql_boundary:
+            return await LegacyRegistrationWriter(self.session).finalize_player(
+                player, receipt_id
+            )
+        player.finality_receipt_id = receipt_id
+        player.governance_state = "ACTIVE"
+        await self.session.flush()
+        return player
+
+    async def apply_postcommit_projection(
+        self, entity, *, base_revision: int, base_hash: str, updates: Dict[str, Any]
+    ):
+        """Keep REG-S07 capability checks before the fixed SQL projection."""
+        authority = self._persistence_guard.require()
+        values = {
+            column.name: getattr(entity, column.name)
+            for column in entity.__table__.columns
+        }
+        values.update(updates)
+        values.update(
+            postcommit_revision=authority.proposed_revision,
+            postcommit_snapshot_hash=authority.proposed_snapshot_hash,
+        )
+        proposed = SimpleNamespace(**values)
+        authorize = (
+            authority.authorize_team_update
+            if isinstance(entity, Team)
+            else authority.authorize_player_update
+        )
+        authorize(proposed, updates.keys(), token=self._persistence_guard.token)
+        if self.uses_legacy_sql_boundary:
+            return await LegacyRegistrationWriter(self.session).project(
+                entity,
+                base_revision=base_revision,
+                base_hash=base_hash,
+                updates=updates,
+            )
+        for field, value in values.items():
+            setattr(entity, field, value)
+        await self.session.flush([entity])
+        return entity
 
     # ============================================================================
     # TEAM OPERATIONS
@@ -202,6 +292,8 @@ class CopaTelmexDB:
         self._persistence_guard.require().authorize_team_create(
             team, token=self._persistence_guard.token
         )
+        if self.uses_legacy_sql_boundary:
+            return await LegacyRegistrationWriter(self.session).insert(team)
         self.session.add(team)
         await self.session.flush()  # Get the ID without committing
 
@@ -357,6 +449,8 @@ class CopaTelmexDB:
         self._persistence_guard.require().authorize_player_create(
             player, token=self._persistence_guard.token
         )
+        if self.uses_legacy_sql_boundary:
+            return await LegacyRegistrationWriter(self.session).insert(player)
         self.session.add(player)
         await self.session.flush()
 
