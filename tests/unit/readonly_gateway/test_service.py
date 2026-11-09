@@ -11,7 +11,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -337,7 +337,7 @@ class ServiceTests(unittest.TestCase):
             "samchat-production",
             "fmfg-binding",
             "v1",
-            datetime(2026, 11, 8, tzinfo=timezone.utc),
+            datetime.now(timezone.utc) + timedelta(days=1),
             "reviewed-v1",
         )
         config = {
@@ -415,7 +415,7 @@ class ServiceTests(unittest.TestCase):
             "installation": "samchat-production",
             "actor_binding": "fmfg-binding",
             "generation": "v1",
-            "expires_at": "2026-11-08T23:59:59Z",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
             "owner_version": "reviewed-v1",
             "scope_policy": "live_informes_v1",
             "transport_binding": "tunnel_6abc52a731608191a27c90d670fb5502",

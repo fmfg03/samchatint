@@ -1,0 +1,172 @@
+{
+  "schema_version": "samchat.approved-budget-reconciliation.operator.v1",
+  "budget_version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+  "edition_year": 2026,
+  "actor_empleado_id": "e3d13040-2360-420f-98a1-516440ef63c3",
+  "reason": "Conciliación auditada de 16 movimientos a líneas existentes del presupuesto aprobado; sin cambios de importes ni fuentes.",
+  "csv_sha256": "cc54537c8f838a8953f1d7420702f1ff153b56593d0e6fe46656936ab9540284",
+  "story_sha256": "24d770dd4086f2fd7ed62426daca83944b83fa1fdb21527404ed8117198a7e4b",
+  "spec_sha256": "e3a9afc6e9b4122dbf0ecd53fd57a671c15bdba7ea88b282ba56c84a3a8f4a22",
+  "assignments": [
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "movement_key": "accounting:b5679faf-d2b9-4bae-8a7a-e6f149ec7a7c",
+      "budget_line_id": "a68157c6-05d5-40cc-b709-bab007f39495",
+      "budget_concept_id": "47e5272f-3a2b-44ae-9ecb-b3e6ccf9a2e4",
+      "phase": "Fase nacional",
+      "kind": "ledger_expense",
+      "document_id": "66ffbb3b-24b3-42d4-b87e-b7caa2bb8486",
+      "expense_id": null
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "movement_key": "accounting:2f9e7530-5d54-4e80-a90c-1645ddddc0f8",
+      "budget_line_id": "a68157c6-05d5-40cc-b709-bab007f39495",
+      "budget_concept_id": "47e5272f-3a2b-44ae-9ecb-b3e6ccf9a2e4",
+      "phase": "Fase nacional",
+      "kind": "ledger_expense",
+      "document_id": "a0a4be49-2ab9-48d0-bf19-b391ad4d6764",
+      "expense_id": null
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "movement_key": "accounting:8d06169f-d0a3-488e-b718-c87a4d7a82b4",
+      "budget_line_id": "a68157c6-05d5-40cc-b709-bab007f39495",
+      "budget_concept_id": "47e5272f-3a2b-44ae-9ecb-b3e6ccf9a2e4",
+      "phase": "Fase nacional",
+      "kind": "ledger_expense",
+      "document_id": "6841989a-f39c-47d9-ba36-387aa327a1c6",
+      "expense_id": null
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "movement_key": "accounting:2e488ffe-5e95-4277-b386-99d909f46bc2",
+      "budget_line_id": "a68157c6-05d5-40cc-b709-bab007f39495",
+      "budget_concept_id": "47e5272f-3a2b-44ae-9ecb-b3e6ccf9a2e4",
+      "phase": "Fase nacional",
+      "kind": "ledger_expense",
+      "document_id": "3e1ceae0-393d-4c1e-b454-daaaeeeef0fc",
+      "expense_id": null
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "movement_key": "expense:d45592d4-833d-4b44-aaf3-000cb6fcbaa9",
+      "budget_line_id": "d7f3a792-51e7-4b43-9c86-58d6e6045c01",
+      "budget_concept_id": "4de2da6a-d3b0-4863-a5f7-947bbe695a86",
+      "phase": "Fase nacional",
+      "kind": "commitment",
+      "document_id": "79272f73-bd9e-4fbc-b23d-e6621301119a",
+      "expense_id": "d45592d4-833d-4b44-aaf3-000cb6fcbaa9"
+    },
+    {
+      "tournament_id": "16793f0e-4697-4a28-8f42-b563da8cc7d8",
+      "movement_key": "expense:c0296eda-e6a2-4705-abca-a70951a83e94",
+      "budget_line_id": "b4552a32-1146-4936-83ed-31a9ca825d48",
+      "budget_concept_id": "b70ec1b3-6673-4bc0-8237-7f59a49dbc51",
+      "phase": "Fase Nacional",
+      "kind": "commitment",
+      "document_id": "75966811-45e4-449d-b8a3-c0777be2a58b",
+      "expense_id": "c0296eda-e6a2-4705-abca-a70951a83e94"
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "movement_key": "accounting:d9644f95-0da2-4aeb-b977-ef422d0760e9",
+      "budget_line_id": "be60408a-5f81-46fc-bf74-cd8aa50872bb",
+      "budget_concept_id": "df5f0c7b-7056-451c-a616-ab0a033f175b",
+      "phase": "Fase Estatal",
+      "kind": "commitment",
+      "document_id": "1541dde3-91fd-451e-b734-162deca21a10",
+      "expense_id": null
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "movement_key": "accounting:db89b9b0-0670-4cd8-a6b5-0ee7a33509ab",
+      "budget_line_id": "be60408a-5f81-46fc-bf74-cd8aa50872bb",
+      "budget_concept_id": "df5f0c7b-7056-451c-a616-ab0a033f175b",
+      "phase": "Fase Estatal",
+      "kind": "ledger_expense",
+      "document_id": "32d2da78-c20e-41e7-90a3-ddd814a803e5",
+      "expense_id": null
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "movement_key": "accounting:deb7cbb9-cd28-4474-8202-11a767912e1b",
+      "budget_line_id": "be60408a-5f81-46fc-bf74-cd8aa50872bb",
+      "budget_concept_id": "df5f0c7b-7056-451c-a616-ab0a033f175b",
+      "phase": "Fase Estatal",
+      "kind": "ledger_expense",
+      "document_id": "cc39686b-82b0-41dc-a9b7-ca4531a1c4e5",
+      "expense_id": "6e38af93-3976-4000-92fc-59c70f8e5d4b"
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "movement_key": "accounting:762a2422-5afa-4854-b046-2fa9276d71e2",
+      "budget_line_id": "be60408a-5f81-46fc-bf74-cd8aa50872bb",
+      "budget_concept_id": "df5f0c7b-7056-451c-a616-ab0a033f175b",
+      "phase": "Fase Estatal",
+      "kind": "ledger_expense",
+      "document_id": "66fc0262-1b07-4970-a982-c7caeb4ac433",
+      "expense_id": null
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "movement_key": "accounting:4ea0ddad-660d-4263-8527-a93b8f477ef9",
+      "budget_line_id": "034b0be8-46ae-4229-8605-42cfcee7d1a9",
+      "budget_concept_id": "1c8a29c7-8aa5-45eb-8b02-1331c3fa16ca",
+      "phase": "Periodo de inscripción",
+      "kind": "ledger_expense",
+      "document_id": "c70107d2-8a0b-43ff-94c1-57a9f59ce10a",
+      "expense_id": null
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "movement_key": "accounting:010316fd-92b5-4630-8aff-fd0b8283d289",
+      "budget_line_id": "be60408a-5f81-46fc-bf74-cd8aa50872bb",
+      "budget_concept_id": "df5f0c7b-7056-451c-a616-ab0a033f175b",
+      "phase": "Fase Estatal",
+      "kind": "ledger_expense",
+      "document_id": "5009c684-fa3f-43c2-8b8c-9fe0c72a9545",
+      "expense_id": null
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "movement_key": "accounting:134d93ea-88fc-46a3-a0dc-67c60a3f7904",
+      "budget_line_id": "be60408a-5f81-46fc-bf74-cd8aa50872bb",
+      "budget_concept_id": "df5f0c7b-7056-451c-a616-ab0a033f175b",
+      "phase": "Fase Estatal",
+      "kind": "ledger_expense",
+      "document_id": "233b157e-b6e7-4421-a5a5-d39659ee7799",
+      "expense_id": null
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "movement_key": "accounting:6ee9c90d-fb9f-4c26-aed4-71cc5abcdef3",
+      "budget_line_id": "be60408a-5f81-46fc-bf74-cd8aa50872bb",
+      "budget_concept_id": "df5f0c7b-7056-451c-a616-ab0a033f175b",
+      "phase": "Fase Estatal",
+      "kind": "commitment",
+      "document_id": "2fff0758-43d1-41dc-ad5c-27f7f5f28b92",
+      "expense_id": null
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "movement_key": "expense:41b17108-5430-423e-8232-8e1dac6085e3",
+      "budget_line_id": "be60408a-5f81-46fc-bf74-cd8aa50872bb",
+      "budget_concept_id": "df5f0c7b-7056-451c-a616-ab0a033f175b",
+      "phase": "Fase Estatal",
+      "kind": "pending_accounting",
+      "document_id": "88d88cf1-bd99-449d-bb90-aebb760f8768",
+      "expense_id": "41b17108-5430-423e-8232-8e1dac6085e3"
+    },
+    {
+      "tournament_id": "67c556df-f953-4f99-8cab-87ed4d111b05",
+      "movement_key": "expense:6f0d2d03-18d4-4979-aed5-e207970deb24",
+      "budget_line_id": "be60408a-5f81-46fc-bf74-cd8aa50872bb",
+      "budget_concept_id": "df5f0c7b-7056-451c-a616-ab0a033f175b",
+      "phase": "Fase Estatal",
+      "kind": "pending_accounting",
+      "document_id": "88d88cf1-bd99-449d-bb90-aebb760f8768",
+      "expense_id": "6f0d2d03-18d4-4979-aed5-e207970deb24"
+    }
+  ]
+}

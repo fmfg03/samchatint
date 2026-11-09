@@ -76,6 +76,8 @@ CANONICAL_BUDGET_ROUTE_PATHS = {
     "/admin/presupuestos/versiones/copy-forward",
     "/admin/presupuestos/versiones/{version_id}/lineas/create",
     "/admin/presupuestos/versiones/{version_id}/lineas/assign-existing",
+    "/admin/presupuestos/versiones/{version_id}/conciliacion/preview",
+    "/admin/presupuestos/versiones/{version_id}/conciliacion/confirm",
     "/admin/presupuestos/versiones/{version_id}/transition",
     "/admin/presupuestos/versiones/{version_id}/distribucion",
     "/admin/presupuestos/versiones/{version_id}/update",
@@ -210,6 +212,7 @@ async def test_tournament_detail_redirects_to_canonical_selected_version(
 
     response = await route.endpoint(
         tournament_key="torneo-1",
+        request=SimpleNamespace(scope={"session": {}}, session={}),
         session=object(),
         current_empleado=SimpleNamespace(rol="superadmin"),
         edition_year=2026,

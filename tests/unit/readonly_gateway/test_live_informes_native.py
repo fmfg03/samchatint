@@ -12,7 +12,7 @@ import threading
 import time
 import unittest
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from samchat.readonly_gateway.asyncpg_driver import AsyncpgConnectionFactory
@@ -60,9 +60,14 @@ class LiveInformeNativeTests(unittest.TestCase):
                 "DROP TABLE documentos,aprobaciones,expense_reports,anticipos,reembolsos,empleados,authorization_positions,authorization_position_assignments,documento_authorization_routes,access_control_rules; DROP ROLE devnous_user; DROP ROLE outside_actor"
             )
         cls.admin((Path(__file__).with_name("native_fixture.sql")).read_text())
-        cls.admin(
-            (ROOT / "deployment/readonly_gateway/live-informes-install.sql").read_text()
-        )
+        cls.fixture_expiry = datetime.now(timezone.utc) + timedelta(days=1)
+        install_sql = (
+            ROOT / "deployment/readonly_gateway/live-informes-install.sql"
+        ).read_text()
+        deadline = "2026-11-08 23:59:59+00"
+        if install_sql.count(deadline) != 2:
+            raise RuntimeError("Unexpected synthetic SQL fixture expiry bindings")
+        cls.admin(install_sql.replace(deadline, cls.fixture_expiry.isoformat()))
         definitions = json.loads(
             cls.admin(
                 "SET TIME ZONE 'UTC'; SET search_path=samchat_ro_fmfg_v1,pg_catalog; "
@@ -108,7 +113,7 @@ class LiveInformeNativeTests(unittest.TestCase):
             "samchat-production",
             "agentius:fmfg:readonly:v1",
             "20261009-v1",
-            datetime(2026, 11, 8, 23, 59, 59, tzinfo=timezone.utc),
+            self.fixture_expiry,
             "live-informes-7d857ad32-v1",
         )
         self.actor = self.delegation.principal()
