@@ -12,7 +12,7 @@ import threading
 import time
 import unittest
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from samchat.readonly_gateway.asyncpg_driver import AsyncpgConnectionFactory
@@ -108,7 +108,7 @@ class LiveInformeNativeTests(unittest.TestCase):
             "samchat-production",
             "agentius:fmfg:readonly:v1",
             "20261009-v1",
-            datetime(2026, 11, 8, 23, 59, 59, tzinfo=timezone.utc),
+            datetime.now(timezone.utc) + timedelta(days=1),
             "live-informes-7d857ad32-v1",
         )
         self.actor = self.delegation.principal()
