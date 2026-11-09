@@ -1,0 +1,7 @@
+{
+  "adapter_overlay/canonical_authority.py": "3c4275f91f1bc003029230edc5219fcd98735f55d3ce0731301e99193f16d1cf",
+  "adapter_overlay/expanded.py": "79c3aacd695144c4719cbaa1634225702ab2cff0c8d33c6068d20a370ee1babb",
+  "adapter_overlay/authenticated_binding.py": "61a3b20987157de535ef908eba53d044bfd852502d1ca62e3d87eb3142cb0df4",
+  "adapter_overlay/expanded_catalog.py": "d0da80271e66ff2f3defbf73aac6b3fcbe4245b8eb10281f866b1ce57546ce51",
+  "test_identity_binding_composition.py": "921aabb173aba6a74ca6b22710a0f99f977ac75b8312f5ffaf305357d70941ff"
+}

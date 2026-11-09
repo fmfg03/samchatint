@@ -1,0 +1,47 @@
+name: Batiseñal isolated identity composition
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tests/fixtures/batisenal-composition/**'
+      - '.github/workflows/batisenal-composition.yml'
+permissions:
+  contents: read
+jobs:
+  synthetic-http:
+    name: Synthetic HTTP and identity composition (not Chatty E2E)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify and prepare isolated historical source
+        shell: bash
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d /tmp/bp-XXXXXX)
+          rmdir "$work"
+          python tests/fixtures/batisenal-composition/prepare.py "$work"
+          echo "PILOT_WORK=$work" >> "$GITHUB_ENV"
+      - name: Install recorded test dependencies in disposable venv
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/pilot-venv"
+          "$RUNNER_TEMP/pilot-venv/bin/python" -m pip install -r "$PILOT_WORK/samchat-pilot-compatible-source-20261026/handoff/requirements-observed.txt"
+          echo "PILOT_PY=$RUNNER_TEMP/pilot-venv/bin/python" >> "$GITHUB_ENV"
+      - name: Run existing safety suite plus identity composition
+        run: bash tests/fixtures/batisenal-composition/run.sh
+      - name: Upload synthetic test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: batisenal-composition-synthetic-results
+          path: ${{ env.PILOT_WORK }}/c/artifacts/pilot/ci-results/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7

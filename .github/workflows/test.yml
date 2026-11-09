@@ -79,8 +79,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements.txt
 
       - name: Free hosted runner disk space
         if: runner.environment == 'github-hosted' && runner.os == 'Linux'
@@ -93,7 +91,7 @@ jobs:
       - name: Install dependencies
         env:
           PIP_NO_CACHE_DIR: "1"
-        run: python -m pip install -r requirements.txt -r requirements-test.txt
+        run: bash scripts/ci/install-cpu-test-dependencies.sh python -r requirements.txt -r requirements-test.txt
 
       - name: Verify and prepare exact CTT kit test fixtures
         run: python scripts/ci/check-ctt-test-fixtures.py --prepare "/tmp/ctt-ci-unit-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --github-env "$GITHUB_ENV"
@@ -238,8 +236,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements.txt
 
       - name: Free hosted runner disk space
         if: runner.environment == 'github-hosted' && runner.os == 'Linux'
@@ -252,7 +248,7 @@ jobs:
       - name: Install dependencies
         env:
           PIP_NO_CACHE_DIR: "1"
-        run: python -m pip install -r requirements.txt
+        run: bash scripts/ci/install-cpu-test-dependencies.sh python -r requirements.txt
 
       - name: Install approved CTT test dependency and verify fixture bindings
         run: |

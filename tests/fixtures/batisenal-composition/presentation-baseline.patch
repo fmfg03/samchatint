@@ -1,0 +1,20 @@
+--- a/src/devnous/gastos/routes/batisenal_pilot_routes.py
++++ b/src/devnous/gastos/routes/batisenal_pilot_routes.py
+@@ -40 +40 @@
+-def html(body, status=200):
++def html(body, status=200, *, form_page=False):
+@@ -50 +50,4 @@
+-        headers=SAFE_HEADERS,
++        # Preserve native Origin on same-origin form navigation. Do not change
++        # the policy on errors, redirects, metadata or token responses.
++        headers={**SAFE_HEADERS, "Referrer-Policy": "same-origin"}
++        if form_page else SAFE_HEADERS,
+@@ -333 +336 @@
+-            + '/case">Ahora no · conservar mi consulta</a>'
++            + '/case">Ahora no · conservar mi consulta</a>', form_page=True
+@@ -381 +384 @@
+-                + '/case">Cancelar conexión · conservar consulta y trabajo</a>'
++                + '/case">Cancelar conexión · conservar consulta y trabajo</a>', form_page=True
+@@ -523 +526 @@
+-        return html(body)
++        return html(body, form_page=True)

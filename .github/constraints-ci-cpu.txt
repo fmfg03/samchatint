@@ -1,0 +1,5 @@
+# CI-only ML dependency tuple, matching the 2026-10-30 resolver except CPU torch.
+# Keep runtime requirements and the historical Batiseñal fixture unchanged.
+torch==2.15.0+cpu
+sentence-transformers==6.2.0
+transformers==5.22.1
