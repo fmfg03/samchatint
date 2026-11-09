@@ -475,3 +475,33 @@ console.log(JSON.stringify({populated, manuallyCalculated: total.value}));
     actual = json.loads(result.stdout)
     assert actual["populated"] == [required, optional, optional, required]
     assert actual["manuallyCalculated"] == "120.00"
+
+
+@pytest.mark.parametrize("tax_label", ["Imptos. trasladados", "Imptos trasladados", "Impuestos trasladados"])
+def test_discounted_invoice_with_abbreviated_transferred_taxes(tax_label):
+    """A legitimate discounted invoice must not lose the transferred VAT."""
+    text = (
+        HEADER
+        + "Servicio de comida rapida\n"
+        + "Subtotal 217.76\n"
+        + "Descuentos 35.00\n"
+        + f"{tax_label} 29.24\n"
+        + "Total 212.00\n"
+    )
+    parsed = resolve_pdf(digital_pdf(text))
+    assert parsed["subtotal"] == 217.76
+    assert parsed["descuento"] == 35.0
+    assert parsed["total_impuestos_trasladados"] == 29.24
+    assert parsed["total"] == 212.0
+    assert capture(parsed)["total"] == Decimal("212.00")
+
+
+def test_discounted_invoice_rejects_real_inconsistent_total():
+    """Recognition of abbreviations must not bypass arithmetic checks."""
+    parsed = pdf_reader._parse_from_text(
+        HEADER
+        + "Subtotal 217.76\nDescuentos 35.00\n"
+        + "Imptos. trasladados 29.24\nTotal 213.00"
+    )
+    with pytest.raises(ValueError, match="TOTAL del PDF no coincide"):
+        capture(parsed)
