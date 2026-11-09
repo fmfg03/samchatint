@@ -15,6 +15,39 @@
         photo_box: 'Fotografía', absence_box: 'Constancia de ausencia',
     };
     const clone = value => JSON.parse(JSON.stringify(value));
+    const uuid = value => typeof value === 'string'
+        && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(value)
+        && value !== '00000000-0000-0000-0000-000000000000';
+
+    function focusCaptureComplete(notice) {
+        notice.focus({ preventScroll: true });
+        notice.scrollIntoView({ block: 'center', behavior: 'auto' });
+    }
+
+    function captureCompleteNotice(root) {
+        let notice = document.querySelector('[data-capture-complete]');
+        if (!notice) {
+            notice = document.createElement('section');
+            notice.id = 'ctt-capture-complete';
+            notice.className = 'capture-complete';
+            notice.dataset.captureComplete = '';
+            notice.setAttribute('role', 'status');
+            notice.setAttribute('aria-live', 'polite');
+            notice.setAttribute('aria-atomic', 'true');
+            notice.tabIndex = -1;
+            const title = document.createElement('strong'); title.textContent = 'Captura completada';
+            const detail = document.createElement('p');
+            detail.textContent = 'El expediente está registrado y queda en modo de consulta.';
+            const inbox = document.createElement('a');
+            inbox.href = '/registration-review'; inbox.textContent = 'Volver a la bandeja de revisiones';
+            notice.append(title, detail, inbox);
+            root.before(notice);
+        }
+        notice.hidden = false;
+        notice.dataset.captureState = 'committed';
+        focusCaptureComplete(notice);
+        return notice;
+    }
 
     function decode(value) {
         if (typeof value !== 'string' || value.length > 100000) throw new Error('Opciones de passkey inválidas.');
@@ -69,6 +102,7 @@
             this.dirty = false;
             this.attemptId = null;
             this.capturePending = false;
+            this.completion = null;
             this.enrollmentId = null;
             this.pollTimer = null;
             this.canUsePasskey = Boolean(window.isSecureContext && window.PublicKeyCredential
@@ -141,7 +175,12 @@
 
         applyView(payload) {
             const view = payload.staff_review_view || payload;
+            if (view?.state === 'committed') {
+                this.completeCapture(view);
+                return;
+            }
             if (!view || view.session_id !== this.sessionId) throw new Error('La revisión no corresponde a este expediente.');
+            if (this.completion) return;
             if (payload.staff_review_csrf) this.csrf = payload.staff_review_csrf;
             this.view = clone(view);
             this.draft = clone(view);
@@ -519,13 +558,13 @@
         }
 
         captureState(result) {
-            if (result.session_id && result.session_id !== this.sessionId) throw new Error('El resultado no corresponde a esta revisión.');
+            if (this.completion && result.state !== 'committed') return;
             if (result.state === 'committed') {
-                this.capturePending = false;
-                clearTimeout(this.pollTimer); this.view.state = 'committed'; this.editing = false;
-                this.message('La revisión quedó capturada. Consulta el expediente para ver su estado final.');
-                this.find('[data-review-confirm]').checked = false;
-            } else if (['expired', 'stale'].includes(result.state)) {
+                this.completeCapture(result);
+                return;
+            }
+            if (result.session_id && result.session_id !== this.sessionId) throw new Error('El resultado no corresponde a esta revisión.');
+            if (['expired', 'stale'].includes(result.state)) {
                 this.capturePending = false;
                 clearTimeout(this.pollTimer);
                 this.find('[data-review-confirm]').checked = false;
@@ -537,14 +576,50 @@
             }
         }
 
+        completeCapture(result) {
+            if (this.completion) return;
+            if (result.session_id !== this.sessionId || !uuid(result.result_id) || !uuid(result.attempt_id)
+                || (this.attemptId && result.attempt_id !== this.attemptId)) {
+                this.capturePending = true;
+                this.controls();
+                throw new Error('No se recibió un resultado de captura verificable para este intento. Consulta su estado.');
+            }
+            this.completion = { result_id: result.result_id, attempt_id: result.attempt_id };
+            this.capturePending = false;
+            this.attemptId = result.attempt_id;
+            clearTimeout(this.pollTimer);
+            this.view = { ...this.view, state: 'committed' };
+            this.editing = false;
+            this.clearError();
+            this.find('[data-review-confirm]').checked = false;
+            this.message('Captura completada. El expediente está registrado y queda en modo de consulta.');
+            this.controls();
+            captureCompleteNotice(this.root);
+            // Re-read the canonical page with GET; changing the fragment alone
+            // would leave the header, old blockers and external actions stale.
+            const target = new URL(window.location.href);
+            target.hash = 'ctt-capture-complete';
+            try {
+                window.history.replaceState(window.history.state, '', target);
+                window.location.reload();
+            } catch (_) {
+                // The confirmed result stays visible. A normal page refresh is
+                // a read and must never fall back to another capture request.
+            }
+        }
+
         async poll(remaining) {
-            if (!this.attemptId) return;
+            if (!this.attemptId || this.completion) return;
             clearTimeout(this.pollTimer);
             try {
                 const result = await this.request(`/staff-approval/status?attempt_id=${encodeURIComponent(this.attemptId)}`);
+                if (this.completion) return;
                 if (['committed', 'expired', 'stale'].includes(result.state)) { this.captureState(result); this.controls(); return; }
                 this.message('El resultado aún no está confirmado. Consulta este mismo intento nuevamente.');
-            } catch (error) { this.failure(error.message); }
+            } catch (error) {
+                if (this.completion) return;
+                this.failure(error.message);
+            }
             if (remaining > 0) this.pollTimer = setTimeout(() => this.poll(remaining - 1), 1500);
         }
 
@@ -615,5 +690,7 @@
         }
     }
 
+    const completed = document.querySelector('[data-capture-complete][data-capture-state="committed"]');
+    if (completed) focusCaptureComplete(completed);
     document.querySelectorAll('#ctt-staff-review').forEach(root => new ReviewPanel(root));
 })();

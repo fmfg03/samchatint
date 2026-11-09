@@ -7,14 +7,16 @@ workflow/PostgreSQL suites own those boundaries; no live request leaves here.
 import base64
 import json
 import logging
+import os
 import secrets
+from copy import deepcopy
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from jinja2 import Environment, select_autoescape
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from PIL import Image
 from playwright.sync_api import expect
 
@@ -721,3 +723,373 @@ def test_person_exception_without_specific_field_opens_person_source(panel, fiel
     expect(panel.page.locator("[data-source-target] option:checked")).to_have_text(
         "Director técnico · Nombre completo"
     )
+
+
+@pytest.fixture
+def completion_page(panel):
+    """Whole served page, sixteen synthetic players and intercepted capture replies."""
+    page, state = panel.page, panel.state
+    state.view["players"] = [
+        {**deepcopy(state.view["players"][0]), "slot": slot} for slot in range(1, 17)
+    ]
+    state.attempt_id, state.result_id = str(uuid4()), str(uuid4())
+    state.committed = False
+    state.document_gets = []
+    state.assertion_state = "committed"
+    state.statuses = []
+    state.result_patch = {}
+    state.initial_session_status = "ready"
+    state.view_committed = False
+    state.legacy_blockers = [
+        {
+            "code": "STAFF_GOVERNANCE_CONTRACT_REQUIRED",
+            "message": "Synthetic legacy player-only contract.",
+        }
+    ]
+    path = "/registration-review/" + state.view["session_id"]
+    template = Environment(
+        loader=FileSystemLoader(ROOT / "templates"),
+        autoescape=select_autoescape(("html",)),
+    ).get_template("registration_review_detail.html")
+
+    def result(value):
+        reply = {
+            "session_id": state.view["session_id"],
+            "attempt_id": state.attempt_id,
+            "state": value,
+        }
+        if value == "committed":
+            reply["result_id"] = state.result_id
+            reply.update(state.result_patch)
+            if not state.result_patch:
+                state.committed = True
+        return reply
+
+    def handle(route):
+        request = route.request
+        url_path = request.url.split("https://sam.chat", 1)[-1]
+        if url_path == path:
+            assert request.method == "GET"
+            state.document_gets.append(request.url)
+            status = "committed" if state.committed else state.initial_session_status
+            markup = template.render(
+                request=SimpleNamespace(url=SimpleNamespace(path=path)),
+                review_session=SimpleNamespace(
+                    id=state.view["session_id"],
+                    status=status,
+                    provider="reviewed_manifest",
+                    tournament_slug="copa-telmex-2026",
+                ),
+                assets=[],
+                team=state.view["team"],
+                manager={},
+                staff=state.view["staff"],
+                players=[],
+                notes="",
+                validation={
+                    "blockers": state.legacy_blockers,
+                    "issues": [],
+                    "ready_to_commit": False,
+                },
+                layout_regions={},
+                overall_confidence="100%",
+                canonical_review=None,
+                tournament_options=[],
+                protected_staff_review=True,
+                staff_review_csrf="synthetic-csrf",
+                staff_review_view=state.view,
+            )
+            route.fulfill(status=200, content_type="text/html", body=markup)
+            return
+        if url_path.startswith(panel.base) and "/source/" not in url_path:
+            body = request.post_data_json if request.method == "POST" else None
+            state.calls.append((url_path, body))
+            if request.method == "POST":
+                assert request.headers.get("x-ctt-csrf") == "synthetic-csrf"
+            if url_path == panel.base + "/staff-approval/challenge":
+                reply = {
+                    "attempt_id": state.attempt_id,
+                    "options": {
+                        "publicKey": {
+                            "challenge": base64.urlsafe_b64encode(b"c" * 32)
+                            .decode()
+                            .rstrip("="),
+                            "rpId": "sam.chat",
+                            "userVerification": "required",
+                        }
+                    },
+                }
+            elif url_path == panel.base + "/staff-approval/assertion":
+                reply = result(state.assertion_state)
+            elif url_path.startswith(panel.base + "/staff-approval/status?"):
+                status = state.statuses.pop(0) if state.statuses else "uncertain"
+                if isinstance(status, int):
+                    route.fulfill(
+                        status=status,
+                        content_type="application/json",
+                        body=json.dumps(
+                            {"detail": {"message": "Synthetic status outage"}}
+                        ),
+                    )
+                    return
+                reply = result(status)
+            elif url_path == panel.base + "/staff-approval":
+                view = deepcopy(state.view)
+                if state.view_committed:
+                    view.update(result("committed"))
+                reply = {
+                    "staff_review_view": view,
+                    "staff_review_csrf": "synthetic-csrf",
+                }
+            else:
+                route.abort()
+                return
+            route.fulfill(
+                status=200, content_type="application/json", body=json.dumps(reply)
+            )
+            return
+        route.fallback()
+
+    page.route("**/*", handle)
+    page.add_init_script(
+        """Object.defineProperty(navigator.credentials,'get',{value:async()=>({
+        id:'synthetic',type:'public-key',rawId:new Uint8Array([1]).buffer,
+        response:{clientDataJSON:new Uint8Array([1]).buffer,
+          authenticatorData:new Uint8Array([1]).buffer,
+          signature:new Uint8Array([1]).buffer,userHandle:null},
+        getClientExtensionResults:()=>({})})});"""
+    )
+    return SimpleNamespace(
+        page=page, state=state, path=path, base=panel.base, result=result
+    )
+
+
+def _open_completion_page(completion):
+    completion.page.goto("https://sam.chat" + completion.path)
+    expect(completion.page.locator("[data-review-team]")).to_contain_text("Equipo")
+
+
+def _approve_completion(completion):
+    completion.page.locator("[data-review-confirm]").check()
+    completion.page.locator("[data-review-approve]").click()
+
+
+def _assert_completed_page(completion, *, expected_gets=2, anchored=True):
+    page = completion.page
+    banner = page.locator("#ctt-capture-complete")
+    expect(banner).to_contain_text("Captura completada")
+    expect(banner).to_be_in_viewport()
+    expect(banner).to_be_focused()
+    assert banner.get_attribute("role") == "status"
+    assert "rejected-banner" not in (banner.get_attribute("class") or "")
+    expect(page.locator(".status-pill[data-status='committed']")).to_contain_text(
+        "Capturado"
+    )
+    assert len(completion.state.document_gets) == expected_gets
+    if anchored:
+        assert page.url.endswith("#ctt-capture-complete")
+    expect(banner.locator("a[href='/registration-review']")).to_be_visible()
+    expect(page.locator("[data-action='modify']")).to_be_disabled()
+    expect(page.locator("[data-action='reject']")).to_be_disabled()
+    expect(page.get_by_role("button", name="Reprocesar", exact=True)).to_be_disabled()
+    expect(
+        page.get_by_role("button", name="Subir y anexar", exact=True)
+    ).to_be_disabled()
+    expect(page.locator("input[type='file']")).to_be_disabled()
+    for button in page.locator("[data-commit-button]").all():
+        expect(button).to_be_disabled()
+    expect(page.locator("[data-review-approve]")).to_have_count(0)
+    expect(
+        page.get_by_text("La captura anterior admite jugadores", exact=False)
+    ).to_have_count(0)
+    expect(page.locator("[data-review-error]:visible")).to_have_count(0)
+    expect(page.get_by_text("Borrador editable", exact=True)).to_have_count(0)
+    expect(
+        page.get_by_text("Para corregir y capturar utiliza", exact=False)
+    ).to_have_count(0)
+    expect(
+        page.get_by_text("Su captura permanece bloqueada", exact=False)
+    ).to_have_count(0)
+    for control in page.locator(
+        "#review-edit-form input:not([type='hidden']), "
+        "#review-edit-form textarea, #review-edit-form select"
+    ).all():
+        expect(control).to_be_disabled()
+
+
+def _assert_single_capture(completion):
+    paths = [path for path, _ in completion.state.calls]
+    assert paths.count(completion.base + "/staff-approval/challenge") == 1
+    assert paths.count(completion.base + "/staff-approval/assertion") == 1
+    assert not any(path.endswith("/edit") for path in paths)
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        {"name": "desktop", "width": 1280, "height": 800},
+        {"name": "mobile", "width": 390, "height": 844},
+    ],
+    indirect=True,
+)
+def test_committed_capture_refreshes_full_page_with_visible_completion(completion_page):
+    completion = completion_page
+    _open_completion_page(completion)
+    _approve_completion(completion)
+    _assert_completed_page(completion)
+    _assert_single_capture(completion)
+    artifacts = Path(
+        os.environ.get("SAMCHAT_BROWSER_ARTIFACT_DIR", ROOT / "artifacts" / "browser")
+    )
+    artifacts.mkdir(parents=True, exist_ok=True)
+    width = completion.page.viewport_size["width"]
+    completion.page.screenshot(path=str(artifacts / f"committed-success-{width}.png"))
+    completion.page.reload()
+    _assert_completed_page(completion, expected_gets=3)
+    _assert_single_capture(completion)
+
+
+@pytest.mark.parametrize("transient_error", [False, True])
+@pytest.mark.parametrize(
+    "page",
+    [
+        {"name": "desktop", "width": 1280, "height": 800},
+        {"name": "mobile", "width": 390, "height": 844},
+    ],
+    indirect=True,
+)
+def test_committed_status_reconciles_uncertain_capture_without_resubmission(
+    completion_page, transient_error
+):
+    completion = completion_page
+    completion.state.assertion_state = "uncertain"
+    completion.state.statuses = [503 if transient_error else "uncertain", "committed"]
+    _open_completion_page(completion)
+    _approve_completion(completion)
+    expect(completion.page.locator("#ctt-capture-complete")).to_be_hidden()
+    if transient_error:
+        expect(completion.page.locator("[data-review-error]")).to_be_visible()
+    _assert_completed_page(completion)
+    _assert_single_capture(completion)
+    statuses = [p for p, _ in completion.state.calls if "/staff-approval/status?" in p]
+    assert len(statuses) == 2
+    assert all("attempt_id=" + completion.state.attempt_id in p for p in statuses)
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"session_id": str(uuid4())},
+        {"session_id": None},
+        {"attempt_id": str(uuid4())},
+        {"attempt_id": None},
+        {"result_id": None},
+        {"result_id": "invalid"},
+        {"result_id": "00000000-0000-0000-0000-000000000000"},
+    ],
+)
+def test_malformed_committed_reply_never_announces_success(completion_page, patch):
+    completion = completion_page
+    completion.state.result_patch = patch
+    _open_completion_page(completion)
+    _approve_completion(completion)
+    completion.page.wait_for_timeout(100)
+    expect(completion.page.locator("#ctt-capture-complete")).to_be_hidden()
+    assert len(completion.state.document_gets) == 1
+    _assert_single_capture(completion)
+
+
+def test_committed_refresh_uses_same_completion_transition(completion_page):
+    completion = completion_page
+    completion.state.assertion_state = "uncertain"
+    _open_completion_page(completion)
+    _approve_completion(completion)
+    completion.state.view_committed = True
+    completion.page.locator("[data-review-refresh]").click()
+    _assert_completed_page(completion)
+    _assert_single_capture(completion)
+
+
+def test_repeated_committed_status_causes_one_full_page_get(completion_page):
+    completion = completion_page
+    completion.state.assertion_state = "uncertain"
+    _open_completion_page(completion)
+    _approve_completion(completion)
+    completion.state.committed = True
+    reply = completion.result("committed")
+    completion.page.evaluate(
+        """reply => {
+          const original=window.fetch;let release;
+          const replace=window.history.replaceState.bind(window.history);
+          window.history.replaceState=(...args)=>{
+            sessionStorage.setItem('completion-sync-count',String(Number(sessionStorage.getItem('completion-sync-count')||0)+1));
+            return replace(...args);
+          };
+          const pending=new Promise(resolve=>{release=resolve;});
+          window.fetch=(input,...args)=>String(input).includes('/staff-approval/status?')
+            ? pending.then(()=>new Response(JSON.stringify(reply),{status:200,headers:{'content-type':'application/json'}}))
+            : original(input,...args);
+          const button=document.querySelector('[data-review-result]');
+          button.click();button.click();release();
+        }""",
+        reply,
+    )
+    _assert_completed_page(completion)
+    _assert_single_capture(completion)
+    assert (
+        completion.page.evaluate("sessionStorage.getItem('completion-sync-count')")
+        == "1"
+    )
+
+
+def test_committed_direct_entry_is_visible_without_mounting_review_panel(
+    completion_page,
+):
+    completion = completion_page
+    completion.state.committed = True
+    completion.page.goto("https://sam.chat" + completion.path)
+    _assert_completed_page(completion, expected_gets=1, anchored=False)
+    assert completion.state.calls == []
+
+
+@pytest.mark.parametrize("capture_state", ["uncertain", "expired", "stale"])
+def test_noncommitted_capture_never_shows_completion(completion_page, capture_state):
+    completion = completion_page
+    completion.state.assertion_state = capture_state
+    _open_completion_page(completion)
+    _approve_completion(completion)
+    completion.page.wait_for_timeout(100)
+    expect(completion.page.locator("#ctt-capture-complete")).to_be_hidden()
+    assert len(completion.state.document_gets) == 1
+    _assert_single_capture(completion)
+    if capture_state in ("expired", "stale"):
+        expect(completion.page.locator("[data-review-confirm]")).not_to_be_checked()
+
+
+@pytest.mark.parametrize("view_state", ["ready", "blocked", "unavailable", "rejected"])
+def test_uncommitted_page_keeps_actual_blockers_and_never_reports_success(
+    completion_page, view_state
+):
+    completion = completion_page
+    if view_state != "ready":
+        completion.state.view.update(
+            state="unavailable" if view_state == "rejected" else view_state,
+            ready_to_approve=False,
+            blockers=[
+                {"code": "SOURCE_MISSING", "message": "Synthetic pending source."}
+            ],
+        )
+    if view_state == "rejected":
+        completion.state.initial_session_status = "rejected"
+    _open_completion_page(completion)
+    expect(completion.page.locator("#ctt-capture-complete")).to_be_hidden()
+    expect(
+        completion.page.get_by_text("La captura anterior admite jugadores", exact=False)
+    ).to_be_visible()
+    expect(completion.page.locator("[data-review-approve]")).to_be_disabled()
+    if view_state != "ready":
+        expect(completion.page.locator("[data-review-blockers]")).to_contain_text(
+            "Synthetic pending source."
+        )
+    assert len(completion.state.document_gets) == 1
+    assert completion.state.calls == []

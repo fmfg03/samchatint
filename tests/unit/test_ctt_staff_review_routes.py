@@ -5,9 +5,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
-import pytest
 from starlette.middleware.sessions import SessionMiddleware
 
 from devnous.copa_telmex.staff_review_routes import (
@@ -655,8 +655,10 @@ def test_origin_configuration_cannot_be_derived_from_request_host(boundary, orig
 
 
 @pytest.mark.parametrize("protected", [False, True])
+@pytest.mark.parametrize("committed", [False, True])
 def test_contract_notice_distinguishes_legacy_capture_without_removing_incidents(
     protected,
+    committed,
 ):
     from jinja2 import Environment, select_autoescape
 
@@ -664,11 +666,10 @@ def test_contract_notice_distinguishes_legacy_capture_without_removing_incidents
         Path(__file__).resolve().parents[2]
         / "templates/registration_review_detail.html"
     ).read_text()
-    section = source.split("{% if validation.blockers %}", 1)[1].split(
-        "{% if validation.issues %}", 1
-    )[0]
+    condition = "{% if validation.blockers and not session_committed %}"
+    section = source.split(condition, 1)[1].split("{% if validation.issues %}", 1)[0]
     template = Environment(autoescape=select_autoescape(default=True)).from_string(
-        "{% if validation.blockers %}" + section
+        condition + section
     )
     validation = {
         "blockers": [
@@ -681,10 +682,16 @@ def test_contract_notice_distinguishes_legacy_capture_without_removing_incidents
         "ready_to_commit": False,
     }
     before = copy.deepcopy(validation)
-    rendered = template.render(validation=validation, protected_staff_review=protected)
-    assert "CURP sin revisar." in rendered
-    assert ("usa la revisión protegida con passkey" in rendered) is protected
+    rendered = template.render(
+        validation=validation,
+        protected_staff_review=protected,
+        session_committed=committed,
+    )
+    assert ("CURP sin revisar." in rendered) is (not committed)
+    assert ("usa la revisión protegida con passkey" in rendered) is (
+        protected and not committed
+    )
     assert ("El contrato anterior solo autoriza jugadores." in rendered) is (
-        not protected
+        not protected and not committed
     )
     assert validation == before
