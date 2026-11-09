@@ -983,7 +983,9 @@ def _render_budget_aggregate_matrix(
             <div class="budget-excel-line-card" style="border:1px dashed #f59e0b;border-radius:14px;background:#fffbeb;padding:12px;margin-top:12px;width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;">
                 <div style="font-weight:900;color:#92400e;margin-bottom:4px;">Sin línea presupuestal</div>
                 <div style="font-size:12px;color:#92400e;margin-bottom:10px;">
-                    Movimientos sin una línea equivalente en la versión seleccionada; se muestran una sola vez y no son editables.
+                    Movimientos pendientes de vínculo en la versión seleccionada. Se
+                    muestran una sola vez; consulta el detalle para revisar su
+                    conciliación.
                 </div>
                 <div class="budget-excel-grid" style="overflow-x:auto;border:1px solid #fde68a;border-radius:12px;background:#fff;">
                     <table style="width:max-content;min-width:100%;border-collapse:collapse;font-size:12px;">
@@ -1041,7 +1043,8 @@ def _render_unbudgeted_expense_actuals_card(
         <div class="budget-excel-line-card" style="border:1px dashed #f59e0b;border-radius:14px;background:#fffbeb;padding:12px;margin-bottom:12px;width:100%;min-width:0;max-width:100%;box-sizing:border-box;overflow:hidden;">
             <div style="font-weight:900;color:#92400e;margin-bottom:4px;">Sin línea presupuestal</div>
             <div style="font-size:12px;color:#92400e;margin-bottom:10px;">
-                Movimientos sin una línea equivalente en la versión seleccionada; se muestran una sola vez y no son editables.
+                Movimientos pendientes de vínculo en la versión seleccionada. Se
+                muestran una sola vez; consulta el detalle para revisar su conciliación.
             </div>
             <div class="budget-excel-grid" style="overflow-x:auto;border:1px solid #fde68a;border-radius:12px;background:#fff;">
                 <table style="width:max-content;min-width:100%;border-collapse:collapse;font-size:11px;">
@@ -1062,6 +1065,101 @@ def _render_unbudgeted_expense_actuals_card(
     """
 
 
+def render_budget_reconciliation_preview(
+    plan: dict[str, Any],
+    *,
+    intent: dict[str, Any],
+    return_context: dict[str, str],
+    csrf_token: str,
+    nonce: str,
+    cancel_url: str,
+) -> str:
+    """Render only the review fields, never the raw financial source snapshot."""
+    assignment = plan["assignments"][0]
+    labels = {
+        "ledger_expense": "Resultado contable",
+        "commitment": "Compromiso documental",
+        "pending_accounting": "Pendiente de contabilización",
+    }
+    amount = assignment.get("amount")
+    amount_label = (
+        "Pendiente de evidencia" if amount is None else f"{float(amount):,.2f}"
+    )
+    rows = [
+        (
+            "Referencia",
+            assignment.get("reference") or intent["assignments"][0]["movement_key"],
+        ),
+        ("Movimiento", intent["assignments"][0]["movement_key"]),
+        (
+            "Estado",
+            labels.get(assignment.get("kind"), assignment.get("kind") or "Pendiente"),
+        ),
+        ("Importe observado", amount_label),
+        (
+            "Partida",
+            assignment.get("concept_name")
+            or assignment.get("budget_concept_name")
+            or assignment.get("budget_concept_id"),
+        ),
+        ("Fase", assignment.get("phase")),
+        ("Línea existente", intent["assignments"][0]["budget_line_id"]),
+        ("Motivo", intent["reason"]),
+    ]
+    review = "".join(
+        f'<tr><th style="text-align:left;padding:9px;vertical-align:top;">'
+        f'{escape(str(label))}</th>'
+        f'<td style="padding:9px;overflow-wrap:anywhere;">'
+        f'{escape(str(value or "—"))}</td></tr>'
+        for label, value in rows
+    )
+    fields = {
+        "_csrf_token": csrf_token,
+        "movement_key": intent["assignments"][0]["movement_key"],
+        "budget_line_id": intent["assignments"][0]["budget_line_id"],
+        "tournament_id": intent["assignments"][0]["tournament_id"],
+        "edition_year": intent["edition_year"],
+        "reason": intent["reason"],
+        "expected_plan_sha256": plan["plan_sha256"],
+        "confirmation_nonce": nonce,
+        **return_context,
+    }
+    hidden = "".join(
+        f'<input type="hidden" name="{escape(str(key), quote=True)}" '
+        f'value="{escape(str(value), quote=True)}">'
+        for key, value in fields.items()
+    )
+    confirm_url = (
+        "/admin/presupuestos/versiones/"
+        f"{quote(str(intent['budget_version_id']))}/conciliacion/confirm"
+    )
+    return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Revisar conciliación presupuestal</title></head>
+        <body style="margin:0;background:#f8fafc;color:#334155;
+        font-family:system-ui,sans-serif;">
+        <main style="max-width:850px;margin:28px auto;padding:20px;background:white;
+        border:1px solid #dbe2ea;border-radius:14px;">
+        <h1 style="font-size:23px;color:#0f172a;">Revisar conciliación</h1>
+        <p>La confirmación registra el vínculo con una partida existente. Los importes
+        del presupuesto y los estados de pago y contabilidad se conservan.</p>
+        <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;
+        ">{review}</table>
+        <p>Confirma después de revisar la referencia, partida, fase y motivo. Esta
+        vista previa vence en 15 minutos.</p>
+        <form method="POST"
+        action="{escape(confirm_url, quote=True)}">
+        {hidden}
+        <label style="display:block;margin:16px 0;"><input type="checkbox"
+        name="confirmed" value="true" required>Confirmo vincular este movimiento a la
+        partida indicada.</label>
+        <button style="padding:10px 16px;border:0;border-radius:8px;background:#0f766e;
+        color:white;font-weight:700;" type="submit">Confirmar conciliación</button>
+        <a style="display:inline-block;margin:10px;color:#475569;"
+        href="{escape(cancel_url, quote=True)}">Cancelar y volver</a>
+        </form></main></body></html>"""
+
+
 def _render_budget_movement_details(
     lines: list[dict[str, Any]],
     movements: list[dict[str, Any]],
@@ -1071,6 +1169,11 @@ def _render_budget_movement_details(
     edition_year: int,
     phase_filter: Optional[str],
     can_edit: bool,
+    can_reconcile: bool = False,
+    reconciliation_lines: Optional[list[dict[str, Any]]] = None,
+    active_concept_ids: Optional[set[str]] = None,
+    reconciliation_csrf_token: str = "",
+    tournament_id: str = "",
 ) -> str:
     line_ids = {str(line.get("id") or "") for line in lines}
     visible: list[dict[str, Any]] = []
@@ -1101,7 +1204,41 @@ def _render_budget_movement_details(
         has_existing_concept = concept_key != "__unassigned__"
         kind = str(movement.get("kind") or "")
         diagnostics: list[str] = []
-        if str(movement.get("budget_line_id") or "") not in line_ids:
+        assigned_line = str(movement.get("budget_line_id") or "")
+        canonical_unassigned = (
+            movement.get("reconciliation_status") == "unassigned" and not assigned_line
+        )
+        candidate_lines: list[dict[str, Any]] = []
+        is_amex = movement.get("source_kind") == "amex_direct"
+        if active_concept_ids is not None:
+            from samchat.budgets.reconciliation import is_amex_direct_source
+
+            is_amex = is_amex_direct_source(movement)
+        if active_concept_ids is not None and canonical_unassigned:
+            from samchat.budgets.reconciliation import eligible_reconciliation_lines
+
+            candidate_lines = eligible_reconciliation_lines(
+                movement,
+                reconciliation_lines or [],
+                active_concept_ids=active_concept_ids,
+            )
+            if concept_key not in active_concept_ids:
+                diagnostics.append(
+                    "Partida retirada o no disponible; requiere revisión presupuestal"
+                )
+            elif len(candidate_lines) == 1:
+                diagnostics.append("Pendiente de vincular a una partida existente")
+            elif not str(movement.get("effective_phase") or "").strip():
+                diagnostics.append("Fase pendiente de clasificación")
+            elif len(candidate_lines) > 1:
+                diagnostics.append("Más de una partida compatible; requiere revisión")
+            else:
+                diagnostics.append(
+                    "Sin línea existente elegible para el concepto y la fase"
+                )
+        elif assigned_line and assigned_line not in line_ids:
+            diagnostics.append("Partida asignada fuera del filtro actual")
+        elif not assigned_line:
             diagnostics.append("Sin presupuesto autorizado en esta versión")
         if kind == "pending_accounting":
             diagnostics.append("Pendiente de contabilización")
@@ -1124,16 +1261,58 @@ def _render_budget_movement_details(
         movement_key = str(movement.get("movement_key") or "") or budget_movement_key(
             movement
         )
-        if movement.get("source_kind") == "amex_direct":
+        if is_amex:
             action = (
                 '<a href="/documentos/control-presupuestal/amex-directo">'
                 'Revisar partida AMEX en Control Presupuestal</a>'
             )
         elif (
+            can_reconcile
+            and canonical_unassigned
+            and len(candidate_lines) == 1
+            and reconciliation_csrf_token
+        ):
+            target = candidate_lines[0]
+            preview_url = (
+                f"/admin/presupuestos/versiones/{quote(version_id)}"
+                "/conciliacion/preview"
+            )
+            action = f"""
+                <form method="POST"
+                action="{escape(preview_url, quote=True)}"
+                style="display:grid;gap:6px;min-width:230px;">
+                    <input type="hidden" name="_csrf_token"
+                    value="{escape(reconciliation_csrf_token, quote=True)}">
+                    <input type="hidden" name="movement_key"
+                    value="{escape(movement_key, quote=True)}">
+                    <input type="hidden" name="budget_line_id"
+                    value="{escape(str(target['id']), quote=True)}">
+                    <input type="hidden" name="tournament_id"
+                    value="{escape(tournament_id, quote=True)}">
+                    <input type="hidden" name="tournament_key"
+                    value="{escape(tournament_key, quote=True)}">
+                    <input type="hidden" name="edition_year"
+                    value="{int(edition_year)}">
+                    <input type="hidden" name="phase_filter"
+                    value="{escape(str(phase_filter or ''), quote=True)}">
+                    <span style="font-size:11px;color:#475569;">Partida existente:
+                    {escape(str(target.get('concept_name') or budget_concept_name))} ·
+                    {escape(str(target.get('phase') or ''))}</span>
+                    <label style="font-size:11px;color:#475569;">Motivo
+                        <input name="reason" required maxlength="1000"
+                        style="width:100%;box-sizing:border-box;padding:6px;border:1px
+                        solid #cbd5e1;border-radius:6px;">
+                    </label>
+                    <button type="submit" style="padding:7px 10px;border:0;
+                    border-radius:6px;background:#0f766e;color:#fff;font-weight:800;
+                    cursor:pointer;">Revisar conciliación</button>
+                </form>
+            """
+        elif (
             can_edit
             and has_existing_concept
             and movement_key
-            and str(movement.get("budget_line_id") or "") not in line_ids
+            and not movement.get("budget_line_id")
         ):
             action = f"""
                 <form method="POST" action="/admin/presupuestos/versiones/{escape(version_id)}/lineas/assign-existing" style="display:grid;grid-template-columns:minmax(105px,1fr) minmax(110px,1fr) auto;gap:6px;align-items:end;min-width:330px;">
@@ -1182,7 +1361,9 @@ def _render_budget_movement_details(
     return f"""
         <section style="margin:14px 0;border-top:3px solid #f59e0b;padding-top:12px;">
             <h3 style="margin:0 0 4px;font-size:16px;color:#78350f;">Movimientos por conciliar</h3>
-            <p style="margin:0 0 10px;font-size:12px;color:#64748b;">Detalle trazable de movimientos sin línea en esta versión o sin póliza de resultados.</p>
+            <p style="margin:0 0 10px;font-size:12px;color:#64748b;">Detalle trazable
+            de movimientos pendientes de vincular, partidas fuera del filtro actual o
+            pendientes de contabilidad.</p>
             <div style="overflow-x:auto;border:1px solid #fde68a;border-radius:6px;background:#fff;">
                 <table style="width:100%;min-width:1480px;border-collapse:collapse;font-size:12px;">
                     <thead><tr style="background:#fef3c7;text-align:left;">
@@ -1219,6 +1400,11 @@ def render_budget_partida_matrix(
     matrix_mode: str = "full",
     budget_view: str = "expenses",
     budget_period: str = "weekly",
+    can_reconcile: bool = False,
+    reconciliation_lines: Optional[list[dict[str, Any]]] = None,
+    active_concept_ids: Optional[set[str]] = None,
+    reconciliation_csrf_token: str = "",
+    tournament_id: str = "",
 ) -> str:
     clean_mode = matrix_mode if matrix_mode in {"full", "expenses", "income"} else "full"
     clean_period = _clean_budget_period(budget_period)
@@ -1236,6 +1422,11 @@ def render_budget_partida_matrix(
                 (l.get("metadata") or {}).get("distribution_source_line_id")
                 for l in lines
             ),
+            can_reconcile=can_reconcile,
+            reconciliation_lines=reconciliation_lines,
+            active_concept_ids=active_concept_ids,
+            reconciliation_csrf_token=reconciliation_csrf_token,
+            tournament_id=tournament_id,
         )
         if clean_mode in {"full", "expenses"}
         else ""
