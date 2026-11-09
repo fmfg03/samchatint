@@ -7908,7 +7908,20 @@ async def assign_budget_movement_to_line(
             raise ValueError("La partida o versión cambió; recarga el contexto AMEX")
         candidates = [movement]
     else:
-        if not _editable_version_status(target["version_status"]):
+        # Serialize ordinary assignments with approvals and the approved-only
+        # reconciliation owner. Keep AMEX's source-first lock order unchanged.
+        await session.execute(
+            text(
+                "SELECT id FROM budget_versions "
+                "WHERE id=CAST(:version_id AS uuid) FOR UPDATE"
+            ),
+            {"version_id": _safe_str(budget_version_id)},
+        )
+        locked_result = await session.execute(
+            text(target_sql + " FOR UPDATE OF l"), target_params
+        )
+        target = locked_result.mappings().first()
+        if target is None or not _editable_version_status(target["version_status"]):
             raise ValueError(
                 "Partida inválida para esta versión o concepto presupuestal."
             )
@@ -8005,14 +8018,13 @@ def _merge_monthly_actual(
         bucket[key] = round(bucket.get(key, 0.0) + _safe_decimal(value), 2)
 
 
-async def _apply_explicit_movement_assignments(
+async def _movement_assignment_projection_context(
     session: AsyncSession,
     *,
     budget_version_id: str,
     movements: list[dict[str, Any]],
-    store: dict[str, dict[int, dict[str, float]]],
-) -> None:
-    """Attach movements to lines, preserving concept-based behavior for legacy data."""
+) -> dict[str, Any]:
+    """Load the existing canonical projection inputs without changing their order."""
     assignment_rows = (
         (
             await session.execute(
@@ -8031,11 +8043,7 @@ async def _apply_explicit_movement_assignments(
         .mappings()
         .all()
     )
-    assignments = {_safe_str(row["movement_key"]): row for row in assignment_rows}
     confirmed = await _closeout_assignment_proofs(session, budget_version_id, movements)
-    activated_concepts = {
-        _safe_str(row["budget_concept_id"]) for row in assignment_rows
-    }
     line_rows = (
         (
             await session.execute(
@@ -8053,6 +8061,26 @@ async def _apply_explicit_movement_assignments(
         .mappings()
         .all()
     )
+    return {
+        "assignment_rows": assignment_rows,
+        "line_rows": line_rows,
+        "confirmed": confirmed,
+    }
+
+
+def _project_explicit_movement_assignments(
+    *,
+    movements: list[dict[str, Any]],
+    store: dict[str, dict[int, dict[str, float]]],
+    assignment_rows: list[dict[str, Any]],
+    line_rows: list[dict[str, Any]],
+    confirmed: dict[str, str],
+) -> None:
+    """Pure canonical projection, shared with read-only reconciliation previews."""
+    assignments = {_safe_str(row["movement_key"]): row for row in assignment_rows}
+    activated_concepts = {
+        _safe_str(row["budget_concept_id"]) for row in assignment_rows
+    }
     legacy_lines = {
         _safe_str(row["budget_concept_id"]): _safe_str(row["id"])
         for row in line_rows
@@ -8127,6 +8155,20 @@ async def _apply_explicit_movement_assignments(
                 month_number=int(movement.get("month_number") or 1),
                 committed_unpaid=_safe_decimal(movement.get("amount")),
             )
+
+
+async def _apply_explicit_movement_assignments(
+    session: AsyncSession,
+    *,
+    budget_version_id: str,
+    movements: list[dict[str, Any]],
+    store: dict[str, dict[int, dict[str, float]]],
+) -> None:
+    """Attach movements to lines with the unchanged canonical projection."""
+    context = await _movement_assignment_projection_context(
+        session, budget_version_id=budget_version_id, movements=movements
+    )
+    _project_explicit_movement_assignments(movements=movements, store=store, **context)
 
 
 async def list_monthly_plan_for_lines(

@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import secrets
+import time
 from datetime import date
 from html import escape as escape_html
 from typing import Any, Optional
 from urllib.parse import quote
 from uuid import UUID as UUIDType
 
-from fastapi import Depends, File, Form, Query, Request, UploadFile
+from fastapi import Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from samchat.budgets.service import (
     DEFAULT_BUDGET_CONCEPT_PASIVO_ACCOUNT_CODE,
@@ -61,6 +65,7 @@ from .admin_budget_ui import (
     render_budget_executive_dashboard,
     render_budget_matrix_filters,
     render_budget_partida_matrix,
+    render_budget_reconciliation_preview,
     render_tournament_dashboard_cards,
     summarize_budget_actuals_for_lines,
 )
@@ -77,6 +82,76 @@ from ..services.cfdi_income_bridge_service import (
 from ..models import CuentaContable, Tournament
 
 logger = logging.getLogger(__name__)
+
+
+_RECONCILIATION_CSRF_KEY = "budget_reconciliation_csrf"
+_RECONCILIATION_PENDING_KEY = "budget_reconciliation_pending"
+_RECONCILIATION_TTL_SECONDS = 15 * 60
+
+
+def _budget_reconciliation_csrf_token(request: Request) -> str:
+    """Use the existing signed-session synchronizer pattern for this domain."""
+    if "session" not in request.scope:
+        raise HTTPException(503, "La sesión segura no está disponible.")
+    token = str(request.session.get(_RECONCILIATION_CSRF_KEY) or "")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        request.session[_RECONCILIATION_CSRF_KEY] = token
+    return token
+
+
+async def _require_budget_reconciliation_csrf(request: Request) -> None:
+    if "session" not in request.scope:
+        raise HTTPException(403, "La sesión de conciliación no es válida.")
+    form = await request.form()
+    expected = str(request.session.get(_RECONCILIATION_CSRF_KEY) or "")
+    submitted = str(form.get("_csrf_token") or "")
+    if (
+        not expected
+        or not submitted
+        or len(submitted) > 256
+        or not submitted.isascii()
+        or not secrets.compare_digest(expected, submitted)
+    ):
+        raise HTTPException(403, "El token de conciliación no es válido.")
+
+
+def _reconciliation_intent_hash(intent: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            intent, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode()
+    ).hexdigest()
+
+
+async def _call_reconciliation_core(action: str, session: AsyncSession, **kwargs):
+    from samchat.budgets import reconciliation
+
+    methods = {
+        "preview": reconciliation.preview_approved_movement_reconciliation,
+        "apply": reconciliation.apply_approved_movement_reconciliation,
+        "recover": reconciliation.recover_approved_movement_reconciliation,
+    }
+    return await methods[action](session, **kwargs)
+
+
+async def _run_reconciliation_uow(auth_session: AsyncSession, *, action: str, **kwargs):
+    """Own a fresh transaction, leaving the authentication session untouched."""
+    bind = auth_session.bind
+    if not isinstance(bind, AsyncEngine):
+        raise RuntimeError("Se requiere el engine canónico de gastos.")
+    async with AsyncSession(bind=bind, expire_on_commit=False) as work:
+        async with work.begin():
+            readonly = action in {"preview", "recover"}
+            await work.execute(
+                text(
+                    "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"
+                    + (" READ ONLY" if readonly else "")
+                )
+            )
+            await work.execute(text("SET LOCAL lock_timeout='5s'"))
+            await work.execute(text("SET LOCAL statement_timeout='120s'"))
+            return await _call_reconciliation_core(action, work, **kwargs)
 
 
 def render_distribution_action(
@@ -631,6 +706,241 @@ def register_presupuestos_routes(router) -> None:
         get_current_empleado=get_current_empleado,
         require_budget_access=_require_budget_access,
     )
+
+    @router.post(
+        "/admin/presupuestos/versiones/{version_id}/conciliacion/preview",
+        response_class=HTMLResponse,
+    )
+    async def admin_presupuestos_reconciliation_preview(
+        version_id: UUIDType,
+        request: Request,
+        movement_key: str = Form(...),
+        budget_line_id: UUIDType = Form(...),
+        tournament_id: UUIDType = Form(...),
+        edition_year: int = Form(..., ge=2000, le=2100),
+        reason: str = Form(..., min_length=1, max_length=1000),
+        tournament_key: str = Form(""),
+        phase_filter: str = Form(""),
+        session: AsyncSession = Depends(get_db_session),
+        current_empleado=Depends(get_current_empleado),
+    ):
+        _require_budget_access(current_empleado, "line_update")
+        await _require_budget_reconciliation_csrf(request)
+        actor_id = str(current_empleado.id)
+        intent = {
+            "budget_version_id": str(version_id),
+            "edition_year": edition_year,
+            "assignments": [
+                {
+                    "tournament_id": str(tournament_id),
+                    "movement_key": movement_key,
+                    "budget_line_id": str(budget_line_id),
+                }
+            ],
+            "actor_empleado_id": actor_id,
+            "reason": reason,
+        }
+        return_context = {
+            "tournament_key": tournament_key,
+            "phase_filter": phase_filter,
+        }
+        cancel_url = _presupuestos_redirect_url(
+            edition_year=edition_year,
+            version_id=str(version_id),
+            tournament_key=tournament_key,
+            phase_filter=phase_filter,
+            budget_view="expenses",
+        )
+        try:
+            plan = await _run_reconciliation_uow(session, action="preview", **intent)
+            pending = {
+                "actor_id": actor_id,
+                "intent_hash": _reconciliation_intent_hash(
+                    {**intent, **return_context}
+                ),
+                "plan_sha256": str(plan["plan_sha256"]),
+                "nonce": secrets.token_urlsafe(32),
+                "issued_at": time.time(),
+                "completed": False,
+            }
+            request.session[_RECONCILIATION_PENDING_KEY] = pending
+            return HTMLResponse(
+                render_budget_reconciliation_preview(
+                    plan,
+                    intent=intent,
+                    return_context=return_context,
+                    csrf_token=_budget_reconciliation_csrf_token(request),
+                    nonce=pending["nonce"],
+                    cancel_url=cancel_url,
+                )
+            )
+        except PermissionError:
+            raise HTTPException(403, "No se permite esta conciliación.") from None
+        except ValueError as exc:
+            return RedirectResponse(
+                _presupuestos_redirect_url(
+                    edition_year=edition_year,
+                    version_id=str(version_id),
+                    tournament_key=tournament_key,
+                    phase_filter=phase_filter,
+                    budget_view="expenses",
+                    error_msg=str(exc),
+                ),
+                status_code=303,
+            )
+        except Exception as exc:
+            logger.error(
+                "Budget reconciliation preview failed",
+                extra={"error_type": type(exc).__name__},
+            )
+            return RedirectResponse(
+                _presupuestos_redirect_url(
+                    edition_year=edition_year,
+                    version_id=str(version_id),
+                    tournament_key=tournament_key,
+                    phase_filter=phase_filter,
+                    budget_view="expenses",
+                    error_msg="No se pudo preparar la revisión. Recarga el contexto.",
+                ),
+                status_code=303,
+            )
+
+    @router.post("/admin/presupuestos/versiones/{version_id}/conciliacion/confirm")
+    async def admin_presupuestos_reconciliation_confirm(
+        version_id: UUIDType,
+        request: Request,
+        movement_key: str = Form(...),
+        budget_line_id: UUIDType = Form(...),
+        tournament_id: UUIDType = Form(...),
+        edition_year: int = Form(..., ge=2000, le=2100),
+        reason: str = Form(..., min_length=1, max_length=1000),
+        expected_plan_sha256: str = Form(...),
+        confirmation_nonce: str = Form(...),
+        confirmed: bool = Form(False),
+        tournament_key: str = Form(""),
+        phase_filter: str = Form(""),
+        session: AsyncSession = Depends(get_db_session),
+        current_empleado=Depends(get_current_empleado),
+    ):
+        _require_budget_access(current_empleado, "line_update")
+        await _require_budget_reconciliation_csrf(request)
+        actor_id = str(current_empleado.id)
+        intent = {
+            "budget_version_id": str(version_id),
+            "edition_year": edition_year,
+            "assignments": [
+                {
+                    "tournament_id": str(tournament_id),
+                    "movement_key": movement_key,
+                    "budget_line_id": str(budget_line_id),
+                }
+            ],
+            "actor_empleado_id": actor_id,
+            "reason": reason,
+        }
+        pending = request.session.get(_RECONCILIATION_PENDING_KEY)
+        intent_hash = _reconciliation_intent_hash(
+            {
+                **intent,
+                "tournament_key": tournament_key,
+                "phase_filter": phase_filter,
+            }
+        )
+        if (
+            not confirmation_nonce.isascii()
+            or len(confirmation_nonce) > 256
+            or not confirmed
+            or not isinstance(pending, dict)
+            or not all(
+                (
+                    pending.get("actor_id") == actor_id,
+                    pending.get("intent_hash") == intent_hash,
+                    pending.get("plan_sha256") == expected_plan_sha256,
+                    secrets.compare_digest(
+                        str(pending.get("nonce") or ""), confirmation_nonce
+                    ),
+                )
+            )
+        ):
+            raise HTTPException(
+                409, "La confirmación cambió. Prepara una nueva vista previa."
+            )
+        issued = pending.get("issued_at")
+        expired = (
+            not isinstance(issued, (int, float))
+            or not 0 <= time.time() - issued <= _RECONCILIATION_TTL_SECONDS
+        )
+        action = (
+            "recover"
+            if expired or pending.get("completed") or pending.get("recover_only")
+            else "apply"
+        )
+        try:
+            receipt = await _run_reconciliation_uow(
+                session,
+                action=action,
+                **intent,
+                expected_plan_sha256=expected_plan_sha256,
+            )
+            if receipt is None:
+                raise ValueError(
+                    "La vista previa venció o cambió. Prepara una nueva revisión."
+                )
+            if receipt.get("status") not in {"APPLIED", "ALREADY_APPLIED"}:
+                raise ValueError("No se acreditó la conciliación. Revisa la partida.")
+            request.session[_RECONCILIATION_PENDING_KEY] = {
+                **pending,
+                "completed": True,
+            }
+            return RedirectResponse(
+                _presupuestos_redirect_url(
+                    edition_year=edition_year,
+                    version_id=str(version_id),
+                    tournament_key=tournament_key,
+                    phase_filter=phase_filter,
+                    budget_view="expenses",
+                    success_msg=(
+                        "Movimiento vinculado a la partida. Sus estados de pago "
+                        "y contabilidad se conservan."
+                    ),
+                ),
+                status_code=303,
+            )
+        except PermissionError:
+            request.session[_RECONCILIATION_PENDING_KEY] = {
+                **pending,
+                "recover_only": True,
+            }
+            raise HTTPException(403, "No se permite esta conciliación.") from None
+        except Exception as exc:
+            request.session[_RECONCILIATION_PENDING_KEY] = {
+                **pending,
+                "recover_only": True,
+            }
+            message = (
+                str(exc)
+                if isinstance(exc, ValueError)
+                else (
+                    "No se pudo confirmar. Revisa el contexto antes de preparar "
+                    "otra vista previa."
+                )
+            )
+            if not isinstance(exc, ValueError):
+                logger.error(
+                    "Budget reconciliation confirmation failed",
+                    extra={"error_type": type(exc).__name__},
+                )
+            return RedirectResponse(
+                _presupuestos_redirect_url(
+                    edition_year=edition_year,
+                    version_id=str(version_id),
+                    tournament_key=tournament_key,
+                    phase_filter=phase_filter,
+                    budget_view="expenses",
+                    error_msg=message,
+                ),
+                status_code=303,
+            )
 
     @router.get("/admin/presupuestos", response_class=HTMLResponse)
     async def admin_presupuestos_dashboard(
@@ -1608,6 +1918,7 @@ def register_presupuestos_routes(router) -> None:
     )
     async def admin_presupuestos_tournament_detail(
         tournament_key: str,
+        request: Request,
         session: AsyncSession = Depends(get_db_session),
         current_empleado=Depends(get_current_empleado),
         edition_year: Optional[int] = Query(None),
@@ -1765,6 +2076,34 @@ def register_presupuestos_routes(router) -> None:
         can_edit_lines = bool(
             access.get("line_update")
         ) and _budget_version_allows_line_edits(selected_version.get("status"))
+        reconciliation_concepts: list[dict[str, Any]] | None = None
+        can_reconcile = False
+        reconciliation_csrf = ""
+        if (
+            selected_version.get("status") == "approved"
+            and selected_version.get("source") != "distribution_revision"
+            and tournament_id
+        ):
+            reconciliation_concepts = await list_budget_concepts(
+                session, tournament_id=str(tournament_id), active_only=True, limit=5000
+            )
+            if access.get("line_update") and "session" in request.scope:
+                from ..services.tournament_authority_service import (
+                    GovernedGastosProjectError,
+                    TournamentAuthorityUnavailableError,
+                    require_ungoverned_gastos_project,
+                )
+
+                try:
+                    await require_ungoverned_gastos_project(session, str(tournament_id))
+                except (
+                    GovernedGastosProjectError,
+                    TournamentAuthorityUnavailableError,
+                ):
+                    pass
+                else:
+                    can_reconcile = True
+                    reconciliation_csrf = _budget_reconciliation_csrf_token(request)
         rollups = await build_budget_monthly_plan_rollups(
             session,
             version_id=selected_version["id"],
@@ -1817,6 +2156,15 @@ def register_presupuestos_routes(router) -> None:
             matrix_mode="expenses",
             budget_view="expenses",
             budget_period=budget_period,
+            can_reconcile=can_reconcile,
+            reconciliation_lines=expense_lines,
+            active_concept_ids=(
+                {str(c["id"]) for c in reconciliation_concepts}
+                if reconciliation_concepts is not None
+                else None
+            ),
+            reconciliation_csrf_token=reconciliation_csrf,
+            tournament_id=str(tournament_id or ""),
         )
         if distribution_conflicts:
             gastos_matrix_html = (
