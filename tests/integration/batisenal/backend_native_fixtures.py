@@ -26,7 +26,11 @@ from devnous.gastos.services.project_authorization_service import (
 from samchat.batisenal_synthetic_protocol import SyntheticProtocol
 
 SOCKET = os.environ.get("BATISENAL_TEST_SOCKET", "")
-if not SOCKET or not Path(SOCKET).is_absolute() or not Path(SOCKET).is_dir():
+if not SOCKET:
+    pytest.skip(
+        "Run scripts/batisenal/run_isolated_acceptance.py", allow_module_level=True
+    )
+if not Path(SOCKET).is_absolute() or not Path(SOCKET).is_dir():
     raise RuntimeError(
         "BATISENAL_TEST_SOCKET must name the runner-owned Unix socket directory"
     )
