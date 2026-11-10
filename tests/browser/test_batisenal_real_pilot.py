@@ -13,6 +13,10 @@ from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[2]
 PREFIX = "/soporte/batisenal/piloto"
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("BATISENAL_BROWSER_ENGINE"),
+    reason="Run scripts/batisenal/run_isolated_acceptance.py",
+)
 
 
 @pytest.fixture(scope="module")
