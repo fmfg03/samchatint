@@ -200,17 +200,27 @@ def _employee_id(value):
     return value
 
 
-def _request_json(request):
+def _valid_scopes(scopes, support_only=False):
+    return (
+        type(scopes) is frozenset
+        and bool(scopes)
+        and (
+            scopes == frozenset({"batisenal.support"})
+            if support_only
+            else all(
+                isinstance(s, str) and re.fullmatch(r"[a-z][a-z0-9_]*:read", s)
+                for s in scopes
+            )
+        )
+    )
+
+
+def _request_json(request, support_only=False):
     # request.state deliberately contains digest(original OAuth state), not state.
     _hash(request.state)
     if (
         not isinstance(request, AuthorizationRequest)
-        or type(request.scopes) is not frozenset
-        or not request.scopes
-        or any(
-            not isinstance(s, str) or not re.fullmatch(r"[a-z][a-z0-9_]*:read", s)
-            for s in request.scopes
-        )
+        or not _valid_scopes(request.scopes, support_only)
         or not re.fullmatch(r"[A-Za-z0-9_-]{43}", request.challenge)
         or not all(
             isinstance(v, str) and v and len(v) <= 2048
@@ -221,11 +231,11 @@ def _request_json(request):
     return {**asdict(request), "scopes": sorted(request.scopes)}
 
 
-def _request(row):
+def _request(row, support_only=False):
     value = dict(row)
     value["scopes"] = frozenset(value["scopes"])
     result = AuthorizationRequest(**value)
-    _request_json(result)
+    _request_json(result, support_only)
     return result
 
 
@@ -257,13 +267,22 @@ def create_local_fixture_schema(engine: Engine) -> None:
 
 class OAuthStore:
     def __init__(
-        self, engine: Engine, *, issuer: str, installation_id: str, organization_id: str
+        self,
+        engine: Engine,
+        *,
+        issuer: str,
+        installation_id: str,
+        organization_id: str,
+        support_only: bool = False,
     ):
         if not all(
             isinstance(v, str) and v.strip() and len(v) <= 2048
             for v in (issuer, installation_id, organization_id)
         ):
             raise OAuthStoreError("STORE_INVALID_CONFIGURATION")
+        if type(support_only) is not bool:
+            raise OAuthStoreError("STORE_INVALID_CONFIGURATION")
+        self.support_only = support_only
         self.engine = engine
         self.issuer = issuer
         self.installation_id = installation_id
@@ -299,6 +318,20 @@ class OAuthStore:
                         raise OAuthStoreError("STORE_DURABILITY_REQUIRED")
                     # Reserve before reading so concurrent consumes cannot both win.
                     connection.exec_driver_sql("BEGIN IMMEDIATE")
+                if self.support_only:
+                    from samchat.batisenal_policy_fence import (
+                        PolicyFenceBusy,
+                        acquire_policy_fence,
+                    )
+
+                    # Optional migration; acquire BEFORE current_employee/link/grant
+                    # row locks. No policy decision or credential is added here.
+                    # This synchronous owner can run in an async flow. Never wait
+                    # for the new row fence while its async holder needs that loop.
+                    try:
+                        acquire_policy_fence(connection, nowait=True)
+                    except PolicyFenceBusy:
+                        raise OAuthStoreError("STORE_BUSY") from None
                 transaction = OAuthTransaction(connection, self, now, clock=clock)
                 try:
                     yield transaction
@@ -416,7 +449,9 @@ class OAuthTransaction:
             dict(
                 hash_id=_hash(record.hash_id),
                 employee_id=record.draft.employee_id,
-                request_json=_request_json(record.draft.request),
+                request_json=_request_json(
+                    record.draft.request, self.store.support_only
+                ),
                 browser_hash=_hash(record.draft.browser_binding_hash),
                 csrf_hash=_hash(record.draft.csrf_hash),
                 expires_at=record.draft.expires_at,
@@ -444,7 +479,7 @@ class OAuthTransaction:
                 row["hash_id"],
                 ConsentDraft(
                     str(row["employee_id"]),
-                    _request(row["request_json"]),
+                    _request(row["request_json"], self.store.support_only),
                     row["browser_hash"],
                     row["csrf_hash"],
                     row["expires_at"],
@@ -547,7 +582,7 @@ class OAuthTransaction:
                 code_hash=_hash(record.code_hash),
                 employee_id=record.employee_id,
                 link_id=record.link.link_id,
-                request_json=_request_json(record.request),
+                request_json=_request_json(record.request, self.store.support_only),
                 link_snapshot=asdict(record.link),
                 expires_at=record.expires_at,
                 used=False,
@@ -566,7 +601,7 @@ class OAuthTransaction:
             CodeRecord(
                 row["code_hash"],
                 str(row["employee_id"]),
-                _request(row["request_json"]),
+                _request(row["request_json"], self.store.support_only),
                 ExistingLink(**row["link_snapshot"]),
                 row["expires_at"],
                 row["used"],
@@ -602,9 +637,7 @@ class OAuthTransaction:
             or grant.revoked is not False
             or type(grant.expires_at) is not int
             or grant.expires_at <= self.now
-            or type(grant.scopes) is not frozenset
-            or not grant.scopes
-            or any(not re.fullmatch(r"[a-z][a-z0-9_]*:read", s) for s in grant.scopes)
+            or not _valid_scopes(grant.scopes, self.store.support_only)
             or not all(
                 isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9:_-]{1,128}", v)
                 for v in (grant.grant_id, grant.token_id, grant.client_id)

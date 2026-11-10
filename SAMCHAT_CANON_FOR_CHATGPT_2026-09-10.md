@@ -508,3 +508,10 @@ Para la fase nacional fijada explícitamente en el perfil operativo de Copa Telm
 Aprobación humana expresa: «aprobado», 2026-11-06, sobre la especificación técnica y este texto literal. Razón: la persona responsable aclaró que en fase nacional se permite registrar sin fotografía. Evidencia y alcance: `docs/roadmap/ctt-national-photo-optional-20261106.md`. Implementación aprobada; pruebas, CI, despliegue y aceptación humana requieren sus recibos.
 
 En el perfil operativo nacional de Copa Telmex2026 autorizado por la persona responsable, la fotografía de las jugadoras es opcional. Su ausencia queda visible como pendiente y no bloquea por sí sola la captura; las fotografías aportadas conservan verificación de fuente e integridad. Esta excepción no se extiende al perfil estricto o a la fase estatal y no acredita elegibilidad externa. La confirmación explícita del plan y la passkey humana se conservan.
+
+
+### 2026-11-09 — Diseño aprobado del piloto aislado Batiseñal
+
+Aprobación humana expresa: «aprobada», registrada el 2026-11-10, sobre la especificación técnica y estos textos literales. Razón: primera entrega aislada con procedencia auténtica de Chatty. Evidencia: `docs/roadmap/batisenal-real-pilot-20261109-story.md` y `docs/roadmap/batisenal-real-pilot-20261109-spec.md`, sección 12. Construcción autorizada; instalación y aceptación real conservan sus propios recibos.
+
+Diseño de piloto aislado Batiseñal con Chatty real: una persona realmente autenticada puede consentir lectura acotada de un único caso e INFORME sintéticos y la creación de una propuesta privada. SamChat conserva autoridad de identidad, ámbito, vigencia, fuentes, idempotencia y recibo; Chatty no recibe facultad de aprobar, pagar, modificar el informe ni publicar respuestas. La atestación del piloto impide publicación incluso humana. La integración sólo se considera aceptada con evidencia correlacionada de cliente real, PostgreSQL y navegador de la misma revisión. Código apagado y pruebas sintéticas son evidencias separadas de conexión y aceptación reales. Producción general y publicación son decisiones posteriores.

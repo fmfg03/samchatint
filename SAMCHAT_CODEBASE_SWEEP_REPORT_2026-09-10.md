@@ -341,3 +341,10 @@ virtual, verificaciones de tipos/formato y revisiones independientes. Sus
 resultados exactos se consultan en el informe fechado del paquete. Esta evidencia
 no afirma que el servicio en producción haya cambiado ni que los once
 expedientes del piloto se hayan capturado.
+
+
+### 2026-11-09 — Diseño aprobado del piloto aislado Batiseñal
+
+Aprobación humana expresa: «aprobada», registrada el 2026-11-10, sobre la especificación técnica y estos textos literales. Razón: primera entrega aislada con procedencia auténtica de Chatty. Evidencia: `docs/roadmap/batisenal-real-pilot-20261109-story.md` y `docs/roadmap/batisenal-real-pilot-20261109-spec.md`, sección 12. Construcción autorizada; instalación y aceptación real conservan sus propios recibos.
+
+El PR516 incorporó CI y fixtures de composición sintética, sin montar Batiseñal en el runtime financiero. Se aprobó la historia de una primera entrega real aislada; su especificación propone portado controlado, procedencia auténtica, esquema sintético y retorno privado. Implementación, alta de cliente/herramientas, instalación y aceptación real conservan evidencia y checkpoints propios. No hay activación productiva ni aceptación E2E acreditadas por este documento.

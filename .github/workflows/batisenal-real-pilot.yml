@@ -1,0 +1,53 @@
+name: Batiseñal isolated real-client pilot code
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/samchat/batisenal*'
+      - 'src/samchat/batisenal_transport/**'
+      - 'src/samchat/private_plugin/**'
+      - 'src/devnous/gastos/services/batisenal*'
+      - 'src/devnous/gastos/services/support_ticket_service.py'
+      - 'src/devnous/gastos/services/customer_success_audit.py'
+      - 'src/devnous/gastos/routes/batisenal*'
+      - 'src/devnous/gastos/routes/support_routes.py'
+      - 'static/batisenal.js'
+      - 'database/migrations/*batisenal*'
+      - 'config/batisenal-pilot-manifest.schema.json'
+      - 'scripts/batisenal/**'
+      - 'scripts/batisenal_real_pilot.py'
+      - 'tests/unit/batisenal/**'
+      - 'tests/integration/batisenal/**'
+      - 'tests/browser/test_batisenal_real_pilot.py'
+      - 'tests/browser/fixtures/batisenal/**'
+      - '.github/workflows/batisenal-real-pilot.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated-technical:
+    name: Isolated Batiseñal pilot checks (not Chatty E2E)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install isolated test dependencies
+        run: bash scripts/ci/install-cpu-test-dependencies.sh python -r requirements-browser.txt -r requirements-private-plugin-postgres.txt
+      - name: Install Firefox test browser (default sandbox)
+        run: python -m playwright install --with-deps firefox
+      - name: Run integrated technical acceptance
+        run: python scripts/batisenal/run_isolated_acceptance.py --tier technical --browser firefox
+      - name: Preserve technical evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: batisenal-integrated-technical-not-chatty-e2e
+          path: artifacts/batisenal-real/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7

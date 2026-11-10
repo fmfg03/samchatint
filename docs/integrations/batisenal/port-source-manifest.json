@@ -1,0 +1,179 @@
+{
+  "archive_sha256": "b8d89c6d0b1c7f04b48cce0de6e54827740ac1e70c53efa657ed094a21f46b63",
+  "preparer": "tests/fixtures/batisenal-composition/prepare.py",
+  "base_commit": "0f0ca09876ac76e8d808c872feb4436fc2a207a1",
+  "files": [
+    {
+      "path": "database/migrations/20261023_batisenal_transport_sqlite.sql",
+      "integrated_sha256": "898517d7dab00eb61ad1268bc4b37e450d8f5c2f958249612b921b68f5ca2f4f",
+      "prepared_source_sha256": "a285b335a38d5d09269067d96969d2c6a910209bcdd0434a13f9a2c12f111ef5"
+    },
+    {
+      "path": "database/migrations/20261023_support_batisenal.sql",
+      "integrated_sha256": "28670039756f6e30b9a371e3b017eaedddcd0eef89a2fb561d6a3be2a7e94a4e",
+      "prepared_source_sha256": "28670039756f6e30b9a371e3b017eaedddcd0eef89a2fb561d6a3be2a7e94a4e"
+    },
+    {
+      "path": "database/migrations/20261023_support_batisenal_agent.sql",
+      "integrated_sha256": "585d5b4eac4570715b7745d4519b24a7a7ac546a92b18aa5c5e61a88a56e1937",
+      "prepared_source_sha256": "585d5b4eac4570715b7745d4519b24a7a7ac546a92b18aa5c5e61a88a56e1937"
+    },
+    {
+      "path": "database/migrations/20261024_batisenal_pilot.sql",
+      "integrated_sha256": "92b258b67e49d7edb20ef421d87c31c20cfbb5577b9169bd85f155d7f6f85ecb",
+      "prepared_source_sha256": "92b258b67e49d7edb20ef421d87c31c20cfbb5577b9169bd85f155d7f6f85ecb"
+    },
+    {
+      "path": "database/migrations/20261025_batisenal_v01_case_storage.sql",
+      "integrated_sha256": "86fc59a283d94c07cda6075f739dd19135bf2c56ffe190c7814d551f552bf53f",
+      "prepared_source_sha256": "86fc59a283d94c07cda6075f739dd19135bf2c56ffe190c7814d551f552bf53f"
+    },
+    {
+      "path": "database/migrations/20261025_batisenal_v01_policy_fence.sql",
+      "integrated_sha256": "40e1be7ddcf5b5bdfbcdbc139017180cb060656b3c0d8a9627c785b750c7f900",
+      "prepared_source_sha256": "40e1be7ddcf5b5bdfbcdbc139017180cb060656b3c0d8a9627c785b750c7f900"
+    },
+    {
+      "path": "database/migrations/20261025_batisenal_v01_synthetic_protocol.sql",
+      "integrated_sha256": "8ab9628dd203c7908128352b6c8ada341f40301313e7d30cefeec5b7097dbccf",
+      "prepared_source_sha256": "8ab9628dd203c7908128352b6c8ada341f40301313e7d30cefeec5b7097dbccf"
+    },
+    {
+      "path": "database/migrations/20261109_batisenal_real_client_binding.sql",
+      "integrated_sha256": "911aeebe882387885bcd1df6cb1e19ed7929030041d3e5509dd5cea6597b6edf"
+    },
+    {
+      "path": "src/devnous/gastos/routes/batisenal_pilot_routes.py",
+      "integrated_sha256": "0315383a8d190645426d6ede1fe6fa0f97d82209fe5a79dc146f45f63ff94f90",
+      "prepared_source_sha256": "50d38588e52b6c0616eefcaa6bdfc1bfb7a7963d1d44a66184bd0bdde5cdf498"
+    },
+    {
+      "path": "src/devnous/gastos/routes/batisenal_routes.py",
+      "integrated_sha256": "27bd0ce79d3def70d0e19955ed61a45d82f98d24003d4d8ee5aead43a7972812",
+      "prepared_source_sha256": "c36e6a86bf705c74c9698ac66d879c44f0d2728ef4dedd80c769bb729a1fb396"
+    },
+    {
+      "path": "src/devnous/gastos/routes/support_routes.py",
+      "integrated_sha256": "73e229aa8b5e91e9646a618cfee53d09a9cb6a0ea5e0e0e38b194a5f10706f3b",
+      "prepared_source_sha256": "07b669b6e90fa246d6d99f3ddc5a34ae51a185d0d0de852cbcb4aa5add31836c",
+      "base_sha256": "3357db1100219dd6369cf035742f89dc96c8cb397fcd8e1a7d7274cba14ae0c7"
+    },
+    {
+      "path": "src/devnous/gastos/services/batisenal_agent_service.py",
+      "integrated_sha256": "31561c1c2cd71d66b60ca54664a61d4780b4a279a396752e0c9e50241f21f981",
+      "prepared_source_sha256": "aa637d54838d1ace99da3aa75d5c128ae531fa0e4324f5ab1aac8cf2d330d80a"
+    },
+    {
+      "path": "src/devnous/gastos/services/batisenal_case_authority.py",
+      "integrated_sha256": "d0e32d77650ea24a18c926bd41be526488ecef521e083248a67ade2f0c5e9998",
+      "prepared_source_sha256": "03567f6107334c8a78d419c057eb58ad34ae197155f84fc7deb2d67b88c357ab"
+    },
+    {
+      "path": "src/devnous/gastos/services/batisenal_case_service.py",
+      "integrated_sha256": "3fa58ccf702e3b444ae5cf0fa82c2bed609567d7313a7b052a5eff2b0d71837c",
+      "prepared_source_sha256": "8073d631df8558cab7558010dfaa4296b180a6b589f2ab12922adb35930891e1"
+    },
+    {
+      "path": "src/devnous/gastos/services/batisenal_pilot_service.py",
+      "integrated_sha256": "ba28e5b2ce33bf39d3e9a8854d5939b4c3729f05c24ca5653fe636fe723b1fc0",
+      "prepared_source_sha256": "330d2e0991be5f78d124b9fccfdbcb0a8f3a98ee377749b90f7391a330bc3b07"
+    },
+    {
+      "path": "src/devnous/gastos/services/batisenal_service.py",
+      "integrated_sha256": "d594c40a9cd6cdda630f6c34399757d95bb4f13de11132cd57d99f0c31fda122",
+      "prepared_source_sha256": "e713c498289cbd56ba06100d3a2a62a844dcdb0b0e121a25837a51306e1c5e2e"
+    },
+    {
+      "path": "src/devnous/gastos/services/customer_success_audit.py",
+      "integrated_sha256": "64079a9536fce9e66ece2b12f284b0d4b6efffe40c7cd7de9d8683092c210b5c",
+      "prepared_source_sha256": "fd26bd1f071e7f8cfca27f0e105b8e9e1634b067be2c0073eda10c9faffa6ab7",
+      "base_sha256": "fd26bd1f071e7f8cfca27f0e105b8e9e1634b067be2c0073eda10c9faffa6ab7"
+    },
+    {
+      "path": "src/devnous/gastos/services/support_ticket_service.py",
+      "integrated_sha256": "8d32d635dd3d49b62d7c822d96d7ae3a36e0d9718865ee6bc223da4726f5bc36",
+      "prepared_source_sha256": "33cdd39f818f797fad59ff7d9ad3b908c51493e246e9976eba959a7337e7e41b",
+      "base_sha256": "1665ffa90f09260f866ecccbd790ce7022b0681b61c87607fe841c1ba7a20303"
+    },
+    {
+      "path": "src/samchat/batisenal_bridge.py",
+      "integrated_sha256": "38d2aaf1c5452a578a554838c64c531cd28080a8eb662e2bcb825c8aeaed730d",
+      "prepared_source_sha256": "320857eb7745ff710e33339e8a574d7814f15e29ba6da75f63b70a85f29d5728"
+    },
+    {
+      "path": "src/samchat/batisenal_case_bridge.py",
+      "integrated_sha256": "5622f88d665b9c6b647b710914022f8fbe7ebbdd288abd266e6d3f89f3828f60",
+      "prepared_source_sha256": "111d6b598994a79bb93c955bd41575502ba6dcbce796e8e30538d9db8b51ce24"
+    },
+    {
+      "path": "src/samchat/batisenal_case_contract.py",
+      "integrated_sha256": "491dda9c20579b946f4a641785b4aa62e3459ca3543a5280c3fd223197ef3c27",
+      "prepared_source_sha256": "491dda9c20579b946f4a641785b4aa62e3459ca3543a5280c3fd223197ef3c27"
+    },
+    {
+      "path": "src/samchat/batisenal_composition.py",
+      "integrated_sha256": "343bc9ad3e9488c485e9e1b98ebf87cec04fdb2840d2a08030a8599dea10350f"
+    },
+    {
+      "path": "src/samchat/batisenal_isolated_app.py",
+      "integrated_sha256": "789513ea863df2765e4ce4caf92f03b10a92b45dfc63af4d866f2d66082540e1"
+    },
+    {
+      "path": "src/samchat/batisenal_pilot.py",
+      "integrated_sha256": "3e896b2e3293bdc38340e9abeb4f84d40de2a6da933df14c83fae0335a7b08b3",
+      "prepared_source_sha256": "21db27ea868d3e7774c116bbac8fcd2ceed16d6f803efa034b7f771f2419a360"
+    },
+    {
+      "path": "src/samchat/batisenal_policy_fence.py",
+      "integrated_sha256": "ee0a2169c8506fffc3fdcbb05c26da2eaadb7992a9e2f5c36a9a6d4b9e1a1595",
+      "prepared_source_sha256": "7fe11bcd5e2f6d01f0cb45d9c378115b51e6d3e3f618169424349255e4e4f9e3"
+    },
+    {
+      "path": "src/samchat/batisenal_synthetic_protocol.py",
+      "integrated_sha256": "ef28d5c540936f466ed10d279857ceef7aca3ec80670be896d5f520506c781b1",
+      "prepared_source_sha256": "80ccb03a1f9e775d6959234dd70f6c2ce1265cbff65e7f9e902e6541d1cc28fb"
+    },
+    {
+      "path": "src/samchat/batisenal_transport/__init__.py",
+      "integrated_sha256": "a2170d06c8a42bfa0d3a4405054a3b33534945c10742f5467f479c182a944cda",
+      "prepared_source_sha256": "a2170d06c8a42bfa0d3a4405054a3b33534945c10742f5467f479c182a944cda"
+    },
+    {
+      "path": "src/samchat/batisenal_transport/contracts.py",
+      "integrated_sha256": "feee78f4c213053d0c7e416180e2c54f276a59f8cb62f1c7d4d118984e42f236",
+      "prepared_source_sha256": "f2ff584714a99f4e52cd77639f92912a9adb4dc40f5b8ce3af7ebcc4d60820a4"
+    },
+    {
+      "path": "src/samchat/batisenal_transport/framing.py",
+      "integrated_sha256": "d1fe675ffd40be8c10f5445920a752a74657350976e4764274bce2488a692b65",
+      "prepared_source_sha256": "b539dc251ecccddbedf6ab01725f7870cefd100eabe12c0b596fc03bf9093890"
+    },
+    {
+      "path": "src/samchat/batisenal_transport/http.py",
+      "integrated_sha256": "37549359c83b637025a2b64ad6caa951275ba99b551cdab673685792124fd7d5",
+      "prepared_source_sha256": "bac37ad5482333719076099917c01713bd3ef4f51b94688b9c70fc3d5008451a"
+    },
+    {
+      "path": "src/samchat/batisenal_transport/store.py",
+      "integrated_sha256": "c7d2896baa51869b25aa09f4afcb1762e84a06d6ccb68fd83c619005c686173b",
+      "prepared_source_sha256": "a46eb4d20486377be40e1d76e0c287b40b09888c4a220978375f79ae798dacdf"
+    },
+    {
+      "path": "src/samchat/private_plugin/oauth_flow.py",
+      "integrated_sha256": "22d7278e2da24c1e0847ec22ff264def599f74619bc0a65d91a7649c52c78035",
+      "prepared_source_sha256": "22d7278e2da24c1e0847ec22ff264def599f74619bc0a65d91a7649c52c78035",
+      "base_sha256": "4ceeec15185ba7129a0ac4638f1eee7836f89c904f89da789b2d6849c7ad666a"
+    },
+    {
+      "path": "src/samchat/private_plugin/oauth_store.py",
+      "integrated_sha256": "37a000d1ebcae79eaa58b08626d4e2c3725a812771556c00e111e33d24db7768",
+      "prepared_source_sha256": "a497bd9b7f62448603a080792c552a8d44fbe4c3264344a407fe7b86adcb3fea",
+      "base_sha256": "4b0cc5eac9156bc19df2d812601ac66b965e99b902e35cf81461c34eeecde284"
+    },
+    {
+      "path": "static/batisenal.js",
+      "integrated_sha256": "6722cdf4cbcf73ff7baf4fba7eb4a9884c255594435d1b3cbebf4a7693bbab77",
+      "prepared_source_sha256": "527a0113d1cf8f4faad2f92ecd9945f9ec108649926cabaf38dcd297e53319a8"
+    }
+  ]
+}
