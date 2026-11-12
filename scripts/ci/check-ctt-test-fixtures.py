@@ -26,8 +26,10 @@ TEST_HELPERS = frozenset(
     {
         "services/evidence-bus/tests/v2_fixtures.py",
         "services/samchat-registration-gate/tests/test_staff_capture_gate_v2.py",
+        "services/samchat-registration-gate/tests/test_staff_capture_gate_v3.py",
         "services/samchat-registration-gate/tests/test_staff_capture_finality_v2.py",
-        "services/samchat-registration-gate/tests/test_staff_capture_national_curp_v2.py",
+        "services/samchat-registration-gate/tests/"
+        "test_staff_capture_national_curp_v2.py",
     }
 )
 REQUIRED_COHORTS = {

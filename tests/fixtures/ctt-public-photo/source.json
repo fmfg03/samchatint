@@ -1,0 +1,16 @@
+{
+  "schema": "ctt.synthetic-public-photo-fixture.v1",
+  "filename": "grace_hopper.jpg",
+  "sha256": "a8ca6d734765703b09728ab47fe59f473d93ae3967fc24c7c0288c3c7adb7130",
+  "repository": "https://github.com/matplotlib/matplotlib",
+  "tag": "v3.9.0",
+  "source_url": "https://raw.githubusercontent.com/matplotlib/matplotlib/v3.9.0/lib/matplotlib/mpl-data/sample_data/grace_hopper.jpg",
+  "original_author": "James S. Davis, U.S. Navy",
+  "original_date": "1984-01-20",
+  "original_photo_id": "DN-SC-84-05971",
+  "original_record": "https://commons.wikimedia.org/wiki/File:Commodore_Grace_M._Hopper,_USN_(covered).jpg",
+  "copyright_status": "public-domain U.S. government work (U.S. Navy official duties)",
+  "project_license": "https://github.com/matplotlib/matplotlib/blob/v3.9.0/LICENSE/LICENSE",
+  "use": "synthetic acceptance fixture; source crop and local face-presence signal only; no identity or eligibility claim",
+  "original_bytes_modified": false
+}

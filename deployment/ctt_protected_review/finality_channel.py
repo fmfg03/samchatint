@@ -10,18 +10,20 @@ import base64
 import hmac
 import ipaddress
 import time
-from typing import NoReturn
 from contextlib import contextmanager
 from pathlib import Path
+from typing import NoReturn
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
+from devnous.copa_telmex.staff_batch_authorization import canonical_batch_scope_bytes
 from devnous.copa_telmex.staff_capture_edition import TrustedEditionBinding
 from devnous.copa_telmex.staff_capture_executor import CaptureDenied, LockedAttempt
 from devnous.copa_telmex.staff_capture_finality_authorization import (
     verify_capture_finality_authorization,
 )
 from devnous.copa_telmex.staff_capture_finality_effect import (
+    BatchFinalityContext,
     FinalityContext,
     VerifiedFinalityBundle,
     canonical,
@@ -42,12 +44,13 @@ from devnous.copa_telmex.staff_review_challenge import (
 )
 from devnous.copa_telmex.staff_review_operations_channel import (
     _canonical as wire_canonical,
-    _json as wire_json,
-    _mac as channel_mac,
 )
+from devnous.copa_telmex.staff_review_operations_channel import _json as wire_json
+from devnous.copa_telmex.staff_review_operations_channel import _mac as channel_mac
 from devnous.copa_telmex.staff_review_proposal_store import PostgresReviewProposalStore
 
 PREFIX = "/v2/staff-review/finality/"
+BATCH_PREFIX = "/v3/staff-review/batch-finality/"
 OPERATIONS = frozenset({"finalize_rows", "authorize_finality_effect"})
 MAX_WIRE_BYTES = 8_388_608
 MAX_FIELD_BYTES = 4_194_304
@@ -101,7 +104,7 @@ def identifier(value):
         deny()
 
 
-def request_mac(key, operation, nonce, timestamp, raw):
+def request_mac(key, operation, nonce, timestamp, raw, *, _batch=False):
     if (
         operation not in OPERATIONS
         or type(timestamp) is not int
@@ -113,16 +116,20 @@ def request_mac(key, operation, nonce, timestamp, raw):
         deny()
     return channel_mac(
         key,
-        b"samchat.ctt.finality-rpc.request.v1\0",
+        (
+            b"samchat.ctt.batch-finality-rpc.request.v1\0"
+            if _batch
+            else b"samchat.ctt.finality-rpc.request.v1\0"
+        ),
         b"POST",
-        (PREFIX + operation).encode(),
+        ((BATCH_PREFIX if _batch else PREFIX) + operation).encode(),
         str(nonce).encode(),
         str(timestamp).encode(),
         raw,
     )
 
 
-def response_mac(key, operation, nonce, request, status, raw):
+def response_mac(key, operation, nonce, request, status, raw, *, _batch=False):
     import hashlib
 
     if (
@@ -136,8 +143,12 @@ def response_mac(key, operation, nonce, request, status, raw):
         deny()
     return channel_mac(
         key,
-        b"samchat.ctt.finality-rpc.response.v1\0",
-        (PREFIX + operation).encode(),
+        (
+            b"samchat.ctt.batch-finality-rpc.response.v1\0"
+            if _batch
+            else b"samchat.ctt.finality-rpc.response.v1\0"
+        ),
+        ((BATCH_PREFIX if _batch else PREFIX) + operation).encode(),
         str(nonce).encode(),
         hashlib.sha256(request).digest(),
         str(status).encode(),
@@ -145,7 +156,7 @@ def response_mac(key, operation, nonce, request, status, raw):
     )
 
 
-def decode(operation, raw):
+def decode(operation, raw, *, _batch=False):
     try:
         value = wire_json(raw, MAX_WIRE_BYTES)
         additional = (
@@ -168,7 +179,12 @@ def decode(operation, raw):
         for key in _BASE | additional:
             if key.endswith("_bytes") or key == "signed_review":
                 value[key] = binary(value[key])
-        parse_canonical_scope(value["scope_bytes"])
+        if _batch:
+            from devnous.copa_telmex.staff_batch_authorization import parse_batch_scope
+
+            parse_batch_scope(value["scope_bytes"])
+        else:
+            parse_canonical_scope(value["scope_bytes"])
         return value
     except Exception:
         deny()
@@ -184,15 +200,25 @@ def encode(
     pending_effect_bytes,
     signed_review,
     preauthorization,
+    _batch=False,
     **extra,
 ):
     try:
-        if type(protected_context) is not FinalityContext:
+        from devnous.copa_telmex.staff_capture_finality_effect import (
+            BatchFinalityContext,
+        )
+
+        expected = BatchFinalityContext if _batch else FinalityContext
+        if type(protected_context) is not expected:
             deny()
         protected_context.verify(scope, review_attempt_id)
         value = {
             "context": {key: getattr(protected_context, key) for key in _CONTEXT},
-            "scope_bytes": canonical_scope_bytes(scope),
+            "scope_bytes": (
+                canonical_batch_scope_bytes(scope)
+                if _batch
+                else canonical_scope_bytes(scope)
+            ),
             "review_attempt_id": str(review_attempt_id),
             "review_bytes": review_bytes,
             "pending_effect_bytes": pending_effect_bytes,
@@ -210,7 +236,7 @@ def encode(
                     deny()
                 value[key] = base64.b64encode(value[key]).decode()
         raw = wire_canonical(value)
-        decode(operation, raw)
+        decode(operation, raw, _batch=_batch)
         return raw
     except Exception:
         deny()
@@ -280,12 +306,18 @@ class FinalityGateRPCServer:
         with adapter.open_verified_snapshot(locked) as snapshot:
             yield snapshot
 
+    _context_type = FinalityContext
+
+    def _parse_scope(self, raw):
+        return parse_canonical_scope(raw)
+
+    async def _protected_inputs(self, attempt):
+        return await self._store.load_finality_gate_context(attempt)
+
     async def invoke(self, operation, value):
         """The only admitted source of CAS/incident status is protected SQL+CAS."""
-        protected = await self._store.load_finality_gate_context(
-            value["review_attempt_id"]
-        )
-        scope = parse_canonical_scope(value["scope_bytes"])
+        protected = await self._protected_inputs(value["review_attempt_id"])
+        scope = self._parse_scope(value["scope_bytes"])
         expected = {
             "scope_bytes",
             "review_bytes",
@@ -326,7 +358,7 @@ class FinalityGateRPCServer:
         ) != canonical(observed):
             deny()
         with self._snapshot(scope, value["review_attempt_id"], source) as snapshot:
-            context = FinalityContext(
+            context = self._context_type(
                 **attested,
                 review_attempt_id=value["review_attempt_id"],
                 snapshot=snapshot,
@@ -358,6 +390,67 @@ class FinalityGateRPCServer:
             )
 
 
+class BatchFinalityGateRPCServer(FinalityGateRPCServer):
+    """V3 gate reads retained batch inputs independently, without writer locks."""
+
+    _context_type = BatchFinalityContext
+
+    def __init__(
+        self,
+        *,
+        gate,
+        store,
+        private_source_root,
+        database_identity,
+        max_source_bytes,
+        max_asset_bytes,
+        max_manifest_bytes,
+    ):
+        from devnous.copa_telmex.staff_batch_runtime import BatchPolicyFinalityService
+        from devnous.copa_telmex.staff_batch_source_adapter import (
+            PrivateBatchSourceProvider,
+            SourceCheckAdapterV2,
+        )
+        from devnous.copa_telmex.staff_batch_store import PostgresBatchReviewStore
+
+        if (
+            type(gate) is not BatchPolicyFinalityService
+            or type(store) is not PostgresBatchReviewStore
+            or type(database_identity) is not str
+            or not database_identity
+        ):
+            deny()
+        root = Path(private_source_root)
+        if not root.is_absolute() or ".." in root.parts:
+            deny()
+        self._gate, self._store, self._identity = gate, store, database_identity
+        self._adapter = SourceCheckAdapterV2(
+            PrivateBatchSourceProvider(root, max_manifest_bytes=max_manifest_bytes),
+            max_source_bytes=max_source_bytes,
+            max_asset_bytes=max_asset_bytes,
+            max_manifest_bytes=max_manifest_bytes,
+        )
+
+    def _parse_scope(self, raw):
+        from devnous.copa_telmex.staff_batch_authorization import parse_batch_scope
+
+        return parse_batch_scope(raw)
+
+    async def _protected_inputs(self, attempt):
+        return await self._store.load_finality_gate_context(attempt)
+
+    @contextmanager
+    def _snapshot(self, scope, attempt, source_context):
+        from devnous.copa_telmex.staff_batch_authorization import (
+            canonical_batch_scope_bytes,
+        )
+
+        with self._adapter.open_verified_snapshot(
+            canonical_batch_scope_bytes(scope)
+        ) as snapshot:
+            yield snapshot
+
+
 def mount_finality_rpc(
     app,
     *,
@@ -370,7 +463,7 @@ def mount_finality_rpc(
     max_inflight=4,
 ):
     """Mount two fixed private RPCs; never expose with public operations key."""
-    from fastapi import Request, Response, HTTPException
+    from fastapi import HTTPException, Request, Response
 
     if (
         not isinstance(service, FinalityGateRPCServer)
@@ -383,13 +476,30 @@ def mount_finality_rpc(
         or not 1 <= max_inflight <= 64
     ):
         deny()
+    batch = type(service) is BatchFinalityGateRPCServer
     gate = service._gate
     forbidden = (
-        operations_channel_key,
-        gate._review_key,
-        gate._effect_key,
-        gate._identity_key,
-        gate._signer.private_bytes_raw(),
+        (
+            operations_channel_key,
+            gate._review_key,
+            gate._effect_key,
+            gate._identity_key,
+            gate._signer.private_bytes_raw(),
+        )
+        if not batch
+        else (
+            operations_channel_key,
+            *(
+                value
+                for item in gate._gates.values()
+                for value in (
+                    item._review_key,
+                    item._effect_key,
+                    item._identity_key,
+                    item._signer.private_bytes_raw(),
+                )
+            ),
+        )
     )
     if (
         type(channel_key) is not bytes
@@ -399,7 +509,7 @@ def mount_finality_rpc(
         deny()
     semaphore = asyncio.Semaphore(max_inflight)
 
-    @app.post(PREFIX + "{operation}")
+    @app.post((BATCH_PREFIX if batch else PREFIX) + "{operation}")
     async def invoke(operation: str, request: Request):
         if operation not in OPERATIONS or semaphore.locked():
             raise HTTPException(503, "finality unavailable")
@@ -436,12 +546,19 @@ def mount_finality_rpc(
                         str(timestamp) != timestamp_text
                         or abs(int(time.time()) - timestamp) > max_clock_skew
                         or not hmac.compare_digest(
-                            request_mac(channel_key, operation, nonce, timestamp, raw),
+                            request_mac(
+                                channel_key,
+                                operation,
+                                nonce,
+                                timestamp,
+                                raw,
+                                _batch=batch,
+                            ),
                             request.headers[MAC],
                         )
                     ):
                         deny()
-                    value = decode(operation, raw)
+                    value = decode(operation, raw, _batch=batch)
                     if (
                         await consume_nonce(nonce, timestamp + max_clock_skew)
                         is not True
@@ -464,7 +581,13 @@ def mount_finality_rpc(
                         media_type="application/json",
                         headers={
                             RESPONSE_MAC: response_mac(
-                                channel_key, operation, nonce, raw, status, body
+                                channel_key,
+                                operation,
+                                nonce,
+                                raw,
+                                status,
+                                body,
+                                _batch=batch,
                             ),
                             "Cache-Control": "no-store",
                         },
@@ -477,6 +600,8 @@ def mount_finality_rpc(
 
 class FinalityRPCClient:
     """Synchronous interface used by writer's asyncio.to_thread, no signer key."""
+
+    _batch = False
 
     def __init__(
         self,
@@ -532,11 +657,13 @@ class FinalityRPCClient:
                 "Content-Type": "application/json",
                 NONCE: str(nonce),
                 TIME: str(timestamp),
-                MAC: request_mac(self._key, operation, nonce, timestamp, raw),
+                MAC: request_mac(
+                    self._key, operation, nonce, timestamp, raw, _batch=self._batch
+                ),
             }
             with self._http.stream(
                 "POST",
-                self._url + PREFIX + operation,
+                self._url + (BATCH_PREFIX if self._batch else PREFIX) + operation,
                 content=raw,
                 headers=headers,
                 timeout=self._timeout,
@@ -559,7 +686,13 @@ class FinalityRPCClient:
                 result = b"".join(chunks)
                 if not hmac.compare_digest(
                     response_mac(
-                        self._key, operation, nonce, raw, response.status_code, result
+                        self._key,
+                        operation,
+                        nonce,
+                        raw,
+                        response.status_code,
+                        result,
+                        _batch=self._batch,
                     ),
                     response.headers[RESPONSE_MAC],
                 ):
@@ -574,6 +707,7 @@ class FinalityRPCClient:
     def finalize_rows(self, *, observed_pending_rows, **kwargs):
         raw = encode(
             "finalize_rows",
+            _batch=self._batch,
             **kwargs,
             observed_pending_rows_bytes=canonical(observed_pending_rows),
         )
@@ -614,6 +748,7 @@ class FinalityRPCClient:
             deny()
         raw = encode(
             "authorize_finality_effect",
+            _batch=self._batch,
             **kwargs,
             finality_effect_bytes=finality_effect_bytes,
             verified_finalities_bytes=verified_finalities.payload_bytes,
@@ -642,3 +777,9 @@ class FinalityRPCClient:
 
     def close(self):
         self._http.close()
+
+
+class BatchFinalityRPCClient(FinalityRPCClient):
+    """Typed V3 client; individual scopes remain rejected by its encoder."""
+
+    _batch = True

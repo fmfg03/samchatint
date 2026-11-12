@@ -13,8 +13,8 @@ from .staff_capture_private_sources import PrivateAttemptSourceProvider
 from .staff_capture_source_adapter import SourceCheckAdapter
 from .staff_capture_transport import CaptureUnixTransport
 from .staff_capture_transport_store import PostgresTransportNonces
-from .staff_signed_assertion import SignedAssertionVerifier
 from .staff_photo_store import PrivateReviewPhotoStore
+from .staff_signed_assertion import SignedAssertionVerifier
 
 
 def assemble_capture_runtime(
@@ -36,6 +36,11 @@ def assemble_capture_runtime(
     finality_service=None,
     receipt_public_keys=None,
     database_identity: str | None = None,
+    batch_enabled: bool = False,
+    batch_private_source_root: Path | None = None,
+    batch_assertion_public_keys=None,
+    batch_finality_service=None,
+    request_timeout: float = 5.0,
 ) -> CaptureUnixTransport:
     """Wire the same trusted writer for all internal authenticated requests."""
     try:
@@ -83,6 +88,67 @@ def assemble_capture_runtime(
                 max_manifest_bytes=max_manifest_bytes,
             )
 
+        batch_adapter = None
+        verifier = SignedAssertionVerifier(assertion_public_keys)
+        finality_keys = dict(assertion_public_keys)
+        if type(batch_enabled) is not bool:
+            raise ValueError("explicit batch configuration required")
+        if batch_enabled:
+            if capture_pool is nonce_pool:
+                raise ValueError("separate private writer and nonce pools required")
+            from .staff_batch_authorization import (
+                BatchAwareDecisionVerifier,
+                BatchAwareFinalityService,
+                BatchDecisionVerifier,
+            )
+            from .staff_batch_source_adapter import (
+                PrivateBatchSourceProvider,
+                SourceCheckAdapterV2,
+            )
+
+            batch_root = Path(batch_private_source_root)
+            if (
+                not batch_root.is_absolute()
+                or ".." in batch_root.parts
+                or not batch_assertion_public_keys
+                or batch_finality_service is None
+            ):
+                raise ValueError("complete private batch writer required")
+            for kid, key in batch_assertion_public_keys.items():
+                if (
+                    type(kid) is not str
+                    or not kid
+                    or type(key) is not bytes
+                    or len(key) != 32
+                ):
+                    raise ValueError("invalid batch issuer pin")
+                if kid in finality_keys and finality_keys[kid] != key:
+                    raise ValueError("ambiguous issuer pin")
+                finality_keys[kid] = key
+            batch_adapter = SourceCheckAdapterV2(
+                PrivateBatchSourceProvider(
+                    batch_root, max_manifest_bytes=max_manifest_bytes
+                ),
+                max_source_bytes=max_source_bytes,
+                max_asset_bytes=max_asset_bytes,
+                max_manifest_bytes=max_manifest_bytes,
+            )
+            verifier = BatchAwareDecisionVerifier(
+                verifier, BatchDecisionVerifier(batch_assertion_public_keys)
+            )
+            finality_service = BatchAwareFinalityService(
+                individual=finality_service, batch=batch_finality_service
+            )
+        elif any(
+            value is not None
+            for value in (
+                batch_private_source_root,
+                batch_assertion_public_keys,
+                batch_finality_service,
+            )
+        ):
+            raise ValueError("batch dependencies require explicit enablement")
+
         store = PostgresCaptureStore(
             capture_pool,
             source_factory,
@@ -96,18 +162,19 @@ def assemble_capture_runtime(
             ),
             finality_service=finality_service,
             receipt_public_keys=receipt_public_keys,
-            assertion_public_keys=assertion_public_keys,
+            assertion_public_keys=finality_keys,
             database_identity=database_identity,
+            batch_support=batch_enabled,
+            batch_source_adapter=batch_adapter,
         )
-        executor = StaffCaptureExecutor(
-            store, SignedAssertionVerifier(assertion_public_keys)
-        )
+        executor = StaffCaptureExecutor(store, verifier)
         return CaptureUnixTransport(
             key=channel_key,
             allowed_uids=allowed_uids,
             consume_nonce=PostgresTransportNonces(nonce_pool),
             handler=executor.execute,
             client_gid=client_gid,
+            request_timeout=request_timeout,
         )
     except Exception:
         raise CaptureDenied("capture denied") from None
