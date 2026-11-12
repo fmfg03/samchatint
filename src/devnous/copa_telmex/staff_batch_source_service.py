@@ -157,6 +157,8 @@ class BatchCatalogSourceProvider:
                 if d["document_id"] == source["document_id"]
             )
             legacy = source.get("legacy", {})
+            prior = source.get("prior_batch_capture", {"status": "none"})
+            exclusion_hash = None
             status, issues = "analysis_pending", []
             structure = doc["extraction"].get("structural_observation", {})
             expected_refs = [
@@ -180,10 +182,52 @@ class BatchCatalogSourceProvider:
                 status, issues = "exception", [
                     {"code": "STRUCTURAL_OBSERVATION_REQUIRED"}
                 ]
-            if legacy.get("status") == "committed" and legacy.get("result_id"):
+            if prior.get("status") == "committed":
+                valid_prior = all(
+                    prior.get(key) == expected
+                    for key, expected in {
+                        "tenant_id": context["tenant_id"],
+                        "edition_id": str(context["edition_id"]),
+                        "document_id": source["document_id"],
+                        "operation_id": source.get("operation_id"),
+                        "source_payload_hash": source["source_payload_hash"],
+                        "source_pages": source["source_pages"],
+                        "team_id": source.get("committed_team_id"),
+                    }.items()
+                ) and all(prior.get(k) for k in ("result_id", "attempt_id", "team_id"))
+                valid_prior = valid_prior and legacy.get("status") not in {
+                    "ambiguous",
+                    "unknown",
+                }
+                if legacy.get("status") == "committed":
+                    valid_prior = valid_prior and (
+                        legacy.get("result_id") == prior.get("result_id")
+                        and legacy.get("committed_team_id") == prior.get("team_id")
+                    )
+                proof_hash = prior.get("proof_hash", "")
+                valid_prior = (
+                    valid_prior
+                    and type(proof_hash) is str
+                    and len(proof_hash) == 64
+                    and all(c in "0123456789abcdef" for c in proof_hash)
+                )
+                if valid_prior:
+                    status, issues = "already_captured", []
+                    exclusion_hash = proof_hash
+                else:
+                    status, issues = "exception", [
+                        {"code": "BATCH_CAPTURE_IDENTITY_UNRESOLVED"}
+                    ]
+            elif prior.get("status") != "none":
+                status, issues = "exception", [
+                    {"code": "BATCH_CAPTURE_IDENTITY_UNRESOLVED"}
+                ]
+            elif legacy.get("status") == "committed" and legacy.get("result_id"):
                 status = "already_captured"
-            elif legacy.get("status") == "ambiguous" or (
-                source.get("committed_team_id") and status != "already_captured"
+                exclusion_hash = legacy["proof_hash"]
+            if prior.get("status") == "none" and (
+                legacy.get("status") == "ambiguous"
+                or (source.get("committed_team_id") and status != "already_captured")
             ):
                 status, issues = "exception", [{"code": "LEGACY_IDENTITY_UNRESOLVED"}]
             member = {
@@ -211,7 +255,7 @@ class BatchCatalogSourceProvider:
             if status == "already_captured":
                 member["exclusion_proof"] = {
                     "kind": "already_captured",
-                    "evidence_sha256": legacy["proof_hash"],
+                    "evidence_sha256": exclusion_hash,
                     "effective_at": datetime.now(timezone.utc).isoformat(),
                 }
             members.append(member)
@@ -256,7 +300,10 @@ class BatchCatalogSourceProvider:
         for member in initial["members"]:
             source = member["snapshot"]["source"]
             old = previous.get(member["document_id"], {})
-            if old.get("original_auto_ready") is True:
+            if (
+                member["status"] == "already_captured"
+                and old.get("status") == "committed"
+            ):
                 retained = dict(old)
                 retained["snapshot"] = old.get("frozen_snapshot", old.get("snapshot"))
                 retained["source_slices"] = member["source_slices"]
@@ -264,6 +311,12 @@ class BatchCatalogSourceProvider:
                 continue
             if member["status"] in {"already_captured", "exception"}:
                 analyzed.append(member)
+                continue
+            if old.get("original_auto_ready") is True:
+                retained = dict(old)
+                retained["snapshot"] = old.get("frozen_snapshot", old.get("snapshot"))
+                retained["source_slices"] = member["source_slices"]
+                analyzed.append(retained)
                 continue
             identity = analysis_identity(run["profile_hash"], source)
             with self.adapter.open_verified_snapshot(

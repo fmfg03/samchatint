@@ -245,6 +245,55 @@ def test_correctly_rejected_raw_error_is_exception_not_false_admission():
     assert result["passed"] and result["human_authority"] is False
 
 
+@pytest.mark.parametrize("comparisons", [[], [{"critical": True, "error": False}]])
+def test_automatic_sample_cannot_be_confirmed_as_excluded(comparisons):
+    proposed = sample_result(document(1), outcome="exception_confirmed")
+    proposed["comparisons"] = comparisons
+    with pytest.raises(BatchContractError, match="BATCH_SAMPLE_INVALID"):
+        validate_quality_sample([proposed])
+
+
+def test_candidate_rejects_false_exception_declaration_on_automatic_member():
+    members, _, measured = metrics_fixture(1, 1)
+    proposed = sample_result(
+        members[0], classification="exception", outcome="exception_confirmed"
+    )
+    proposed["comparisons"] = []
+    with pytest.raises(BatchContractError, match="BATCH_SAMPLE_INVALID"):
+        create_qualification_candidate(
+            members,
+            corpus_hash=CORPUS,
+            profile_hash=PROFILE,
+            cutoff=CUTOFF,
+            metrics=measured,
+            sample_results=[proposed],
+        )
+
+
+def test_candidate_retains_correct_exception_confirmation_without_admitting_it():
+    members, _, measured = metrics_fixture(1, 0)
+    proposed = sample_result(
+        members[0],
+        classification="exception",
+        outcome="exception_confirmed",
+        error=True,
+    )
+    candidate = create_qualification_candidate(
+        members,
+        corpus_hash=CORPUS,
+        profile_hash=PROFILE,
+        cutoff=CUTOFF,
+        metrics=measured,
+        sample_results=[proposed],
+    )
+    assert candidate["sample_report"]["passed"]
+    assert candidate["sample_report"]["critical_false_admissions"] == 0
+    assert candidate["sample_results"][0]["classification"] == "exception"
+    assert candidate["metrics"]["automatic_document_ids"] == []
+    assert not scaling_allowed(candidate["metrics"])
+    assert candidate["human_authority"] is False
+
+
 def test_candidate_has_no_future_uv_and_caller_cannot_forge_sample_classification():
     members, _, measured = metrics_fixture(1, 1)
     proposed = sample_result(

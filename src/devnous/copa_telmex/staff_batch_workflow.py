@@ -323,13 +323,15 @@ class BatchReviewWorkflowService:
             )
 
         value["options"] = {
-            "challenge": url(value.pop("challenge")),
-            "rpId": "sam.chat",
-            "allowCredentials": [
-                {"type": "public-key", "id": url(value.pop("credential_id"))}
-            ],
-            "timeout": 300000,
-            "userVerification": "required",
+            "publicKey": {
+                "challenge": url(value.pop("challenge")),
+                "rpId": "sam.chat",
+                "allowCredentials": [
+                    {"type": "public-key", "id": url(value.pop("credential_id"))}
+                ],
+                "timeout": 300000,
+                "userVerification": "required",
+            }
         }
         return value
 

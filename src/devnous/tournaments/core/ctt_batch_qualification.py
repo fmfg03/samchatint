@@ -326,6 +326,8 @@ def validate_quality_sample(
             or type(outcome) is not str
             or classification not in {"auto_ready", "exception"}
             or outcome not in {"matches", "critical_error", "exception_confirmed"}
+            or classification == "auto_ready"
+            and outcome == "exception_confirmed"
         ):
             raise BatchContractError("BATCH_SAMPLE_INVALID")
         comparisons = result.get("comparisons", [])

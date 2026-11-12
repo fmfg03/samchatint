@@ -111,6 +111,7 @@ def proposal(tmp_path):
         "source_binding_hash": analysis["source_binding_hash"],
     }
     context = {
+        "existing_photo_records": [],
         "run_id": str(run),
         "tenant_id": "synthetic",
         "edition_id": str(edition),

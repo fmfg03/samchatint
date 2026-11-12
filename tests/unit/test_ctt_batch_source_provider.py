@@ -999,3 +999,91 @@ async def test_pending_geometry_reanalysis_uses_original_receipt_and_zero_auto_y
         == "bad raw date"
     )
     assert p.cache.read(analysis_identity(p.run["profile_hash"], p.source)) == original
+
+
+def _prior_batch_source(p):
+    source = p.context["documents"][0]
+    source["operation_id"] = str(uuid4())
+    source["committed_team_id"] = str(uuid4())
+    source["legacy"] = {"status": "none"}
+    source["prior_batch_capture"] = {
+        "status": "committed",
+        "tenant_id": p.context["tenant_id"],
+        "edition_id": str(p.context["edition_id"]),
+        "document_id": source["document_id"],
+        "operation_id": source["operation_id"],
+        "source_payload_hash": source["source_payload_hash"],
+        "source_pages": source["source_pages"],
+        "team_id": source["committed_team_id"],
+        "attempt_id": str(uuid4()),
+        "result_id": str(uuid4()),
+        "proof_hash": "a" * 64,
+    }
+    return source
+
+
+@pytest.mark.asyncio
+async def test_prior_batch_capture_without_legacy_bridge_overrides_frozen_ready(
+    preparation,
+):
+    p = preparation
+    source = _prior_batch_source(p)
+    p.run["members"] = [
+        {
+            "document_id": source["document_id"],
+            "original_auto_ready": True,
+            "status": "ready",
+            "snapshot": {"obsolete": True},
+        }
+    ]
+    result = await p.provider.analyze(p.run)
+    member = result["members"][0]
+    assert member["status"] == "already_captured"
+    assert member["exclusion_proof"]["evidence_sha256"] == "a" * 64
+    assert member["attempt_id"] is None
+    assert not any(call[0] == "build" for call in p.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("status", "incomplete"),
+        ("result_id", None),
+        ("team_id", str(uuid4())),
+        ("source_pages", []),
+        ("operation_id", str(uuid4())),
+        ("proof_hash", "bad"),
+    ],
+)
+async def test_incomplete_or_conflicting_prior_capture_is_blocked(
+    preparation, field, value
+):
+    p = preparation
+    source = _prior_batch_source(p)
+    source["prior_batch_capture"][field] = value
+    member = (await p.provider.prepare_run(p.context, p.run["manifest_hashes"]))[
+        "members"
+    ][0]
+    assert member["status"] == "exception"
+    assert member["issues"] == [{"code": "BATCH_CAPTURE_IDENTITY_UNRESOLVED"}]
+    assert "exclusion_proof" not in member
+
+
+@pytest.mark.asyncio
+async def test_conflicting_legacy_capture_does_not_override_prior_batch_proof(
+    preparation,
+):
+    p = preparation
+    source = _prior_batch_source(p)
+    source["legacy"] = {
+        "status": "committed",
+        "result_id": str(uuid4()),
+        "committed_team_id": str(uuid4()),
+        "proof_hash": "b" * 64,
+    }
+    member = (await p.provider.prepare_run(p.context, p.run["manifest_hashes"]))[
+        "members"
+    ][0]
+    assert member["status"] == "exception"
+    assert "exclusion_proof" not in member

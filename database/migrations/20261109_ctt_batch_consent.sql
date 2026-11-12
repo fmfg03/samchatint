@@ -94,19 +94,44 @@ BEGIN
 END $fn$;
 CREATE FUNCTION ctt_staff_private.batch_source_context(p_account uuid,p_edition uuid,p_manifests jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
-DECLARE ctx jsonb;docs jsonb;d jsonb;items jsonb:='[]';legacy jsonb;op uuid;sid uuid;current_draft record;current_session record;
+DECLARE ctx jsonb;docs jsonb;d jsonb;items jsonb:='[]';legacy jsonb;op uuid;sid uuid;current_draft record;current_session record;prior jsonb;proof jsonb;roster_slug text;source_slug text;
 BEGIN
  ctx:=ctt_staff_private.batch_preparation_context(p_account,p_edition,p_manifests);
  docs:=ctt_staff_private.batch_source_documents(p_edition,ARRAY(SELECT value#>>'{}' FROM jsonb_array_elements(p_manifests)));
  FOR d IN SELECT value FROM jsonb_array_elements(docs) LOOP
+ source_slug:=d->'manifest'->'edition'->>'roster_slug';
+ IF source_slug IS NULL OR (roster_slug IS NOT NULL AND roster_slug<>source_slug) THEN RAISE EXCEPTION 'CTT batch tournament source mismatch' USING ERRCODE='42501';END IF;
+ roster_slug:=source_slug;
  legacy:=ctt_staff_private.batch_resolve_legacy_source(p_edition,d->>'document_id');
  op:=ctt_staff_private.batch_uuid('6ba7b811-9dad-11d1-80b4-00c04fd430c8'::uuid,'ctt-batch-capture:'||(ctx->>'tenant_id')||':'||p_edition::text||':'||(d->>'document_id'));
  sid:=CASE WHEN legacy->>'status' IN('pending','committed') THEN (legacy->>'legacy_session_id')::uuid ELSE ctt_staff_private.batch_uuid(op,'session') END;
+ -- Batch captures have their own durable provenance, independent of V1 admission.
+ prior:=jsonb_build_object('status','none');
+ SELECT jsonb_build_object('status',CASE WHEN
+   ci.operation_id=op AND ci.committed_result_id=c.result_id AND ci.committed_team_id=c.team_id
+   AND rr.result_id=c.result_id AND rr.team_id=c.team_id
+   AND m.capture_identity=ci.capture_identity AND m.attempt_id=c.attempt_id
+   AND m.document_id=d->>'document_id' AND m.source_payload_hash=d->>'source_payload_hash'
+   AND m.source_pages=d->'source_pages'
+   AND EXISTS(SELECT 1 FROM ctt_staff_private.capture_attempt_registry ar WHERE ar.attempt_id=c.attempt_id AND ar.kind='batch_v3')
+   AND (SELECT count(*) FROM ctt_staff_private.review_batch_page_consumptions pc WHERE pc.edition_id=p_edition AND pc.operation_id=op AND pc.attempt_id=c.attempt_id AND pc.result_id=c.result_id AND pc.team_id=c.team_id)=jsonb_array_length(d->'source_pages')
+   AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(d->'source_pages') pg WHERE NOT EXISTS(SELECT 1 FROM ctt_staff_private.review_batch_page_consumptions pc WHERE pc.edition_id=p_edition AND pc.pdf_sha256=pg->>'pdf_sha256' AND pc.pdf_page=(pg->>'pdf_page')::int AND pc.operation_id=op AND pc.attempt_id=c.attempt_id AND pc.result_id=c.result_id AND pc.team_id=c.team_id))
+   THEN 'committed' ELSE 'incomplete' END,
+   'tenant_id',ci.tenant_id,'edition_id',ci.edition_id,'document_id',ci.document_id,
+   'operation_id',ci.operation_id,'attempt_id',c.attempt_id,'result_id',c.result_id,'team_id',c.team_id,
+   'source_payload_hash',m.source_payload_hash,'source_pages',m.source_pages,'recorded_at',c.recorded_at)
+ INTO proof FROM ctt_staff_private.review_batch_capture_identities ci
+ LEFT JOIN ctt_staff_private.review_batch_consumptions c USING(capture_identity)
+ LEFT JOIN ctt_staff_private.review_batch_members m ON m.member_id=c.member_id
+ LEFT JOIN ctt_staff_private.capture_results rr ON rr.attempt_id=c.attempt_id
+ WHERE ci.tenant_id=ctx->>'tenant_id' AND ci.edition_id=p_edition AND ci.document_id=d->>'document_id'
+ AND (ci.committed_result_id IS NOT NULL OR ci.committed_team_id IS NOT NULL OR c.capture_identity IS NOT NULL);
+ IF proof IS NOT NULL THEN prior:=proof||jsonb_build_object('proof_hash',encode(public.digest(convert_to(proof::text,'UTF8'),'sha256'),'hex'));END IF;
  SELECT rd.id,rd.draft_version,rd.content_hash INTO current_draft FROM public.copa_telmex_registration_review_drafts rd WHERE rd.session_id=sid ORDER BY rd.draft_version DESC LIMIT 1;
  SELECT rs.status,rs.committed_team_id INTO current_session FROM public.copa_telmex_registration_review_sessions rs WHERE rs.id=sid;
- items:=items||jsonb_build_array(d||jsonb_build_object('operation_id',op,'session_id',sid,'legacy',legacy,'expected_draft_version',coalesce(current_draft.draft_version,0),'draft_version',coalesce(current_draft.draft_version,0)+1,'expected_draft_id',current_draft.id,'expected_content_hash',current_draft.content_hash,'session_status',current_session.status,'committed_team_id',current_session.committed_team_id));
+ items:=items||jsonb_build_array(d||jsonb_build_object('operation_id',op,'session_id',sid,'legacy',legacy,'prior_batch_capture',prior,'expected_draft_version',coalesce(current_draft.draft_version,0),'draft_version',coalesce(current_draft.draft_version,0)+1,'expected_draft_id',current_draft.id,'expected_content_hash',current_draft.content_hash,'session_status',current_session.status,'committed_team_id',current_session.committed_team_id));
  END LOOP;
- RETURN ctx||jsonb_build_object('documents',items);
+ RETURN ctx||jsonb_build_object('documents',items,'existing_photo_records',ctt_staff_private.review_existing_photos(roster_slug));
 END $fn$;
 
 CREATE FUNCTION ctt_staff_private.batch_expire_blocks(p_run uuid)
@@ -321,6 +346,13 @@ BEGIN
  -- The identity lock serializes with every canonical writer. Only after it is
  -- acquired and no result exists may a new lease fence the old worker.
  SELECT * INTO c FROM ctt_staff_private.review_batch_consents WHERE consent_id=b.consent_id;
+ IF b.status='paused' AND c.consent_id IS NOT NULL AND c.expires_at>clock_timestamp() THEN
+ -- Pausing fences the old child, but does not abandon its uncommitted member.
+ -- Queue it under the same block/attempt; only an explicit valid resume makes
+ -- batch_claim eligible to issue a fresh lease and child generation.
+ UPDATE ctt_staff_private.review_batch_jobs SET status='queued',worker_id=NULL,lease_until=NULL,updated_at=clock_timestamp() WHERE member_id=m.member_id;
+ UPDATE ctt_staff_private.review_batch_dispatch_slot SET member_id=NULL,worker_id=NULL,lease_until=NULL,lease_epoch=lease_epoch+1 WHERE singleton;
+ RETURN jsonb_build_object('status','recovered_uncommitted','attempt_id',p_attempt);END IF;
  IF b.status<>'active' OR c.expires_at<=clock_timestamp() THEN
  UPDATE ctt_staff_private.review_batch_jobs SET status='failed',lease_until=NULL WHERE member_id=m.member_id;
  UPDATE ctt_staff_private.review_batch_members SET status='ready' WHERE member_id=m.member_id AND status<>'committed';
@@ -681,12 +713,40 @@ CREATE TABLE ctt_staff_private.batch_writer_contexts(
  pg_top_xid xid8 NOT NULL,backend_pid integer NOT NULL,writer_role name NOT NULL,
  PRIMARY KEY(attempt_id,pg_top_xid)
 );
+-- Reuse the individual capture's canonical photo inventory, comparison and
+-- transaction lock. Gate reads pass false and must remain lock-free.
+CREATE FUNCTION ctt_staff_private.batch_assert_capture_photo_policy(p_plan jsonb,p_capture boolean)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
+DECLARE row_value jsonb;other jsonb;ordinal bigint;
+BEGIN
+ IF p_capture IS NULL OR jsonb_typeof(p_plan->'team') IS DISTINCT FROM 'object'
+ OR jsonb_typeof(p_plan->'players') IS DISTINCT FROM 'array'
+ OR nullif(p_plan->'team'->>'tournament_slug','') IS NULL
+ OR nullif(p_plan->'team'->>'id','') IS NULL THEN
+ RAISE EXCEPTION 'CTT batch photo policy input denied' USING ERRCODE='42501';END IF;
+ IF p_capture THEN
+ PERFORM ctt_staff_private.current_finality_writer();
+ IF NOT pg_try_advisory_xact_lock(1129600050,0) THEN
+ RAISE EXCEPTION 'CTT registration capture busy' USING ERRCODE='42501';END IF;
+ END IF;
+ FOR row_value,ordinal IN SELECT value,ordinality FROM jsonb_array_elements(p_plan->'players') WITH ORDINALITY LOOP
+ FOR other IN SELECT value FROM jsonb_array_elements(ctt_staff_private.review_existing_photos(p_plan->'team'->>'tournament_slug',(p_plan->'team'->>'id')::uuid))
+ UNION ALL SELECT value FROM jsonb_array_elements(p_plan->'players') WITH ORDINALITY earlier(value,position) WHERE position<ordinal LOOP
+ IF ctt_staff_private.review_photo_duplicate(row_value->>'photo_sha256',row_value->>'photo_ahash',other->>'photo_sha256',other->>'photo_ahash') THEN
+ RAISE EXCEPTION 'CTT batch duplicate photo unresolved' USING ERRCODE='42501';END IF;
+ END LOOP;END LOOP;
+END $fn$;
+
 CREATE FUNCTION ctt_staff_private.batch_consume_child(p_attempt uuid,p_auth uuid,p_worker uuid,p_epoch bigint)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $fn$
-DECLARE ctx jsonb;scope jsonb;ids uuid[];
+DECLARE ctx jsonb;scope jsonb;ids uuid[];plan jsonb;
 BEGIN
  PERFORM ctt_staff_private.current_finality_writer();
  ctx:=ctt_staff_private.batch_lock_child(p_attempt,p_auth,p_worker,p_epoch);
+ SELECT ctt_staff_private.batch_json(p.review_bytes) INTO plan
+ FROM ctt_staff_private.batch_capture_payloads p WHERE p.attempt_id=p_attempt AND p.authorization_id=p_auth;
+ IF plan IS NULL THEN RAISE EXCEPTION 'CTT batch staged payload absent' USING ERRCODE='42501';END IF;
+ PERFORM ctt_staff_private.batch_assert_capture_photo_policy(plan,true);
  INSERT INTO ctt_staff_private.batch_writer_contexts(attempt_id,authorization_id,pg_top_xid,backend_pid,writer_role)
  VALUES(p_attempt,p_auth,pg_current_xact_id(),pg_backend_pid(),session_user);
  SELECT ctt_staff_private.batch_json(decode(m.frozen_snapshot->>'scope_bytes','base64')) INTO scope
@@ -1069,6 +1129,8 @@ BEGIN
  SELECT f.database_identity INTO pin FROM ctt_staff_private.finality_database_identity f WHERE singleton FOR SHARE;
  SELECT decode(m.frozen_snapshot->>'validation_bytes','base64') INTO validation_bytes FROM ctt_staff_private.review_batch_members m WHERE m.attempt_id=p_attempt;
  IF pin IS NULL OR validation_bytes IS NULL THEN RAISE EXCEPTION 'CTT batch finality input denied' USING ERRCODE='42501';END IF;
+ PERFORM ctt_staff_private.batch_assert_capture_photo_policy(
+ (SELECT ctt_staff_private.batch_json(p.review_bytes) FROM ctt_staff_private.capture_payloads p WHERE p.attempt_id=p_attempt),true);
  RETURN QUERY SELECT pin,d.oid::bigint,pg_current_xact_id()::text,floor(extract(epoch FROM clock_timestamp()))::bigint,
  src.expires_at_seconds,ctt_staff_private.batch_json(validation_bytes) FROM pg_database d WHERE d.datname=current_database();
 END $fn$;
@@ -1277,7 +1339,9 @@ BEGIN
  AND ctt_staff_private.batch_assert_source_document(r.edition_id,m.manifest_sha256,m.document_id,m.source_payload_hash)
  AND ctt_staff_private.batch_assert_source_pages(m.manifest_sha256,m.document_id,m.source_pages)
  AND session_user<>'devnous_user' AND login.rolcanlogin AND NOT(login.rolsuper OR login.rolcreatedb OR login.rolcreaterole OR login.rolreplication OR login.rolbypassrls) AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members WHERE member=login.oid);
- IF answer IS NULL THEN RAISE EXCEPTION 'CTT batch committed finality context unavailable' USING ERRCODE='42501';END IF;RETURN answer;
+ IF answer IS NULL THEN RAISE EXCEPTION 'CTT batch committed finality context unavailable' USING ERRCODE='42501';END IF;
+ PERFORM ctt_staff_private.batch_assert_capture_photo_policy(ctt_staff_private.batch_json(decode(answer->>'review_bytes','base64')),false);
+ RETURN answer;
 END $fn$;
 
 -- Frozen evidence is append-only; only operational heads and lease rows mutate.

@@ -2624,6 +2624,144 @@ async def postcommit_correction(consent_case, analyzed):
     )
 
 
+async def assert_new_mixed_run_preserves_prior_captures(consent_case):
+    """Actual five canonical captures remain exclusions in a fresh six-source run."""
+    from devnous.copa_telmex.staff_batch_workflow import _canonical_snapshot
+
+    case, provider = consent_case["case"], consent_case["workflow"].sources
+    store, admin = case["store"], case["admin"]
+    account, edition = UUID(case["context"]["account_id"]), UUID(
+        case["context"]["edition_id"]
+    )
+    run = uuid4()
+    initial = copy.deepcopy(case["initial"])
+    initial["idempotency_key"] = str(uuid4())
+    initial["request_hash"] = digest(
+        {
+            k: initial[k]
+            for k in ("edition_id", "source_manifest_hashes", "idempotency_key")
+        }
+    )
+    for member in initial["members"]:
+        member["member_id"] = str(uuid5(run, member["document_id"]))
+    initial["input_hash"] = digest(
+        {k: v for k, v in initial.items() if k != "input_hash"}
+    )
+    await store.create_run(account, run, initial)
+    worker = uuid4()
+    lease = await store.claim_analysis(worker)
+    assert lease["run_id"] == str(run)
+    fresh = await store.preparation_context(
+        account, edition, initial["source_manifest_hashes"]
+    )
+    captured = [
+        s
+        for s in fresh["documents"]
+        if s["prior_batch_capture"]["status"] == "committed"
+    ]
+    assert len(captured) == 5
+    assert all(s["legacy"]["status"] == "none" for s in captured)
+    assert fresh["existing_photo_records"] == []
+    before = await admin.fetch(
+        "SELECT * FROM ctt_staff_private.capture_results ORDER BY attempt_id"
+    )
+    # Independently retained, source-bound observations can prepare the uncaptured
+    # source; the new run still requires its own sample, block and fresh UV consent.
+    from devnous.copa_telmex.staff_batch_source_service import (
+        PrivateBatchAnalysisCache,
+        analysis_identity,
+    )
+
+    provider = copy.copy(provider)
+    cache_root = case["cas"] / "new-mixed-run-cache"
+    cache_root.mkdir(mode=0o700)
+    provider.cache = PrivateBatchAnalysisCache(cache_root)
+    pending_source = next(
+        s for s in fresh["documents"] if s["prior_batch_capture"]["status"] == "none"
+    )
+    original = next(
+        m
+        for m in case["prepared_input"]["members"]
+        if m["document_id"] == pending_source["document_id"]
+    )
+    observation = copy.deepcopy(original["snapshot"]["analysis"])
+    source_index = (pending_source["source_pages"][0]["pdf_page"] - 1) // 2
+    name = case["observations"][source_index]["players"][0]["first_name"]
+    observation["players"][0]["first_name"] = name
+    observation["verification_input"]["proposed_fields"]["players.1.first_name"] = name
+    for reading in observation["verification_input"]["readings"]:
+        reading["fields"]["players.1.first_name"] = name
+    observation.update(auto_ready=True, issues=[])
+    provider.cache.retain(
+        analysis_identity(fresh["profile_hash"], pending_source), observation
+    )
+    private = await store.private_run(account, run)
+    analyzed = await provider.analyze(private)
+    assert sum(m["status"] == "already_captured" for m in analyzed["members"]) == 5
+    assert sum(m["status"] == "ready" for m in analyzed["members"]) == 1
+    analyzed["members"] = [_canonical_snapshot(m) for m in analyzed["members"]]
+    analyzed["input_hash"] = digest(
+        {k: v for k, v in analyzed.items() if k != "input_hash"}
+    )
+    result = await store.complete_preparation(
+        account, run, 1, worker, lease["lease_epoch"], analyzed
+    )
+    assert result["status"] == "prepared"
+    assert (await store.view(account, run))["counts"]["already_captured"] == 5
+    assert (
+        await admin.fetch(
+            "SELECT * FROM ctt_staff_private.capture_results ORDER BY attempt_id"
+        )
+        == before
+    )
+    assert await admin.fetchval("SELECT count(*) FROM public.copa_telmex_teams") == 5
+    # Missing durable consumption must never be treated as a successful exclusion.
+    async with admin.transaction():
+        # Superuser-only corruption simulation in disposable PostgreSQL; rolled back.
+        await admin.execute("SET LOCAL session_replication_role = replica")
+        await admin.execute(
+            "DELETE FROM ctt_staff_private.review_batch_consumptions "
+            "WHERE capture_identity=(SELECT capture_identity FROM "
+            "ctt_staff_private.review_batch_consumptions LIMIT 1)"
+        )
+        workflow_role = await admin.fetchval(
+            "SELECT service_role::text FROM ctt_staff_private.review_batch_services "
+            "WHERE kind='workflow'"
+        )
+        await admin.execute(
+            'SET LOCAL SESSION AUTHORIZATION "' + workflow_role.replace('"', '""') + '"'
+        )
+        incomplete = json.loads(
+            await admin.fetchval(
+                "SELECT ctt_staff_private.batch_source_context($1,$2,$3::jsonb)::text",
+                account,
+                edition,
+                json.dumps(initial["source_manifest_hashes"]),
+            )
+        )
+        assert (
+            sum(
+                s["prior_batch_capture"]["status"] == "incomplete"
+                for s in incomplete["documents"]
+            )
+            == 1
+        )
+        incomplete["run_id"] = str(run)
+        blocked = await provider.prepare_run(
+            incomplete, initial["source_manifest_hashes"]
+        )
+        assert any(
+            m["issues"] == [{"code": "BATCH_CAPTURE_IDENTITY_UNRESOLVED"}]
+            for m in blocked["members"]
+        )
+        # Test fixture only: rollback simulated corrupt proof after checking denial.
+        raise _PriorProofRollback()
+
+
+class _PriorProofRollback(Exception):
+    pass
+
+
 @pytest.mark.parametrize(
     "mode",
     [
@@ -3043,6 +3181,10 @@ def test_actual_source_run_analysis_lease_budget_and_exception_completion(
                     )
                     if mode == "capture_reprepare":
                         await postcommit_correction(consent_case, analyzed)
+                        with pytest.raises(_PriorProofRollback):
+                            await assert_new_mixed_run_preserves_prior_captures(
+                                consent_case
+                            )
                     return
                 from devnous.copa_telmex.staff_batch_authorization import (
                     BatchAuthorizationDenied,

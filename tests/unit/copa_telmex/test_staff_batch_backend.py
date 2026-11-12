@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -21,6 +22,68 @@ from devnous.copa_telmex.staff_batch_verification import (
     BatchPrivateVerifier,
     normalize_observation,
 )
+
+
+@pytest.mark.asyncio
+async def test_workflow_challenge_has_browser_public_key_options(monkeypatch):
+    from devnous.copa_telmex.staff_batch_workflow import BatchReviewWorkflowService
+
+    account, block, attempt = uuid4(), uuid4(), uuid4()
+    challenge, credential = bytes(range(32)), b"\xfb\xff\xfa\x00credential"
+    calls = []
+
+    class Store:
+        async def create_challenge(self, *args):
+            calls.append(args)
+            return {
+                "attempt_id": str(attempt),
+                "block_id": str(block),
+                "version": 3,
+                "status": "challenged",
+                "challenge": base64.b64encode(challenge).decode(),
+                "credential_id": base64.b64encode(credential).decode(),
+            }
+
+    def token_bytes(size):
+        assert size == 32
+        return challenge
+
+    monkeypatch.setattr(
+        "devnous.copa_telmex.staff_batch_workflow.secrets.token_bytes", token_bytes
+    )
+    provider = SimpleNamespace(
+        **{
+            name: lambda *args: None
+            for name in ("prepare_run", "analyze", "qualify", "source_page")
+        }
+    )
+    service = BatchReviewWorkflowService(
+        store=Store(),
+        source_provider=provider,
+        verifier=object(),
+        issuer=object(),
+        capture_adapter=object(),
+        worker_store=object(),
+        capture_enabled=True,
+    )
+    result = await service.challenge(
+        account, block, {"expected_block_version": 2, "confirmed": True}
+    )
+
+    assert calls[0][:3] == (account, block, 2)
+    assert calls[0][4] == challenge
+    assert result["attempt_id"] == str(attempt)
+    assert result["status"] == "challenged" and result["version"] == 3
+    assert "challenge" not in result and "credential_id" not in result
+    assert set(result["options"]) == {"publicKey"}
+    offered = result["options"]["publicKey"]
+    assert base64.urlsafe_b64decode(offered["challenge"] + "===") == challenge
+    allowed = offered["allowCredentials"]
+    assert len(allowed) == 1 and allowed[0]["type"] == "public-key"
+    assert base64.urlsafe_b64decode(allowed[0]["id"] + "===") == credential
+    assert offered["rpId"] == "sam.chat"
+    assert offered["userVerification"] == "required"
+    assert offered["timeout"] == 300000
 
 
 def test_native_date_normalization_does_not_repair_identity():

@@ -425,6 +425,9 @@ class BatchPlanBuilder(ReviewPlanBuilder):
                         )
                     )
                 evidence_members.append(evidence)
+        photo_inventory = context.get("existing_photo_records")
+        if photo_artifacts and type(photo_inventory) is not list:
+            raise BatchContractError("BATCH_PHOTO_INVENTORY_REQUIRED")
         incident_policy = _build_registration_incident_policy(
             {
                 "players": [
@@ -440,7 +443,9 @@ class BatchPlanBuilder(ReviewPlanBuilder):
             },
             minimum_roster=self._policy["minimum_roster_size"],
             photo_artifacts=photo_artifacts,
-            existing_photo_records=context.get("existing_photo_records", []),
+            existing_photo_records=(
+                photo_inventory if type(photo_inventory) is list else []
+            ),
         )
         blocking = sum(
             1
