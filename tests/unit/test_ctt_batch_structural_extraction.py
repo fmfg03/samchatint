@@ -578,7 +578,12 @@ async def test_cache_response_source_tampering_is_not_accepted(case):
     body["analysis"]["response"]["results"][0]["render_sha256"] = "b" * 64
     from devnous.copa_telmex.staff_batch_contracts import canonical
 
-    p.write_bytes(canonical(body))
+    original_mode = p.stat().st_mode & 0o777
+    p.chmod(0o600)
+    try:
+        p.write_bytes(canonical(body))
+    finally:
+        p.chmod(original_mode)
     obs, r = await case.analyzer.analyze(
         case.snapshot, context=case.context, store=case.store
     )
