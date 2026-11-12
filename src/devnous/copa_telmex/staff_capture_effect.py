@@ -17,10 +17,10 @@ import hmac
 import json
 import re
 from typing import Mapping
+from uuid import UUID
 
 from sqlalchemy import JSON
 from sqlalchemy.dialects import postgresql
-from uuid import UUID
 
 from .models import Player, Team, TeamStaff
 from .staff_capture_executor import CaptureDenied
@@ -129,6 +129,7 @@ def _freeze_capture_effect(
     player_source_refs: list[str],
     staff: list[Mapping],
     review_plan: bool,
+    _batch: bool = False,
 ) -> bytes:
     """Freeze exact rows and physical source mapping from protected review.
 
@@ -136,7 +137,10 @@ def _freeze_capture_effect(
     independently. Returned bytes are private and cannot authorize SQL alone.
     """
     try:
-        if type(scope) is not ReviewScope or len(players) != len(player_source_refs):
+        from .staff_batch_authorization import BatchReviewScope
+
+        expected_scope = BatchReviewScope if _batch else ReviewScope
+        if type(scope) is not expected_scope or len(players) != len(player_source_refs):
             raise ValueError("scope mismatch")
         team_row = _row(team, Team, review_plan)
         if (
@@ -145,9 +149,18 @@ def _freeze_capture_effect(
         ):
             raise ValueError("team mismatch")
         player_rows = [_row(row, Player, review_plan) for row in players]
-        slots = resolve_player_slots(
-            [{"slot_ref": ref} for ref in player_source_refs], scope
+        slots = (
+            _batch_player_slots(player_source_refs, scope)
+            if _batch
+            else resolve_player_slots(
+                [{"slot_ref": ref} for ref in player_source_refs], scope
+            )
         )
+        if _batch and any(
+            row["verified_by_human"] is not False or row["needs_review"] is not False
+            for row in player_rows
+        ):
+            raise ValueError("batch provenance mismatch")
         all_ids = [team_row["id"]]
         for row, source in zip(player_rows, slots):
             if (
@@ -215,7 +228,7 @@ def _freeze_capture_effect(
             ]:
                 for field in LATE_AUTHORITY_FIELDS:
                     del row[field]
-        context = json.loads(canonical_scope_bytes(scope))
+        context = json.loads(_scope_bytes(scope, batch=_batch))
         # These values are created from or after the effect. Excluding them
         # avoids a circular commitment; the final signed review binds both.
         for field in (
@@ -224,16 +237,22 @@ def _freeze_capture_effect(
             "review_receipt_id",
         ):
             context.pop(field, None)
-        if scope.decision_hash is not None:
+        if not _batch and scope.decision_hash is not None:
             # Preserve the existing v1 wire. New pre-receipt scopes bind
             # the preassigned operation within the reviewed plan itself.
             del context["operation_id"]
         return _canonical(
             {
                 "schema": (
-                    "ctt.capture.review-plan.v1"
+                    (
+                        "ctt.capture.review-plan.v3"
+                        if _batch
+                        else "ctt.capture.review-plan.v1"
+                    )
                     if review_plan
-                    else "ctt.capture.effect.v1"
+                    else (
+                        "ctt.capture.effect.v3" if _batch else "ctt.capture.effect.v1"
+                    )
                 ),
                 "review_context": context,
                 "column_schema_hash": "sha256:"
@@ -248,6 +267,14 @@ def _freeze_capture_effect(
                         "source_slot": slot.source_slot,
                         "pdf_page": slot.pdf_page,
                         "asset_id": str(slot.asset_id),
+                        **(
+                            {
+                                "page_index": slot.page_index,
+                                "pdf_sha256": slot.pdf_sha256,
+                            }
+                            if _batch
+                            else {}
+                        ),
                     }
                     for row, slot in zip(player_rows, slots)
                 ],
@@ -314,13 +341,14 @@ def bind_review_evidence(private_bytes: bytes, key: bytes) -> str:
     )
 
 
-def check_effect_follows_review(
+def _check_effect_follows_review(
     *,
     review_bytes: bytes,
     effect_bytes: bytes,
     scope: ReviewScope,
     review_key: bytes,
     authority_metadata: Mapping,
+    _batch: bool = False,
 ) -> None:
     """Require unchanged reviewed data plus exact verified authority metadata.
 
@@ -338,29 +366,31 @@ def check_effect_follows_review(
         final = json.loads(effect_bytes)
         if _canonical(plan) != review_bytes or _canonical(final) != effect_bytes:
             raise ValueError("noncanonical effect")
-        if (
-            plan["schema"] != "ctt.capture.review-plan.v1"
-            or final["schema"] != "ctt.capture.effect.v1"
+        if plan["schema"] != (
+            "ctt.capture.review-plan.v3" if _batch else "ctt.capture.review-plan.v1"
+        ) or final["schema"] != (
+            "ctt.capture.effect.v3" if _batch else "ctt.capture.effect.v1"
         ):
             raise ValueError("invalid stage")
-        context = json.loads(canonical_scope_bytes(scope))
+        context = json.loads(_scope_bytes(scope, batch=_batch))
         for field in (
             "staff_and_changes_binding",
             "decision_hash",
             "review_receipt_id",
         ):
             context.pop(field, None)
-        if scope.decision_hash is not None:
+        if not _batch and scope.decision_hash is not None:
             del context["operation_id"]
         if plan["review_context"] != context:
             raise ValueError("review scope changed")
-        rebuilt = freeze_capture_effect(
+        rebuilt = (freeze_capture_batch_effect if _batch else freeze_capture_effect)(
             scope=scope,
             team=final["team"],
             players=final["players"],
             staff=final["staff"],
             player_source_refs=[
-                f"page:{item['pdf_page']}:jugador_{item['source_slot']}"
+                f"page:{item['page_index'] if _batch else item['pdf_page']}:"
+                f"jugador_{item['source_slot']}"
                 for item in final["player_sources"]
             ],
         )
@@ -413,3 +443,71 @@ def check_effect_follows_review(
             raise ValueError("reviewed values changed")
     except Exception:
         raise CaptureDenied("capture denied") from None
+
+
+def _scope_bytes(scope, *, batch=False):
+    if batch:
+        from .staff_batch_authorization import canonical_batch_scope_bytes
+
+        return canonical_batch_scope_bytes(scope)
+    return canonical_scope_bytes(scope)
+
+
+def _batch_player_slots(refs, scope):
+    from types import SimpleNamespace
+
+    from .staff_batch_authorization import BatchReviewScope
+
+    if (
+        type(scope) is not BatchReviewScope
+        or type(refs) is not list
+        or not 1 <= len(refs) <= 35
+    ):
+        raise CaptureDenied("capture denied")
+    result, seen = [], set()
+    for index, ref in enumerate(refs, 1):
+        match = (
+            re.fullmatch(r"page:([1-4]):jugador_([1-9]|1[0-9]|20)", ref)
+            if type(ref) is str
+            else None
+        )
+        if match is None:
+            raise CaptureDenied("capture denied")
+        logical, slot = map(int, match.groups())
+        if (
+            logical > len(scope.source_pages)
+            or (logical == 1 and slot > 8)
+            or (logical > 1 and slot < 9)
+            or (logical, slot) in seen
+        ):
+            raise CaptureDenied("capture denied")
+        seen.add((logical, slot))
+        page = scope.source_pages[logical - 1]
+        result.append(
+            SimpleNamespace(
+                roster_index=index,
+                source_slot=slot,
+                pdf_page=page.pdf_page,
+                asset_id=page.asset_id,
+                page_index=logical,
+                pdf_sha256=page.pdf_sha256,
+            )
+        )
+    return tuple(result)
+
+
+def freeze_review_batch(**kwargs) -> bytes:
+    """Freeze a version-3 automatic plan; never accepts an individual scope."""
+    return _freeze_capture_effect(**kwargs, review_plan=True, _batch=True)
+
+
+def freeze_capture_batch_effect(**kwargs) -> bytes:
+    return _freeze_capture_effect(**kwargs, review_plan=False, _batch=True)
+
+
+def check_effect_follows_review(**kwargs) -> None:
+    return _check_effect_follows_review(**kwargs, _batch=False)
+
+
+def check_batch_effect_follows_review(**kwargs) -> None:
+    return _check_effect_follows_review(**kwargs, _batch=True)

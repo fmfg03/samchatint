@@ -11,7 +11,7 @@ import time
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import BigInteger, DateTime, Float, JSON, String, Text
+from sqlalchemy import JSON, BigInteger, DateTime, Float, String, Text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -242,6 +242,25 @@ class PendingCaptureWriter:
             nonce=nonce,
             review_bytes=review_bytes,
             effect_bytes=effect_bytes,
+            public_keys=self._public_keys,
+            review_key=self._review_key,
+            effect_key=self._effect_key,
+            photo_store=self._photo_store,
+        )
+
+
+class BatchPendingCaptureWriter(PendingCaptureWriter):
+    """Explicit V3 pending writer using the same exact row/boundary checks."""
+
+    async def persist(self, conn, *, member_proof_bytes, **authorization):
+        from .staff_batch_authorization import BatchReviewScope
+
+        if type(authorization.get("scope")) is not BatchReviewScope:
+            raise CaptureDenied("capture denied")
+        return await _persist_pending_capture(
+            conn,
+            **authorization,
+            member_proof_bytes=member_proof_bytes,
             public_keys=self._public_keys,
             review_key=self._review_key,
             effect_key=self._effect_key,

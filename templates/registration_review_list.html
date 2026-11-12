@@ -157,7 +157,10 @@
         <h2 style="margin: 0 0 8px;">Bandeja de precaptura</h2>
         <p style="margin: 0; color: #64748b;">Prioriza diferencias, bloqueos y expedientes pendientes antes de capturar.</p>
     </div>
-    <a href="/registration-review/new" class="btn">Nueva revisión</a>
+    <div class="review-card-actions">
+        <a href="/registration-review/new" class="btn">Nueva revisión</a>
+        {% if batch_review_enabled|default(false) %}<a href="/registration-review-batches/new" class="btn">Captura por lotes</a>{% endif %}
+    </div>
 </section>
 
 {% if sessions %}

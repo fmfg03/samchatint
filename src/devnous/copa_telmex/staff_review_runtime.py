@@ -26,8 +26,9 @@ def assemble_review_issuer(
     channel_key,
 ):
     """New ingress always retains its signed proof in the issuer transaction."""
-    from staff_review_issuer_v2 import PostgresReviewAssertionIssuer
     from staff_review_http_v2 import create_review_issuer_app
+    from staff_review_issuer_v2 import PostgresReviewAssertionIssuer
+
     from .staff_capture_transport_store import PostgresTransportNonces
 
     if issuer_pool is nonce_pool:
@@ -74,6 +75,7 @@ def assemble_review_workflow(
     """
     from staff_capture_gate_v2 import StaffCaptureGateV2
     from staff_review_enrollment_v2 import PasskeyEnrollmentService
+
     from .staff_review_plan_builder import ReviewPlanBuilder
 
     if (
@@ -122,3 +124,14 @@ def assemble_review_workflow(
             ),
         ),
     )
+
+
+def assemble_batch_review_runtime(**configuration):
+    """Compose the separately configured private batch process explicitly.
+
+    The individual review factory retains its original contract. A disabled
+    batch configuration returns None and performs no SQL or model calls.
+    """
+    from .staff_batch_runtime import assemble_batch_review_runtime as assemble
+
+    return assemble(**configuration)

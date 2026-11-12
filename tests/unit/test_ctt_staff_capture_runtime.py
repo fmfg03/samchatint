@@ -61,3 +61,59 @@ def test_untrusted_or_ambiguous_configuration_fails_closed(tmp_path, change):
         args["database_identity"] = None
     with pytest.raises(CaptureDenied):
         assemble_capture_runtime(**args)
+
+
+def test_explicit_batch_writer_wires_typed_verifier_and_separate_finality(tmp_path):
+    from devnous.copa_telmex.staff_batch_authorization import (
+        BatchAwareDecisionVerifier,
+        BatchAwareFinalityService,
+    )
+
+    args = configuration(tmp_path)
+    batch_finality = SimpleNamespace(
+        finalize_rows=lambda **_: None,
+        authorize_finality_effect=lambda **_: None,
+    )
+    args.update(
+        batch_enabled=True,
+        batch_private_source_root=tmp_path / "batch-sources",
+        batch_assertion_public_keys={"batch-issuer": b"z" * 32},
+        batch_finality_service=batch_finality,
+        request_timeout=60.0,
+    )
+    transport = assemble_capture_runtime(**args)
+    executor = transport._handler.__self__
+    assert type(executor._verifier) is BatchAwareDecisionVerifier
+    assert executor._store._batch_support is True
+    assert type(executor._store._final_writer._service) is BatchAwareFinalityService
+    assert transport._timeout == 60.0
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "fault", ["flag", "disabled", "source", "issuer", "finality", "collision", "pool"]
+)
+def test_incomplete_batch_writer_configuration_fails_closed(tmp_path, fault):
+    args = configuration(tmp_path)
+    args.update(
+        batch_enabled=True,
+        batch_private_source_root=tmp_path / "batch-sources",
+        batch_assertion_public_keys={"batch-issuer": b"z" * 32},
+        batch_finality_service=args["finality_service"],
+    )
+    if fault == "flag":
+        args["batch_enabled"] = 1
+    elif fault == "disabled":
+        args["batch_enabled"] = False
+    elif fault == "source":
+        args["batch_private_source_root"] = "relative"
+    elif fault == "issuer":
+        args["batch_assertion_public_keys"] = None
+    elif fault == "finality":
+        args["batch_finality_service"] = None
+    elif fault == "collision":
+        args["batch_assertion_public_keys"] = {"assertion": b"z" * 32}
+    else:
+        args["nonce_pool"] = args["capture_pool"]
+    with pytest.raises(CaptureDenied):
+        assemble_capture_runtime(**args)

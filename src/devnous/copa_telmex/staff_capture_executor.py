@@ -133,6 +133,10 @@ class StaffCaptureExecutor:
         if not signed_decision or len(signed_decision) > 65536:
             raise CaptureDenied("capture denied")
         decision = self._verifier.verify(signed_decision)
+        from .staff_batch_authorization import VerifiedBatchDecision
+
+        if type(decision) is VerifiedBatchDecision:
+            return await self._execute_batch(attempt_id, decision)
         if (
             not isinstance(decision, VerifiedDecision)
             or decision.attempt_id != attempt_id
@@ -168,5 +172,34 @@ class StaffCaptureExecutor:
                     not isinstance(result, CaptureResult)
                     or result.attempt_id != attempt_id
                 ):
+                    raise CaptureDenied("capture denied")
+                return result
+
+    async def _execute_batch(self, attempt_id, decision):
+        from .staff_batch_authorization import VerifiedBatchDecision
+
+        if (
+            type(decision) is not VerifiedBatchDecision
+            or decision.attempt_id != attempt_id
+        ):
+            raise CaptureDenied("capture denied")
+        async with self._store.transaction() as tx:
+            await tx.assert_prepared_transactions_disabled()
+            attempt = await tx.lock_batch_attempt(decision)
+            existing = await tx.completed_result(attempt_id)
+            if existing is not None:
+                if (
+                    type(existing) is not CaptureResult
+                    or existing.attempt_id != attempt_id
+                ):
+                    raise CaptureDenied("capture denied")
+                return existing
+            await tx.validate_batch_decision(decision, attempt)
+            with tx.open_batch_source(attempt) as source:
+                source.verify_unchanged()
+                await tx.consume_batch(decision)
+                result = await tx.capture_batch(attempt, source)
+                source.verify_unchanged()
+                if type(result) is not CaptureResult or result.attempt_id != attempt_id:
                     raise CaptureDenied("capture denied")
                 return result

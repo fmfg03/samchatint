@@ -1,0 +1,897 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zaubern.ai/schemas/evidence/samchat_registration_staff_contract_v3.schema.json",
+  "title": "Candidate SamChat protected batch staff evidence v3",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/rosterDecision"
+    },
+    {
+      "$ref": "#/$defs/finalityAttestation"
+    },
+    {
+      "$ref": "#/$defs/playerFinalityAttestation"
+    }
+  ],
+  "$defs": {
+    "rosterDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tenant_id",
+        "tournament_edition_id",
+        "tournament_slug",
+        "team_id",
+        "session_id",
+        "draft_id",
+        "draft_version",
+        "timestamp",
+        "policy_hash",
+        "event_type",
+        "decision_id",
+        "ordered_player_slots",
+        "ordered_player_field_decision_hashes",
+        "ordered_staff_slots",
+        "source_page_bindings",
+        "incident_state_hash",
+        "roster_draft_binding",
+        "decision",
+        "reason_codes",
+        "decision_hash",
+        "workflow_id",
+        "effective_sal",
+        "policy_id",
+        "policy_version",
+        "operation_id",
+        "attempt_id",
+        "authorization_id",
+        "member_proof_hash",
+        "batch_context_hash"
+      ],
+      "properties": {
+        "tenant_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,79}$"
+        },
+        "tournament_edition_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "tournament_slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,79}$"
+        },
+        "team_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "draft_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "draft_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d(?:\\.\\d+)?Z$"
+        },
+        "policy_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "event_type": {
+          "const": "samchat_registration_roster_decision_v3"
+        },
+        "decision_id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "ordered_player_slots": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 35
+          },
+          "uniqueItems": true
+        },
+        "ordered_player_field_decision_hashes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        },
+        "ordered_staff_slots": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "slot",
+                "role",
+                "staff_entry_binding",
+                "presence",
+                "source_page_hash",
+                "evidence_binding",
+                "review_decision_hash",
+                "field_decision_hashes"
+              ],
+              "properties": {
+                "slot": {
+                  "type": "integer",
+                  "enum": [
+                    1,
+                    2
+                  ]
+                },
+                "role": {
+                  "enum": [
+                    "director_tecnico",
+                    "auxiliar"
+                  ]
+                },
+                "staff_entry_binding": {
+                  "type": "string",
+                  "pattern": "^hmac-sha256:[a-f0-9]{64}$"
+                },
+                "presence": {
+                  "enum": [
+                    "PRESENT",
+                    "ABSENT"
+                  ]
+                },
+                "source_page_hash": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "evidence_binding": {
+                  "type": "string",
+                  "pattern": "^hmac-sha256:[a-f0-9]{64}$"
+                },
+                "review_decision_hash": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "field_decision_hashes": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "slot": {
+                        "const": 1
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "role": {
+                        "const": "director_tecnico"
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "slot": {
+                        "const": 2
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "role": {
+                        "const": "auxiliar"
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "presence": {
+                        "const": "ABSENT"
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "field_decision_hashes": {
+                        "maxItems": 0
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "field_decision_hashes": {
+                        "minItems": 1
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "slot",
+                "role",
+                "staff_entry_binding",
+                "presence",
+                "source_page_hash",
+                "evidence_binding",
+                "review_decision_hash",
+                "field_decision_hashes"
+              ],
+              "properties": {
+                "slot": {
+                  "type": "integer",
+                  "enum": [
+                    1,
+                    2
+                  ]
+                },
+                "role": {
+                  "enum": [
+                    "director_tecnico",
+                    "auxiliar"
+                  ]
+                },
+                "staff_entry_binding": {
+                  "type": "string",
+                  "pattern": "^hmac-sha256:[a-f0-9]{64}$"
+                },
+                "presence": {
+                  "enum": [
+                    "PRESENT",
+                    "ABSENT"
+                  ]
+                },
+                "source_page_hash": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "evidence_binding": {
+                  "type": "string",
+                  "pattern": "^hmac-sha256:[a-f0-9]{64}$"
+                },
+                "review_decision_hash": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                },
+                "field_decision_hashes": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^sha256:[a-f0-9]{64}$"
+                  }
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "slot": {
+                        "const": 1
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "role": {
+                        "const": "director_tecnico"
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "slot": {
+                        "const": 2
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "role": {
+                        "const": "auxiliar"
+                      }
+                    }
+                  }
+                },
+                {
+                  "if": {
+                    "properties": {
+                      "presence": {
+                        "const": "ABSENT"
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "field_decision_hashes": {
+                        "maxItems": 0
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "field_decision_hashes": {
+                        "minItems": 1
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "source_page_bindings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "minItems": 1
+        },
+        "incident_state_hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "roster_draft_binding": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[a-f0-9]{64}$"
+        },
+        "decision": {
+          "enum": [
+            "AUTHORIZE_PENDING_MATERIALIZATION",
+            "REQUIRE_ROSTER_REVIEW",
+            "DENY_ROSTER_MATERIALIZATION"
+          ]
+        },
+        "reason_codes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "CANDIDATE_POLICY_SATISFIED",
+              "FIELD_EVIDENCE_MISSING",
+              "HUMAN_APPROVAL_REQUIRED",
+              "STALE_GOVERNANCE_DECISION",
+              "BLOCKING_INCIDENT_PRESENT",
+              "STAFF_REVIEW_REQUIRED",
+              "STAFF_SCOPE_INVALID",
+              "STAFF_SOURCE_BINDING_MISMATCH",
+              "STAFF_FIELD_EVIDENCE_MISSING",
+              "STAFF_GEOMETRY_INVALID",
+              "STAFF_FINALITY_MISMATCH",
+              "STAFF_REVIEW_EXPIRED",
+              "STAFF_REVIEW_REVOKED",
+              "STAFF_REVIEW_ALREADY_USED",
+              "PREAUTHORIZATION_RECEIPT_INVALID",
+              "EVIDENCE_WRITE_FAILED_FAIL_CLOSED"
+            ]
+          }
+        },
+        "decision_hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "workflow_id": {
+          "const": "samchat_registration_identity_v2"
+        },
+        "effective_sal": {
+          "const": "SAL-3"
+        },
+        "policy_id": {
+          "const": "samchat_registration_identity_policy_v2"
+        },
+        "policy_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "operation_id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "authorization_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "member_proof_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "batch_context_hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      },
+      "allOf": [
+        {
+          "properties": {
+            "ordered_staff_slots": {
+              "prefixItems": [
+                {
+                  "properties": {
+                    "slot": {
+                      "const": 1
+                    }
+                  }
+                },
+                {
+                  "properties": {
+                    "slot": {
+                      "const": 2
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "finalityAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tenant_id",
+        "tournament_edition_id",
+        "tournament_slug",
+        "team_id",
+        "session_id",
+        "draft_id",
+        "draft_version",
+        "timestamp",
+        "policy_hash",
+        "event_type",
+        "attestation_id",
+        "staff_id",
+        "staff_entry_binding",
+        "staff_slot",
+        "staff_role",
+        "roster_draft_binding",
+        "preauthorization_receipt_id",
+        "database_transaction_id",
+        "cas_succeeded",
+        "provisional_row_binding",
+        "post_execution_row_binding",
+        "blocking_incident_count",
+        "decision",
+        "reason_codes",
+        "attestation_hash",
+        "workflow_id",
+        "effective_sal",
+        "policy_id",
+        "policy_version",
+        "operation_id",
+        "attempt_id"
+      ],
+      "properties": {
+        "tenant_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,79}$"
+        },
+        "tournament_edition_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "tournament_slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,79}$"
+        },
+        "team_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "draft_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "draft_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d(?:\\.\\d+)?Z$"
+        },
+        "policy_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "event_type": {
+          "const": "samchat_registration_staff_finality_attestation_v3"
+        },
+        "attestation_id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "staff_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "staff_entry_binding": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[a-f0-9]{64}$"
+        },
+        "staff_slot": {
+          "type": "integer",
+          "enum": [
+            1,
+            2
+          ]
+        },
+        "staff_role": {
+          "enum": [
+            "director_tecnico",
+            "auxiliar"
+          ]
+        },
+        "roster_draft_binding": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[a-f0-9]{64}$"
+        },
+        "preauthorization_receipt_id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "database_transaction_id": {
+          "type": "string",
+          "pattern": "^samchat-tx-[a-f0-9]{24}$"
+        },
+        "cas_succeeded": {
+          "type": "boolean"
+        },
+        "provisional_row_binding": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[a-f0-9]{64}$"
+        },
+        "post_execution_row_binding": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[a-f0-9]{64}$"
+        },
+        "blocking_incident_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decision": {
+          "enum": [
+            "ACTIVATE_STAFF",
+            "DENY_STAFF_ACTIVATION"
+          ]
+        },
+        "reason_codes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "CANDIDATE_POLICY_SATISFIED",
+              "FIELD_EVIDENCE_MISSING",
+              "HUMAN_APPROVAL_REQUIRED",
+              "STALE_GOVERNANCE_DECISION",
+              "BLOCKING_INCIDENT_PRESENT",
+              "STAFF_REVIEW_REQUIRED",
+              "STAFF_SCOPE_INVALID",
+              "STAFF_SOURCE_BINDING_MISMATCH",
+              "STAFF_FIELD_EVIDENCE_MISSING",
+              "STAFF_GEOMETRY_INVALID",
+              "STAFF_FINALITY_MISMATCH",
+              "STAFF_REVIEW_EXPIRED",
+              "STAFF_REVIEW_REVOKED",
+              "STAFF_REVIEW_ALREADY_USED",
+              "PREAUTHORIZATION_RECEIPT_INVALID",
+              "EVIDENCE_WRITE_FAILED_FAIL_CLOSED"
+            ]
+          }
+        },
+        "attestation_hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "workflow_id": {
+          "const": "samchat_registration_identity_v2"
+        },
+        "effective_sal": {
+          "const": "SAL-3"
+        },
+        "policy_id": {
+          "const": "samchat_registration_identity_policy_v2"
+        },
+        "policy_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "operation_id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "staff_slot": {
+                "const": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "staff_role": {
+                "const": "director_tecnico"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "staff_slot": {
+                "const": 2
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "staff_role": {
+                "const": "auxiliar"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "decision": {
+                "const": "ACTIVATE_STAFF"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "cas_succeeded": {
+                "const": true
+              },
+              "blocking_incident_count": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "playerFinalityAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tenant_id",
+        "tournament_edition_id",
+        "tournament_slug",
+        "team_id",
+        "session_id",
+        "draft_id",
+        "draft_version",
+        "timestamp",
+        "policy_hash",
+        "event_type",
+        "attestation_id",
+        "player_id",
+        "player_entry_binding",
+        "player_slot",
+        "roster_draft_binding",
+        "preauthorization_receipt_id",
+        "database_transaction_id",
+        "cas_succeeded",
+        "provisional_row_binding",
+        "post_execution_row_binding",
+        "blocking_incident_count",
+        "decision",
+        "reason_codes",
+        "attestation_hash",
+        "workflow_id",
+        "effective_sal",
+        "policy_id",
+        "policy_version",
+        "operation_id",
+        "attempt_id"
+      ],
+      "properties": {
+        "tenant_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,79}$"
+        },
+        "tournament_edition_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "tournament_slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,79}$"
+        },
+        "team_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "draft_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "draft_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d(?:\\.\\d+)?Z$"
+        },
+        "policy_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "event_type": {
+          "const": "samchat_registration_player_finality_attestation_v3"
+        },
+        "attestation_id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "roster_draft_binding": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[a-f0-9]{64}$"
+        },
+        "preauthorization_receipt_id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "database_transaction_id": {
+          "type": "string",
+          "pattern": "^samchat-tx-[a-f0-9]{24}$"
+        },
+        "cas_succeeded": {
+          "type": "boolean"
+        },
+        "provisional_row_binding": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[a-f0-9]{64}$"
+        },
+        "post_execution_row_binding": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[a-f0-9]{64}$"
+        },
+        "blocking_incident_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decision": {
+          "enum": [
+            "ACTIVATE_PLAYER",
+            "DENY_PLAYER_ACTIVATION"
+          ]
+        },
+        "reason_codes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "CANDIDATE_POLICY_SATISFIED",
+              "FIELD_EVIDENCE_MISSING",
+              "HUMAN_APPROVAL_REQUIRED",
+              "STALE_GOVERNANCE_DECISION",
+              "BLOCKING_INCIDENT_PRESENT",
+              "STAFF_REVIEW_REQUIRED",
+              "STAFF_SCOPE_INVALID",
+              "STAFF_SOURCE_BINDING_MISMATCH",
+              "STAFF_FIELD_EVIDENCE_MISSING",
+              "STAFF_GEOMETRY_INVALID",
+              "STAFF_FINALITY_MISMATCH",
+              "STAFF_REVIEW_EXPIRED",
+              "STAFF_REVIEW_REVOKED",
+              "STAFF_REVIEW_ALREADY_USED",
+              "PREAUTHORIZATION_RECEIPT_INVALID",
+              "EVIDENCE_WRITE_FAILED_FAIL_CLOSED"
+            ]
+          }
+        },
+        "attestation_hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "workflow_id": {
+          "const": "samchat_registration_identity_v2"
+        },
+        "effective_sal": {
+          "const": "SAL-3"
+        },
+        "policy_id": {
+          "const": "samchat_registration_identity_policy_v2"
+        },
+        "policy_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "operation_id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "player_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "player_slot": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 35
+        },
+        "player_entry_binding": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[a-f0-9]{64}$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "decision": {
+                "const": "ACTIVATE_PLAYER"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "cas_succeeded": {
+                "const": true
+              },
+              "blocking_incident_count": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timezone
 import hashlib
+from datetime import datetime, timezone
 from uuid import UUID
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from .staff_capture_effect import bind_review_plan, bind_capture_effect
+from .staff_capture_effect import bind_capture_effect, bind_review_plan
 from .staff_capture_finality_effect import (
+    BatchFinalityContext,
     FinalityContext,
     bind_finality_effect,
     canonical,
@@ -23,7 +24,7 @@ from .staff_capture_finality_effect import (
     verify_finality_bundle,
 )
 from .staff_governance_receipt import verify_staff_evidence_receipt
-from .staff_review_challenge import scope_hash
+from .staff_review_challenge import scope_hash as _individual_scope_hash
 from .staff_signed_assertion import verify_assertion
 
 DOMAIN = b"samchat.ctt.capture-finality-authorization.v1\x00"
@@ -62,6 +63,7 @@ def verify_pre_authorization(
 ):
     """Authenticate original issuance/roster; never trust a verified flag alone."""
     try:
+        batch = _is_batch(scope)
         if (
             type(preauthorization) is not dict
             or set(preauthorization)
@@ -74,11 +76,24 @@ def verify_pre_authorization(
                 "preauthorization_receipt",
                 "authority_metadata",
             }
+            | ({"batch_context"} if batch else set())
             or preauthorization["authorized"] is not True
-            or preauthorization["contract_version"] != "ctt-registration-staff-v2"
+            or preauthorization["contract_version"]
+            != (
+                "ctt-registration-staff-batch-v3"
+                if batch
+                else "ctt-registration-staff-v2"
+            )
         ):
             deny()
-        proof = verify_assertion(signed_review, public_keys=assertion_public_keys)
+        if batch:
+            from .staff_batch_authorization import BatchDecisionVerifier
+
+            proof = BatchDecisionVerifier(
+                assertion_public_keys, clock=lambda: now_seconds
+            ).verify(signed_review)
+        else:
+            proof = verify_assertion(signed_review, public_keys=assertion_public_keys)
         if (
             proof.attempt_id != attempt_id
             or proof.scope_hash != scope_hash(scope)
@@ -97,7 +112,11 @@ def verify_pre_authorization(
         ):
             deny()
         for name, value in {
-            "event_type": "samchat_registration_roster_decision_v2",
+            "event_type": (
+                "samchat_registration_roster_decision_v3"
+                if batch
+                else "samchat_registration_roster_decision_v2"
+            ),
             "tenant_id": scope.tenant_id,
             "tournament_edition_id": str(scope.edition_id),
             "tournament_slug": scope.tournament_slug,
@@ -113,6 +132,13 @@ def verify_pre_authorization(
         }.items():
             if canonical(event[name]) != canonical(value):
                 deny()
+        if batch and (
+            event.get("authorization_id") != str(proof.authorization_id)
+            or event.get("member_proof_hash") != proof.proof_sha256
+            or event.get("batch_context_hash")
+            != digest(preauthorization["batch_context"])
+        ):
+            deny()
         pending = parse(pending_effect_bytes)
         if canonical(event["ordered_player_slots"]) != canonical(
             [r["roster_index"] for r in pending["players"]]
@@ -196,7 +222,11 @@ def finality_authorization_body(
     effect_key,
 ):
     return {
-        "schema": "ctt.capture.finality-authorization.v1",
+        "schema": (
+            "ctt.capture.finality-authorization.v3"
+            if _is_batch(scope)
+            else "ctt.capture.finality-authorization.v1"
+        ),
         "kid": kid,
         "scope_hash": scope_hash(scope),
         "review_attempt_id": str(protected_context.review_attempt_id),
@@ -237,7 +267,9 @@ def check_finality_effect(
 ):
     """Recompute effect and references from immutable input and signed receipts."""
     try:
-        if type(protected_context) is not FinalityContext:
+        if type(protected_context) is not (
+            BatchFinalityContext if _is_batch(scope) else FinalityContext
+        ):
             deny()
         protected_context.verify(
             scope, protected_context.review_attempt_id, now_seconds=now_seconds
@@ -261,7 +293,10 @@ def check_finality_effect(
             deny()
         # Reuse the existing complete material comparison with the verified
         # metadata; finality never weakens the original PENDING authority.
-        from .staff_capture_effect import check_effect_follows_review
+        from .staff_capture_effect import (
+            check_batch_effect_follows_review,
+            check_effect_follows_review,
+        )
 
         event, receipt = (
             preauthorization["roster_decision"],
@@ -278,7 +313,11 @@ def check_finality_effect(
             for row in pending["players"]
             + [s["row"] for s in pending["staff"] if s["row"] is not None]
         }
-        check_effect_follows_review(
+        (
+            check_batch_effect_follows_review
+            if _is_batch(scope)
+            else check_effect_follows_review
+        )(
             review_bytes=review_bytes,
             effect_bytes=pending_effect_bytes,
             scope=scope,
@@ -393,7 +432,7 @@ def verify_capture_finality_authorization(
         ):
             deny()
         Ed25519PublicKey.from_public_bytes(public_keys[body["kid"]]).verify(
-            signature, DOMAIN + canonical(body)
+            signature, finality_authorization_domain(scope) + canonical(body)
         )
         records = check_finality_effect(
             scope=scope,
@@ -428,3 +467,25 @@ def verify_capture_finality_authorization(
         return "sha256:" + hashlib.sha256(envelope).hexdigest()
     except Exception:
         deny()
+
+
+def _is_batch(scope):
+    from .staff_batch_authorization import BatchReviewScope
+
+    return type(scope) is BatchReviewScope
+
+
+def scope_hash(scope):
+    if _is_batch(scope):
+        from .staff_batch_authorization import batch_scope_hash
+
+        return batch_scope_hash(scope)
+    return _individual_scope_hash(scope)
+
+
+def finality_authorization_domain(scope):
+    return (
+        b"samchat.ctt.capture-finality-authorization.v3\0"
+        if _is_batch(scope)
+        else DOMAIN
+    )

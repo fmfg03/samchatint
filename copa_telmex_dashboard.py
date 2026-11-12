@@ -240,6 +240,11 @@ from devnous.copa_telmex.registration_review_policy import (
     _birth_date_has_two_digit_year,
 )
 from devnous.copa_telmex.staff_review_routes import register_staff_review_routes
+from devnous.copa_telmex.staff_batch_routes import register_staff_batch_routes
+from devnous.copa_telmex.staff_batch_public_runtime import (
+    configure_batch_review_client,
+    close_batch_review_client,
+)
 from devnous.copa_telmex.staff_review_operations_channel import (
     StaffReviewClientSettings,
     configure_staff_review_client,
@@ -2258,6 +2263,11 @@ def _review_public_path(image_path: str) -> str:
 
 
 def _review_asset_public_url(asset: RegistrationReviewAsset) -> Optional[str]:
+    if re.fullmatch(r"ctt-cas-v2:[0-9a-f]{64}", asset.image_path or ""):
+        return (
+            f"/api/registration-review-batches/sessions/{asset.session_id}"
+            f"/assets/{asset.id}"
+        )
     original = Path(asset.image_path)
     active = _current_review_asset_path(asset.image_path)
     if active != original:
@@ -4344,6 +4354,21 @@ async def copa_telmex_spa(path: str = ""):
 @app.on_event("startup")
 async def startup_event():
     """Startup event - test database connection and create tables"""
+    batch_enabled = os.getenv("CTT_BATCH_REVIEW_ENABLED", "0")
+    if batch_enabled not in {"0", "1"}:
+        raise ValueError("CTT_BATCH_REVIEW_ENABLED must be 0 or 1")
+    configure_batch_review_client(
+        app,
+        StaffReviewClientSettings(
+            enabled=batch_enabled == "1",
+            base_url=os.getenv("CTT_BATCH_REVIEW_URL", ""),
+            key_path=(
+                Path(os.environ["CTT_BATCH_REVIEW_KEY_PATH"])
+                if batch_enabled == "1" and os.getenv("CTT_BATCH_REVIEW_KEY_PATH")
+                else None
+            ),
+        ),
+    )
     enabled = os.getenv("CTT_STAFF_REVIEW_ENABLED", "0")
     if enabled not in {"0", "1"}:
         raise ValueError("CTT_STAFF_REVIEW_ENABLED must be 0 or 1")
@@ -4399,6 +4424,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Shutdown event - stop SAT jobs and close database connections"""
+    await close_batch_review_client(app)
     await close_staff_review_client(app)
     try:
         await shutdown_background_jobs()
@@ -7894,6 +7920,20 @@ async def delete_team(team_id: str, request: Request):
     )
 
 
+_staff_batch_routes = register_staff_batch_routes(
+    app,
+    templates=templates,
+    ensure_access=_ensure_registration_review_access,
+    actor_from_request=_review_session_actor,
+    refresh_actor=_refresh_review_actor,
+    session_factory=async_session_maker,
+    client_resolver=lambda request: getattr(
+        request.app.state, "ctt_batch_review_client", None
+    ),
+    expected_origin="https://sam.chat",
+)
+
+
 _staff_review_routes = register_staff_review_routes(
     app,
     ensure_access=_ensure_registration_review_access,
@@ -7905,6 +7945,33 @@ _staff_review_routes = register_staff_review_routes(
     ),
     expected_origin="https://sam.chat",
 )
+
+
+@app.get(
+    "/api/registration-review-batches/sessions/{session_id}/assets/{asset_id}",
+    include_in_schema=False,
+)
+async def serve_batch_review_asset(request: Request, session_id: UUID, asset_id: UUID):
+    """Proxy source bytes only after fresh account and private membership checks."""
+    client, account, _ = await _staff_batch_routes._catalog_context(request)
+    raw = await _staff_batch_routes._call(
+        client, "source_asset", account, session_id, asset_id
+    )
+    if (
+        type(raw) is not bytes
+        or not raw.startswith(b"\x89PNG\r\n\x1a\n")
+        or not 0 < len(raw) <= 24 * 1024 * 1024
+    ):
+        raise HTTPException(status_code=503, detail="Source unavailable")
+    return Response(
+        raw,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "no-store, private",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+        },
+    )
 
 
 async def _protected_staff_review_context(request: Request, session_id: str) -> dict:

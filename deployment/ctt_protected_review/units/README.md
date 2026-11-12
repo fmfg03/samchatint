@@ -57,3 +57,88 @@ hardening or OS isolation: verify rendered units under the actual service users,
 filesystem modes, key denials, bind addresses, graceful stop and workflow smoke.
 No key generation, policy adoption, invitation, source admission or team capture
 is authorized by rendering a unit. Keep their independent operational records.
+
+The optional V3 candidate adds `ctt-review-batch-workflow.service.in`. It is an
+inactive template under the existing private workflow `ctt-review` UID. Rendering
+or importing it does not create an account, admit any SQL service/capability, seed a key or
+start a process. The public app and the individual workflow retain their prior
+identities. The operator must separately arrange the sealed directories and
+transport/photo group access before selecting this template.
+
+Its configuration uses `schema=ctt.protected-runtime.v2` and
+`role=batch-workflow`. Exact fields are enforced by `runtime.ROLE_FIELDS`; the
+capture-specific fields are required only with `capture_enabled=true`.
+`profile_path/profile_hash` and the `policy_paths` raw-hash-to-file mapping pin
+actual admitted artifacts. There is no wildcard or pilot-policy fallback.
+Workflow, verifier, worker and channel nonce DSNs must name separate roles.
+The workflow contains only the independent issuer URL/channel key and public
+pins; issuer DSN/seed fields are rejected. The existing issuer UID alone loads
+the explicit batch issuer extension (its own SQL role/seed/channel/verifier
+pins) and mounts the typed consent/child RPC. All channel/signing domains
+remain separate. `retained_analysis_only=true` replays retained, source-bound
+analysis. Explicit false additionally requires a pinned layout, sealed cache,
+provider snapshot, complete price quote and admitted budget; it never falls
+back to an unconfigured provider. Existing credential reuse was approved on
+2026-11-10. The shared US$25 consumption ceiling and pre-document observation
+adjustment were approved on 2026-11-12; neither approval provisions a runtime
+identity or admits source/profile artifacts by itself.
+
+The existing writer remains V2 unless all five `BATCH_WRITER_FIELDS` are
+explicitly provided with `batch_enabled=true`. Its extra V3 finality client uses
+`/v3/staff-review/batch-finality/` and a separate key/MAC domain. The V2 client,
+URL, scope parser and signature rules remain unchanged. The new gate loads
+committed staged batch inputs through a lock-free MVCC read on its own private
+pool, opens its own source bundle and recounts incidents. It receives no signer
+key from the writer and accepts no wire CAS/human-review flag. The writer still
+rechecks actual authority, finality and canonical consumption in its own
+per-team transaction. A receipt is never evidence that SQL committed.
+
+Run `python -m deployment.ctt_protected_review.runtime --config <sealed-file>
+--check` for local file/pin validation. That check opens no database/listener.
+Only an explicitly selected process run opens pools and starts its background
+loops; production promotion, source/capability admission and human consent are
+separate steps and are not performed by these templates.
+
+
+### Private source observation before document admission
+
+The same private workflow launcher has an explicit one-shot
+`--prepare-sources <UUID>` mode. It uses only its existing verifier SQL pool,
+opens no listener, starts no capture dispatcher and requires no issuer/writer
+keys. Its sealed configuration has exactly:
+
+```json
+{
+  "schema": "ctt.protected-runtime.v2",
+  "role": "batch-workflow",
+  "expected_uid": 1234,
+  "public_uid": 5678,
+  "backend_pin": "<operator-selected-backend>",
+  "verifier_dsn_file": "/<sealed-verifier-dsn-file>",
+  "capture_enabled": false,
+  "preparation_only": true
+}
+```
+
+The numeric IDs and path above are placeholders, not identities or grants.
+This minimal mode configuration is rejected by the regular listener launcher.
+Use private directories already created by the operator:
+
+```text
+python -m deployment.ctt_protected_review.runtime --config <sealed-file> --prepare-sources <preparation-uuid> --inventory-root <private-inventory> --preparation-cache-root <private-cache> --preparation-output-root <separate-private-export> --check
+```
+
+`--check` performs only local validation; it does not prove SQL admission.
+Without `--check`, SQL must resolve the exact admitted inventory/profile/quote
+and shared budget before the existing API credential can be read. The quote
+and all source hashes are checked, requests use Standard (`default`) with zero
+automatic retries, unknown costs keep their entire reservation, and completed
+observations recover without another SDK construction or request.
+
+The private export contains source-inventory.json, source-observations.json,
+structural-profile.json and source-preparation-report.json. The offline
+manifest CLI consumes those exact artifacts. Its output remains a proposal;
+no source admission, capture capacity, sample activation or team is created.
+The shared budget binding for a later extraction run requires the exact bytes
+of that run's actual extraction profile, its hash and pricing matching the
+same admitted quote. No rollover is created by a new preparation or run.
