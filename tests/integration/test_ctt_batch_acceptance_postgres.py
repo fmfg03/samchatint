@@ -1768,6 +1768,7 @@ async def canonical_captures(
     rollback=False,
     revoke_race=False,
     manual_photo=False,
+    reprepare=False,
 ):
     ("Use real signed Bus events, Unix transport and canonical owner " "writer.")
     import os
@@ -1934,7 +1935,7 @@ async def canonical_captures(
                 await revocation_commit_race(consent_case, adapter, writer_errors)
                 return
             job, child = consent_case["job"], consent_case["child"]
-            capture_count = 5 if manual_photo else case["team_count"]
+            capture_count = 5 if manual_photo or reprepare else case["team_count"]
             for number in range(capture_count):
                 if rollback and number == 1:
                     await admin.execute(
@@ -2050,13 +2051,14 @@ async def canonical_captures(
                 await manual_photo_after_first_block(
                     consent_case, adapter, writer_errors
                 )
+        expected_count = 5 if reprepare else case["team_count"]
         assert (
             await admin.fetchval("SELECT count(*) FROM public.copa_telmex_players")
-            == case["team_count"] * case["player_count"]
+            == expected_count * case["player_count"]
         )
         assert (
             await admin.fetchval("SELECT count(*) FROM public.copa_telmex_team_staff")
-            == case["team_count"] * 2
+            == expected_count * 2
         )
         assert (
             await admin.fetchval(
@@ -2071,19 +2073,19 @@ async def canonical_captures(
             await admin.fetchval(
                 "SELECT count(*) FROM ctt_staff_private.capture_results"
             )
-            == case["team_count"]
+            == expected_count
         )
         assert (
             await admin.fetchval(
                 "SELECT count(*) FROM " "ctt_staff_private.review_batch_consumptions"
             )
-            == case["team_count"]
+            == expected_count
         )
         assert (
             await admin.fetchval(
                 "SELECT count(*) FROM ctt_staff_private.review_batch_page_consumptions"
             )
-            == case["team_count"] * 2
+            == expected_count * 2
         )
         if case.get("pagination"):
             await assert_paginated_reconciliation(consent_case)
@@ -2630,7 +2632,8 @@ async def postcommit_correction(consent_case, analyzed):
         "capture",
         "capture_rpc",
         "capture_supplied_photos",
-        "capture_pagination",
+        # The full 1,008-row acceptance measured 258s before coverage overhead.
+        pytest.param("capture_pagination", marks=pytest.mark.timeout(900)),
         "capture_mixed",
         "capture_manual_photo",
         "capture_revoke_race",
@@ -3035,6 +3038,7 @@ def test_actual_source_run_analysis_lease_budget_and_exception_completion(
                         },
                         revoke_race=mode == "capture_revoke_race",
                         manual_photo=mode == "capture_manual_photo",
+                        reprepare=mode == "capture_reprepare",
                         rollback=mode == "capture_rollback",
                     )
                     if mode == "capture_reprepare":
