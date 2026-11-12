@@ -1,0 +1,379 @@
+--- a/src/devnous/gastos/routes/batisenal_pilot_routes.py
++++ b/src/devnous/gastos/routes/batisenal_pilot_routes.py
+@@ -40 +40 @@
+-def html(body, status=200):
++def html(body, status=200, *, form_page=False):
+@@ -50 +50,22 @@
+-        headers=SAFE_HEADERS,
++        # Preserve native Origin on same-origin form navigation. Do not change
++        # the policy on errors, redirects, metadata or token responses.
++        headers={**SAFE_HEADERS, "Referrer-Policy": "same-origin"}
++        if form_page else SAFE_HEADERS,
++    )
++
++
++def private_empty_message(permission):
++    """Describe the visibility state without asserting whether a draft exists."""
++    if permission.startswith("Revocada;"):
++        return (
++            "El contenido privado no se muestra porque esta conexión está revocada. "
++            "Esta vista no indica que las propuestas se hayan eliminado."
++        )
++    if permission.startswith("Vencida;"):
++        return (
++            "El contenido privado no se muestra porque esta conexión ha vencido. "
++            "Esta vista no indica que las propuestas se hayan eliminado."
++        )
++    return (
++        "Aún no hay una propuesta privada. "
++        "Puedes continuar y volver a consultar aquí."
+@@ -333 +354 @@
+-            + '/case">Ahora no · conservar mi consulta</a>'
++            + '/case">Ahora no · conservar mi consulta</a>', form_page=True
+@@ -381 +402 @@
+-                + '/case">Cancelar conexión · conservar consulta y trabajo</a>'
++                + '/case">Cancelar conexión · conservar consulta y trabajo</a>', form_page=True
+@@ -503 +524,3 @@
+-            body += "<p>Aún no hay una propuesta privada. Puedes continuar y volver a consultar aquí.</p>"
++            body += (
++                "<p>" + escape(private_empty_message(detail["pilot_permission"])) + "</p>"
++            )
+@@ -523 +546 @@
+-        return html(body)
++        return html(body, form_page=True)
+--- /dev/null
++++ b/src/samchat/batisenal_transport/framing.py
+@@ -0,0 +1,179 @@
++"""Bounded modern MCP framing; metadata never supplies identity or authority.
++
++Supports the 2026-07-28 core request envelope. Optional extensions not explicitly
++implemented are rejected, not forwarded to domain handlers. No network or state.
++"""
++
++import base64
++import binascii
++import re
++
++PROTOCOL = "2026-07-28"
++VERSION = "io.modelcontextprotocol/protocolVersion"
++CLIENT = "io.modelcontextprotocol/clientInfo"
++CAPABILITIES = "io.modelcontextprotocol/clientCapabilities"
++LOG_LEVEL = "io.modelcontextprotocol/logLevel"
++META_FIELDS = {VERSION, CLIENT, CAPABILITIES, LOG_LEVEL, "progressToken"}
++LOG_LEVELS = {
++    "debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"
++}
++SERVER_INFO = {"name": "samchat-batisenal-candidate", "version": "0.1.1"}
++LABEL = r"[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
++EXTENSION_KEY = (
++    rf"{LABEL}(?:\.{LABEL})*/(?:[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?)?"
++)
++
++
++class ProtocolError(ValueError):
++    def __init__(self, code, rpc_code, *, status=400, data=None):
++        super().__init__(code)
++        self.code, self.rpc_code, self.status, self.data = code, rpc_code, status, data
++
++
++def invalid():
++    raise ProtocolError("INVALID_ARGUMENTS", -32602)
++
++
++def header_error():
++    raise ProtocolError("HeaderMismatch", -32020)
++
++
++def field_text(value):
++    return isinstance(value, str) and 0 < len(value) <= 2048
++
++
++def header_value(headers, name, *, encoded=False, required=True):
++    """Take raw ASGI pairs so duplicate headers cannot select another value."""
++    values = [v for k, v in headers if k.lower() == name.encode("ascii")]
++    if not values and not required:
++        return None
++    if len(values) != 1:
++        header_error()
++    try:
++        value = values[0].decode("ascii")
++    except UnicodeError:
++        header_error()
++    if (
++        not value or len(value) > 4096 or value.strip() != value
++        or any(ord(c) < 32 or ord(c) > 126 for c in value)
++    ):
++        header_error()
++    if encoded and value.startswith("=?base64?") and value.endswith("?="):
++        try:
++            return base64.b64decode(value[9:-2], validate=True).decode("utf-8")
++        except (ValueError, UnicodeError, binascii.Error):
++            header_error()
++    return value
++
++
++def validate_client_info(value):
++    if not isinstance(value, dict) or not {"name", "version"} <= set(value):
++        invalid()
++    text_fields = {"name", "version", "title", "description", "websiteUrl"}
++    if set(value) - text_fields - {"icons"}:
++        invalid()
++    if any(not isinstance(v, str) for k, v in value.items() if k in text_fields):
++        invalid()
++    if "icons" in value:
++        if not isinstance(value["icons"], list):
++            invalid()
++        for icon in value["icons"]:
++            if (
++                not isinstance(icon, dict) or "src" not in icon
++                or set(icon) - {"src", "mimeType", "sizes", "theme"}
++                or any(not isinstance(v, str) for k, v in icon.items() if k != "sizes")
++                or ("theme" in icon and icon["theme"] not in {"light", "dark"})
++                or ("sizes" in icon and (
++                    not isinstance(icon["sizes"], list)
++                    or any(not isinstance(v, str) for v in icon["sizes"])
++                ))
++            ):
++                invalid()
++    # websiteUrl/icons are descriptive strings only. Never fetch or log them.
++
++
++def validate_capabilities(value):
++    if not isinstance(value, dict) or set(value) - {
++        "roots", "sampling", "elicitation", "experimental", "extensions"
++    }:
++        invalid()
++    for key, entry in value.items():
++        if not isinstance(entry, dict):
++            invalid()
++        if key == "roots" and entry:
++            invalid()
++        if key == "sampling" and set(entry) - {"context", "tools"}:
++            invalid()
++        if key == "elicitation" and set(entry) - {"form", "url"}:
++            invalid()
++        if key != "roots" and any(not isinstance(v, dict) for v in entry.values()):
++            invalid()
++        if key == "extensions" and any(
++            not re.fullmatch(EXTENSION_KEY, name)
++            for name in entry
++        ):
++            invalid()
++    # Declarations are ignored; no sampling, roots, elicitation or extension
++    # handler is activated, and no capability is inherited across requests.
++
++
++def normalize_request(message, headers):
++    """Return a new domain envelope after validating modern transport metadata."""
++    version_header = header_value(headers, "mcp-protocol-version")
++    params = message.get("params", {})
++    meta = params.get("_meta")
++    requested = meta.get(VERSION) if isinstance(meta, dict) else None
++    if requested is not None and requested != version_header:
++        header_error()
++    if version_header != PROTOCOL:
++        if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", version_header):
++            header_error()
++        raise ProtocolError(
++            "Unsupported protocol version", -32022,
++            data={"supported": [PROTOCOL], "requested": version_header},
++        )
++    if not isinstance(meta, dict) or set(meta) - META_FIELDS:
++        invalid()
++    if not {VERSION, CAPABILITIES} <= set(meta) or requested != PROTOCOL:
++        invalid()
++    validate_capabilities(meta[CAPABILITIES])
++    if CLIENT in meta:
++        validate_client_info(meta[CLIENT])
++    if LOG_LEVEL in meta and (
++        not isinstance(meta[LOG_LEVEL], str) or meta[LOG_LEVEL] not in LOG_LEVELS
++    ):
++        invalid()
++    if "progressToken" in meta and type(meta["progressToken"]) not in (str, int, float):
++        invalid()
++    if "id" not in message or message["id"] is None:
++        raise ProtocolError("INVALID_REQUEST", -32600)
++    method = message["method"]
++    if header_value(headers, "mcp-method") != method:
++        header_error()
++    clean = {k: v for k, v in params.items() if k != "_meta"}
++    name_field = {
++        "tools/call": "name", "prompts/get": "name", "resources/read": "uri"
++    }.get(method)
++    if name_field:
++        if not field_text(clean.get(name_field)):
++            invalid()
++        if header_value(headers, "mcp-name", encoded=True) != clean[name_field]:
++            header_error()
++    elif header_value(headers, "mcp-name", required=False) is not None:
++        header_error()
++    if method in {"server/discover", "ping", "tools/list"} and clean:
++        # No pagination cursor is issued by this finite, single-page catalog.
++        invalid()
++    if method == "tools/call" and (
++        set(clean) != {"name", "arguments"} or not isinstance(clean["arguments"], dict)
++    ):
++        invalid()
++    return {**message, "params": clean}
++
++
++def modern_result(result, *, cacheable=False):
++    """Enrich transport fields only; never cache account-bound results publicly."""
++    enriched = {**result, "resultType": "complete"}
++    if cacheable:
++        enriched.update(ttlMs=0, cacheScope="private")
++    return enriched
+--- a/src/samchat/batisenal_transport/http.py
++++ b/src/samchat/batisenal_transport/http.py
+@@ -14 +14 @@
+-from starlette.responses import JSONResponse, Response
++from starlette.responses import JSONResponse
+@@ -18,0 +19,8 @@
++from .framing import (
++    PROTOCOL,
++    SERVER_INFO,
++    ProtocolError,
++    modern_result,
++    normalize_request,
++)
++
+@@ -20 +27,0 @@
+-PROTOCOL = "2026-07-28"
+@@ -90,2 +96,0 @@
+-            if request.headers.get("mcp-protocol-version", PROTOCOL) != PROTOCOL:
+-                raise BatisenalError("PROTOCOL_UNSUPPORTED", 400)
+@@ -117,0 +123,2 @@
++            msg = normalize_request(msg, request.scope["headers"])
++            params = msg["params"]
+@@ -126,5 +133 @@
+-            if "id" not in msg:
+-                if method != "notifications/initialized" or params:
+-                    raise BatisenalError("INVALID_REQUEST")
+-                return Response(status_code=202, headers=HEADERS)
+-            if method in {"initialize", "server/discover", "ping"}:
++            if method in {"server/discover", "ping"}:
+@@ -135,9 +138 @@
+-                if method == "initialize":
+-                    if (
+-                        params.get("protocolVersion") != PROTOCOL
+-                        or set(params)
+-                        != {"protocolVersion", "capabilities", "clientInfo"}
+-                        or not isinstance(params["capabilities"], dict)
+-                        or not isinstance(params["clientInfo"], dict)
+-                    ):
+-                        raise BatisenalError("PROTOCOL_UNSUPPORTED")
++                if method == "server/discover":
+@@ -145,12 +139,0 @@
+-                        "protocolVersion": PROTOCOL,
+-                        "capabilities": capabilities,
+-                        "serverInfo": {
+-                            "name": "samchat-batisenal-candidate",
+-                            "version": "0.1.0",
+-                        },
+-                    }
+-                elif method == "server/discover":
+-                    if params:
+-                        raise BatisenalError("INVALID_ARGUMENTS")
+-                    result = {
+-                        "resultType": "complete",
+@@ -158,0 +142 @@
++                        "_meta": {"io.modelcontextprotocol/serverInfo": SERVER_INFO},
+@@ -161,2 +144,0 @@
+-                    if params:
+-                        raise BatisenalError("INVALID_ARGUMENTS")
+@@ -177,0 +160,7 @@
++                if "result" in response:
++                    response = {
++                        **response,
++                        "result": modern_result(
++                            response["result"], cacheable=method == "tools/list"
++                        ),
++                    }
+@@ -182 +171 @@
+-                raise BatisenalError("METHOD_NOT_AVAILABLE")
++                raise ProtocolError("Method not found", -32601, status=404)
+@@ -185 +174,8 @@
+-                {"jsonrpc": "2.0", "id": identifier, "result": result}, headers=HEADERS
++                {
++                    "jsonrpc": "2.0",
++                    "id": identifier,
++                    "result": modern_result(
++                        result, cacheable=method == "server/discover"
++                    ),
++                },
++                headers=HEADERS,
+@@ -187 +183 @@
+-        except BatisenalError as exc:
++        except (BatisenalError, ProtocolError) as exc:
+@@ -193 +189,10 @@
+-            error: dict[str, Any] = {"code": -32000, "message": exc.code}
++            rpc_code = {
++                "INVALID_JSON": -32700,
++                "INVALID_REQUEST": -32600,
++                "INVALID_ARGUMENTS": -32602,
++            }.get(exc.code, -32000)
++            error: dict[str, Any] = {"code": rpc_code, "message": exc.code}
++            if isinstance(exc, ProtocolError):
++                error["code"] = exc.rpc_code
++                if exc.data is not None:
++                    error["data"] = exc.data
+--- /dev/null
++++ b/tests/batisenal_pilot/modern_wire.py
+@@ -0,0 +1,21 @@
++"""Synthetic fixture wire encoding only; never supplies identity or grants."""
++PROTOCOL = "2026-07-28"
++
++
++def mcp_request(method, params=None):
++    values = dict(params or {})
++    if "_meta" in values:
++        raise ValueError("Fixture metadata is fixed")
++    headers = {"Accept": "application/json", "MCP-Protocol-Version": PROTOCOL,
++               "Mcp-Method": method}
++    if method == "tools/call":
++        headers["Mcp-Name"] = values["name"]
++    values["_meta"] = {
++        "io.modelcontextprotocol/protocolVersion": PROTOCOL,
++        "io.modelcontextprotocol/clientCapabilities": {},
++        "io.modelcontextprotocol/clientInfo": {
++            "name": "synthetic-composition-client", "version": "1"
++        },
++    }
++    return headers, {"jsonrpc": "2.0", "id": 1, "method": method, "params": values}
++
+--- a/tests/batisenal_pilot/test_application.py
++++ b/tests/batisenal_pilot/test_application.py
+@@ -11,0 +12 @@
++from modern_wire import mcp_request
+@@ -130,0 +132,3 @@
++        wire_headers, message = mcp_request(
++            "tools/call", {"name": "samchat_batisenal_" + name, "arguments": args}
++        )
+@@ -133,7 +137,2 @@
+-            headers={"Authorization": "Bearer " + bearer, "Accept": "application/json"},
+-            json={
+-                "jsonrpc": "2.0",
+-                "id": 1,
+-                "method": "tools/call",
+-                "params": {"name": "samchat_batisenal_" + name, "arguments": args},
+-            },
++            headers={**wire_headers, "Authorization": "Bearer " + bearer},
++            json=message,
+@@ -435,0 +435 @@
++        wire_headers, message = mcp_request("tools/list")
+@@ -438,2 +438,2 @@
+-            headers={"Authorization": "Bearer " + bearer, "Accept": "application/json"},
+-            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
++            headers={**wire_headers, "Authorization": "Bearer " + bearer},
++            json=message,
+--- a/tests/batisenal_pilot/test_case_http.py
++++ b/tests/batisenal_pilot/test_case_http.py
+@@ -0,0 +1 @@
++from modern_wire import mcp_request
+@@ -214,0 +216 @@
++        wire_headers, message = mcp_request("tools/list")
+@@ -217,2 +219,2 @@
+-            headers={"Authorization": "Bearer " + bearer, "Accept": "application/json"},
+-            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
++            headers={**wire_headers, "Authorization": "Bearer " + bearer},
++            json=message,

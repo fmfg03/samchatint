@@ -1,0 +1,43 @@
+{
+  "integration_patch_sha256": "3ee1ca30f7fabc255e0d1495c3b9e7a7ab34d51393c739a7edc8746685ddbb5f",
+  "presentation_baseline_patch_sha256": "ec079f2b9b7c7234178b3da2ad31f8c45eeb52a7c3bc6c94c19007bf8778dee2",
+  "baseline_route_sha256": "58337c0126a893af1191d1d40b9c25087f19654bb0f2d22073100291978b9768",
+  "changes": [
+    {
+      "path": "src/devnous/gastos/routes/batisenal_pilot_routes.py",
+      "before_sha256": "8e3b75527a4e42f424ba5f11ace51f6b0b0631c46b7079fdb8bcd0e429d5a099",
+      "after_sha256": "50d38588e52b6c0616eefcaa6bdfc1bfb7a7963d1d44a66184bd0bdde5cdf498"
+    },
+    {
+      "path": "src/samchat/batisenal_transport/framing.py",
+      "before_sha256": null,
+      "after_sha256": "b539dc251ecccddbedf6ab01725f7870cefd100eabe12c0b596fc03bf9093890"
+    },
+    {
+      "path": "src/samchat/batisenal_transport/http.py",
+      "before_sha256": "925c6805960e9ee641f5b2924850c5f21f02eb1edac8f8e458ee59b911785034",
+      "after_sha256": "bac37ad5482333719076099917c01713bd3ef4f51b94688b9c70fc3d5008451a"
+    },
+    {
+      "path": "tests/batisenal_pilot/modern_wire.py",
+      "before_sha256": null,
+      "after_sha256": "92462a56fc3a6bec5825e81641c181fa122531517c32a972e5a036b9087b0e3c"
+    },
+    {
+      "path": "tests/batisenal_pilot/test_application.py",
+      "before_sha256": "7177229b3db124301013383d20b296f90bc39d8c2f585780fceb5fd231b87ba5",
+      "after_sha256": "6d0111038fc0bbcae5feee46c96ca05e37991421372feeaf0089c41ff311e882"
+    },
+    {
+      "path": "tests/batisenal_pilot/test_case_http.py",
+      "before_sha256": "2a0fc85249f62b63399eb5cabd95bd6447562eb20027527cb97bbb0e90a7a310",
+      "after_sha256": "915fe7abc63cde413149356bcc653a97fa6396c96f9f426e50523eeb037effc4"
+    }
+  ],
+  "contract_files": {
+    "run_tests.py": "c417c84056375b9fa235582bb538ccabdc36af44945eae1f82b0c43275257268",
+    "test_integrated_ui.py": "921f3f4837af4c3a7d4d683770beb9b93bd72b59bd41f7b16648a232d6a89d08",
+    "test_modern_transport.py": "eaab8e8830b98995b1f254ef7ae37176e58f03cab12ecdfdac99531dddf3da81"
+  },
+  "reviewed_full_context_patch_sha256": "bc27df5d2b5b3b8a3093dfdae80b727804ab166d40978f9860acc0fb15033443"
+}
