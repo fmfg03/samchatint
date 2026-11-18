@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import DBAPIError
 
 os.environ.setdefault(
     "SESSION_SECRET_KEY", "ctt-roster-unit-test-key-no-production-access"
@@ -14,7 +15,7 @@ os.environ.setdefault(
 import copa_telmex_dashboard as dashboard  # noqa: E402
 
 from devnous.copa_telmex import ctt_report_access  # noqa: E402
-from devnous.copa_telmex.models import Team  # noqa: E402
+from devnous.copa_telmex.models import Player, Team  # noqa: E402
 
 
 @pytest.fixture
@@ -131,6 +132,152 @@ def test_legacy_boundary_reserves_the_write_lock_for_the_sql_cas():
     session.bind = None
     query = dashboard._regs07_entity_query(session, Team, uuid4())
     assert "FOR UPDATE" in str(query)
+
+
+@pytest.fixture
+def authenticated_roster_view(roster, monkeypatch):
+    request = SimpleNamespace(
+        session={"empleado_id": str(roster.employee_id), "rol": "coordinador"}
+    )
+
+    def use_results(items):
+        result = SimpleNamespace(all=lambda: items)
+        result.scalars = lambda: result
+        execute_mock = AsyncMock(return_value=result)
+
+        class Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            execute = staticmethod(execute_mock)
+
+        monkeypatch.setattr(dashboard, "async_session_maker", Session)
+        return execute_mock
+
+    def render(template, context, **kwargs):
+        return SimpleNamespace(
+            template=template, context=context, headers=kwargs.get("headers", {})
+        )
+
+    monkeypatch.setattr(dashboard.templates, "TemplateResponse", render)
+    return request, use_results
+
+
+@pytest.mark.parametrize("needs_review", [False, True])
+@pytest.mark.asyncio
+async def test_players_page_hides_out_of_scope_and_uncaptured_players(
+    roster, authenticated_roster_view, needs_review
+):
+    request, use_results = authenticated_roster_view
+
+    def player(team, state):
+        return Player(
+            id=uuid4(),
+            team_id=team.id,
+            first_name="Prueba",
+            last_name="Ficticia",
+            created_at=datetime(2026, 1, 1),
+            governance_state=state,
+        )
+
+    visible = player(roster.assigned, "ACTIVE")
+    legacy = player(roster.legacy, "PENDING_FINALITY")
+    execute = use_results(
+        [
+            (visible, roster.assigned),
+            (player(roster.assigned, "PENDING_FINALITY"), roster.assigned),
+            (player(roster.outside, "ACTIVE"), roster.outside),
+            (legacy, roster.legacy),
+        ]
+    )
+
+    page = await dashboard.list_players(request, needs_review=needs_review)
+
+    assert page.template == "players.html"
+    assert page.headers["Cache-Control"] == "private, no-store"
+    assert [row["id"] for row in page.context["players"]] == [
+        str(visible.id),
+        str(legacy.id),
+    ]
+    assert page.context["filter"] == ("needs_review" if needs_review else "all")
+    where = execute.await_args.args[0].whereclause
+    assert (where is not None) == needs_review
+
+
+@pytest.mark.asyncio
+async def test_teams_page_renders_only_selected_entitled_roster(
+    roster, authenticated_roster_view, monkeypatch
+):
+    request, use_results = authenticated_roster_view
+    roster.assigned.created_at = datetime(2026, 1, 1)
+    roster.assigned.municipality = "Guadalajara"
+    execute = use_results([roster.assigned, roster.outside])
+    load_players = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        dashboard,
+        "CopaTelmexDB",
+        lambda _session: SimpleNamespace(get_players_by_team=load_players),
+    )
+
+    page = await dashboard.list_teams(request, roster.edition.roster_slug, "14")
+
+    assert page.template == "teams.html"
+    assert page.context["roster_slug"] == roster.edition.roster_slug
+    assert [row["municipality"] for row in page.context["teams"]] == ["Guadalajara"]
+    load_players.assert_awaited_once_with(roster.assigned.id)
+    query = execute.await_args.args[0]
+    assert roster.edition.roster_slug in query.compile().params.values()
+
+    with pytest.raises(HTTPException) as denied:
+        await dashboard.list_teams(request, roster.edition.roster_slug, "21")
+    assert denied.value.status_code == 403
+    load_players.assert_awaited_once_with(roster.assigned.id)
+
+
+@pytest.mark.parametrize(
+    ("route", "database_error", "expected_error"),
+    [
+        (dashboard.edit_team, "CTT legacy successor stale", "STALE_POSTCOMMIT_BASE"),
+        (
+            dashboard.edit_player,
+            "CTT legacy cannot mutate protected v2 evidence",
+            "POSTCOMMIT_PROTECTED_CAPTURE",
+        ),
+        (
+            dashboard.verify_player,
+            "CTT legacy successor stale",
+            "STALE_POSTCOMMIT_BASE",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_mutation_routes_forward_revision_and_translate_governed_denial(
+    route, database_error, expected_error, monkeypatch
+):
+    request = SimpleNamespace(
+        session={"empleado_id": str(uuid4()), "rol": "coordinador"},
+        form=AsyncMock(
+            return_value={
+                "mutation_request_id": str(uuid4()),
+                "expected_revision": "7",
+                "name": "Equipo ficticio",
+                "first_name": "Nombre",
+                "last_name": "Ficticio",
+            }
+        ),
+    )
+    mutate = AsyncMock(side_effect=DBAPIError(None, None, Exception(database_error)))
+    monkeypatch.setattr(dashboard, "_execute_regs07_mutation", mutate)
+
+    with pytest.raises(HTTPException) as denied:
+        await route(str(uuid4()), request)
+
+    assert denied.value.status_code == 409
+    assert denied.value.detail["error"] == expected_error
+    assert mutate.await_args.kwargs["expected_revision"] == 7
 
 
 @pytest.mark.parametrize(

@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.templating import Jinja2Templates
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
+from sqlalchemy.exc import SQLAlchemyError
 
 from devnous.copa_telmex import ctt_registration_report as report_service
 from devnous.copa_telmex import ctt_report_access, ctt_report_routes
@@ -160,6 +161,57 @@ def test_report_requires_configured_source_and_cutoff(report_client):
     reader.assert_not_awaited()
 
 
+def test_report_navigation_and_http_hide_unavailable_access(report_client):
+    client, lookup, reader = report_client
+    lookup.side_effect = SQLAlchemyError("private source details")
+    page = client.get(ctt_report_routes.CTT_REPORT_PATH)
+    assert page.status_code == 503
+    assert "private source details" not in page.text
+    reader.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_report_navigation_requires_an_available_edition(monkeypatch):
+    lookup = AsyncMock(side_effect=[[], [edition()], SQLAlchemyError("offline")])
+    monkeypatch.setattr(ctt_report_routes, "list_ctt_report_editions", lookup)
+    employee = SimpleNamespace(id="fixture-actor", rol="coordinador")
+    link = ctt_report_routes.ctt_reports_url_for_employee
+    assert await link(None, employee) is None
+    assert await link(None, employee) == ctt_report_routes.CTT_REPORT_PATH
+    assert await link(None, employee) is None
+    lookup.assert_awaited_with(None, employee_id="fixture-actor", role="coordinador")
+
+
+def test_national_report_infers_municipality_state_and_hides_report_only_roster_link(
+    report_client,
+):
+    client, lookup, reader = report_client
+    lookup.return_value = [edition(national=True)]
+    auth = client.app.dependency_overrides
+    auth[ctt_report_routes.get_current_empleado] = lambda: SimpleNamespace(
+        id="fixture-actor", rol="reports-reader"
+    )
+    page = client.get(ctt_report_routes.CTT_REPORT_PATH + "?municipality=09014")
+    assert page.status_code == 200
+    assert "Todos los estados" in page.text
+    assert "Quintana Roo" in page.text
+    assert "/teams?" not in page.text
+    assert reader.await_args.kwargs["state_code"] == "09"
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"), [("FILTER_INVALID", 422), ("SOURCE_FAILED", 503)]
+)
+def test_report_rejects_invalid_or_unavailable_result(report_client, status, expected):
+    client, _, reader = report_client
+    reader.side_effect = None
+    reader.return_value = {"available": False, "status": status}
+    assert client.get(ctt_report_routes.CTT_REPORT_PATH).status_code == expected
+    assert (
+        client.get(ctt_report_routes.CTT_REPORT_DOWNLOAD_PATH).status_code == expected
+    )
+
+
 def test_download_detects_corrections_after_page_loaded(report_client):
     client, _, reader = report_client
     page = client.get(ctt_report_routes.CTT_REPORT_PATH)
@@ -200,6 +252,88 @@ async def test_roster_edit_checks_origin_and_destination(monkeypatch):
                 target_state=destination,
             )
         assert denial.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_report_editions_keep_read_and_write_assignments_separate(monkeypatch):
+    scope = edition()
+    db_rows = [
+        {
+            "tournament_id": scope.tournament_id,
+            "edition_year": scope.edition_year,
+            "roster_slug": scope.roster_slug,
+            "age_cutoff": scope.age_cutoff,
+            "state_code": state,
+            "can_edit": allow_edit,
+        }
+        for state, allow_edit in [("09", True), ("23", False)]
+    ]
+    read = AsyncMock(
+        side_effect=[
+            [{"relation": None}],
+            [{"relation": "copa_telmex_edition_access"}],
+            db_rows,
+            [{"relation": "copa_telmex_edition_access"}],
+            [{**db_rows[0], "state_code": None, "can_edit": None}],
+        ]
+    )
+    monkeypatch.setattr(ctt_report_access, "_rows", read)
+    list_editions = ctt_report_access.list_ctt_report_editions
+    assert await list_editions(None, employee_id="actor", role="coordinador") is None
+    [restricted] = await list_editions(
+        None, employee_id="actor", role="coordinador", roster_slug=scope.roster_slug
+    )
+    assert restricted.age_cutoff == scope.age_cutoff
+    assert restricted.state_codes == frozenset({"09", "23"})
+    assert restricted.edit_state_codes == frozenset({"09"})
+    assert not restricted.national
+    assert read.await_args.args[2] == {
+        "employee_id": "actor",
+        "roster_slug": scope.roster_slug,
+        "national_admin": False,
+    }
+    [admin] = await list_editions(None, employee_id="admin", role=" Super_Admin ")
+    assert admin.national
+    assert admin.edit_state_codes == frozenset({""})
+    assert read.await_args.args[2]["national_admin"] is True
+
+
+@pytest.mark.asyncio
+async def test_unmanaged_roster_preserves_legacy_while_managed_roster_denies(
+    monkeypatch,
+):
+    scope = edition()
+    read = AsyncMock(
+        side_effect=[
+            [{"relation": None}],
+            [{"relation": "copa_telmex_edition_access"}],
+            [{"roster_slug": scope.roster_slug}],
+        ]
+    )
+    monkeypatch.setattr(ctt_report_access, "_rows", read)
+    managed = ctt_report_access.list_managed_ctt_roster_slugs
+    assert await managed(None) == frozenset()
+    assert await managed(None) == frozenset({scope.roster_slug})
+    lookup = AsyncMock(side_effect=[None, [], []])
+    monkeypatch.setattr(ctt_report_access, "list_ctt_report_editions", lookup)
+    monkeypatch.setattr(
+        ctt_report_access,
+        "list_managed_ctt_roster_slugs",
+        AsyncMock(
+            return_value={
+                scope.roster_slug,
+            }
+        ),
+    )
+    check = ctt_report_access.enforce_ctt_roster_access
+    actor = {"employee_id": "reader", "role": "coordinador", "state": "CDMX"}
+    assert not await check(None, **actor, roster_slug="copa-ajena-2026")
+    lookup.assert_not_awaited()
+    assert not await check(None, **actor, roster_slug=scope.roster_slug)
+    assert not await check(None, **actor, roster_slug="copa-telmex-2025")
+    with pytest.raises(HTTPException) as denial:
+        await check(None, **actor, roster_slug=scope.roster_slug)
+    assert denial.value.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -283,3 +417,107 @@ async def test_report_counts_homonyms_once_per_state_and_reconciles_ages(monkeyp
     assert national_men["sin_fecha_nacimiento"] == 1
     assert national_men["fecha_nacimiento_invalida"] == 1
     assert report_rows["calidad_datos"][0]["equipos_sin_municipio_inegi"] == 1
+
+
+@pytest.mark.parametrize(
+    ("selector", "status"),
+    [
+        ({"state_code": "99"}, "FILTER_INVALID"),
+        ({"state_code": "09", "municipality_code": "23005"}, "FILTER_INVALID"),
+        ({"category": "desconocida"}, "FILTER_INVALID"),
+        ({"tournament_id": "not-a-uuid"}, "SCOPE_MISSING"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_invalid_report_selector_never_reads_roster(
+    monkeypatch, selector, status
+):
+    probe = AsyncMock()
+    monkeypatch.setattr(report_service, "probe_registration_scope", probe)
+    report = await report_service.build_ctt_registration_report(
+        None,
+        **{"tournament_id": edition().tournament_id, **selector},
+        edition_year=2026,
+        age_cutoff=date(2026, 12, 31),
+    )
+    assert report["status"] == status
+    assert report["summary"] is None
+    probe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_report_preserves_catalog_scope_and_storage_failures(monkeypatch):
+    scope = edition()
+    fields = {
+        "tournament_id": scope.tournament_id,
+        "edition_year": scope.edition_year,
+        "age_cutoff": scope.age_cutoff,
+    }
+
+    def missing_catalog():
+        raise OSError("catalog unavailable")
+
+    build = report_service.build_ctt_registration_report
+    with monkeypatch.context() as context:
+        context.setattr(
+            report_service, "load_ctt_municipality_catalog", missing_catalog
+        )
+        assert (await build(None, **fields))["status"] == "CATALOG_UNAVAILABLE"
+
+    configured = {
+        "status": "CONFIGURED",
+        "roster_slug": scope.roster_slug,
+        "tournament_name": "CTT",
+    }
+    probe = AsyncMock(
+        side_effect=[{"status": "SCOPE_INACTIVE"}, configured, configured]
+    )
+    read = AsyncMock(side_effect=[SQLAlchemyError("offline"), []])
+    monkeypatch.setattr(report_service, "probe_registration_scope", probe)
+    monkeypatch.setattr(report_service, "_rows", read)
+    assert (await build(None, **fields))["status"] == "SCOPE_INACTIVE"
+    read.assert_not_awaited()
+    assert (await build(None, **fields))["status"] == "SOURCE_FAILED"
+    assert (await build(None, **fields))["status"] == "SCOPE_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_valid_scope_without_committed_teams_reports_zero_not_failure(
+    monkeypatch,
+):
+    scope = edition()
+    monkeypatch.setattr(
+        report_service,
+        "probe_registration_scope",
+        AsyncMock(
+            return_value={
+                "status": "CONFIGURED",
+                "roster_slug": scope.roster_slug,
+                "tournament_name": "CTT",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        report_service,
+        "_rows",
+        AsyncMock(return_value=[{"team_id": None}]),
+    )
+    report = await report_service.build_ctt_registration_report(
+        None,
+        tournament_id=scope.tournament_id,
+        edition_year=scope.edition_year,
+        age_cutoff=scope.age_cutoff,
+        municipality_code="09014",
+    )
+    assert report["available"]
+    assert report["status"] == "EMPTY"
+    assert report["summary"] == {
+        "equipos": 0,
+        "jugadores": 0,
+        "estados": 0,
+        "municipios_participantes": 0,
+    }
+    assert report["filters"]["state_code"] == "09"
+    [coverage] = report["reports"]["cobertura_municipal"]
+    assert coverage["municipios_totales"] == 16
+    assert coverage["porcentaje"] == 0
