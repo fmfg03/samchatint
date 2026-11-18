@@ -1,5 +1,9 @@
 """Owner-migrated evidence for direct AMEX; never provisioned by runtime."""
 
+from datetime import datetime
+from decimal import Decimal
+from typing import Any
+from uuid import UUID as PythonUUID
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -18,6 +22,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column
 
 from devnous.copa_telmex.models import Base
 
@@ -454,3 +459,49 @@ class AmexDirectSignRow(Base):
     original_expense_id = reference("expense_reports", nullable=True)
     proof_hash = Column(String(64), nullable=False)
     created_at = timestamp()
+
+
+class AmexPartnerCoiDeduction(Base):
+    """Finance-confirmed COI deduction evidence, frozen on first application."""
+
+    __tablename__ = "amex_partner_coi_deductions"
+    source_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    debtor_account_id: Mapped[PythonUUID] = mapped_column(
+        ForeignKey("cuentas_contables.id")
+    )
+    actor_id: Mapped[PythonUUID] = mapped_column(ForeignKey("empleados.id"))
+    document_sha256: Mapped[str] = mapped_column(Text)
+    document_format: Mapped[str] = mapped_column(Text)
+    document_bytes: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    facts: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class AmexPartnerPayrollEvent(Base):
+    """A confirmed allocation from payroll or bank evidence to one AMEX cut item."""
+
+    __tablename__ = "amex_partner_payroll_events"
+    id: Mapped[PythonUUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    cut_item_id: Mapped[PythonUUID] = mapped_column(
+        ForeignKey("amex_direct_cut_items.id")
+    )
+    actor_id: Mapped[PythonUUID] = mapped_column(ForeignKey("empleados.id"))
+    kind: Mapped[str] = mapped_column(Text)
+    request_hash: Mapped[str] = mapped_column(Text)
+    coi_source_key: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("amex_partner_coi_deductions.source_key")
+    )
+    debit_bank_id: Mapped[PythonUUID | None] = mapped_column(
+        ForeignKey("bank_movements.id")
+    )
+    credit_bank_id: Mapped[PythonUUID | None] = mapped_column(
+        ForeignKey("bank_movements.id")
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
