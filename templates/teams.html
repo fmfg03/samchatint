@@ -3,7 +3,7 @@
 {% block title %}Equipos - Copa Telmex{% endblock %}
 
 {% block content %}
-<h2 style="margin-bottom: 30px;">📁 Equipos Registrados</h2>
+<h2 style="margin-bottom: 30px;">{% if roster_slug %}Padrón de equipos CTT{% else %}Equipos registrados{% endif %}</h2>
 
 {% if teams %}
 <table>
@@ -13,6 +13,7 @@
             <th>Categoría</th>
             <th>Rama</th>
             <th>Estado</th>
+            <th>Municipio</th>
             <th>Jugadores</th>
             <th>Fecha de Registro</th>
             <th>Acciones</th>
@@ -25,6 +26,7 @@
             <td>{{ team.category }}</td>
             <td>{{ team.gender }}</td>
             <td>{{ team.state }}</td>
+            <td>{{ team.municipality }}</td>
             <td>
                 <span class="badge badge-success">{{ team.player_count }} jugador(es)</span>
             </td>
@@ -41,7 +43,7 @@
 {% else %}
 <div style="padding: 60px; text-align: center; color: #6c757d;">
     <h3>📭 No hay equipos registrados</h3>
-    <p style="margin-top: 10px;">Los equipos aparecerán aquí cuando se registren a través del bot de Telegram.</p>
+    <p style="margin-top: 10px;">El padrón muestra los equipos capturados en el alcance consultado.</p>
 </div>
 {% endif %}
 {% endblock %}

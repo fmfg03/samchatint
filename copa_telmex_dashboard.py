@@ -112,6 +112,7 @@ from devnous.copa_telmex.models import (
     RegistrationReviewDraft,
     RegistrationReviewSession,
     Team,
+    TeamStaff,
 )
 from devnous.copa_telmex.page_composition_governance import (
     admitted_asset_rows,
@@ -131,6 +132,10 @@ from devnous.copa_telmex.reprocess_governance import (
     parent_authorization as reprocess_parent_authorization,
     public_field_diffs,
     sha256_binding,
+)
+from devnous.copa_telmex.ctt_report_routes import (
+    create_ctt_report_router,
+    ctt_reports_url_for_employee,
 )
 from devnous.copa_telmex.persistence_authority import (
     PersistenceAuthorityDenied,
@@ -197,7 +202,10 @@ except ImportError:
         return None
 from devnous.gastos.routes.user_routes import set_db_session_maker as set_user_session_maker
 from devnous.gastos.routes.auth_routes import set_db_session_maker as set_auth_session_maker
-from devnous.gastos.routes.dependencies import set_db_session_maker as set_dependencies_session_maker
+from devnous.gastos.routes.dependencies import (
+    get_current_empleado,
+    set_db_session_maker as set_dependencies_session_maker,
+)
 from devnous.gastos.schema_guard import apply_schema_guard, check_schema_health
 
 from samchat.assistant import assistant_router
@@ -1945,7 +1953,21 @@ async def serve_photo_asset(path: str, request: Request):
         _ensure_registration_review_access(request)
     elif not public_asset:
         _ensure_legacy_copa_dashboard_access(request)
-    return FileResponse(str(asset_path))
+        parts = asset_path.relative_to(photos_dir.resolve()).parts
+        if len(parts) >= 3 and parts[0] == "players":
+            try:
+                team_id = UUID(parts[1])
+            except ValueError:
+                team_id = None
+            if team_id is not None:
+                async with async_session_maker() as session:
+                    team = await session.get(Team, team_id)
+                    if team is None or not await _visible_ctt_roster_teams(
+                        session, request, [team]
+                    ):
+                        raise HTTPException(status_code=404, detail="Photo not found")
+    headers = None if public_asset else {"Cache-Control": "private, no-store"}
+    return FileResponse(str(asset_path), headers=headers)
 
 
 @app.get("/api/registration-photos/{photo_sha256}", include_in_schema=False)
@@ -1972,8 +1994,28 @@ async def serve_committed_registration_photo(photo_sha256: str, request: Request
                     {"photo_sha256": photo_sha256},
                 )
             ).scalar_one()
-        if committed is not True:
-            raise ValueError("photo is not committed")
+            if committed is not True:
+                raise ValueError("photo is not committed")
+            path = f"ctt-photo:{photo_sha256}"
+            player_photo = select(Player.id).where(
+                Player.team_id == Team.id,
+                Player.photo_path == path,
+                Player.governance_state == "ACTIVE",
+                Player.finality_receipt_id.is_not(None),
+            )
+            staff_photo = select(TeamStaff.id).where(
+                TeamStaff.team_id == Team.id,
+                TeamStaff.photo_path == path,
+                TeamStaff.governance_state == "ACTIVE",
+                TeamStaff.finality_receipt_id.is_not(None),
+            )
+            owners = list(
+                await session.scalars(
+                    select(Team).where(player_photo.exists() | staff_photo.exists())
+                )
+            )
+            if not await _visible_ctt_roster_teams(session, request, owners):
+                raise ValueError("photo outside the registration scope")
         raw = PrivateReviewPhotoStore(root).read(photo_sha256 + ".jpg")
         return Response(
             raw,
@@ -2046,6 +2088,7 @@ set_dependencies_session_maker(async_session_maker)
 templates_dir = Path(__file__).parent / "templates"
 templates_dir.mkdir(exist_ok=True)
 templates = Jinja2Templates(directory=str(templates_dir))
+app.include_router(create_ctt_report_router(templates))
 
 public_app_url = (os.getenv("APP_URL") or "https://sam.chat").rstrip("/")
 copa_america_frontend_url = os.getenv("COPA_AMERICA_FRONTEND_URL", f"{public_app_url}/copa-america/")
@@ -3294,6 +3337,88 @@ def _regs07_actor_matches(
     )
 
 
+async def _regs07_ctt_scope(
+    session: AsyncSession,
+    actor: Dict[str, Any],
+    entity: Team | Player,
+    updates: Dict[str, Any],
+) -> bool:
+    team = entity if isinstance(entity, Team) else await session.get(Team, entity.team_id)
+    if team is None:
+        raise _regs07_error(
+            "POSTCOMMIT_ENTITY_NOT_FOUND",
+            "El equipo del participante no existe.",
+            status_code=404,
+        )
+    if not team.tournament_slug:
+        return False
+    from devnous.copa_telmex.ctt_report_access import enforce_ctt_roster_access
+
+    return await enforce_ctt_roster_access(
+        session,
+        employee_id=actor["user_id"],
+        role=actor["role"],
+        roster_slug=team.tournament_slug,
+        state=team.state,
+        write=True,
+        target_state=(updates.get("state") or "") if "state" in updates else None,
+    )
+
+
+def _regs07_entity_query(session: AsyncSession, model, entity_id: UUID):
+    statement = select(model).where(model.id == entity_id)
+    # The PostgreSQL web role is SELECT-only on these tables. The existing
+    # SECURITY DEFINER projection locks and compares the row before updating it.
+    if not CopaTelmexDB(session).uses_legacy_sql_boundary:
+        return statement.with_for_update()
+    return statement
+
+
+def _regs07_check_expected_revision(
+    expected_revision: int | None,
+    current_revision: int,
+    *,
+    scoped_ctt: bool,
+) -> None:
+    if expected_revision is None:
+        if scoped_ctt:
+            raise _regs07_error(
+                "POSTCOMMIT_REVISION_REQUIRED",
+                "Vuelve a abrir la ficha para cargar la revisión vigente.",
+                status_code=428,
+            )
+    elif expected_revision != current_revision:
+        raise _regs07_error(
+            "STALE_POSTCOMMIT_BASE",
+            "La ficha cambió. Recárgala y vuelve a revisar tu corrección.",
+        )
+
+
+def _regs07_expected_revision(form_data) -> int | None:
+    provided = form_data.get("expected_revision")
+    if provided is None:
+        return None
+    revision = int(str(provided))
+    if revision < 0:
+        raise ValueError("invalid expected revision")
+    return revision
+
+
+def _raise_regs07_write_error(exc: DBAPIError, action: str) -> None:
+    diagnostic = str(exc.orig)
+    if "CTT legacy cannot mutate protected v2 evidence" in diagnostic:
+        raise _regs07_error(
+            "POSTCOMMIT_PROTECTED_CAPTURE",
+            "Esta captura protegida requiere un flujo de corrección autorizado.",
+        ) from None
+    if "CTT legacy successor stale" in diagnostic:
+        raise _regs07_error(
+            "STALE_POSTCOMMIT_BASE",
+            "La ficha cambió. Recárgala y vuelve a revisar tu corrección.",
+        ) from None
+    _raise_dashboard_internal_error(action)
+
+
 async def _execute_regs07_mutation(
     *,
     request: Request,
@@ -3303,6 +3428,7 @@ async def _execute_regs07_mutation(
     updates: Dict[str, Any],
     mutation_reason: str,
     mutation_request_id: UUID,
+    expected_revision: int | None = None,
 ) -> Dict[str, Any]:
     """Create and atomically project one double-receipt post-commit successor."""
     actor = _review_session_actor(request)
@@ -3333,9 +3459,7 @@ async def _execute_regs07_mutation(
     decision: Optional[RegistrationPostcommitMutationDecision] = None
     async with async_session_maker() as session:
         actor = await _refresh_review_actor(session, actor)
-        result = await session.execute(
-            select(model).where(model.id == entity_id).with_for_update()
-        )
+        result = await session.execute(_regs07_entity_query(session, model, entity_id))
         entity = result.scalar_one_or_none()
         if entity is None:
             raise _regs07_error(
@@ -3343,6 +3467,7 @@ async def _execute_regs07_mutation(
                 "El equipo o jugador no existe.",
                 status_code=404,
             )
+        scoped_ctt = await _regs07_ctt_scope(session, actor, entity, updates)
         if isinstance(entity, Player) and entity.governance_state not in {
             "ACTIVE",
             "LEGACY_ACTIVE",
@@ -3366,6 +3491,12 @@ async def _execute_regs07_mutation(
         for field, value in updates.items():
             proposed_snapshot[field] = _regs07_json_value(value)
         changes = postcommit_changed_fields(base_snapshot, proposed_snapshot)
+        if changes or expected_revision is None:
+            _regs07_check_expected_revision(
+                expected_revision,
+                int(entity.postcommit_revision),
+                scoped_ctt=scoped_ctt,
+            )
         if not changes:
             return {
                 "success": True,
@@ -3518,9 +3649,7 @@ async def _execute_regs07_mutation(
                 )
             )
         ).scalar_one()
-        result = await session.execute(
-            select(model).where(model.id == entity_id).with_for_update()
-        )
+        result = await session.execute(_regs07_entity_query(session, model, entity_id))
         entity = result.scalar_one_or_none()
         if entity is None:
             raise _regs07_error(
@@ -3535,6 +3664,19 @@ async def _execute_regs07_mutation(
             raise _regs07_error(
                 "POSTCOMMIT_ACTOR_AUTHORITY_CHANGED",
                 "La autoridad actual del operador cambió; solicita otra decisión.",
+            )
+        if scoped_ctt and copa_db.uses_legacy_sql_boundary:
+            team_id = entity.id if isinstance(entity, Team) else entity.team_id
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:team_key, 0))"),
+                {"team_key": f"samchat.ctt-roster:{team_id}"},
+            )
+            await session.refresh(entity)
+        final_scope = await _regs07_ctt_scope(session, current_actor, entity, updates)
+        if final_scope != scoped_ctt:
+            raise _regs07_error(
+                "POSTCOMMIT_ACTOR_AUTHORITY_CHANGED",
+                "El alcance de la edición cambió; vuelve a abrir la ficha.",
             )
         current_snapshot = await _regs07_database_snapshot(session, entity)
         current_hash = await _regs07_database_hash(session, current_snapshot)
@@ -4589,6 +4731,13 @@ async def home(request: Request):
             )
             review_records = review_result.mappings().all()
             review_operations = build_home_operations_snapshot(review_records)
+            ctt_reports_url = None
+            if _has_internal_session(request):
+                try:
+                    employee = await get_current_empleado(request, session=session)
+                    ctt_reports_url = await ctt_reports_url_for_employee(session, employee)
+                except HTTPException:
+                    pass
 
             return templates.TemplateResponse(
                 "home.html",
@@ -4597,6 +4746,7 @@ async def home(request: Request):
                     "stats": stats,
                     "pending_reviews": len(registrations),
                     "review_operations": review_operations,
+                    "ctt_reports_url": ctt_reports_url,
                 },
             )
     except Exception:
@@ -4613,8 +4763,94 @@ async def get_stats(request: Request):
         return stats
 
 
+async def _read_ctt_roster_team(
+    session: AsyncSession,
+    employee,
+    team: Team,
+    *,
+    write: bool = False,
+) -> bool:
+    from devnous.copa_telmex.ctt_report_access import enforce_ctt_roster_access
+
+    return await enforce_ctt_roster_access(
+        session,
+        employee_id=str(employee.id),
+        role=str(employee.rol),
+        roster_slug=team.tournament_slug,
+        state=team.state,
+        write=write,
+    )
+
+
+async def _visible_ctt_roster_teams(
+    session: AsyncSession,
+    request: Request,
+    teams: List[Team],
+    *,
+    roster_slug: str | None = None,
+    state_code: str | None = None,
+    managed_slugs: frozenset[str] | None = None,
+) -> List[Team]:
+    from devnous.copa_telmex.ctt_municipality_catalog import (
+        load_ctt_municipality_catalog,
+        resolve_ctt_geography,
+    )
+    from devnous.copa_telmex.ctt_report_access import (
+        CTT_ROSTER_SLUG,
+        ctt_scope_allows_state,
+        list_ctt_report_editions,
+        list_managed_ctt_roster_slugs,
+    )
+
+    scoped_request = bool(CTT_ROSTER_SLUG.fullmatch(roster_slug or ""))
+    if state_code and not scoped_request:
+        raise HTTPException(
+            422, "Selecciona una edición de CTT para filtrar por estado."
+        )
+    if state_code and state_code not in load_ctt_municipality_catalog().states:
+        raise HTTPException(422, "Selecciona una entidad válida del catálogo INEGI.")
+    if not scoped_request and not any(
+        CTT_ROSTER_SLUG.fullmatch(getattr(team, "tournament_slug", None) or "")
+        for team in teams
+    ):
+        return teams
+    if managed_slugs is None:
+        managed_slugs = await list_managed_ctt_roster_slugs(session)
+    if scoped_request and roster_slug not in managed_slugs:
+        raise HTTPException(503, "El padrón por edición de CTT no está disponible.")
+    ctt_teams = [team for team in teams if team.tournament_slug in managed_slugs]
+    if not scoped_request and not ctt_teams:
+        return teams
+    employee = await get_current_empleado(request, session)
+    editions = await list_ctt_report_editions(
+        session,
+        employee_id=str(employee.id),
+        role=str(employee.rol),
+        roster_slug=roster_slug,
+    )
+    by_slug = {edition.roster_slug: edition for edition in editions or []}
+    if scoped_request and roster_slug not in by_slug:
+        raise HTTPException(403, "La edición está fuera de tu alcance de CTT.")
+    if state_code and not ctt_scope_allows_state(by_slug[roster_slug], state_code):
+        raise HTTPException(403, "El estado está fuera de tu alcance de CTT.")
+    permitted = {
+        team.id
+        for team in ctt_teams
+        if team.tournament_slug in by_slug
+        and ctt_scope_allows_state(by_slug[team.tournament_slug], team.state)
+        and (
+            not state_code
+            or resolve_ctt_geography(team.state, None).state_code == state_code
+        )
+    }
+    ctt_ids = {team.id for team in ctt_teams}
+    return [team for team in teams if team.id not in ctt_ids or team.id in permitted]
+
+
 @app.get("/teams", response_class=HTMLResponse)
-async def list_teams(request: Request):
+async def list_teams(
+    request: Request, roster_slug: str | None = None, state_code: str | None = None
+):
     """List all teams"""
     redirect = _ensure_legacy_copa_dashboard_access(request, html_fallback="/teams")
     if redirect is not None:
@@ -4626,10 +4862,17 @@ async def list_teams(request: Request):
             from sqlalchemy import select
             from devnous.copa_telmex.models import Team
 
-            result = await session.execute(
-                select(Team).order_by(Team.created_at.desc())
+            query = select(Team).order_by(Team.created_at.desc())
+            if roster_slug:
+                query = query.where(Team.tournament_slug == roster_slug)
+            result = await session.execute(query)
+            all_teams = await _visible_ctt_roster_teams(
+                session,
+                request,
+                result.scalars().all(),
+                roster_slug=roster_slug,
+                state_code=state_code,
             )
-            all_teams = result.scalars().all()
 
             # Convert to dict for template
             teams_data = []
@@ -4641,6 +4884,7 @@ async def list_teams(request: Request):
                     "category": team.category or "N/A",
                     "gender": team.gender or "N/A",
                     "state": team.state or "N/A",
+                    "municipality": getattr(team, "municipality", None) or "N/A",
                     "player_count": len(players),
                     "created_at": team.created_at.strftime("%Y-%m-%d %H:%M")
                 })
@@ -4649,9 +4893,12 @@ async def list_teams(request: Request):
                 "teams.html",
                 {
                     "request": request,
-                    "teams": teams_data
+                    "teams": teams_data,
+                    "roster_slug": roster_slug,
                 }
             )
+    except HTTPException:
+        raise
     except Exception:
         _raise_dashboard_internal_error("Error loading teams")
 
@@ -4662,15 +4909,73 @@ async def view_team(request: Request, team_id: str):
     redirect = _ensure_legacy_copa_dashboard_access(request, html_fallback=f"/team/{team_id}")
     if redirect is not None:
         return redirect
-    try:
-        from uuid import UUID
+    from devnous.copa_telmex.ctt_report_access import CTT_ROSTER_SLUG
 
+    try:
         async with async_session_maker() as session:
             copa_db = CopaTelmexDB(session)
 
             team = await copa_db.get_team_by_id(UUID(team_id))
             if not team:
                 raise HTTPException(status_code=404, detail="Team not found")
+
+            scoped_ctt = False
+            can_edit = True
+            staff_data = []
+            external_checks = []
+            if CTT_ROSTER_SLUG.fullmatch(team.tournament_slug or ""):
+                employee = await get_current_empleado(request, session)
+                scoped_ctt = await _read_ctt_roster_team(session, employee, team)
+                if scoped_ctt:
+                    from devnous.copa_telmex.ctt_registration_report import (
+                        ctt_registration_category,
+                    )
+
+                    external_checks.append("RENAPO")
+                    if ctt_registration_category(team.category, team.gender) in {
+                        "juvenil", "varonil"
+                    }:
+                        external_checks.append("FMF / Liga MX")
+                    can_edit = str(employee.rol).lower() in {
+                        "coordinador", "admin", "superadmin", "super_admin"
+                    }
+                    if can_edit:
+                        try:
+                            await _read_ctt_roster_team(
+                                session, employee, team, write=True
+                            )
+                        except HTTPException as exc:
+                            if exc.status_code != 403:
+                                raise
+                            can_edit = False
+                    staff = await session.execute(
+                        select(
+                            TeamStaff.role,
+                            TeamStaff.first_name,
+                            TeamStaff.last_name,
+                            TeamStaff.birth_date,
+                            TeamStaff.curp,
+                            TeamStaff.photo_path,
+                        )
+                        .where(
+                            TeamStaff.team_id == team.id,
+                            TeamStaff.governance_state == "ACTIVE",
+                            TeamStaff.finality_receipt_id.is_not(None),
+                        )
+                        .order_by(TeamStaff.staff_slot)
+                    )
+                    staff_data = [
+                        {
+                            "role": person.role,
+                            "name": " ".join(
+                                filter(None, (person.first_name, person.last_name))
+                            ),
+                            "birth_date": person.birth_date,
+                            "curp": person.curp,
+                            "photo_url": _public_storage_path(person.photo_path),
+                        }
+                        for person in staff
+                    ]
 
             players = await copa_db.get_players_by_team(team.id)
 
@@ -4685,9 +4990,11 @@ async def view_team(request: Request, team_id: str):
                 "league_address": team.league_address or "N/A",
                 "representative_name": team.representative_name or "N/A",
                 "contact_phone": team.contact_phone or "N/A",
+                "contact_email": team.contact_email or "N/A",
                 "state": team.state or "N/A",
                 "municipality": team.municipality or "N/A",
-                "roster_image_path": team.roster_image_path or None,
+                "roster_image_path": (team.roster_image_path or "").lstrip("/") or None,
+                "postcommit_revision": team.postcommit_revision,
                 "created_at": team.created_at.strftime("%Y-%m-%d %H:%M")
             }
 
@@ -4696,6 +5003,8 @@ async def view_team(request: Request, team_id: str):
                 players_data.append({
                     "id": str(player.id),
                     "full_name": player.full_name,
+                    "first_name": player.first_name,
+                    "last_name": player.last_name,
                     "birth_date": player.birth_date.strftime("%Y-%m-%d") if player.birth_date else "N/A",
                     "curp": player.curp or "N/A",
                     "email": player.email or "N/A",
@@ -4703,6 +5012,7 @@ async def view_team(request: Request, team_id: str):
                     "ocr_confidence": f"{player.ocr_confidence*100:.0f}%" if player.ocr_confidence else "N/A",
                     "needs_review": player.needs_review,
                     "verified_by_human": player.verified_by_human,
+                    "postcommit_revision": player.postcommit_revision,
                     "created_at": player.created_at.strftime("%Y-%m-%d %H:%M")
                 })
 
@@ -4711,8 +5021,14 @@ async def view_team(request: Request, team_id: str):
                 {
                     "request": request,
                     "team": team_data,
-                    "players": players_data
-                }
+                    "players": players_data,
+                    "staff": staff_data,
+                    "external_checks": external_checks,
+                    "can_edit": can_edit,
+                    "scoped_ctt": scoped_ctt,
+                    "roster_slug": team.tournament_slug if scoped_ctt else None,
+                },
+                headers={"Cache-Control": "private, no-store"},
             )
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid team ID")
@@ -4728,32 +5044,42 @@ async def list_players(request: Request, needs_review: Optional[bool] = None):
     redirect = _ensure_legacy_copa_dashboard_access(request, html_fallback="/players")
     if redirect is not None:
         return redirect
+    from devnous.copa_telmex.ctt_report_access import list_managed_ctt_roster_slugs
+
     try:
         async with async_session_maker() as session:
-            copa_db = CopaTelmexDB(session)
-
+            query = (
+                select(Player, Team)
+                .join(Team, Team.id == Player.team_id)
+            )
             if needs_review:
-                players = await copa_db.get_players_needing_review()
+                query = query.where(
+                    Player.needs_review.is_(True), Player.verified_by_human.is_(False)
+                ).order_by(Player.created_at)
             else:
-                # Get all players
-                from sqlalchemy import select
-                from devnous.copa_telmex.models import Player
-
-                result = await session.execute(
-                    select(Player).order_by(Player.created_at.desc())
+                query = query.order_by(Player.created_at.desc())
+            rows = (await session.execute(query)).all()
+            teams = {team.id: team for _, team in rows}
+            managed_slugs = await list_managed_ctt_roster_slugs(session)
+            visible_ids = {
+                team.id
+                for team in await _visible_ctt_roster_teams(
+                    session, request, list(teams.values()), managed_slugs=managed_slugs
                 )
-                players = list(result.scalars().all())
+            }
 
             # Convert to dict for template
             players_data = []
-            for player in players:
-                # Get team info
-                team = await copa_db.get_team_by_id(player.team_id)
-
+            for player, team in rows:
+                if team.id not in visible_ids or (
+                    team.tournament_slug in managed_slugs
+                    and player.governance_state not in {"ACTIVE", "LEGACY_ACTIVE"}
+                ):
+                    continue
                 players_data.append({
                     "id": str(player.id),
                     "full_name": player.full_name,
-                    "team_name": team.name if team else "Unknown",
+                    "team_name": team.name,
                     "team_id": str(player.team_id),
                     "birth_date": player.birth_date.strftime("%Y-%m-%d") if player.birth_date else "N/A",
                     "photo_url": _public_storage_path(player.photo_path),
@@ -4769,8 +5095,11 @@ async def list_players(request: Request, needs_review: Optional[bool] = None):
                     "request": request,
                     "players": players_data,
                     "filter": "needs_review" if needs_review else "all"
-                }
+                },
+                headers={"Cache-Control": "private, no-store"},
             )
+    except HTTPException:
+        raise
     except Exception:
         _raise_dashboard_internal_error("Error loading players")
 
@@ -7788,6 +8117,7 @@ async def edit_team(
             updates=updates,
             mutation_reason=str(form_data.get("mutation_reason") or ""),
             mutation_request_id=mutation_request_id,
+            expected_revision=_regs07_expected_revision(form_data),
         )
     except ValueError as exc:
         raise _regs07_error(
@@ -7797,6 +8127,8 @@ async def edit_team(
         ) from exc
     except HTTPException:
         raise
+    except DBAPIError as exc:
+        _raise_regs07_write_error(exc, "Error updating team")
     except Exception:
         _raise_dashboard_internal_error("Error updating team")
 
@@ -7845,6 +8177,7 @@ async def edit_player(
             updates=updates,
             mutation_reason=str(form_data.get("mutation_reason") or ""),
             mutation_request_id=mutation_request_id,
+            expected_revision=_regs07_expected_revision(form_data),
         )
     except ValueError as exc:
         raise _regs07_error(
@@ -7854,6 +8187,8 @@ async def edit_player(
         ) from exc
     except HTTPException:
         raise
+    except DBAPIError as exc:
+        _raise_regs07_write_error(exc, "Error updating player")
     except Exception:
         _raise_dashboard_internal_error("Error updating player")
 
@@ -7883,6 +8218,7 @@ async def verify_player(player_id: str, request: Request):
             },
             mutation_reason=reason,
             mutation_request_id=mutation_request_id,
+            expected_revision=_regs07_expected_revision(form_data),
         )
     except ValueError as exc:
         raise _regs07_error(
@@ -7892,6 +8228,8 @@ async def verify_player(player_id: str, request: Request):
         ) from exc
     except HTTPException:
         raise
+    except DBAPIError as exc:
+        _raise_regs07_write_error(exc, "Error verifying player")
     except Exception:
         _raise_dashboard_internal_error("Error verifying player")
 
