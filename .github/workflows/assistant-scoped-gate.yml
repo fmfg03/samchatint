@@ -8,7 +8,7 @@ on:
 
 jobs:
   assistant-scoped-gate:
-    runs-on: ubuntu-latest
+    runs-on: samchat-ci
 
     steps:
       - name: Checkout code
