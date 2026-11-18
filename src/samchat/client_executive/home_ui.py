@@ -7,8 +7,61 @@ from html import escape
 from urllib.parse import urlencode
 
 from .home import amount, format_money
-from .report_layouts import report_cell_evidence, report_layouts
+from .report_layouts import (
+    BANK_CLASSIFICATION_GAP,
+    cashflow_display,
+    cashflow_fields,
+    report_cell_evidence,
+    report_layouts,
+)
 from .ui import render_documentary_accounting
+
+
+def _cashflow_cell(layouts: dict, entry: dict, key: str, slot: int, blank: str) -> str:
+    layout = layouts["cashflow"]
+    display = cashflow_display(layout, entry.get(key))
+    if "start" not in entry:
+        return blank
+    cell = report_cell_evidence(
+        layouts, {"report": "cashflow", "column": key, "period": str(slot)}
+    )
+    if display is None and "bank_revision" not in layout:
+        return blank
+    reason = cell.get("gap") if display is None else None
+    detail = (
+        f"<small>{escape(reason)}</small>"
+        if reason and reason != layout.get("gap")
+        else ""
+    )
+    source = escape(cell["source"], quote=True)
+    formula = escape(cell["definition"], quote=True)
+    gap = escape(cell.get("gap") or "", quote=True)
+    scope_label = escape(cell.get("scope_label") or "", quote=True)
+    accessible_label = escape(
+        " · ".join((cell["label"], cell["formatted_value"], cell["period"])), quote=True
+    )
+    return (
+        f'<button type="button" class="cell-value" data-report="cashflow" '
+        f'aria-label="{accessible_label}" '
+        f'data-column="{key}" data-period="{slot}" '
+        f'data-label="{escape(cell["label"], quote=True)}" '
+        f'data-period-label="{escape(cell["period"], quote=True)}" '
+        f'data-display="{escape(cell["formatted_value"], quote=True)}" '
+        f'data-source="{source}" data-formula="{formula}" data-gap="{gap}" '
+        f'data-scope-label="{scope_label}">'
+        f"{display or blank}</button>{detail}"
+    )
+
+
+def _cashflow_period_header(entry: dict, fallback: str) -> str:
+    label = entry.get("label") or fallback
+    metadata = [entry.get("scope_label"), entry.get("source")]
+    if "start" in entry:
+        dates = f"{entry['start']} a {entry['end']}"
+        if dates != label:
+            metadata.insert(0, dates)
+    details = "<br>".join(escape(value) for value in metadata if value)
+    return f"{escape(label)}<br><small>{details}</small>" if details else escape(label)
 
 
 def _report_panels(snapshot: dict) -> str:
@@ -45,50 +98,37 @@ def _report_panels(snapshot: dict) -> str:
     cash = layouts["cashflow"]
     bridge = ""
     current = (cash["periods"] or [{}])[0]
-    for key, title, sign in (
-        ("opening", "Saldo inicial", ""),
-        ("origins_total", "Orígenes", "+"),
-        ("applications_total", "Aplicaciones", "−"),
-        ("closing", "Saldo final", "="),
-    ):
-        value = amount(current.get(key))
-        rendered = f"{value:,.2f}" if value is not None else "Pendiente"
-        if value is not None:
-            cell = report_cell_evidence(
-                layouts, {"report": "cashflow", "column": key, "period": "0"}
-            )
-            rendered = f'<button type="button" class="cell-value" data-report="cashflow" data-column="{key}" data-period="0" data-label="{escape(cell["label"], quote=True)}" data-period-label="{escape(cell["period"], quote=True)}" data-display="{escape(cell["formatted_value"], quote=True)}">{rendered}</button>'
-        bridge += f'<div class="bridge-step"><span>{sign} {title}</span><strong>{rendered}</strong><small>Miles de MXN</small></div>'
+    fields = cashflow_fields(cash)
+    for (key, title), sign in zip(fields, ("", "+", "−", "=")):
+        rendered = _cashflow_cell(layouts, current, key, 0, "Pendiente")
+        bridge += f'<div class="bridge-step"><span>{sign} {title}</span><strong>{rendered}</strong><small>{cash["unit"]}</small></div>'
     detail = ""
-    for title, key, first in (
-        ("Orígenes", "origins", 9),
-        ("Aplicaciones", "applications", 16),
-    ):
+    for title, key in (("Orígenes", "origins"), ("Aplicaciones", "applications")):
         values = current.get(key) or [None] * 6
         detail += f'<details class="cash-detail"><summary>{title} · 6 partidas</summary><table><caption>{title} · miles de MXN</caption><tbody>'
-        for offset, value in enumerate(values):
+        for value in values:
             parsed = amount(value)
             detail += f'<tr><th scope="row">Conceptos/Proyectos</th><td class="numeric">{f"{parsed:,.2f}" if parsed is not None else "—"}</td></tr>'
         detail += "</tbody></table></details>"
+    if "bank_revision" in cash:
+        detail = f'<p class="muted">{BANK_CLASSIFICATION_GAP}</p>' + detail
+    period_header = _cashflow_period_header(
+        current, f'{cash["period"]["start"]} a {cash["period"]["end"]}'
+    )
+    notice = f'<p class="notice">{escape(cash["gap"])}</p>' if cash.get("gap") else ""
     periods = cash["periods"] + [{}] * (6 - len(cash["periods"]))
     comparisons = '<table class="cash-periods"><caption>Comparativos · miles de MXN · sin periodo acreditado no hay cifra</caption><thead><tr><th>Concepto</th>'
-    comparisons += (
-        "".join(
-            f'<th>{escape(p.get("label") or ("Mensual" if i < 3 else "Acumulado") + " · periodo pendiente")}</th>'
-            for i, p in enumerate(periods)
+    for slot, period in enumerate(periods):
+        fallback = ("Mensual" if slot < 3 else "Acumulado") + " · periodo pendiente"
+        comparisons += (
+            f'<th scope="col">{_cashflow_period_header(period, fallback)}</th>'
         )
-        + "</tr></thead><tbody>"
-    )
-    for key, label in (
-        ("opening", "Apertura"),
-        ("origins_total", "Orígenes"),
-        ("applications_total", "Aplicaciones"),
-        ("closing", "Cierre"),
-    ):
+    comparisons += "</tr></thead><tbody>"
+    for key, label in fields:
         comparisons += f'<tr><th scope="row">{label}</th>'
-        for p in periods:
-            value = amount(p.get(key))
-            comparisons += f'<td class="numeric">{f"{value:,.2f}" if value is not None else "—"}</td>'
+        for slot, period in enumerate(periods):
+            rendered = _cashflow_cell(layouts, period, key, slot, "—")
+            comparisons += f'<td class="numeric">{rendered}</td>'
         comparisons += "</tr>"
     comparisons += "</tbody></table>"
     distribution = render_budget_distribution(snapshot.get("tournaments") or [])
@@ -102,7 +142,7 @@ def _report_panels(snapshot: dict) -> str:
       <thead><tr><th rowspan="2">Concepto</th><th colspan="2">Presupuesto</th><th colspan="2">Real</th><th colspan="2">Variación</th></tr><tr><th>Mes</th><th>Acumulado</th><th>Mes</th><th>Acumulado</th><th>Mes</th><th>Acumulado</th></tr></thead><tbody>{rows}</tbody></table></div>
       <p class="source-note">Fuente: {escape(budget['source'])}. El remanente resta costos directos, transmisión y patrocinios una sola vez.</p></div></section>
       <section id="cashflow-panel" role="tabpanel" aria-labelledby="cashflow-tab" hidden><div class="panel report-panel"><div class="section-heading"><div><p class="eyebrow">TESORERÍA</p><h2>Flujo de efectivo</h2></div><span class="unit">Miles de MXN</span></div>
-      <p>{escape(current.get('label') or 'Periodo seleccionado · pendiente de fuente bancaria atribuible')}</p><p class="notice">{escape(cash.get('gap') or 'Apertura + orígenes − aplicaciones = cierre.')}</p>
+      <p>{period_header}</p>{notice}
       <div class="cash-bridge" aria-label="Puente de caja">{bridge}</div>
       <p class="muted">Los saldos son existencias al inicio y al cierre; no se suman como acumulados. Un pago documental no acredita movimiento bancario.</p>{detail}
       <details class="cash-detail"><summary>Periodos comparativos y fuentes</summary><p>Tres espacios mensuales y tres acumulados. Cada comparación requiere inicio y fin explícitos; no se asignan años a columnas sin identificar.</p><div class="table-wrap" tabindex="0" role="region" aria-label="Comparativos de flujo">{comparisons}</div><p>{escape(cash['source'])}</p></details>

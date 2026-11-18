@@ -1,6 +1,6 @@
 {
   "baseline": "6cd122f1030ab39631d77e706a9f5a1a7192231d",
-  "source_file_count": 556,
+  "source_file_count": 557,
   "exclusions": [
     "Private plugin integration package excluded from business-source inventory; baseline pinned deliberately, source hashes detect changes",
     "Active frontend is not versioned here; UI function/profile parity remains UNPROVEN",
@@ -20865,11 +20865,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "76988cd354c0",
+      "id": "ee62deef6562",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 206,
+      "line": 207,
       "handler": "direction_executive_dashboard",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "c885c7eb7ede3f07db5dec90c9e66555137f48967cba4f34899a7f218f186e91",
       "method": "GET",
       "paths": [
         "/direccion/tableros"
@@ -20906,7 +20906,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:direction_executive_dashboard",
-      "proposed_tool": "direction_direction_executive_dashboard_get_76988c",
+      "proposed_tool": "direction_direction_executive_dashboard_get_ee62de",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -20925,11 +20925,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d6d8b640102e",
+      "id": "54e767da814a",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 224,
+      "line": 225,
       "handler": "direction_executive_assistant_summary",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "c885c7eb7ede3f07db5dec90c9e66555137f48967cba4f34899a7f218f186e91",
       "method": "GET",
       "paths": [
         "/direccion/tableros/asistente/resumen"
@@ -20968,7 +20968,7 @@
         "build_client_executive_summary"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:direction_executive_assistant_summary",
-      "proposed_tool": "direction_direction_executive_assistant_summary_get_d6d8b6",
+      "proposed_tool": "direction_direction_executive_assistant_summary_get_54e767",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -20987,11 +20987,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e7e0a8f3381a",
+      "id": "bb1e251f2f51",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 238,
+      "line": 239,
       "handler": "direction_published_reports",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "c885c7eb7ede3f07db5dec90c9e66555137f48967cba4f34899a7f218f186e91",
       "method": "GET",
       "paths": [
         "/direccion/reportes"
@@ -21028,7 +21028,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:direction_published_reports",
-      "proposed_tool": "direction_direction_published_reports_get_e7e0a8",
+      "proposed_tool": "direction_direction_published_reports_get_bb1e25",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -21046,11 +21046,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "399fb0d94070",
+      "id": "d14599d42c24",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 267,
+      "line": 268,
       "handler": "direction_executive_tournament_dashboard",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "c885c7eb7ede3f07db5dec90c9e66555137f48967cba4f34899a7f218f186e91",
       "method": "GET",
       "paths": [
         "/direccion/tableros/torneos/{tournament_id}"
@@ -21087,7 +21087,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:direction_executive_tournament_dashboard",
-      "proposed_tool": "direction_direction_executive_tournament_dashboard_get_399fb0",
+      "proposed_tool": "direction_direction_executive_tournament_dashboard_get_d14599",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -21107,11 +21107,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "3c5fe09226e7",
+      "id": "3bd128b068e5",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 349,
+      "line": 360,
       "handler": "direction_home",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "c885c7eb7ede3f07db5dec90c9e66555137f48967cba4f34899a7f218f186e91",
       "method": "GET",
       "paths": [
         "/direccion/inicio"
@@ -21135,13 +21135,13 @@
       "family": "direction",
       "mount_evidence": "live_entrypoint_static",
       "profile_evidence": [
-        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+        "_direction_bank_allowed(session, current_empleado)"
       ],
       "service_candidates": [
         "build_home"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:direction_home",
-      "proposed_tool": "direction_direction_home_get_3c5fe0",
+      "proposed_tool": "direction_direction_home_get_3bd128",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -21165,11 +21165,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e050062281e4",
+      "id": "fdfd7df873fe",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 445,
+      "line": 476,
       "handler": "direction_context_query",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "c885c7eb7ede3f07db5dec90c9e66555137f48967cba4f34899a7f218f186e91",
       "method": "POST",
       "paths": [
         "/direccion/tableros/asistente/consulta"
@@ -21206,7 +21206,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:direction_context_query",
-      "proposed_tool": "direction_direction_context_query_post_e05006",
+      "proposed_tool": "direction_direction_context_query_post_fdfd7d",
       "scope_proposal": "direction:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -21228,11 +21228,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "143c5e8bdeaf",
+      "id": "48494b5cceb7",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 509,
+      "line": 549,
       "handler": "direction_export_report",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "c885c7eb7ede3f07db5dec90c9e66555137f48967cba4f34899a7f218f186e91",
       "method": "POST",
       "paths": [
         "/direccion/reportes/exportar/{output_format}"
@@ -21271,7 +21271,7 @@
         "build_report"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:direction_export_report",
-      "proposed_tool": "direction_direction_export_report_post_143c5e",
+      "proposed_tool": "direction_direction_export_report_post_48494b",
       "scope_proposal": "direction:write; never grants business authority",
       "object_parameters": [
         "output_format",
@@ -21294,11 +21294,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "55f03ebc58b4",
+      "id": "e4412db6d231",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 574,
+      "line": 614,
       "handler": "legacy_client_dashboards_redirect",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "c885c7eb7ede3f07db5dec90c9e66555137f48967cba4f34899a7f218f186e91",
       "method": "GET",
       "paths": [
         "/cliente/tableros"
@@ -21326,7 +21326,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:legacy_client_dashboards_redirect",
-      "proposed_tool": "direction_legacy_client_dashboards_redirect_get_55f03e",
+      "proposed_tool": "direction_legacy_client_dashboards_redirect_get_e4412d",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [],
       "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
@@ -21342,11 +21342,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "3862032acc4f",
+      "id": "b40480d6e85d",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 579,
+      "line": 619,
       "handler": "legacy_client_dashboard_summary_redirect",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "c885c7eb7ede3f07db5dec90c9e66555137f48967cba4f34899a7f218f186e91",
       "method": "GET",
       "paths": [
         "/cliente/tableros/asistente/resumen"
@@ -21374,7 +21374,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:legacy_client_dashboard_summary_redirect",
-      "proposed_tool": "direction_legacy_client_dashboard_summary_redirect_get_386203",
+      "proposed_tool": "direction_legacy_client_dashboard_summary_redirect_get_b40480",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [],
       "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
@@ -21390,11 +21390,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "6c427289272c",
+      "id": "df1dee8417f1",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 584,
+      "line": 624,
       "handler": "legacy_client_reports_redirect",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "c885c7eb7ede3f07db5dec90c9e66555137f48967cba4f34899a7f218f186e91",
       "method": "GET",
       "paths": [
         "/cliente/reportes"
@@ -21422,7 +21422,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:legacy_client_reports_redirect",
-      "proposed_tool": "direction_legacy_client_reports_redirect_get_6c4272",
+      "proposed_tool": "direction_legacy_client_reports_redirect_get_df1dee",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [],
       "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
@@ -21438,11 +21438,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "a317eb777e35",
+      "id": "5b22169c2ed7",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 589,
+      "line": 629,
       "handler": "legacy_client_tournament_redirect",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "c885c7eb7ede3f07db5dec90c9e66555137f48967cba4f34899a7f218f186e91",
       "method": "GET",
       "paths": [
         "/cliente/tableros/torneos/{tournament_id}"
@@ -21470,7 +21470,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:legacy_client_tournament_redirect",
-      "proposed_tool": "direction_legacy_client_tournament_redirect_get_a317eb",
+      "proposed_tool": "direction_legacy_client_tournament_redirect_get_5b2216",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "tournament_id"
