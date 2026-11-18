@@ -24,7 +24,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, deferred, declared_attr
 
@@ -1076,6 +1076,44 @@ class AccountingImportRun(Base):
     started_by = relationship(
         "Empleado", foreign_keys=[started_by_empleado_id], lazy="selectin"
     )
+
+
+_OwnerInstalledBankCertificationBase = declarative_base()
+
+
+class DirectionBankStatementCertification(_OwnerInstalledBankCertificationBase):
+    """Read mapping for the owner-installed Treasury certification register.
+
+    The versioned PostgreSQL migration owns all constraints and privileges.
+    Separate metadata excludes this table from the application's shared schema.
+    """
+
+    __tablename__ = "direction_bank_statement_certifications"
+    __table_args__ = {"schema": "public"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    import_run_id = Column(UUID(as_uuid=True), nullable=False)
+    source_sha256 = Column(String(64), nullable=False)
+    series_sha256 = Column(String(64), nullable=False)
+    account_fingerprint = Column(String(64), nullable=False)
+    account_id = Column(UUID(as_uuid=True), nullable=False)
+    company_id = Column(UUID(as_uuid=True), nullable=False)
+    account_last4 = Column(String(4), nullable=False)
+    currency = Column(String(3), nullable=False)
+    portfolio_id = Column(UUID(as_uuid=True), nullable=False)
+    tournament_ids = Column(ARRAY(UUID(as_uuid=True)), nullable=False)
+    scope_account_ids = Column(ARRAY(UUID(as_uuid=True)))
+    coverage_start = Column(Date, nullable=False)
+    coverage_end = Column(Date, nullable=False)
+    opening_balance = Column(Numeric(20, 2))
+    closing_balance = Column(Numeric(20, 2))
+    descending_rows = Column(Boolean, nullable=False)
+    evidence_ref = Column(UUID(as_uuid=True), nullable=False)
+    certified_by = Column(UUID(as_uuid=True), nullable=False)
+    certified_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True))
+    revoked_by = Column(UUID(as_uuid=True))
+    revocation_reason = Column(Text)
 
 
 class AccountingPoliza(Base):
