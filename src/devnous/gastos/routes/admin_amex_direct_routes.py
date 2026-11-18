@@ -1,6 +1,7 @@
 """Statement-native AMEX UI; financial mutations remain service-owned."""
 
 import json
+import re
 import secrets
 from datetime import date
 from decimal import Decimal
@@ -26,6 +27,7 @@ from ..services import amex_direct_recovery_service as recovery
 from ..services import amex_direct_status_service as status
 from ..services import amex_direct_suggestion_service as suggestions
 from ..services import amex_expense_account_settlement_service as settlements
+from ..services import amex_partner_payroll_service as partner_payroll
 from ..services.amex_direct_common import DirectSchemaUnavailable
 from . import dependencies
 from .admin_amex_accounting_routes import (
@@ -50,6 +52,7 @@ BASE = "/admin/contabilidad/amex/estados"
 QUEUE = "/documentos/control-presupuestal/amex-directo"
 _CSRF_KEY = "amex_direct_csrf"
 _MAX_BYTES = 10 * 1024 * 1024
+PARTNER_PAYROLL_PATH = BASE + "/{import_id}/directo/nomina-1218/{item_id}"
 _TREATMENT_LABELS = {
     "benefit_expense": "Prestación absorbida por la empresa",
     "partner_receivable": "Cargo a la cuenta deudora del socio",
@@ -175,6 +178,17 @@ def _reason(code: str | None) -> str:
         "account_treatment_preview_changed": "La revisión cambió. Conservamos tus datos para que previsualices otra vez antes de confirmar.",
         "invalid_account_treatment": "Selecciona un tratamiento contable válido.",
         "invalid_amex_partner_decision": "El cargo al socio requiere una cuenta deudora activa y un motivo explícito.",
+        "partner_payroll_cut_required": "Se requiere un cargo a deudores del socio contabilizado en AMEX directo.",
+        "partner_payroll_source_mismatch": "La deducción debe pertenecer a la nómina cerrada de 1218 del socio y al concepto autorizado.",
+        "partner_payroll_receipt_required": "Indica la referencia del comprobante del descuento aplicado.",
+        "partner_payroll_withholding_unproven": "Revisa la línea de retención en la póliza de origen del período de nómina.",
+        "partner_payroll_bank_source_mismatch": "Revisa el cargo de 1218 y el abono de Sports. Deben corresponder a la misma transferencia.",
+        "partner_payroll_bank_posting_conflict": "La transferencia ya tiene un vínculo contable que requiere revisión.",
+        "partner_payroll_amount_exceeds_balance": "El importe excede el saldo o la evidencia disponible.",
+        "partner_payroll_ambiguous_accounts": "Finanzas debe verificar las cuentas contables de las dos empresas.",
+        "partner_payroll_request_conflict": "La referencia de confirmación ya se usó. Consulta el historial.",
+        "partner_payroll_preview_changed": "Cambió el saldo o la evidencia. Vuelve a revisar la operación.",
+        "partner_payroll_export_unavailable": "El evento seleccionado carece de una póliza nueva para esta empresa.",
         "partner_budget_conflict": "El cargo al socio no debe conservar una imputación presupuestal. Solicita su devolución o liberación antes de cambiar el tratamiento.",
         "all_sources_already_recognized": "Todos los movimientos están cubiertos o declarados como no nuevo gasto. Se conservan sus pólizas; no se genera una póliza de importe cero.",
         "statement_row_unresolved": "Hay filas omitidas o signos sin resolver. Finanzas debe revisar el estado completo antes de generar la póliza.",
@@ -997,7 +1011,12 @@ def _no_cfdi_forms(request, import_id, version, versions) -> str:
 
 
 def _row(
-    item, suggestion_html: str = "", *, bucket: str = "review", disabled: bool = False
+    item,
+    suggestion_html: str = "",
+    *,
+    bucket: str = "review",
+    disabled: bool = False,
+    partner_payroll_url: str = "",
 ) -> str:
     kind = {
         "debit": "Cargo",
@@ -1085,6 +1104,16 @@ def _row(
             f'<br>Versión: {_text(getattr(item, "budget_version_label", None) or item.budget_version_id)}'
         )
         account_label = "Gasto"
+    payroll_link = ""
+    if (
+        partner_payroll_url
+        and treatment == "partner_receivable"
+        and item.accounting_status == "recognized"
+    ):
+        payroll_link = (
+            f'<br><a href="{escape(partner_payroll_url, quote=True)}">'
+            "Conciliar nómina 1218</a>"
+        )
     return (
         f'<tr data-item-id="{item.id}" data-amex-bucket="{escape(bucket, quote=True)}" '
         f'data-amex-search="{escape(f"{item.fecha} {item.descriptor} {item.amount} {item.currency}", quote=True)}">'
@@ -1095,7 +1124,7 @@ def _row(
         f"<td>{classification}</td>"
         f"<td>{budget_cell}</td>"
         f"<td>{account_label}: {_text(item.account_code)}<br>Pasivo tarjeta: {_text(item.liability_code)}</td>"
-        f'<td>{_stage_label(item.accounting_status)}<br>{_text(", ".join(map(str, item.recognized_poliza_ids)) if item.recognized_poliza_ids else None)}</td></tr>'
+        f'<td>{_stage_label(item.accounting_status)}<br>{_text(", ".join(map(str, item.recognized_poliza_ids)) if item.recognized_poliza_ids else None)}{payroll_link}</td></tr>'
     )
 
 
@@ -1319,6 +1348,9 @@ async def direct_statement(
         "><th>Cuentas</th><th>Contabilidad</t"
         "h></tr></thead><tbody>"
     )
+    payroll_available = (
+        finance and frozen and partner_payroll.can_discover(_actor_id(actor))
+    )
     body += (
         "".join(
             _row(
@@ -1326,6 +1358,11 @@ async def direct_statement(
                 _suggestion_summary(import_id, suggested.get(str(item.id))),
                 bucket=row_bucket(item, preview),
                 disabled=frozen,
+                partner_payroll_url=(
+                    PARTNER_PAYROLL_PATH.format(import_id=import_id, item_id=item.id)
+                    if payroll_available
+                    else ""
+                ),
             ).replace(
                 "</td></tr>",
                 (
@@ -2826,6 +2863,238 @@ async def direct_export(
 ):
     """Download a frozen cut through its explicit export path."""
     return await _direct_download(import_id, export_format, session, actor)
+
+
+def _partner_payroll_form(
+    request: Request,
+    base: str,
+    kind: str,
+    balance: Decimal,
+    choices: dict[str, list[tuple[UUID, str]]],
+) -> str:
+    if balance <= 0:
+        return ""
+    is_payroll = kind == "payroll"
+    title = "Registrar descuento aplicado" if is_payroll else "Conciliar transferencia"
+    first = "Partida de nómina" if is_payroll else "Cargo bancario de 1218"
+    second = "Asiento de retención" if is_payroll else "Abono bancario de Sports"
+    evidence_fields = ""
+    for position, label in (("first", first), ("second", second)):
+        name = f"{kind}-{position}"
+        options = "".join(
+            f'<option value="{row_id}" label="{escape(value, quote=True)}"></option>'
+            for row_id, value in choices.get(name, [])
+        )
+        evidence_fields += (
+            f'<label>{label}<input name="{position}_id" list="{name}" '
+            'placeholder="Selecciona o pega el ID" maxlength="36" required></label>'
+            f'<datalist id="{name}">{options}</datalist>'
+        )
+    extra = (
+        "<label>Número de la deducción en la partida"
+        '<input type="number" name="deduction_number" min="1" max="1000" required></label>'
+        "<label>Referencia del comprobante de descuento"
+        '<input name="receipt_reference" maxlength="100" required></label>'
+        if is_payroll
+        else ""
+    )
+    return (
+        f'<section><h2>{title}</h2><form class="direct-form" method="post" action="{base}/preview">'
+        + _csrf(request)
+        + _hidden("kind", kind)
+        + _hidden("operation_id", uuid4())
+        + f'<label>Importe MXN<input type="number" name="amount" min="0.01" '
+        f'max="{balance}" step="0.01" required></label>'
+        + evidence_fields
+        + extra
+        + _submit("Revisar operación")
+        + "</form></section>"
+    )
+
+
+@router.get(PARTNER_PAYROLL_PATH)
+async def partner_payroll_detail(
+    import_id: UUID,
+    item_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    actor: Empleado = Depends(get_current_empleado),
+):
+    _require_finance_actor(actor)
+    charge, balances, events, choices = await _call(
+        partner_payroll.state(
+            session,
+            actor_id=_actor_id(actor),
+            import_id=import_id,
+            item_id=item_id,
+            include_choices=True,
+        )
+    )
+    base = PARTNER_PAYROLL_PATH.format(import_id=import_id, item_id=item_id)
+    body = f'<p><a href="{BASE}/{import_id}/directo">Volver al estado AMEX</a></p>'
+    body += (
+        f"<p>{escape(charge.concept)} · {charge.date}</p><dl>"
+        f"<dt>Cargo con IVA</dt><dd>{balances.total:,.2f} MXN</dd>"
+        f"<dt>Pendiente del socio</dt><dd>{balances.debtor:,.2f} MXN</dd>"
+        f"<dt>Descontado por 1218</dt><dd>{balances.withheld:,.2f} MXN</dd>"
+        f"<dt>Pendiente de transferir a Sports</dt><dd>{balances.intercompany:,.2f} MXN</dd>"
+        f"<dt>Transferido a Sports</dt><dd>{balances.transferred:,.2f} MXN</dd></dl>"
+    )
+    body += _partner_payroll_form(request, base, "payroll", balances.debtor, choices)
+    body += _partner_payroll_form(
+        request, base, "transfer", balances.intercompany, choices
+    )
+    if events:
+        body += "<h2>Operaciones confirmadas</h2><ul>"
+        for event in events:
+            labels = {partner_payroll.SPORTS: "Sports", partner_payroll.P1218: "1218"}
+            links = " · ".join(
+                f'<a href="{base}/{event.id}/{company}.xlsx">COI {label}</a>'
+                for company, label in labels.items()
+                if company in event.snapshot["books"]
+            )
+            type_label = "Descuento" if event.kind == "payroll" else "Transferencia"
+            reference = event.snapshot.get("receipt_reference") or event.snapshot.get(
+                "bank_reference"
+            )
+            body += (
+                f"<li>{type_label} · {escape(event.snapshot['date'])} · "
+                f"{event.amount:,.2f} MXN · {_text(reference)}"
+                + (f" · {links}" if links else " · Pólizas vinculadas")
+                + "</li>"
+            )
+        body += "</ul>"
+    return _html("Conciliar nómina 1218", body, actor)
+
+
+def _partner_payroll_input(form: FormData) -> partner_payroll.Request:
+    kind = _value(form, "kind", required=True)
+    if kind not in {"payroll", "transfer"}:
+        raise HTTPException(422, "Elige un tipo de operación válido.")
+    raw_amount = _value(form, "amount", required=True)
+    if not re.fullmatch(r"[0-9]{1,16}(\.[0-9]{1,2})?", raw_amount):
+        raise HTTPException(422, "Usa un importe positivo con hasta dos decimales.")
+    return partner_payroll.Request(
+        kind=kind,
+        amount=Decimal(raw_amount),
+        operation_id=_uuid(form, "operation_id"),
+        first_id=_uuid(form, "first_id"),
+        second_id=_uuid(form, "second_id"),
+        deduction_index=(
+            _version(form, "deduction_number") - 1 if kind == "payroll" else None
+        ),
+        receipt_reference=(
+            _value(form, "receipt_reference", required=True)
+            if kind == "payroll"
+            else None
+        ),
+    )
+
+
+@router.post(PARTNER_PAYROLL_PATH + "/preview")
+@router.post(PARTNER_PAYROLL_PATH + "/confirmar")
+async def partner_payroll_review(
+    import_id: UUID,
+    item_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    actor: Empleado = Depends(get_current_empleado),
+):
+    _require_finance_actor(actor)
+    form = await _form(request)
+    confirm = request.url.path.endswith("/confirmar")
+    if confirm and not _confirmed(form):
+        raise HTTPException(422, "Confirma la operación revisada y su evidencia.")
+    values = _partner_payroll_input(form)
+    base = PARTNER_PAYROLL_PATH.format(import_id=import_id, item_id=item_id)
+    try:
+        preview = await _call(
+            partner_payroll.prepare(
+                session,
+                actor_id=_actor_id(actor),
+                import_id=import_id,
+                item_id=item_id,
+                request=values,
+                confirm_hash=(
+                    _value(form, "preview_hash", required=True) if confirm else None
+                ),
+            )
+        )
+        if confirm:
+            await session.commit()
+            return RedirectResponse(base, 303)
+        await session.rollback()
+    except Exception:
+        await session.rollback()
+        raise
+
+    labels = {
+        partner_payroll.SPORTS: "Plataforma Sports",
+        partner_payroll.P1218: "Plataforma 1218",
+    }
+    body = f'<p><a href="{base}">Volver al saldo del cargo</a></p>'
+    body += "<h2>Pólizas COI por empresa</h2><ul>"
+    for company, label in labels.items():
+        book = preview["books"].get(company)
+        description = (
+            f"Debe {_text(book['debit'])} · Haber {_text(book['credit'])} · "
+            f"{values.amount:,.2f} MXN · {_text(book['date'])}"
+            if book
+            else "Póliza existente vinculada"
+        )
+        body += f"<li>{label} · {description}</li>"
+    body += f'</ul><form class="direct-form" method="post" action="{base}/confirmar">'
+    body += _csrf(request)
+    body += "".join(
+        _hidden(key, _value(form, key))
+        for key in (
+            "kind",
+            "amount",
+            "operation_id",
+            "first_id",
+            "second_id",
+            "deduction_number",
+            "receipt_reference",
+        )
+    )
+    body += _hidden("preview_hash", preview["hash"])
+    body += _confirm(
+        "Confirmo que el descuento se aplicó al socio en nómina de Plataforma 1218 y revisé su comprobante."
+        if values.kind == "payroll"
+        else "Confirmo que revisé la transferencia entre 1218 y Sports."
+    )
+    return _html("Revisar conciliación", body + _submit("Confirmar") + "</form>", actor)
+
+
+@router.get(PARTNER_PAYROLL_PATH + "/{event_id}/{company}.xlsx")
+async def partner_payroll_export(
+    import_id: UUID,
+    item_id: UUID,
+    event_id: UUID,
+    company: str,
+    session: AsyncSession = Depends(get_db_session),
+    actor: Empleado = Depends(get_current_empleado),
+):
+    _require_finance_actor(actor)
+    content, filename = await _call(
+        partner_payroll.export(
+            session,
+            actor_id=_actor_id(actor),
+            import_id=import_id,
+            item_id=item_id,
+            event_id=event_id,
+            company=company,
+        )
+    )
+    return Response(
+        content,
+        media_type=partner_payroll.XLSX_MIME,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 async def _direct_download(
