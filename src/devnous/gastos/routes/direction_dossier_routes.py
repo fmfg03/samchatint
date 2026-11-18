@@ -21,6 +21,7 @@ from samchat.client_executive.dossier_records import (
     STATE_CONCEPTS,
     DossierRecordError,
     capture_permissions,
+    document_category_matches,
     known_editions,
     read_domains,
     read_records,
@@ -124,9 +125,7 @@ def _finance_link_matches(capture: dict, document: dict) -> bool:
     categories = document.get("categories") or (
         [document["category"]] if document.get("category") else []
     )
-    return not (
-        capture["category"] and categories and capture["category"] not in categories
-    )
+    return document_category_matches(capture["category"], categories)
 
 
 def _target_progress(target: dict, registration: dict) -> list[tuple]:

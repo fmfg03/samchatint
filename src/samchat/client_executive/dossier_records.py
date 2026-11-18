@@ -470,6 +470,16 @@ async def read_records(
     }
 
 
+def document_category_matches(category: str, categories: Any) -> bool:
+    """Share capture/read category compatibility without inventing missing scope."""
+    values = (
+        [v for v in categories if isinstance(v, str) and v.strip()]
+        if isinstance(categories, list)
+        else []
+    )
+    return not category or categories is None or categories == [] or category in values
+
+
 async def _verify_reference(session: Any, capture: dict, params: dict) -> None:
     fields = capture["fields"]
     operations_id = fields.get("operations_tournament_id")
@@ -495,7 +505,7 @@ async def _verify_reference(session: Any, capture: dict, params: dict) -> None:
     if "document_id" in fields:
         result = await session.execute(
             text("""
-                SELECT id FROM documentos
+                SELECT id, categorias FROM documentos
                 WHERE id = CAST(:document AS uuid) AND torneo_id = CAST(:tournament AS uuid)
                   AND (edicion = :edition OR edicion IS NULL)
                   AND (fase IS NULL OR btrim(fase) = '' OR lower(btrim(fase)) = :phase)
@@ -504,10 +514,13 @@ async def _verify_reference(session: Any, capture: dict, params: dict) -> None:
             """),
             params,
         )
-        if result.scalar_one_or_none() is None:
+        document = result.mappings().one_or_none()
+        if document is None:
             raise DossierRecordError(
                 "El documento no coincide con el torneo, la edición o la fase."
             )
+        if not document_category_matches(capture["category"], document["categorias"]):
+            raise DossierRecordError("El documento no coincide con la categoría.")
     for kind, field in (("visit", "visit_id"), ("activation", "activation_id")):
         if field not in fields:
             continue
@@ -618,8 +631,10 @@ async def save_record(
         await session.execute(
             text("""
                 INSERT INTO direction_dossier_revisions
-                    (record_id, revision, actor_id, evidence_reference)
-                VALUES (CAST(:record AS uuid), :revision, CAST(:actor AS uuid), :reference)
+                    (record_id, revision, actor_id, evidence_reference, snapshot)
+                SELECT id, revision, updated_by, evidence_reference, to_jsonb(record)
+                FROM direction_dossier_records AS record
+                WHERE id = CAST(:record AS uuid) AND revision = :revision
             """),
             {**params, "revision": row["revision"]},
         )

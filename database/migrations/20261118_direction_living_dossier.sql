@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS direction_dossier_revisions (
     record_id UUID NOT NULL REFERENCES direction_dossier_records(id) ON DELETE RESTRICT,
     revision INTEGER NOT NULL CHECK (revision > 0),
     actor_id UUID NOT NULL,
+    snapshot JSONB NOT NULL CHECK (jsonb_typeof(snapshot) = 'object'),
     evidence_reference TEXT NOT NULL CHECK (length(btrim(evidence_reference)) BETWEEN 1 AND 240),
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (record_id, revision)

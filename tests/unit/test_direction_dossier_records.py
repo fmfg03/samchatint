@@ -196,3 +196,19 @@ def test_player_breakdown_requires_age_cutoff_and_valid_unique_total():
     )
     assert saved["fields"]["registrations"] == 8
     assert saved["fields"]["unique_people"] == 7
+
+
+@pytest.mark.parametrize(
+    "category,categories,expected",
+    [
+        ("Juvenil", ["Juvenil"], True),
+        ("Varonil", ["Juvenil"], False),
+        ("", ["Juvenil"], True),
+        ("Juvenil", None, True),
+        ("Juvenil", ["", 1], False),
+    ],
+)
+def test_financial_category_compatibility(category, categories, expected):
+    from samchat.client_executive.dossier_records import document_category_matches
+
+    assert document_category_matches(category, categories) is expected

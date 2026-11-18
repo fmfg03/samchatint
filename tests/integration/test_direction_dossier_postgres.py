@@ -48,7 +48,7 @@ async def test_direction_dossier_migration_scope_audit_and_rollback(dossier_post
             CREATE TABLE empleados (id uuid PRIMARY KEY);
             CREATE TABLE documentos (
                 id uuid PRIMARY KEY, torneo_id uuid REFERENCES tournaments(id),
-                edicion int, fase text, tipo text, fecha_pago_efectiva date
+                edicion int, fase text, tipo text, fecha_pago_efectiva date, categorias jsonb
             );
             GRANT SELECT, UPDATE ON documentos, tournaments TO devnous_user;
             """)
@@ -75,8 +75,8 @@ async def test_direction_dossier_migration_scope_audit_and_rollback(dossier_post
         await admin.execute(
             """
             INSERT INTO documentos VALUES
-                ($1, $3, 2026, 'Nacional', 'SOLICITUD', DATE '2027-01-15'),
-                ($2, $3, 2027, 'Nacional', 'SOLICITUD', NULL)
+                ($1, $3, 2026, 'Nacional', 'SOLICITUD', DATE '2027-01-15', '["Juvenil"]'::jsonb),
+                ($2, $3, 2027, 'Nacional', 'SOLICITUD', NULL, NULL)
             """,
             proof,
             next_year,
@@ -120,6 +120,11 @@ async def test_direction_dossier_migration_scope_audit_and_rollback(dossier_post
         async with session_factory() as session:
             await session.execute(text("SET LOCAL ROLE devnous_user"))
             assert await known_editions(session, str(project)) == [2027, 2026]
+            with pytest.raises(DossierRecordError, match="categoría"):
+                await save_record(
+                    session,
+                    **{**payload, "scope": {**payload["scope"], "category": "Varonil"}},
+                )
             original = await save_record(session, **payload)
             assert await save_record(session, **payload) == original
             assert original["id"] == request_id and original["revision"] == 1
@@ -207,6 +212,17 @@ async def test_direction_dossier_migration_scope_audit_and_rollback(dossier_post
             "Referencia de Finanzas aprobada",
             "Referencia corregida",
         ]
+        snapshots = await admin.fetch(
+            "SELECT snapshot FROM direction_dossier_revisions ORDER BY revision"
+        )
+        import json
+
+        prior, current = [json.loads(row["snapshot"]) for row in snapshots]
+        assert prior["fields"]["concept"] == "hotel_anticipo"
+        assert current["fields"]["concept"] == "hotel_liquidacion"
+        assert prior["document_id"] == current["document_id"] == str(proof)
+        assert prior["category"] == current["category"] == "Juvenil"
+        assert prior["revision"] == 1 and current["revision"] == 2
         await admin.execute("DELETE FROM documentos WHERE id = $1", proof)
 
         async with session_factory() as session:

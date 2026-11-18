@@ -21815,11 +21815,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "357a47c03edf",
+      "id": "96b116d3b076",
       "source": "src/devnous/gastos/routes/direction_dossier_routes.py",
-      "line": 623,
+      "line": 622,
       "handler": "direction_entry",
-      "source_sha256": "38502fba50eb14c4fffa747878a7bc50d70466c0facbfdb2b3797e3c8c6910ae",
+      "source_sha256": "d1c7d9c817c90f1f12e804b0b88a1212b36d0faedf74a3de560ac19e09ccd3f1",
       "method": "GET",
       "paths": [
         "/direccion"
@@ -21847,7 +21847,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/direction_dossier_routes.py:direction_entry",
-      "proposed_tool": "direction_direction_entry_get_357a47",
+      "proposed_tool": "direction_direction_entry_get_96b116",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "employee"
@@ -21865,11 +21865,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "0bb317ef2341",
+      "id": "f8b41ce5e714",
       "source": "src/devnous/gastos/routes/direction_dossier_routes.py",
-      "line": 632,
+      "line": 631,
       "handler": "dossier",
-      "source_sha256": "38502fba50eb14c4fffa747878a7bc50d70466c0facbfdb2b3797e3c8c6910ae",
+      "source_sha256": "d1c7d9c817c90f1f12e804b0b88a1212b36d0faedf74a3de560ac19e09ccd3f1",
       "method": "GET",
       "paths": [
         "/direccion/expediente-vivo"
@@ -21887,10 +21887,10 @@
         }
       ],
       "guard_definitions": [
-        "src/devnous/gastos/routes/direction_dossier_routes.py:322:_scope_choices",
-        "src/devnous/gastos/routes/direction_dossier_routes.py:564:scoped_tournament",
-        "src/devnous/gastos/routes/direction_dossier_routes.py:577:authorized_sources",
-        "src/devnous/gastos/routes/direction_dossier_routes.py:584:scoped_editions"
+        "src/devnous/gastos/routes/direction_dossier_routes.py:321:_scope_choices",
+        "src/devnous/gastos/routes/direction_dossier_routes.py:563:scoped_tournament",
+        "src/devnous/gastos/routes/direction_dossier_routes.py:576:authorized_sources",
+        "src/devnous/gastos/routes/direction_dossier_routes.py:583:scoped_editions"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [],
@@ -21906,7 +21906,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/direction_dossier_routes.py:dossier",
-      "proposed_tool": "direction_dossier_get_0bb317",
+      "proposed_tool": "direction_dossier_get_f8b41c",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "employee"
@@ -21924,11 +21924,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "7b003d9da6fc",
+      "id": "b478315ca8ab",
       "source": "src/devnous/gastos/routes/direction_dossier_routes.py",
-      "line": 743,
+      "line": 742,
       "handler": "capture",
-      "source_sha256": "38502fba50eb14c4fffa747878a7bc50d70466c0facbfdb2b3797e3c8c6910ae",
+      "source_sha256": "d1c7d9c817c90f1f12e804b0b88a1212b36d0faedf74a3de560ac19e09ccd3f1",
       "method": "POST",
       "paths": [
         "/direccion/expediente-vivo/captura"
@@ -21946,10 +21946,10 @@
         }
       ],
       "guard_definitions": [
-        "src/devnous/gastos/routes/direction_dossier_routes.py:322:_scope_choices",
-        "src/devnous/gastos/routes/direction_dossier_routes.py:564:scoped_tournament",
-        "src/devnous/gastos/routes/direction_dossier_routes.py:577:authorized_sources",
-        "src/devnous/gastos/routes/direction_dossier_routes.py:584:scoped_editions"
+        "src/devnous/gastos/routes/direction_dossier_routes.py:321:_scope_choices",
+        "src/devnous/gastos/routes/direction_dossier_routes.py:563:scoped_tournament",
+        "src/devnous/gastos/routes/direction_dossier_routes.py:576:authorized_sources",
+        "src/devnous/gastos/routes/direction_dossier_routes.py:583:scoped_editions"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [],
@@ -21970,7 +21970,7 @@
         "validated['fields'].get"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/direction_dossier_routes.py:capture",
-      "proposed_tool": "direction_capture_post_7b003d",
+      "proposed_tool": "direction_capture_post_b47831",
       "scope_proposal": "direction:write; never grants business authority",
       "object_parameters": [
         "employee"
@@ -21991,11 +21991,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "43f19e7153e6",
+      "id": "4967c029531a",
       "source": "src/devnous/gastos/routes/direction_dossier_routes.py",
-      "line": 921,
+      "line": 920,
       "handler": "photo",
-      "source_sha256": "38502fba50eb14c4fffa747878a7bc50d70466c0facbfdb2b3797e3c8c6910ae",
+      "source_sha256": "d1c7d9c817c90f1f12e804b0b88a1212b36d0faedf74a3de560ac19e09ccd3f1",
       "method": "GET",
       "paths": [
         "/direccion/expediente-vivo/fotografias/{record_id}"
@@ -22013,7 +22013,7 @@
         }
       ],
       "guard_definitions": [
-        "src/devnous/gastos/routes/direction_dossier_routes.py:564:scoped_tournament"
+        "src/devnous/gastos/routes/direction_dossier_routes.py:563:scoped_tournament"
       ],
       "profile_symbols": [],
       "default_profile_candidates": [],
@@ -22025,7 +22025,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/direction_dossier_routes.py:photo",
-      "proposed_tool": "direction_photo_get_43f19e",
+      "proposed_tool": "direction_photo_get_4967c0",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "record_id",
