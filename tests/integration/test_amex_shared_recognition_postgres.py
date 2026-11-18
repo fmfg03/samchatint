@@ -30,7 +30,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from devnous.gastos import models
-from devnous.gastos.amex_schema_policy import AMEX_DIRECT_OWNER_MIGRATION_TABLES
+from devnous.gastos.amex_schema_policy import (
+    AMEX_DIRECT_OWNER_MIGRATION_TABLES,
+    AMEX_PARTNER_PAYROLL_OWNER_MIGRATION_TABLES,
+)
 from devnous.gastos.services import amex_accounting_cut_service as cuts
 from devnous.gastos.services import amex_accounting_posting_service as service
 from devnous.gastos.services import amex_recognition_service as recognition
@@ -46,48 +49,57 @@ async def pg(monkeypatch):
         pytest.fail("AMEX acceptance database must be isolated localhost:55471")
     schema = "amex_test_" + uuid4().hex
     admin = create_async_engine(url)
-    async with admin.begin() as connection:
-        await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
     engine = create_async_engine(
         url, connect_args={"server_settings": {"search_path": schema}}
     )
-    copied = MetaData()
-    for table in models.Base.metadata.tables.values():
-        if table.name in AMEX_DIRECT_OWNER_MIGRATION_TABLES:
-            continue
-        clone = table.to_metadata(copied)
-        if not table.name.startswith("amex_"):
-            for constraint in list(clone.constraints):
-                if isinstance(constraint, ForeignKeyConstraint):
-                    clone.constraints.remove(constraint)
-                    for element in constraint.elements:
-                        clone.foreign_keys.discard(element)
-                        element.parent.foreign_keys.discard(element)
-    async with engine.begin() as connection:
-        await connection.run_sync(copied.create_all)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    actor = uuid4()
-    async with factory.begin() as session:
-        session.add(models.Empleado(id=actor, nombre="Acceptance", rol="finanzas"))
-        session.add(
-            models.AmexRecognitionActivation(
-                id=1, activated_at=datetime(2026, 10, 1, tzinfo=timezone.utc)
-            )
-        )
-    monkeypatch.setattr(
-        service,
-        "build_expense_accounting_preview",
-        AsyncMock(
-            return_value={"taxes": {"base_gasto": 116, "neto_contrapartida": 116}}
-        ),
-    )
+    schema_created = False
     try:
+        async with admin.begin() as connection:
+            await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        schema_created = True
+        copied = MetaData()
+        owner_tables = (
+            AMEX_DIRECT_OWNER_MIGRATION_TABLES
+            | AMEX_PARTNER_PAYROLL_OWNER_MIGRATION_TABLES
+        )
+        for table in models.Base.metadata.tables.values():
+            if table.name in owner_tables:
+                continue
+            clone = table.to_metadata(copied)
+            if not table.name.startswith("amex_"):
+                for constraint in list(clone.constraints):
+                    if isinstance(constraint, ForeignKeyConstraint):
+                        clone.constraints.remove(constraint)
+                        for element in constraint.elements:
+                            clone.foreign_keys.discard(element)
+                            element.parent.foreign_keys.discard(element)
+        async with engine.begin() as connection:
+            await connection.run_sync(copied.create_all)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        actor = uuid4()
+        async with factory.begin() as session:
+            session.add(models.Empleado(id=actor, nombre="Acceptance", rol="finanzas"))
+            session.add(
+                models.AmexRecognitionActivation(
+                    id=1, activated_at=datetime(2026, 10, 1, tzinfo=timezone.utc)
+                )
+            )
+        monkeypatch.setattr(
+            service,
+            "build_expense_accounting_preview",
+            AsyncMock(
+                return_value={"taxes": {"base_gasto": 116, "neto_contrapartida": 116}}
+            ),
+        )
         yield SimpleNamespace(factory=factory, actor=actor)
     finally:
-        await engine.dispose()
-        async with admin.begin() as connection:
-            await connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
-        await admin.dispose()
+        try:
+            await engine.dispose()
+            if schema_created:
+                async with admin.begin() as connection:
+                    await connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        finally:
+            await admin.dispose()
 
 
 async def _seed(pg, *, count=1, code="2120-002-062", invoice=True):

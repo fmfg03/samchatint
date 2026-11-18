@@ -19,6 +19,7 @@ from devnous.gastos import models
 from devnous.gastos.amex_schema_policy import (
     AMEX_DIRECT_OWNER_MIGRATION_TABLES,
     AMEX_OWNER_MIGRATION_TABLES,
+    AMEX_PARTNER_PAYROLL_OWNER_MIGRATION_TABLES,
     AMEX_STATEMENT_OWNER_MIGRATION_TABLES,
 )
 from devnous.gastos.services import amex_statement_import_service as service
@@ -56,6 +57,7 @@ async def pg(monkeypatch):
             AMEX_STATEMENT_OWNER_MIGRATION_TABLES
             | AMEX_DIRECT_OWNER_MIGRATION_TABLES
             | AMEX_OWNER_MIGRATION_TABLES
+            | AMEX_PARTNER_PAYROLL_OWNER_MIGRATION_TABLES
         ):
             continue
         clone = table.to_metadata(metadata)
