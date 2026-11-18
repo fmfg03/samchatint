@@ -80,6 +80,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Free hosted runner disk space
         if: runner.environment == 'github-hosted' && runner.os == 'Linux'
         run: |
@@ -424,6 +429,11 @@ jobs:
     needs: [policy, unit-tests, integration-tests, changed-code-coverage, security-scan]
     runs-on: samchat-ci
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Require every mandatory job
         env:
           POLICY_RESULT: ${{ needs.policy.result }}
