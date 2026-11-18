@@ -15,7 +15,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from lxml import html
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from starlette.middleware.sessions import SessionMiddleware
 
 from devnous.gastos import models
@@ -42,12 +42,16 @@ MIGRATION = ROOT / "database/migrations/20261118_amex_partner_payroll.sql"
 ROLLBACK = ROOT / "database/migrations/20261118_amex_partner_payroll_rollback.sql"
 
 
-async def setup(pg, *, migrate=True):
+async def setup(pg, *, migrate=True, second_charge=False):
     await cut_fixture.configure(pg)
-    view = await cut_fixture.imported(pg, "2026-10-02,PARTNER,-939.00\n")
-    item_id = view.items[0].id
-    view = await cut_fixture.treatment(pg, view, item_id, "partner_receivable")
-    view = await cut_fixture.declare(pg, view, item_id)
+    rows = "2026-10-02,PARTNER,-939.00\n"
+    if second_charge:
+        rows += "2026-10-03,PARTNER OTHER CONSUMPTION,-939.00\n"
+    view = await cut_fixture.imported(pg, rows)
+    item_ids = [item.id for item in view.items]
+    for item_id in item_ids:
+        view = await cut_fixture.treatment(pg, view, item_id, "partner_receivable")
+        view = await cut_fixture.declare(pg, view, item_id)
     cut = await cut_fixture.owner._confirm(
         pg, await cut_fixture.owner._cut_args(pg, view)
     )
@@ -55,38 +59,17 @@ async def setup(pg, *, migrate=True):
     if migrate:
         await pg.conn.execute(MIGRATION.read_text())
 
-    employer = models.PayrollEmployer(
-        id=uuid4(),
-        employer_key="p1218",
-        legal_name="Synthetic 1218",
-        rfc="AAA010101AA1",
-        active=True,
-    )
-    registration = models.PayrollEmployerRegistration(
-        id=uuid4(),
-        payroll_employer_id=employer.id,
-        registration_code="synthetic",
-        branch_name="Synthetic registration",
-    )
-    employee = models.PayrollEmployee(
-        id=uuid4(),
-        empleado_id=pg.actor.id,
-        employee_number="SYN-1",
-        employer_registration_id=registration.id,
-    )
     policy = {
         "sports_actor_ids": [str(pg.actor.id)],
         "p1218_actor_ids": [str(pg.actor.id)],
         "sports_rfc": view.context.receiver_rfc,
-        "p1218_rfc": employer.rfc,
-        "employer_id": str(employer.id),
-        "partners": {str(pg.debtor.id): str(employee.id)},
+        "p1218_rfc": "AAA010101AA1",
+        "starts_on": "2026-10-02",
+        "partner_debtor_ids": [str(pg.debtor.id)],
         "sports_bank_number": "10000001",
         "p1218_bank_number": "20000002",
-        "deduction_concept": "amex_partner",
     }
     async with pg.factory.begin() as session:
-        session.add_all([employer, registration, employee])
         for index, key in enumerate(
             (
                 "sports_receivable",
@@ -108,54 +91,34 @@ async def setup(pg, *, migrate=True):
             policy[key] = {"id": str(account.id), "code": account.codigo}
     pg.monkeypatch.setenv(service.POLICY_ENV, json.dumps(policy))
     return (
-        dict(actor_id=pg.actor.id, import_id=view.statement.id, item_id=item_id),
+        dict(actor_id=pg.actor.id, import_id=view.statement.id, item_id=item_ids[0]),
         policy,
-        employee,
+        item_ids,
     )
 
 
-async def payroll(pg, policy, employee, amount, number, *, already_payable=False):
-    day = date(2026, 10, 10 + number)
-    period = models.PayrollPeriod(
-        id=uuid4(),
-        fiscal_year=2026,
-        period_no=number,
-        period_type="quincenal",
-        start_date=day,
-        end_date=day,
-        payment_date=day,
-        status="closed",
-    )
-    run = models.PayrollRun(id=uuid4(), period_id=period.id, status="posted")
-    row = models.PayrollRunLine(
-        id=uuid4(),
-        run_id=run.id,
-        payroll_employee_id=employee.id,
-        deductions_json=[{"concept_key": "amex_partner", "amount": amount}],
-    )
-    header = models.AccountingPoliza(
-        id=uuid4(),
-        source_file=f"payroll_run:{run.id}",
-        tipo_poliza="Diario",
-        numero_poliza=f"NOM-{number}",
-        concepto="Retención confirmada",
-        origen="payroll",
-    )
+def deduction(policy, amount, number, *, already_payable=False, xlsx=False):
     source = policy["p1218_payable" if already_payable else "p1218_withholding"]
-    line = models.AccountingPolizaLine(
-        id=uuid4(),
-        poliza_id=header.id,
-        line_no=1,
-        cuenta_contable_id=source["id"],
-        cuenta_codigo=source["code"],
-        debe=0,
-        haber=float(amount),
+    if xlsx:
+        workbook = Workbook()
+        workbook.active.append(["COI 1218", number, source["code"], amount])
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        document = buffer.getvalue()
+    else:
+        document = f"%PDF-1.4\nSynthetic COI 1218 evidence {number}\n%%EOF\n".encode()
+    coi = service.CoiDeduction(
+        company_rfc=policy["p1218_rfc"],
+        period="2026-10",
+        policy_type="DR",
+        folio=str(number),
+        line="1",
+        applied_on=date(2026, 10, 10 + number),
+        source_amount=Decimal(amount),
+        credit_account=source["code"],
+        document=document,
     )
-    async with pg.factory.begin() as session:
-        session.add_all([period, run, row, header, line])
-    return service.Request(
-        "payroll", Decimal(amount), uuid4(), row.id, line.id, 0, f"REC-1218-{number}"
-    )
+    return service.Request("payroll", Decimal(amount), uuid4(), coi=coi)
 
 
 async def transfer(pg, policy, amount):
@@ -213,9 +176,9 @@ async def book(pg, args, event_id, company):
 @pytest.mark.asyncio
 async def test_partial_payroll_then_bank_liquidation_with_separate_exports(direct_pg):
     pg = direct_pg
-    args, policy, employee = await setup(pg)
-    first = await payroll(pg, policy, employee, "300.25", 1)
-    second = await payroll(pg, policy, employee, "638.75", 2, already_payable=True)
+    args, policy, _ = await setup(pg)
+    first = deduction(policy, "300.25", 1)
+    second = deduction(policy, "638.75", 2, already_payable=True)
     bank = await transfer(pg, policy, "939.00")
     journal_count = await pg.conn.fetchval("SELECT count(*) FROM accounting_polizas")
     freeze = await pg.conn.fetchval(
@@ -275,8 +238,8 @@ async def test_partial_payroll_then_bank_liquidation_with_separate_exports(direc
 @pytest.mark.asyncio
 async def test_concurrent_confirmations_cannot_spend_the_same_balance(direct_pg):
     pg = direct_pg
-    args, policy, employee = await setup(pg)
-    first = await payroll(pg, policy, employee, "600.00", 1)
+    args, policy, _ = await setup(pg)
+    first = deduction(policy, "600.00", 1)
     second = replace(first, operation_id=uuid4())
     previews = await asyncio.gather(review(pg, args, first), review(pg, args, second))
     results = await asyncio.gather(
@@ -292,32 +255,77 @@ async def test_concurrent_confirmations_cannot_spend_the_same_balance(direct_pg)
 
 
 @pytest.mark.asyncio
+async def test_coi_line_is_shared_across_charges_without_reallocating_its_total(
+    direct_pg,
+):
+    pg = direct_pg
+    args, policy, items = await setup(pg, second_charge=True)
+    other_charge = {**args, "item_id": items[1]}
+    first = replace(deduction(policy, "600.00", 1), amount=Decimal("400.00"))
+    second = replace(first, operation_id=uuid4(), coi=replace(first.coi, folio="0001"))
+    reviews = await asyncio.gather(
+        review(pg, args, first), review(pg, other_charge, second)
+    )
+    results = await asyncio.gather(
+        confirm(pg, args, first, reviews[0]),
+        confirm(pg, other_charge, second, reviews[1]),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(result, dict) for result in results) == 1
+    denied = next(result for result in results if isinstance(result, Exception))
+    assert isinstance(denied, DirectConflict)
+    assert "exceeds_balance" in str(denied)
+    remaining_charge = other_charge if isinstance(results[0], dict) else args
+    conflicting = replace(
+        first,
+        operation_id=uuid4(),
+        amount=Decimal("200.00"),
+        coi=replace(first.coi, source_amount=Decimal("700.00")),
+    )
+    with pytest.raises(DirectConflict, match="coi_source_conflict"):
+        await review(pg, remaining_charge, conflicting)
+    remainder = replace(first, operation_id=uuid4(), amount=Decimal("200.00"))
+    await confirm(
+        pg, remaining_charge, remainder, await review(pg, remaining_charge, remainder)
+    )
+    assert (
+        await pg.conn.fetchval("SELECT count(*) FROM amex_partner_coi_deductions") == 1
+    )
+    assert (
+        await pg.conn.fetchval("SELECT sum(amount) FROM amex_partner_payroll_events")
+        == 600
+    )
+
+
+@pytest.mark.asyncio
 async def test_evidence_scope_and_migration_rollback(direct_pg):
     pg = direct_pg
-    args, policy, employee = await setup(pg, migrate=False)
+    args, policy, _ = await setup(pg, migrate=False)
     with pytest.raises(DirectSchemaUnavailable, match="schema_missing"):
         await balances(pg, args)
     await pg.conn.execute(MIGRATION.read_text())
     await pg.conn.execute(ROLLBACK.read_text())
     await pg.conn.execute(MIGRATION.read_text())
-    pay = await payroll(pg, policy, employee, "939.00", 1)
-    with pytest.raises(DirectConflict, match="receipt_required"):
-        await review(pg, args, replace(pay, receipt_reference=None))
-    with pytest.raises(DirectConflict, match="source_mismatch"):
-        await review(pg, args, replace(pay, deduction_index=8))
-    await pg.conn.execute(
-        "UPDATE payroll_employees SET employer_registration_id = NULL WHERE id = $1",
-        employee.id,
+    pay = deduction(policy, "939.00", 1)
+    with pytest.raises(DirectConflict, match="coi_document_required"):
+        await review(pg, args, replace(pay, coi=None))
+    for changes, code in (
+        ({"document": b"not a COI document"}, "coi_document_required"),
+        ({"folio": ""}, "coi_reference_required"),
+        ({"company_rfc": policy["sports_rfc"]}, "coi_company_mismatch"),
+        ({"applied_on": date(2026, 10, 1)}, "coi_period_mismatch"),
+        ({"period": "2026-09"}, "coi_period_mismatch"),
+        ({"credit_account": "0000-000"}, "ambiguous_accounts"),
+        ({"source_amount": Decimal("900.00")}, "exceeds_balance"),
+    ):
+        with pytest.raises(DirectConflict, match=code):
+            await review(pg, args, replace(pay, coi=replace(pay.coi, **changes)))
+    pg.monkeypatch.setenv(
+        service.POLICY_ENV, json.dumps({**policy, "starts_on": "2026-10-03"})
     )
-    with pytest.raises(DirectConflict, match="source_mismatch"):
-        await review(pg, args, pay)
-    await pg.conn.execute(
-        "UPDATE payroll_employees SET employer_registration_id = $1 WHERE id = $2",
-        employee.employer_registration_id,
-        employee.id,
-    )
-    with pytest.raises(DirectConflict, match="withholding_unproven"):
-        await review(pg, args, replace(pay, second_id=uuid4()))
+    with pytest.raises(DirectConflict, match="before_activation"):
+        await balances(pg, args)
+    pg.monkeypatch.setenv(service.POLICY_ENV, json.dumps(policy))
     preview = await review(pg, args, pay)
     denied = {**policy, "p1218_actor_ids": [str(uuid4())]}
     pg.monkeypatch.setenv(service.POLICY_ENV, json.dumps(denied))
@@ -325,6 +333,8 @@ async def test_evidence_scope_and_migration_rollback(direct_pg):
         await confirm(pg, args, pay, preview)
     pg.monkeypatch.setenv(service.POLICY_ENV, json.dumps(policy))
     await confirm(pg, args, pay, preview)
+    with pytest.raises(asyncpg.CheckViolationError, match="immutable"):
+        await pg.conn.execute("DELETE FROM amex_partner_coi_deductions")
     mismatched_bank = await transfer(pg, policy, "939.00")
     await pg.conn.execute(
         "UPDATE bank_movements SET clave_rastreo = 'OTHER' WHERE id = $1",
@@ -345,8 +355,8 @@ async def test_evidence_scope_and_migration_rollback(direct_pg):
 @pytest.mark.asyncio
 async def test_same_transfer_reimported_under_different_csv_cannot_pay_twice(direct_pg):
     pg = direct_pg
-    args, policy, employee = await setup(pg)
-    pay = await payroll(pg, policy, employee, "939.00", 1)
+    args, policy, _ = await setup(pg)
+    pay = deduction(policy, "939.00", 1)
     await confirm(pg, args, pay, await review(pg, args, pay))
     transfer_original = await transfer(pg, policy, "300.00")
     transfer_copy = await transfer(pg, policy, "300.00")
@@ -367,8 +377,8 @@ async def test_same_transfer_reimported_under_different_csv_cannot_pay_twice(dir
 @pytest.mark.asyncio
 async def test_http_previews_confirms_and_downloads_both_companies(direct_pg):
     pg = direct_pg
-    args, policy, employee = await setup(pg)
-    deduction = await payroll(pg, policy, employee, "939.00", 1)
+    args, policy, _ = await setup(pg)
+    pay = deduction(policy, "939.00", 1, xlsx=True)
     proof = await transfer(pg, policy, "939.00")
     app = FastAPI()
     app.add_middleware(SessionMiddleware, secret_key="isolated synthetic test key")
@@ -394,22 +404,28 @@ async def test_http_previews_confirms_and_downloads_both_companies(direct_pg):
         page = await client.get(path)
         assert page.status_code == 200
         markup = html.fromstring(page.text)
-        assert markup.xpath('//datalist[@id="payroll-first"]/option/@value') == [
-            str(deduction.first_id)
-        ]
+        assert markup.xpath('//input[@name="coi_document"]')
+        assert not markup.xpath('//input[@name="deduction_number"]')
         assert "939.00 MXN" in page.text
         form = {
             "kind": "payroll",
             "amount": "939.00",
-            "operation_id": str(deduction.operation_id),
-            "first_id": str(deduction.first_id),
-            "second_id": str(deduction.second_id),
-            "deduction_number": "1",
-            "receipt_reference": deduction.receipt_reference,
+            "operation_id": str(pay.operation_id),
+            "company_rfc": pay.coi.company_rfc,
+            "coi_period": pay.coi.period,
+            "coi_type": pay.coi.policy_type,
+            "coi_folio": pay.coi.folio,
+            "coi_line": pay.coi.line,
+            "applied_on": pay.coi.applied_on.isoformat(),
+            "source_amount": "939.00",
+            "credit_account": pay.coi.credit_account,
         }
-        assert (await client.post(path + "/preview", data=form)).status_code == 403
+        files = {"coi_document": ("1218.xlsx", pay.coi.document, service.XLSX_MIME)}
+        assert (
+            await client.post(path + "/preview", data=form, files=files)
+        ).status_code == 403
         form["_csrf_token"] = markup.xpath('//input[@name="_csrf_token"]/@value')[0]
-        planned = await client.post(path + "/preview", data=form)
+        planned = await client.post(path + "/preview", data=form, files=files)
         assert planned.status_code == 200
         assert "Plataforma Sports" in planned.text and "Plataforma 1218" in planned.text
         assert (
@@ -419,9 +435,22 @@ async def test_http_previews_confirms_and_downloads_both_companies(direct_pg):
         form["preview_hash"] = html.fromstring(planned.text).xpath(
             '//input[@name="preview_hash"]/@value'
         )[0]
-        assert (await client.post(path + "/confirmar", data=form)).status_code == 422
+        assert (
+            await client.post(path + "/confirmar", data=form, files=files)
+        ).status_code == 422
         form["confirmed"] = "true"
-        assert (await client.post(path + "/confirmar", data=form)).status_code == 303
+        other = deduction(policy, "939.00", 2, xlsx=True)
+        altered = {"coi_document": ("1218.xlsx", other.coi.document, service.XLSX_MIME)}
+        assert (
+            await client.post(path + "/confirmar", data=form, files=altered)
+        ).status_code == 409
+        assert (
+            await client.post(path + "/confirmar", data=form, files=files)
+        ).status_code == 303
+        evidence = await client.get(f"{path}/{pay.operation_id}/evidencia-coi")
+        assert evidence.status_code == 200 and evidence.content == pay.coi.document
+        assert evidence.headers["content-disposition"].startswith("attachment")
+
         page = await client.get(path)
         markup = html.fromstring(page.text)
         assert markup.xpath('//datalist[@id="transfer-first"]/option/@value') == [
@@ -430,7 +459,7 @@ async def test_http_previews_confirms_and_downloads_both_companies(direct_pg):
         assert len(markup.xpath('//a[contains(@href, ".xlsx")]')) == 2
         for company in ("sports", "p1218"):
             book_response = await client.get(
-                f"{path}/{deduction.operation_id}/{company}.xlsx"
+                f"{path}/{pay.operation_id}/{company}.xlsx"
             )
             assert book_response.status_code == 200
             assert book_response.headers["content-type"] == service.XLSX_MIME
@@ -438,7 +467,7 @@ async def test_http_previews_confirms_and_downloads_both_companies(direct_pg):
             assert len(parsed) == 1 and len(parsed[0].lines) == 2
             assert parsed[0].beneficiario_nombre is None
         assert (
-            await client.get(f"{path}/{deduction.operation_id}/goat.xlsx")
+            await client.get(f"{path}/{pay.operation_id}/goat.xlsx")
         ).status_code == 409
         assert (await client.get(f"{path}/{uuid4()}/sports.xlsx")).status_code == 409
         pg.monkeypatch.setenv(
@@ -447,30 +476,18 @@ async def test_http_previews_confirms_and_downloads_both_companies(direct_pg):
         )
         assert (await client.get(path)).status_code == 403
         assert (
-            await client.get(f"{path}/{deduction.operation_id}/sports.xlsx")
+            await client.get(f"{path}/{pay.operation_id}/evidencia-coi")
+        ).status_code == 403
+        assert (
+            await client.get(f"{path}/{pay.operation_id}/sports.xlsx")
         ).status_code == 403
 
 
 @pytest.mark.asyncio
 async def test_approved_coi_payroll_and_posted_bank_sources_are_reused(direct_pg):
     pg = direct_pg
-    args, policy, employee = await setup(pg)
-    pay = await payroll(pg, policy, employee, "939.00", 1, already_payable=True)
-    header_id = await pg.conn.fetchval(
-        "SELECT poliza_id FROM accounting_poliza_lines WHERE id = $1", pay.second_id
-    )
-    run_id = await pg.conn.fetchval(
-        "SELECT run_id FROM payroll_run_lines WHERE id = $1", pay.first_id
-    )
-    await pg.conn.execute(
-        "UPDATE accounting_polizas SET source_file = '1218-coi.xlsx', origen = 'coi' "
-        "WHERE id = $1",
-        header_id,
-    )
-    with pytest.raises(DirectConflict, match="withholding_unproven"):
-        await review(pg, args, pay)
-    policy["p1218_payroll_journals"] = {str(run_id): str(header_id)}
-    pg.monkeypatch.setenv(service.POLICY_ENV, json.dumps(policy))
+    args, policy, _ = await setup(pg)
+    pay = deduction(policy, "939.00", 1, already_payable=True)
     preview = await review(pg, args, pay)
     assert set(preview["books"]) == {"sports"}
     await confirm(pg, args, pay, preview)

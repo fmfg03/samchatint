@@ -179,9 +179,12 @@ def _reason(code: str | None) -> str:
         "invalid_account_treatment": "Selecciona un tratamiento contable válido.",
         "invalid_amex_partner_decision": "El cargo al socio requiere una cuenta deudora activa y un motivo explícito.",
         "partner_payroll_cut_required": "Se requiere un cargo a deudores del socio contabilizado en AMEX directo.",
-        "partner_payroll_source_mismatch": "La deducción debe pertenecer a la nómina cerrada de 1218 del socio y al concepto autorizado.",
-        "partner_payroll_receipt_required": "Indica la referencia del comprobante del descuento aplicado.",
-        "partner_payroll_withholding_unproven": "Revisa la línea de retención en la póliza de origen del período de nómina.",
+        "partner_payroll_before_activation": "Este cargo es anterior a la fecha de inicio de la conciliación de 1218.",
+        "partner_payroll_coi_document_required": "Adjunta la póliza COI original en PDF o XLSX de hasta 5 MiB.",
+        "partner_payroll_coi_reference_required": "Verifica el periodo, tipo, folio y renglón según la póliza de COI.",
+        "partner_payroll_coi_company_mismatch": "La póliza debe pertenecer a Plataforma 1218.",
+        "partner_payroll_coi_period_mismatch": "Verifica el periodo y la fecha del descuento aplicado.",
+        "partner_payroll_coi_source_conflict": "Ese renglón COI ya tiene otra evidencia. Revisa el historial antes de continuar.",
         "partner_payroll_bank_source_mismatch": "Revisa el cargo de 1218 y el abono de Sports. Deben corresponder a la misma transferencia.",
         "partner_payroll_bank_posting_conflict": "La transferencia ya tiene un vínculo contable que requiere revisión.",
         "partner_payroll_amount_exceeds_balance": "El importe excede el saldo o la evidencia disponible.",
@@ -1348,8 +1351,8 @@ async def direct_statement(
         "><th>Cuentas</th><th>Contabilidad</t"
         "h></tr></thead><tbody>"
     )
-    payroll_available = (
-        finance and frozen and partner_payroll.can_discover(_actor_id(actor))
+    payroll_start = (
+        partner_payroll.starts_on_for(_actor_id(actor)) if finance and frozen else None
     )
     body += (
         "".join(
@@ -1360,7 +1363,8 @@ async def direct_statement(
                 disabled=frozen,
                 partner_payroll_url=(
                     PARTNER_PAYROLL_PATH.format(import_id=import_id, item_id=item.id)
-                    if payroll_available
+                    if payroll_start
+                    and str(item.fecha)[:10] >= payroll_start.isoformat()
                     else ""
                 ),
             ).replace(
@@ -2865,6 +2869,25 @@ async def direct_export(
     return await _direct_download(import_id, export_format, session, actor)
 
 
+_COI_PARTNER_FIELDS = (
+    "company_rfc",
+    "coi_period",
+    "coi_type",
+    "coi_folio",
+    "coi_line",
+    "applied_on",
+    "source_amount",
+    "credit_account",
+)
+
+
+def _partner_coi_upload() -> str:
+    return (
+        "<label>Póliza COI de 1218"
+        '<input type="file" name="coi_document" accept=".pdf,.xlsx" required></label>'
+    )
+
+
 def _partner_payroll_form(
     request: Request,
     base: str,
@@ -2874,42 +2897,51 @@ def _partner_payroll_form(
 ) -> str:
     if balance <= 0:
         return ""
-    is_payroll = kind == "payroll"
-    title = "Registrar descuento aplicado" if is_payroll else "Conciliar transferencia"
-    first = "Partida de nómina" if is_payroll else "Cargo bancario de 1218"
-    second = "Asiento de retención" if is_payroll else "Abono bancario de Sports"
-    evidence_fields = ""
-    for position, label in (("first", first), ("second", second)):
-        name = f"{kind}-{position}"
-        options = "".join(
-            f'<option value="{row_id}" label="{escape(value, quote=True)}"></option>'
-            for row_id, value in choices.get(name, [])
-        )
-        evidence_fields += (
-            f'<label>{label}<input name="{position}_id" list="{name}" '
-            'placeholder="Selecciona o pega el ID" maxlength="36" required></label>'
-            f'<datalist id="{name}">{options}</datalist>'
-        )
-    extra = (
-        "<label>Número de la deducción en la partida"
-        '<input type="number" name="deduction_number" min="1" max="1000" required></label>'
-        "<label>Referencia del comprobante de descuento"
-        '<input name="receipt_reference" maxlength="100" required></label>'
-        if is_payroll
-        else ""
+    payroll = kind == "payroll"
+    title = (
+        "Registrar descuento aplicado en COI" if payroll else "Conciliar transferencia"
     )
-    return (
-        f'<section><h2>{title}</h2><form class="direct-form" method="post" action="{base}/preview">'
+    form = (
+        f'<section><h2>{title}</h2><form class="direct-form" method="post" '
+        f'enctype="multipart/form-data" action="{base}/preview">'
         + _csrf(request)
         + _hidden("kind", kind)
         + _hidden("operation_id", uuid4())
-        + f'<label>Importe MXN<input type="number" name="amount" min="0.01" '
+        + f'<label>Importe a aplicar en MXN<input type="number" name="amount" min="0.01" '
         f'max="{balance}" step="0.01" required></label>'
-        + evidence_fields
-        + extra
-        + _submit("Revisar operación")
-        + "</form></section>"
     )
+    if payroll:
+        form += (
+            '<label>RFC de la empresa en COI<input name="company_rfc" maxlength="13" required></label>'
+            '<label>Periodo contable<input name="coi_period" type="month" required></label>'
+            '<label>Tipo de póliza<select name="coi_type" required>'
+            '<option value="DR">Diario</option><option value="EG">Egreso</option>'
+            '<option value="IG">Ingreso</option></select></label>'
+            '<label>Folio de póliza<input name="coi_folio" maxlength="30" required></label>'
+            '<label>Renglón del descuento del socio<input name="coi_line" maxlength="60" required></label>'
+            '<label>Fecha del descuento aplicado<input name="applied_on" type="date" required></label>'
+            '<label>Importe del descuento individual en COI<input name="source_amount" '
+            'type="number" min="0.01" step="0.01" required></label>'
+            '<label>Cuenta acreditada en 1218<input name="credit_account" maxlength="99" required></label>'
+            "<p>Si la póliza está agrupada, adjunta en el mismo archivo su detalle por socio "
+            "y usa la referencia del renglón individual.</p>" + _partner_coi_upload()
+        )
+    else:
+        for position, label in (
+            ("first", "Cargo bancario de 1218"),
+            ("second", "Abono bancario de Sports"),
+        ):
+            name = f"transfer-{position}"
+            options = "".join(
+                f'<option value="{row_id}" label="{escape(value, quote=True)}"></option>'
+                for row_id, value in choices.get(name, [])
+            )
+            form += (
+                f'<label>{label}<input name="{position}_id" list="{name}" '
+                'placeholder="Selecciona o pega el ID" maxlength="36" required></label>'
+                f'<datalist id="{name}">{options}</datalist>'
+            )
+    return form + _submit("Revisar operación") + "</form></section>"
 
 
 @router.get(PARTNER_PAYROLL_PATH)
@@ -2954,9 +2986,16 @@ async def partner_payroll_detail(
                 if company in event.snapshot["books"]
             )
             type_label = "Descuento" if event.kind == "payroll" else "Transferencia"
-            reference = event.snapshot.get("receipt_reference") or event.snapshot.get(
-                "bank_reference"
+            coi = event.snapshot.get("coi_facts")
+            reference = (
+                f"{coi['period']} · {coi['policy_type']} {coi['folio']} · renglón {coi['line']}"
+                if coi
+                else event.snapshot.get("bank_reference")
             )
+            if coi:
+                links += (
+                    f' · <a href="{base}/{event.id}/evidencia-coi">Póliza original</a>'
+                )
             body += (
                 f"<li>{type_label} · {escape(event.snapshot['date'])} · "
                 f"{event.amount:,.2f} MXN · {_text(reference)}"
@@ -2967,26 +3006,49 @@ async def partner_payroll_detail(
     return _html("Conciliar nómina 1218", body, actor)
 
 
-def _partner_payroll_input(form: FormData) -> partner_payroll.Request:
-    kind = _value(form, "kind", required=True)
-    if kind not in {"payroll", "transfer"}:
-        raise HTTPException(422, "Elige un tipo de operación válido.")
-    raw_amount = _value(form, "amount", required=True)
-    if not re.fullmatch(r"[0-9]{1,16}(\.[0-9]{1,2})?", raw_amount):
+def _partner_payroll_amount(form: FormData, name: str) -> Decimal:
+    value = _value(form, name, required=True)
+    if not re.fullmatch(r"[0-9]{1,16}(\.[0-9]{1,2})?", value) or Decimal(value) <= 0:
         raise HTTPException(422, "Usa un importe positivo con hasta dos decimales.")
+    return Decimal(value)
+
+
+async def _partner_payroll_input(form: FormData) -> partner_payroll.Request:
+    kind = _value(form, "kind", required=True)
+    amount = _partner_payroll_amount(form, "amount")
+    operation_id = _uuid(form, "operation_id")
+    if kind == "transfer":
+        return partner_payroll.Request(
+            kind,
+            amount,
+            operation_id,
+            _uuid(form, "first_id"),
+            _uuid(form, "second_id"),
+        )
+    if kind != "payroll":
+        raise HTTPException(422, "Elige un tipo de operación válido.")
+    files = form.getlist("coi_document")
+    document = files[0] if len(files) == 1 else None
+    if not isinstance(document, UploadFile):
+        raise HTTPException(422, "Adjunta la póliza COI revisada.")
+    try:
+        applied_on = date.fromisoformat(_value(form, "applied_on", required=True))
+    except ValueError:
+        raise HTTPException(422, "Indica la fecha del descuento aplicado.") from None
     return partner_payroll.Request(
-        kind=kind,
-        amount=Decimal(raw_amount),
-        operation_id=_uuid(form, "operation_id"),
-        first_id=_uuid(form, "first_id"),
-        second_id=_uuid(form, "second_id"),
-        deduction_index=(
-            _version(form, "deduction_number") - 1 if kind == "payroll" else None
-        ),
-        receipt_reference=(
-            _value(form, "receipt_reference", required=True)
-            if kind == "payroll"
-            else None
+        kind,
+        amount,
+        operation_id,
+        coi=partner_payroll.CoiDeduction(
+            company_rfc=_value(form, "company_rfc", required=True),
+            period=_value(form, "coi_period", required=True),
+            policy_type=_value(form, "coi_type", required=True),
+            folio=_value(form, "coi_folio", required=True),
+            line=_value(form, "coi_line", required=True),
+            applied_on=applied_on,
+            source_amount=_partner_payroll_amount(form, "source_amount"),
+            credit_account=_value(form, "credit_account", required=True),
+            document=await document.read(partner_payroll.MAX_COI_BYTES + 1),
         ),
     )
 
@@ -3001,11 +3063,12 @@ async def partner_payroll_review(
     actor: Empleado = Depends(get_current_empleado),
 ):
     _require_finance_actor(actor)
-    form = await _form(request)
     confirm = request.url.path.endswith("/confirmar")
-    if confirm and not _confirmed(form):
-        raise HTTPException(422, "Confirma la operación revisada y su evidencia.")
-    values = _partner_payroll_input(form)
+    async with request.form(max_files=1, max_fields=24):
+        form = await _form(request)
+        if confirm and not _confirmed(form):
+            raise HTTPException(422, "Confirma la operación revisada y su evidencia.")
+        values = await _partner_payroll_input(form)
     base = PARTNER_PAYROLL_PATH.format(import_id=import_id, item_id=item_id)
     try:
         preview = await _call(
@@ -3033,6 +3096,14 @@ async def partner_payroll_review(
         partner_payroll.P1218: "Plataforma 1218",
     }
     body = f'<p><a href="{base}">Volver al saldo del cargo</a></p>'
+    coi = preview.get("coi_facts")
+    if coi:
+        body += (
+            f"<p>COI 1218 · {_text(coi['period'])} · {_text(coi['policy_type'])} "
+            f"{_text(coi['folio'])} · renglón {_text(coi['line'])} · "
+            f"Cuenta acreditada {_text(coi['credit_account'])} · "
+            f"Descuento acreditado {_text(coi['source_amount'])} MXN</p>"
+        )
     body += "<h2>Pólizas COI por empresa</h2><ul>"
     for company, label in labels.items():
         book = preview["books"].get(company)
@@ -3043,27 +3114,57 @@ async def partner_payroll_review(
             else "Póliza existente vinculada"
         )
         body += f"<li>{label} · {description}</li>"
-    body += f'</ul><form class="direct-form" method="post" action="{base}/confirmar">'
+    body += (
+        f'</ul><form class="direct-form" method="post" '
+        f'enctype="multipart/form-data" action="{base}/confirmar">'
+    )
     body += _csrf(request)
+    keys = _COI_PARTNER_FIELDS if values.coi else ("first_id", "second_id")
     body += "".join(
         _hidden(key, _value(form, key))
-        for key in (
-            "kind",
-            "amount",
-            "operation_id",
-            "first_id",
-            "second_id",
-            "deduction_number",
-            "receipt_reference",
-        )
+        for key in ("kind", "amount", "operation_id", *keys)
     )
     body += _hidden("preview_hash", preview["hash"])
+    if coi:
+        body += (
+            "<p>Adjunta nuevamente el mismo archivo que revisaste.</p>"
+            + _partner_coi_upload()
+        )
     body += _confirm(
-        "Confirmo que el descuento se aplicó al socio en nómina de Plataforma 1218 y revisé su comprobante."
-        if values.kind == "payroll"
+        "Cotejé en COI 1218 que el renglón acredita el descuento aplicado al socio de este cargo."
+        if coi
         else "Confirmo que revisé la transferencia entre 1218 y Sports."
     )
     return _html("Revisar conciliación", body + _submit("Confirmar") + "</form>", actor)
+
+
+@router.get(PARTNER_PAYROLL_PATH + "/{event_id}/evidencia-coi")
+async def partner_payroll_evidence(
+    import_id: UUID,
+    item_id: UUID,
+    event_id: UUID,
+    session: AsyncSession = Depends(get_db_session),
+    actor: Empleado = Depends(get_current_empleado),
+):
+    _require_finance_actor(actor)
+    content, filename, media_type = await _call(
+        partner_payroll.download_coi_source(
+            session,
+            actor_id=_actor_id(actor),
+            import_id=import_id,
+            item_id=item_id,
+            event_id=event_id,
+        )
+    )
+    return Response(
+        content,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get(PARTNER_PAYROLL_PATH + "/{event_id}/{company}.xlsx")

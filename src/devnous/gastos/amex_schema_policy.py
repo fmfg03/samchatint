@@ -83,7 +83,9 @@ AMEX_DIRECT_OWNER_MIGRATION_TABLES = frozenset(
 PAYROLL_OWNER_MIGRATION_TABLES = frozenset(
     {"payroll_amount_imports", "payroll_amount_import_lines"}
 )
-AMEX_PARTNER_PAYROLL_OWNER_MIGRATION_TABLES = frozenset({"amex_partner_payroll_events"})
+AMEX_PARTNER_PAYROLL_OWNER_MIGRATION_TABLES = frozenset(
+    {"amex_partner_payroll_events", "amex_partner_coi_deductions"}
+)
 
 OWNER_MIGRATION_TABLES = (
     AMEX_OWNER_MIGRATION_TABLES

@@ -461,6 +461,25 @@ class AmexDirectSignRow(Base):
     created_at = timestamp()
 
 
+class AmexPartnerCoiDeduction(Base):
+    """Finance-confirmed COI deduction evidence, frozen on first application."""
+
+    __tablename__ = "amex_partner_coi_deductions"
+    source_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    debtor_account_id: Mapped[PythonUUID] = mapped_column(
+        ForeignKey("cuentas_contables.id")
+    )
+    actor_id: Mapped[PythonUUID] = mapped_column(ForeignKey("empleados.id"))
+    document_sha256: Mapped[str] = mapped_column(Text)
+    document_format: Mapped[str] = mapped_column(Text)
+    document_bytes: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    facts: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
 class AmexPartnerPayrollEvent(Base):
     """A confirmed allocation from payroll or bank evidence to one AMEX cut item."""
 
@@ -472,12 +491,8 @@ class AmexPartnerPayrollEvent(Base):
     actor_id: Mapped[PythonUUID] = mapped_column(ForeignKey("empleados.id"))
     kind: Mapped[str] = mapped_column(Text)
     request_hash: Mapped[str] = mapped_column(Text)
-    payroll_line_id: Mapped[PythonUUID | None] = mapped_column(
-        ForeignKey("payroll_run_lines.id")
-    )
-    deduction_index: Mapped[int | None]
-    withholding_line_id: Mapped[PythonUUID | None] = mapped_column(
-        ForeignKey("accounting_poliza_lines.id")
+    coi_source_key: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("amex_partner_coi_deductions.source_key")
     )
     debit_bank_id: Mapped[PythonUUID | None] = mapped_column(
         ForeignKey("bank_movements.id")

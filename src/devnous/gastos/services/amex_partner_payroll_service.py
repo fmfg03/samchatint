@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -10,25 +11,22 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
+from zipfile import BadZipFile, ZipFile
 
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.orm import aliased
 
+from ..amex_direct_models import AmexPartnerCoiDeduction as CoiSource
 from ..amex_direct_models import AmexPartnerPayrollEvent as Event
 from ..models import (
-    AccountingPoliza,
     AccountingPolizaLine,
     AmexDirectAccountingCut,
     AmexDirectCutItem,
     AmexStatementDirectContext,
     BankMovement,
     CuentaContable,
-    PayrollEmployee,
-    PayrollEmployerRegistration,
-    PayrollRun,
-    PayrollRunLine,
 )
 from .amex_direct_common import (
     DirectAccessError,
@@ -44,6 +42,8 @@ SPORTS = "sports"
 P1218 = "p1218"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 POLICY_ENV = "AMEX_PARTNER_PAYROLL_1218_CONFIG"
+MAX_COI_BYTES = 5 * 1024 * 1024
+COI_MIMES = {"pdf": "application/pdf", "xlsx": XLSX_MIME}
 
 
 @dataclass(frozen=True)
@@ -56,11 +56,10 @@ class Account:
 class Policy:
     sports_actor_ids: frozenset[UUID]
     p1218_actor_ids: frozenset[UUID]
-    employer_id: UUID
+    starts_on: date
     sports_rfc: str
     p1218_rfc: str
-    partners: dict[UUID, UUID]
-    p1218_payroll_journals: dict[UUID, UUID]
+    partner_debtor_ids: frozenset[UUID]
     sports_receivable: Account
     p1218_payable: Account
     p1218_withholding: Account
@@ -68,7 +67,6 @@ class Policy:
     p1218_bank: Account
     sports_bank_number: str
     p1218_bank_number: str
-    deduction_concept: str
     fingerprint: str
 
 
@@ -98,14 +96,26 @@ class Balances:
 
 
 @dataclass(frozen=True)
+class CoiDeduction:
+    company_rfc: str
+    period: str
+    policy_type: str
+    folio: str
+    line: str
+    applied_on: date
+    source_amount: Decimal
+    credit_account: str
+    document: bytes
+
+
+@dataclass(frozen=True)
 class Request:
     kind: str
     amount: Decimal
     operation_id: UUID
-    first_id: UUID
-    second_id: UUID
-    deduction_index: int | None = None
-    receipt_reference: str | None = None
+    first_id: UUID | None = None
+    second_id: UUID | None = None
+    coi: CoiDeduction | None = None
 
 
 def _read_policy() -> Policy:
@@ -122,14 +132,10 @@ def _read_policy() -> Policy:
         policy = Policy(
             sports_actor_ids=frozenset(map(UUID, data["sports_actor_ids"])),
             p1218_actor_ids=frozenset(map(UUID, data["p1218_actor_ids"])),
-            employer_id=UUID(data["employer_id"]),
+            starts_on=date.fromisoformat(data["starts_on"]),
             sports_rfc=data["sports_rfc"],
             p1218_rfc=data["p1218_rfc"],
-            partners={UUID(k): UUID(v) for k, v in data["partners"].items()},
-            p1218_payroll_journals={
-                UUID(k): UUID(v)
-                for k, v in data.get("p1218_payroll_journals", {}).items()
-            },
+            partner_debtor_ids=frozenset(map(UUID, data["partner_debtor_ids"])),
             sports_receivable=account("sports_receivable"),
             p1218_payable=account("p1218_payable"),
             p1218_withholding=account("p1218_withholding"),
@@ -137,14 +143,12 @@ def _read_policy() -> Policy:
             p1218_bank=account("p1218_bank"),
             sports_bank_number=data["sports_bank_number"],
             p1218_bank_number=data["p1218_bank_number"],
-            deduction_concept=data["deduction_concept"],
             fingerprint=digest(data),
         )
         if (
             not policy.sports_actor_ids
             or not policy.p1218_actor_ids
-            or not policy.partners
-            or not re.fullmatch(r"[a-z0-9_]{1,80}", policy.deduction_concept)
+            or not policy.partner_debtor_ids
             or not all(
                 re.fullmatch(r"[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}", rfc)
                 for rfc in (policy.sports_rfc, policy.p1218_rfc)
@@ -165,13 +169,15 @@ def _read_policy() -> Policy:
     return policy
 
 
-def can_discover(actor_id: UUID) -> bool:
-    """Hide the action until both company scopes are configured for the actor."""
+def starts_on_for(actor_id: UUID) -> date | None:
+    """Return the effective start for an actor with both company scopes."""
     try:
         policy = _read_policy()
     except DirectSchemaUnavailable:
-        return False
-    return actor_id in policy.sports_actor_ids & policy.p1218_actor_ids
+        return None
+    if actor_id not in policy.sports_actor_ids & policy.p1218_actor_ids:
+        return None
+    return policy.starts_on
 
 
 async def _charge(
@@ -188,7 +194,10 @@ async def _charge(
         raise DirectAccessError("partner_payroll_company_scope_required")
     await load_statement(session, actor_id, import_id, action, finance=True)
     if not await session.scalar(
-        text("SELECT to_regclass('amex_partner_payroll_events') IS NOT NULL")
+        text(
+            "SELECT to_regclass('amex_partner_payroll_events') IS NOT NULL "
+            "AND to_regclass('amex_partner_coi_deductions') IS NOT NULL"
+        )
     ):
         raise DirectSchemaUnavailable("partner_payroll_schema_missing")
 
@@ -226,7 +235,7 @@ async def _charge(
         raise DirectConflict("partner_payroll_cut_required")
     debtor = debtor_lines[0]
     debtor_id = UUID(debtor["cuenta_contable_id"])
-    if debtor_id not in policy.partners:
+    if debtor_id not in policy.partner_debtor_ids:
         raise DirectAccessError("partner_payroll_person_unconfigured")
     total = money(fact["amount"])
     if total <= 0 or money(debtor["debe"]) != total or money(debtor["haber"]) != 0:
@@ -235,6 +244,8 @@ async def _charge(
         charge_date = datetime.fromisoformat(fact["source"]["date"]).date()
     except (KeyError, TypeError, ValueError) as exc:
         raise DirectConflict("partner_payroll_cut_required") from exc
+    if charge_date < policy.starts_on:
+        raise DirectConflict("partner_payroll_before_activation")
     return policy, Charge(
         item.id,
         debtor_id,
@@ -301,89 +312,6 @@ async def _source_choices(
     session: AsyncSession, policy: Policy, charge: Charge, balances: Balances
 ) -> dict[str, list[tuple[UUID, str]]]:
     choices: dict[str, list[tuple[UUID, str]]] = {}
-    if balances.debtor > 0:
-        rows = (
-            await session.execute(
-                select(PayrollRunLine, PayrollRun)
-                .join(PayrollRun, PayrollRun.id == PayrollRunLine.run_id)
-                .options(selectinload(PayrollRun.period))
-                .join(
-                    PayrollEmployee,
-                    PayrollEmployee.id == PayrollRunLine.payroll_employee_id,
-                )
-                .join(
-                    PayrollEmployerRegistration,
-                    PayrollEmployerRegistration.id
-                    == PayrollEmployee.employer_registration_id,
-                )
-                .where(
-                    PayrollRunLine.payroll_employee_id
-                    == policy.partners[charge.debtor_id],
-                    PayrollRun.status == "posted",
-                    PayrollEmployerRegistration.payroll_employer_id
-                    == policy.employer_id,
-                    PayrollEmployerRegistration.active.is_(True),
-                )
-                .order_by(PayrollRun.created_at.desc())
-                .limit(30)
-            )
-        ).all()
-        run_ids = set()
-        choices["payroll-first"] = []
-        for row, run in rows:
-            period = run.period
-            if (
-                period.status != "closed"
-                or (period.payment_date or period.end_date) < charge.date
-            ):
-                continue
-            matches = [
-                str(i)
-                for i, deduction in enumerate(row.deductions_json or [], 1)
-                if isinstance(deduction, dict)
-                and deduction.get("concept_key") == policy.deduction_concept
-            ]
-            if matches:
-                run_ids.add(run.id)
-                choices["payroll-first"].append(
-                    (row.id, f"{period.end_date} · Deducción {', '.join(matches)}")
-                )
-        approved_ids = {
-            policy.p1218_payroll_journals[run_id]
-            for run_id in run_ids
-            if run_id in policy.p1218_payroll_journals
-        }
-        lines = (
-            await session.execute(
-                select(AccountingPolizaLine, AccountingPoliza.numero_poliza)
-                .join(
-                    AccountingPoliza,
-                    AccountingPoliza.id == AccountingPolizaLine.poliza_id,
-                )
-                .where(
-                    AccountingPoliza.id.in_(approved_ids)
-                    | (
-                        AccountingPoliza.source_file.in_(
-                            {f"payroll_run:{run_id}" for run_id in run_ids}
-                        )
-                        & (AccountingPoliza.origen == "payroll")
-                    ),
-                    AccountingPolizaLine.cuenta_contable_id.in_(
-                        {
-                            policy.p1218_payable.id,
-                            policy.p1218_withholding.id,
-                        }
-                    ),
-                    AccountingPolizaLine.haber > 0,
-                )
-                .order_by(AccountingPoliza.fecha_poliza.desc(), AccountingPolizaLine.id)
-                .limit(30)
-            )
-        ).all()
-        choices["payroll-second"] = [
-            (line.id, f"{number} · {line.cuenta_codigo} · {money(line.haber):,.2f} MXN")
-            for line, number in lines
-        ]
     if balances.intercompany > 0:
         for key, number, sign, other, other_sign in (
             (
@@ -464,89 +392,102 @@ async def _accounts(session: AsyncSession, *accounts: Account) -> None:
         raise DirectConflict("partner_payroll_ambiguous_accounts")
 
 
-async def _payroll_source(
-    session: AsyncSession, policy: Policy, charge: Charge, request: Request, lock: bool
-) -> dict:
-    query = (
-        select(PayrollRunLine)
-        .join(PayrollRun, PayrollRun.id == PayrollRunLine.run_id)
-        .options(
-            selectinload(PayrollRunLine.run).selectinload(PayrollRun.period),
-            selectinload(PayrollRunLine.payroll_employee)
-            .selectinload(PayrollEmployee.employer_registration)
-            .selectinload(PayrollEmployerRegistration.employer),
-        )
-        .where(PayrollRunLine.id == request.first_id)
-    )
-    if lock:
-        query = query.with_for_update(of=(PayrollRunLine, PayrollRun))
-    line: Any = await session.scalar(query)
-    if line is None or line.payroll_employee_id != policy.partners[charge.debtor_id]:
-        raise DirectConflict("partner_payroll_source_mismatch")
-    run = line.run
-    registration = line.payroll_employee.employer_registration
-    employer = registration.employer if registration else None
-    deductions = line.deductions_json
-    index = request.deduction_index
-    if (
-        run.status != "posted"
-        or run.period.status != "closed"
-        or registration is None
-        or not registration.active
-        or employer is None
-        or not employer.active
-        or employer.id != policy.employer_id
-        or employer.rfc != policy.p1218_rfc
-        or not isinstance(deductions, list)
-        or index is None
-        or not 0 <= index < len(deductions)
-        or not isinstance(deductions[index], dict)
-        or deductions[index].get("concept_key") != policy.deduction_concept
-    ):
-        raise DirectConflict("partner_payroll_source_mismatch")
-    day = run.period.payment_date or run.period.end_date
-    if day < charge.date:
-        raise DirectConflict("partner_payroll_source_mismatch")
-    deduction = money(deductions[index].get("amount"))
-    _require_available(
-        deduction
-        - await _applied(
-            session, Event.payroll_line_id == line.id, Event.deduction_index == index
-        ),
-        request.amount,
-    )
+def _document_format(content: bytes) -> str:
+    if not 0 < len(content) <= MAX_COI_BYTES:
+        raise DirectConflict("partner_payroll_coi_document_required")
+    if content.startswith(b"%PDF-") and b"%%EOF" in content[-1024:]:
+        return "pdf"
+    if content.startswith(b"PK\x03\x04"):
+        try:
+            with ZipFile(io.BytesIO(content)) as workbook:
+                names = set(workbook.namelist())
+                if {"[Content_Types].xml", "xl/workbook.xml"} <= names and not any(
+                    "vbaproject" in name.lower() for name in names
+                ):
+                    return "xlsx"
+        except (BadZipFile, ValueError):
+            pass
+    raise DirectConflict("partner_payroll_coi_document_required")
 
-    journal_query = (
-        select(AccountingPolizaLine, AccountingPoliza)
-        .join(AccountingPoliza, AccountingPoliza.id == AccountingPolizaLine.poliza_id)
-        .where(AccountingPolizaLine.id == request.second_id)
+
+def _normalize_reference(value: str, limit: int) -> str:
+    value = value.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9][A-Z0-9./_-]*", value) or len(value) > limit:
+        raise DirectConflict("partner_payroll_coi_reference_required")
+    return str(int(value)) if value.isdigit() else value
+
+
+def _coi_facts(policy: Policy, charge: Charge, coi: CoiDeduction) -> dict:
+    if coi.company_rfc.strip().upper() != policy.p1218_rfc:
+        raise DirectConflict("partner_payroll_coi_company_mismatch")
+    if not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", coi.period):
+        raise DirectConflict("partner_payroll_coi_reference_required")
+    if (
+        coi.applied_on < charge.date
+        or coi.applied_on > date.today()
+        or coi.period < policy.starts_on.isoformat()[:7]
+        or coi.period > date.today().isoformat()[:7]
+    ):
+        raise DirectConflict("partner_payroll_coi_period_mismatch")
+    if not coi.source_amount.is_finite() or not 0 < coi.source_amount <= Decimal(
+        "9999999999999999.99"
+    ):
+        raise DirectConflict("invalid_amount")
+    if coi.source_amount != money(coi.source_amount):
+        raise DirectConflict("invalid_amount")
+    if coi.credit_account not in {
+        policy.p1218_payable.code,
+        policy.p1218_withholding.code,
+    }:
+        raise DirectConflict("partner_payroll_ambiguous_accounts")
+    policy_type = coi.policy_type.strip().upper()
+    if policy_type not in {"DR", "EG", "IG"}:
+        raise DirectConflict("partner_payroll_coi_reference_required")
+    return {
+        "company_rfc": policy.p1218_rfc,
+        "period": coi.period,
+        "policy_type": policy_type,
+        "folio": _normalize_reference(coi.folio, 30),
+        "line": _normalize_reference(coi.line, 60),
+        "applied_on": coi.applied_on.isoformat(),
+        "source_amount": str(money(coi.source_amount)),
+        "credit_account": coi.credit_account,
+    }
+
+
+async def _payroll_source(
+    session: AsyncSession,
+    policy: Policy,
+    charge: Charge,
+    coi: CoiDeduction,
+    amount: Decimal,
+    *,
+    lock: bool,
+) -> dict:
+    facts = _coi_facts(policy, charge, coi)
+    file_format = _document_format(coi.document)
+    file_hash = digest(coi.document)
+    key = digest(
+        {
+            name: facts[name]
+            for name in ("company_rfc", "period", "policy_type", "folio", "line")
+        }
     )
     if lock:
-        journal_query = journal_query.with_for_update(of=AccountingPolizaLine)
-    original = (await session.execute(journal_query)).one_or_none()
-    if original is None:
-        raise DirectConflict("partner_payroll_withholding_unproven")
-    withholding, policy_header = original
-    allowed = {
-        account.id: account.code
-        for account in (policy.p1218_payable, policy.p1218_withholding)
-    }
-    native_journal = (
-        policy_header.origen == "payroll"
-        and policy_header.source_file == f"payroll_run:{run.id}"
-    )
-    approved_coi_journal = policy.p1218_payroll_journals.get(run.id) == policy_header.id
-    if (
-        not (native_journal or approved_coi_journal)
-        or withholding.cuenta_contable_id not in allowed
-        or allowed[withholding.cuenta_contable_id] != withholding.cuenta_codigo
-        or money(withholding.debe or 0) != 0
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": "amex-partner-coi:" + key},
+        )
+    original = await session.get(CoiSource, key)
+    if original is not None and (
+        original.debtor_account_id != charge.debtor_id
+        or original.document_sha256 != file_hash
+        or original.facts != facts
     ):
-        raise DirectConflict("partner_payroll_withholding_unproven")
-    credit = money(withholding.haber or 0)
+        raise DirectConflict("partner_payroll_coi_source_conflict")
     _require_available(
-        credit - await _applied(session, Event.withholding_line_id == withholding.id),
-        request.amount,
+        coi.source_amount - await _applied(session, Event.coi_source_key == key),
+        amount,
     )
     await _accounts(
         session,
@@ -555,23 +496,19 @@ async def _payroll_source(
         policy.p1218_withholding,
         policy.p1218_payable,
     )
+    day = coi.applied_on
     books = {
         SPORTS: _policy_lines(day, policy.sports_receivable.code, charge.debtor_code)
     }
-    if withholding.cuenta_contable_id != policy.p1218_payable.id:
-        books[P1218] = _policy_lines(
-            day, withholding.cuenta_codigo, policy.p1218_payable.code
-        )
+    if coi.credit_account != policy.p1218_payable.code:
+        books[P1218] = _policy_lines(day, coi.credit_account, policy.p1218_payable.code)
     return {
-        "date": day.isoformat(),
+        "date": facts["applied_on"],
         "books": books,
-        "payroll_run": str(run.id),
-        "payroll_period": str(run.period_id),
-        "payroll_deduction": str(deduction),
-        "withholding_credit": str(credit),
-        "withholding_poliza": str(policy_header.id),
-        "receipt_reference": request.receipt_reference,
-        "payroll_employer": str(employer.id),
+        "coi_source_key": key,
+        "coi_facts": facts,
+        "document_sha256": file_hash,
+        "document_format": file_format,
     }
 
 
@@ -612,6 +549,8 @@ async def _bank_book(
 async def _transfer_source(
     session: AsyncSession, policy: Policy, charge: Charge, request: Request, lock: bool
 ) -> dict:
+    if request.first_id is None or request.second_id is None:
+        raise DirectConflict("partner_payroll_bank_source_mismatch")
     query = (
         select(BankMovement)
         .where(BankMovement.id.in_([request.first_id, request.second_id]))
@@ -721,25 +660,35 @@ async def prepare(
         "contabilizar",
         lock=confirm_hash is not None,
     )
+    is_payroll = request.kind == "payroll"
+    coi = request.coi
     if (
         request.kind not in {"payroll", "transfer"}
-        or request.amount <= 0
+        or not request.amount.is_finite()
+        or not 0 < request.amount <= Decimal("9999999999999999.99")
         or request.amount != money(request.amount)
-        or (
-            request.kind == "transfer"
-            and (
-                request.deduction_index is not None
-                or request.receipt_reference is not None
-            )
-        )
     ):
         raise DirectConflict("invalid_amount")
-    if request.kind == "payroll" and not re.fullmatch(
-        r"[A-Za-z0-9_./-]{1,100}", request.receipt_reference or ""
-    ):
-        raise DirectConflict("partner_payroll_receipt_required")
+    if is_payroll:
+        if coi is None or request.first_id is not None or request.second_id is not None:
+            raise DirectConflict("partner_payroll_coi_document_required")
+    elif coi is not None:
+        raise DirectConflict("partner_payroll_bank_source_mismatch")
     identity = digest(
-        {"actor": actor_id, "cut_item": charge.cut_item_id, "request": asdict(request)}
+        {
+            "actor": actor_id,
+            "cut_item": charge.cut_item_id,
+            "kind": request.kind,
+            "operation_id": request.operation_id,
+            "amount": str(money(request.amount)),
+            "first_id": request.first_id,
+            "second_id": request.second_id,
+            "coi": (
+                {**asdict(coi), "document": digest(coi.document)}
+                if coi is not None
+                else None
+            ),
+        }
     )
     existing = await session.get(Event, request.operation_id)
     if existing is not None:
@@ -751,13 +700,12 @@ async def prepare(
         return dict(existing.snapshot)
 
     balances = await _balances(session, charge)
-    is_payroll = request.kind == "payroll"
     _require_available(
         balances.debtor if is_payroll else balances.intercompany, request.amount
     )
-    if is_payroll:
+    if coi is not None:
         source = await _payroll_source(
-            session, policy, charge, request, confirm_hash is not None
+            session, policy, charge, coi, request.amount, lock=confirm_hash is not None
         )
     else:
         source = await _transfer_source(
@@ -782,6 +730,21 @@ async def prepare(
     if confirm_hash != result["hash"]:
         raise DirectConflict("partner_payroll_preview_changed")
 
+    if coi is not None:
+        await session.execute(
+            insert(CoiSource)
+            .values(
+                source_key=result["coi_source_key"],
+                debtor_account_id=charge.debtor_id,
+                actor_id=actor_id,
+                document_sha256=result["document_sha256"],
+                document_format=result["document_format"],
+                document_bytes=coi.document,
+                amount=coi.source_amount,
+                facts=result["coi_facts"],
+            )
+            .on_conflict_do_nothing(index_elements=["source_key"])
+        )
     query = (
         insert(Event)
         .values(
@@ -792,9 +755,7 @@ async def prepare(
             amount=request.amount,
             request_hash=identity,
             snapshot=result,
-            payroll_line_id=request.first_id if is_payroll else None,
-            deduction_index=request.deduction_index,
-            withholding_line_id=request.second_id if is_payroll else None,
+            coi_source_key=result.get("coi_source_key"),
             debit_bank_id=None if is_payroll else request.first_id,
             credit_bank_id=None if is_payroll else request.second_id,
         )
@@ -804,6 +765,56 @@ async def prepare(
     if await session.scalar(query) is None:
         raise DirectConflict("partner_payroll_request_conflict")
     return result
+
+
+async def _event_for_export(
+    session: AsyncSession,
+    actor_id: UUID,
+    import_id: UUID,
+    item_id: UUID,
+    event_id: UUID,
+) -> Event:
+    _, charge = await _charge(session, actor_id, import_id, item_id, "exportar")
+    event = await session.scalar(
+        select(Event).where(
+            Event.id == event_id, Event.cut_item_id == charge.cut_item_id
+        )
+    )
+    if event is None:
+        raise DirectConflict("partner_payroll_export_unavailable")
+    return event
+
+
+async def download_coi_source(
+    session: AsyncSession,
+    *,
+    actor_id: UUID,
+    import_id: UUID,
+    item_id: UUID,
+    event_id: UUID,
+) -> tuple[bytes, str, str]:
+    """Return the frozen original only to an actor authorized for the charge."""
+    event = await _event_for_export(session, actor_id, import_id, item_id, event_id)
+    source = (
+        await session.execute(
+            select(
+                CoiSource.document_bytes,
+                CoiSource.document_sha256,
+                CoiSource.document_format,
+            ).where(CoiSource.source_key == event.coi_source_key)
+        )
+    ).one_or_none()
+    if (
+        source is None
+        or source.document_format not in COI_MIMES
+        or digest(source.document_bytes) != source.document_sha256
+    ):
+        raise DirectConflict("partner_payroll_export_unavailable")
+    return (
+        source.document_bytes,
+        f"COI-1218-{event.id}.{source.document_format}",
+        COI_MIMES[source.document_format],
+    )
 
 
 async def export(
@@ -816,13 +827,8 @@ async def export(
     company: str,
 ) -> tuple[bytes, str]:
     """Emit only the confirmed, frozen COI movements for the selected company."""
-    _, charge = await _charge(session, actor_id, import_id, item_id, "exportar")
-    event = await session.scalar(
-        select(Event).where(
-            Event.id == event_id, Event.cut_item_id == charge.cut_item_id
-        )
-    )
-    if company not in {SPORTS, P1218} or event is None:
+    event = await _event_for_export(session, actor_id, import_id, item_id, event_id)
+    if company not in {SPORTS, P1218}:
         raise DirectConflict("partner_payroll_export_unavailable")
     book = event.snapshot["books"].get(company)
     if book is None:
@@ -846,13 +852,21 @@ async def export(
         poliza_operation_reference=str(event.id),
         missing_cfdi_warning="Movimiento de balance sin registro fiscal.",
     )
-    contents = generate_coi_poliza_xlsx(
-        [item],
-        lote_manifest_rows=[
-            ["Empresa", company_name],
-            ["Cargo", reference],
-            ["Operación", str(event.id)],
-            ["Fecha contable", book["date"]],
-        ],
-    )
+    manifest = [
+        ["Empresa", company_name],
+        ["Cargo", reference],
+        ["Operación", str(event.id)],
+        ["Fecha contable", book["date"]],
+    ]
+    coi = event.snapshot.get("coi_facts")
+    if coi:
+        manifest.extend(
+            [
+                ["Periodo COI", coi["period"]],
+                ["Tipo COI", coi["policy_type"]],
+                ["Folio COI", coi["folio"]],
+                ["Renglón COI", coi["line"]],
+            ]
+        )
+    contents = generate_coi_poliza_xlsx([item], lote_manifest_rows=manifest)
     return contents, f"AMEX-{company}-{event.id}.xlsx"
