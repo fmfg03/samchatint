@@ -67,6 +67,11 @@ def generate_direction_report_xlsx(report: dict[str, Any]) -> bytes:
     from openpyxl.chart import BarChart, Reference
 
     from samchat.client_executive.home import amount
+    from samchat.client_executive.report_layouts import (
+        BANK_CLASSIFICATION_GAP,
+        cashflow_fields,
+        number,
+    )
     from samchat.client_executive.ui import documentary_accounting_rows
 
     def money(value):
@@ -425,19 +430,22 @@ def generate_direction_report_xlsx(report: dict[str, Any]) -> bytes:
         budget_sheet.freeze_panes = "B6"
     if layouts.get("cashflow"):
         layout = layouts["cashflow"]
+        bank_backed = "bank_revision" in layout
+        balance_rows = list(zip((6, 8, 15, 22), cashflow_fields(layout)))
         cash_sheet = wb.create_sheet("EFE")
         cash_sheet.append([report["scope"]])
         cash_sheet.append([f"Corte: {report['cut']} · {layout['unit']}"])
         cash_sheet.append([layout.get("gap") or layout["source"]])
-        for rownum, title in (
-            (6, "Saldo inicial"),
-            (8, "Orígenes"),
-            (15, "Aplicaciones"),
-            (22, "Saldo final"),
-        ):
+        for rownum, (_key, title) in balance_rows:
             cash_sheet.cell(rownum, 1, title)
         for rownum in (*range(9, 15), *range(16, 22)):
             cash_sheet.cell(rownum, 1, "Conceptos/Proyectos")
+        if bank_backed:
+            cash_sheet.cell(23, 1, BANK_CLASSIFICATION_GAP)
+            cash_sheet.cell(24, 1, "Alcance acreditado")
+            cash_sheet.cell(25, 1, "Fuente bancaria")
+            for rownum, (_key, title) in enumerate(cashflow_fields(layout), start=26):
+                cash_sheet.cell(rownum, 1, f"{title} pendiente")
         for slot in range(6):
             entry = layout["periods"][slot] if slot < len(layout["periods"]) else {}
             col = slot + 2
@@ -447,16 +455,37 @@ def generate_direction_report_xlsx(report: dict[str, Any]) -> bytes:
                 entry.get("label")
                 or f"{'Mensual' if slot < 3 else 'Acumulado'} {slot % 3 + 1} · periodo pendiente",
             )
-            for rownum, key in (
-                (6, "opening"),
-                (8, "origins_total"),
-                (15, "applications_total"),
-                (22, "closing"),
-            ):
-                cash_sheet.cell(rownum, col, money(entry.get(key)))
+            for rownum, (key, _title) in balance_rows:
+                value = entry.get(key)
+                if bank_backed:
+                    parsed = number(value)
+                    # Excel stores at most 15 significant digits. Keep exact
+                    # text when numeric storage would silently round cents.
+                    if (
+                        parsed is not None
+                        and len(parsed.normalize().as_tuple().digits) > 15
+                    ):
+                        cell = cash_sheet.cell(rownum, col, format(parsed, "f"))
+                        cell.number_format = "@"
+                        continue
+                    cell = cash_sheet.cell(rownum, col, parsed)
+                    cell.number_format = "#,##0.00###;[Red](#,##0.00###);0.00"
+                else:
+                    cash_sheet.cell(rownum, col, money(value))
             for first, key in ((9, "origins"), (16, "applications")):
                 for offset, value in enumerate(entry.get(key) or [None] * 6):
                     cash_sheet.cell(first + offset, col, money(value))
+            if bank_backed and entry:
+                cash_sheet.cell(5, col, f"{entry['start']} a {entry['end']}")
+                cash_sheet.cell(24, col, entry.get("scope_label"))
+                cash_sheet.cell(25, col, entry.get("source") or layout["source"])
+                for rownum, (key, _title) in enumerate(
+                    cashflow_fields(layout), start=26
+                ):
+                    if entry.get(key) is None:
+                        cash_sheet.cell(
+                            rownum, col, entry.get("gaps", {}).get(key) or layout["gap"]
+                        )
         cash_sheet.freeze_panes = "B6"
     for sheet in wb:
         sheet.sheet_view.showGridLines = False
@@ -551,6 +580,11 @@ def generate_direction_report_pdf(report: dict[str, Any]) -> bytes:
     )
 
     from samchat.client_executive.home import amount, format_money
+    from samchat.client_executive.report_layouts import (
+        BANK_CLASSIFICATION_GAP,
+        cashflow_display,
+        cashflow_fields,
+    )
 
     styles = getSampleStyleSheet()
     styles["Normal"].fontSize = 9
@@ -851,21 +885,30 @@ def generate_direction_report_pdf(report: dict[str, Any]) -> bytes:
             )
             story.append(report_table)
         else:
+            fields = cashflow_fields(layout)
             for entry in layout["periods"]:
-                story += [
-                    p(entry["label"], "Heading3"),
-                    p(
-                        " · ".join(
-                            f"{label}: {entry.get(field) if entry.get(field) is not None else 'Sin dato'}"
-                            for field, label in (
-                                ("opening", "Apertura"),
-                                ("origins_total", "Orígenes"),
-                                ("applications_total", "Aplicaciones"),
-                                ("closing", "Cierre"),
-                            )
-                        )
-                    ),
-                ]
+                story.append(p(entry["label"], "Heading3"))
+                period = f"{entry['start']} a {entry['end']}"
+                if "bank_revision" in layout:
+                    if period != entry["label"]:
+                        story.append(p(period))
+                    if entry.get("scope_label"):
+                        story.append(p(entry["scope_label"]))
+                    story.append(p(entry.get("source") or layout["source"]))
+                for field, label in fields:
+                    value = cashflow_display(layout, entry.get(field))
+                    reason = entry.get("gaps", {}).get(field) or layout.get("gap")
+                    text = value or "Sin dato"
+                    if (
+                        value is None
+                        and reason
+                        and reason != layout.get("gap")
+                        and "bank_revision" in layout
+                    ):
+                        text += f" · {reason}"
+                    story.append(p(f"{label} · {text}"))
+            if "bank_revision" in layout:
+                story.append(p(BANK_CLASSIFICATION_GAP))
             story.append(
                 p(
                     "Saldos inicial/final son existencias, no sumas acumuladas; no se atribuye caja empresarial sin evidencia."

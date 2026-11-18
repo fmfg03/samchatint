@@ -23,6 +23,7 @@ from devnous.gastos.services.access_control_service import (
     explicit_tool_decision,
     is_superadmin_role,
 )
+from samchat.cashflow.bank_statements import load_direction_bank_period
 from samchat.client_executive.conversation import (
     MAX_RECEIPT_BYTES,
     ContextError,
@@ -345,6 +346,16 @@ async def _direction_source_access(session, employee) -> dict[str, bool]:
     return result
 
 
+async def _direction_bank_allowed(session, employee) -> bool:
+    try:
+        return (
+            await explicit_tool_decision(session, employee, "admin.contabilidad", "ver")
+            is not False
+        )
+    except AccessControlLookupError:
+        return False
+
+
 @router.get("/direccion/inicio", response_class=HTMLResponse)
 async def direction_home(
     request: Request,
@@ -373,6 +384,8 @@ async def direction_home(
             start=date_from,
             end=date_to,
             source_access=access,
+            bank_allowed=access["finance"]
+            and await _direction_bank_allowed(session, current_empleado),
         )
         token = sign_context(snapshot, str(current_empleado.id))
     except ClientExecutiveAccessError as exc:
@@ -432,6 +445,24 @@ async def _verified_direction_context(request, payload, session, employee) -> di
             raise ContextError(
                 "El alcance o los permisos cambiaron; actualiza el tablero."
             )
+        bank_revision = (
+            snapshot.get("reports", {}).get("cashflow", {}).get("bank_revision")
+        )
+        if bank_revision:
+            if not await _direction_bank_allowed(session, employee):
+                raise ContextError(
+                    "El permiso de la fuente bancaria cambió; actualiza el tablero."
+                )
+            refreshed = await load_direction_bank_period(
+                session,
+                scope=current,
+                start=date.fromisoformat(snapshot["period"]["start"]),
+                end=date.fromisoformat(snapshot["period"]["end"]),
+            )
+            if refreshed["revision"] != bank_revision:
+                raise ContextError(
+                    "La evidencia bancaria cambió; actualiza el tablero."
+                )
         return snapshot
     except ClientExecutiveAccessError as exc:
         raise HTTPException(
@@ -487,14 +518,23 @@ async def direction_context_query(
         answer["analysis_token"] = answer_token
         answer["analysis_receipt"] = answer_receipt
         answer["report_ready"] = True
-        answer["conversation_id"] = await save_turn(
-            session,
-            actor=str(current_empleado.id),
-            snapshot=snapshot,
-            metric_id=payload.metric_id,
-            question=payload.question,
-            answer=answer,
-            conversation_id=payload.conversation_id,
+        bank_cell = (answer.get("report_cell") or {}).get(
+            "report"
+        ) == "cashflow" and snapshot["reports"]["cashflow"].get("bank_revision")
+        # Generic conversation history is not governed by Direction's bank
+        # permissions. Keep certified statement facts in this signed context.
+        answer["conversation_id"] = (
+            None
+            if bank_cell
+            else await save_turn(
+                session,
+                actor=str(current_empleado.id),
+                snapshot=snapshot,
+                metric_id=payload.metric_id,
+                question=payload.question,
+                answer=answer,
+                conversation_id=payload.conversation_id,
+            )
         )
     except ClientExecutiveAccessError as exc:
         raise HTTPException(

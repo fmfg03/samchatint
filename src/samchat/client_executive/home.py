@@ -18,6 +18,10 @@ from sqlalchemy import text
 from samchat.ar.service import build_ar_read_model
 from samchat.budgets.executive_facts import SOURCE as FACT_SOURCE
 from samchat.budgets.executive_facts import build_executive_facts
+from samchat.cashflow.bank_statements import (
+    load_direction_bank_period,
+    unavailable_bank_period,
+)
 from samchat.finance_platform.service import (
     approved_unpaid_documents,
     build_finance_source_snapshot,
@@ -572,6 +576,7 @@ def build_snapshot(
     start: date,
     end: date,
     observed_at: str,
+    bank: dict | None = None,
 ) -> dict:
     indicators = []
     for key, (label, definition, formula, owner) in DEFINITIONS.items():
@@ -722,7 +727,9 @@ def build_snapshot(
         "headline": headline,
         "source_consistency": "independent_reads_with_individual_cuts_not_cross_store_atomic",
         "business_acceptance": "pending",
-        "reports": report_layouts({"start": start.isoformat(), "end": end.isoformat()}),
+        "reports": report_layouts(
+            {"start": start.isoformat(), "end": end.isoformat()}, bank=bank
+        ),
     }
     result["snapshot_id"] = hashlib.sha256(
         json.dumps(result, ensure_ascii=False, sort_keys=True, default=str).encode()
@@ -742,6 +749,7 @@ async def build_home(
     start: date | None = None,
     end: date | None = None,
     source_access: dict[str, bool] | None = None,
+    bank_allowed: bool = False,
 ) -> tuple[dict, dict]:
     start, end = period_bounds(year, start, end)
     source_access = source_access or {"budget": True, "finance": True}
@@ -1049,6 +1057,13 @@ async def build_home(
         ]
         projected = await asyncio.gather(*(project_chunk(chunk) for chunk in chunks))
         rows = [row for chunk in projected for row in chunk]
+    bank = (
+        await load_direction_bank_period(session, scope=scope, start=start, end=end)
+        if source_access["finance"] and bank_allowed
+        else unavailable_bank_period(
+            start, end, "La fuente bancaria está fuera del permiso financiero vigente."
+        )
+    )
     result = build_snapshot(
         scope,
         rows,
@@ -1056,6 +1071,7 @@ async def build_home(
         start=start,
         end=end,
         observed_at=datetime.now(timezone.utc).isoformat(),
+        bank=bank,
     )
     result["source_access"] = source_access
     result.pop("snapshot_id")
