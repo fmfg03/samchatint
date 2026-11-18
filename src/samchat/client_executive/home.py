@@ -749,7 +749,7 @@ async def build_home(
     start: date | None = None,
     end: date | None = None,
     source_access: dict[str, bool] | None = None,
-    bank_allowed: bool = False,
+    bank_allowed: bool | None = None,
 ) -> tuple[dict, dict]:
     start, end = period_bounds(year, start, end)
     source_access = source_access or {"budget": True, "finance": True}
@@ -1057,13 +1057,18 @@ async def build_home(
         ]
         projected = await asyncio.gather(*(project_chunk(chunk) for chunk in chunks))
         rows = [row for chunk in projected for row in chunk]
-    bank = (
-        await load_direction_bank_period(session, scope=scope, start=start, end=end)
-        if source_access["finance"] and bank_allowed
-        else unavailable_bank_period(
-            start, end, "La fuente bancaria está fuera del permiso financiero vigente."
+    bank = None
+    # The Direction web route opts in with an explicit bank access decision.
+    if bank_allowed is not None:
+        bank = (
+            await load_direction_bank_period(session, scope=scope, start=start, end=end)
+            if source_access["finance"] and bank_allowed
+            else unavailable_bank_period(
+                start,
+                end,
+                "La fuente bancaria está fuera del permiso financiero vigente.",
+            )
         )
-    )
     result = build_snapshot(
         scope,
         rows,
