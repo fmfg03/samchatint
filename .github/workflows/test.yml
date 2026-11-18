@@ -24,12 +24,7 @@ env:
 jobs:
   policy:
     name: Policy and repository contract
-    runs-on: >-
-      ${{ github.event_name == 'pull_request'
-        && github.event.pull_request.number == 536
-        && github.event.pull_request.head.repo.full_name == github.repository
-        && github.event.pull_request.head.ref == 'feat/direction-bank-balances-20261118'
-        && 'samchat-ci' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -75,12 +70,7 @@ jobs:
 
   unit-tests:
     name: Unit tests (Python 3.12)
-    runs-on: >-
-      ${{ github.event_name == 'pull_request'
-        && github.event.pull_request.number == 536
-        && github.event.pull_request.head.repo.full_name == github.repository
-        && github.event.pull_request.head.ref == 'feat/direction-bank-balances-20261118'
-        && 'samchat-ci' || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -213,12 +203,7 @@ jobs:
 
   integration-tests:
     name: Integration tests (Python 3.12)
-    runs-on: >-
-      ${{ github.event_name == 'pull_request'
-        && github.event.pull_request.number == 536
-        && github.event.pull_request.head.repo.full_name == github.repository
-        && github.event.pull_request.head.ref == 'feat/direction-bank-balances-20261118'
-        && 'samchat-ci' || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     services:
       redis:
         image: redis:7
@@ -347,12 +332,7 @@ jobs:
     name: Changed-code coverage (85%)
     if: github.event_name == 'pull_request'
     needs: [unit-tests, integration-tests]
-    runs-on: >-
-      ${{ github.event_name == 'pull_request'
-        && github.event.pull_request.number == 536
-        && github.event.pull_request.head.repo.full_name == github.repository
-        && github.event.pull_request.head.ref == 'feat/direction-bank-balances-20261118'
-        && 'samchat-ci' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -396,12 +376,7 @@ jobs:
 
   security-scan:
     name: Python security baseline
-    runs-on: >-
-      ${{ github.event_name == 'pull_request'
-        && github.event.pull_request.number == 536
-        && github.event.pull_request.head.repo.full_name == github.repository
-        && github.event.pull_request.head.ref == 'feat/direction-bank-balances-20261118'
-        && 'samchat-ci' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -447,12 +422,7 @@ jobs:
     name: Required PR gate
     if: always()
     needs: [policy, unit-tests, integration-tests, changed-code-coverage, security-scan]
-    runs-on: >-
-      ${{ github.event_name == 'pull_request'
-        && github.event.pull_request.number == 536
-        && github.event.pull_request.head.repo.full_name == github.repository
-        && github.event.pull_request.head.ref == 'feat/direction-bank-balances-20261118'
-        && 'samchat-ci' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     steps:
       - name: Require every mandatory job
         env:
