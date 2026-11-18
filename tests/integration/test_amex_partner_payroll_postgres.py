@@ -121,7 +121,7 @@ def deduction(policy, amount, number, *, already_payable=False, xlsx=False):
     return service.Request("payroll", Decimal(amount), uuid4(), coi=coi)
 
 
-async def transfer(pg, policy, amount):
+async def transfer(pg, policy, amount, *, trace="TRACE-1218"):
     debit = models.BankMovement(
         id=uuid4(),
         source_file="test-1218.csv",
@@ -130,7 +130,7 @@ async def transfer(pg, policy, amount):
         fecha=datetime(2026, 10, 28),
         signo="-",
         importe=float(amount),
-        clave_rastreo="TRACE-1218",
+        clave_rastreo=trace,
     )
     credit = models.BankMovement(
         id=uuid4(),
@@ -140,7 +140,7 @@ async def transfer(pg, policy, amount):
         fecha=datetime(2026, 10, 28),
         signo="+",
         importe=float(amount),
-        clave_rastreo="TRACE-1218",
+        clave_rastreo=trace,
     )
     async with pg.factory.begin() as session:
         session.add_all([debit, credit])
@@ -171,6 +171,128 @@ async def book(pg, args, event_id, company):
         )
     assert company in name
     return load_workbook(io.BytesIO(blob), data_only=True)
+
+
+async def link_bank_journals(pg, policy, bank):
+    journals = {}
+    async with pg.factory.begin() as session:
+        for movement_id, accounts in (
+            (bank.first_id, ("p1218_payable", "p1218_bank")),
+            (bank.second_id, ("sports_bank", "sports_receivable")),
+        ):
+            journal_id = uuid4()
+            journals[movement_id] = journal_id
+            session.add(
+                models.AccountingPoliza(
+                    id=journal_id,
+                    source_file="settlement.xlsx",
+                    tipo_poliza="Diario",
+                    numero_poliza="1",
+                    concepto="Liquidación registrada",
+                    origen="coi",
+                )
+            )
+            for i, key in enumerate(accounts, 1):
+                account = policy[key]
+                amount = float(bank.amount)
+                session.add(
+                    models.AccountingPolizaLine(
+                        id=uuid4(),
+                        poliza_id=journal_id,
+                        line_no=i,
+                        cuenta_contable_id=account["id"],
+                        cuenta_codigo=account["code"],
+                        debe=amount if i == 1 else 0,
+                        haber=amount if i == 2 else 0,
+                    )
+                )
+            movement = await session.get(models.BankMovement, movement_id)
+            movement.related_poliza_id = journal_id
+    return journals
+
+
+@pytest.mark.asyncio
+async def test_new_books_require_open_period_at_preview_and_confirmation(direct_pg):
+    pg = direct_pg
+    args, policy, _ = await setup(pg)
+    pay = deduction(policy, "939.00", 1)
+    future_month = replace(
+        pay, coi=replace(pay.coi, period="2026-11", applied_on=date(2026, 11, 3))
+    )
+    with pytest.raises(
+        DirectConflict, match="explicit_open_accounting_period_required"
+    ):
+        await review(pg, args, future_month)
+
+    async def set_october(status):
+        await pg.conn.execute(
+            "UPDATE accounting_close_periods SET status = $1 "
+            "WHERE fiscal_year = 2026 AND fiscal_month = 10",
+            status,
+        )
+
+    preview = await review(pg, args, pay)
+    await set_october("closed")
+    with pytest.raises(DirectConflict, match="closed_amex_accounting_period"):
+        await confirm(pg, args, pay, preview)
+    assert (
+        await pg.conn.fetchval("SELECT count(*) FROM amex_partner_coi_deductions") == 0
+    )
+    await set_october("open")
+    await confirm(pg, args, pay, preview)
+    bank = await transfer(pg, policy, "939.00")
+    planned = await review(pg, args, bank)
+    await set_october("closed")
+    with pytest.raises(DirectConflict, match="closed_amex_accounting_period"):
+        await confirm(pg, args, bank, planned)
+    assert (await balances(pg, args)).intercompany == Decimal("939.00")
+    await link_bank_journals(pg, policy, bank)
+    linked = await review(pg, args, bank)
+    assert linked["books"] == {}
+    await confirm(pg, args, bank, linked)
+
+
+@pytest.mark.asyncio
+async def test_existing_journal_covers_only_one_transfer_identity(direct_pg):
+    pg = direct_pg
+    args, policy, items = await setup(pg, second_charge=True)
+    other_args = {**args, "item_id": items[1]}
+    for match, number in ((args, 1), (other_args, 2)):
+        pay = deduction(policy, "939.00", number)
+        await confirm(pg, match, pay, await review(pg, match, pay))
+
+    first = await transfer(pg, policy, "600.00")
+    second = await transfer(pg, policy, "600.00", trace="OTHER-TRANSFER")
+    journals = await link_bank_journals(pg, policy, first)
+    await pg.conn.execute(
+        "UPDATE bank_movements SET related_poliza_id = $1 WHERE id = $2",
+        journals[first.first_id],
+        second.first_id,
+    )
+    await pg.conn.execute(
+        "UPDATE bank_movements SET related_poliza_id = $1 WHERE id = $2",
+        journals[first.second_id],
+        second.second_id,
+    )
+    claims = [
+        (args, replace(first, amount=Decimal("300.00"))),
+        (other_args, replace(second, amount=Decimal("300.00"))),
+    ]
+    previews = await asyncio.gather(*(review(pg, a, b) for a, b in claims))
+    results = await asyncio.gather(
+        *(confirm(pg, a, b, p) for (a, b), p in zip(claims, previews, strict=True)),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(result, dict) for result in results) == 1
+    denied = next(result for result in results if isinstance(result, Exception))
+    assert isinstance(denied, DirectConflict)
+    assert "bank_journal_reused" in str(denied)
+    winner_args, winner = claims[0 if isinstance(results[0], dict) else 1]
+    remaining = replace(winner, operation_id=uuid4())
+    plan = await review(pg, winner_args, remaining)
+    assert plan["books"] == {}
+    await confirm(pg, winner_args, remaining, plan)
+    assert (await balances(pg, winner_args)).transferred == 600
 
 
 @pytest.mark.asyncio

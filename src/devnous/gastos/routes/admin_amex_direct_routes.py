@@ -187,6 +187,7 @@ def _reason(code: str | None) -> str:
         "partner_payroll_coi_source_conflict": "Ese renglón COI ya tiene otra evidencia. Revisa el historial antes de continuar.",
         "partner_payroll_bank_source_mismatch": "Revisa el cargo de 1218 y el abono de Sports. Deben corresponder a la misma transferencia.",
         "partner_payroll_bank_posting_conflict": "La transferencia ya tiene un vínculo contable que requiere revisión.",
+        "partner_payroll_bank_journal_reused": "La póliza bancaria ya respalda otra transferencia. Revisa el vínculo de origen.",
         "partner_payroll_amount_exceeds_balance": "El importe excede el saldo o la evidencia disponible.",
         "partner_payroll_ambiguous_accounts": "Finanzas debe verificar las cuentas contables de las dos empresas.",
         "partner_payroll_request_conflict": "La referencia de confirmación ya se usó. Consulta el historial.",

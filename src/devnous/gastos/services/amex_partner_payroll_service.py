@@ -13,7 +13,7 @@ from typing import Any, cast
 from uuid import UUID
 from zipfile import BadZipFile, ZipFile
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -21,6 +21,8 @@ from sqlalchemy.orm import aliased
 from ..amex_direct_models import AmexPartnerCoiDeduction as CoiSource
 from ..amex_direct_models import AmexPartnerPayrollEvent as Event
 from ..models import (
+    AccountingClosePeriod,
+    AccountingPoliza,
     AccountingPolizaLine,
     AmexDirectAccountingCut,
     AmexDirectCutItem,
@@ -546,6 +548,35 @@ async def _bank_book(
     return None
 
 
+async def _require_journals_for_transfer(
+    session: AsyncSession, journals: set[UUID], bank_key: str, *, lock: bool
+) -> None:
+    if not journals:
+        return
+    if lock:
+        await session.execute(
+            select(AccountingPoliza.id)
+            .where(AccountingPoliza.id.in_(journals))
+            .order_by(AccountingPoliza.id)
+            .with_for_update()
+        )
+    ids = {str(journal) for journal in journals}
+    already_used = await session.scalar(
+        select(Event.id)
+        .where(
+            Event.kind == "transfer",
+            Event.snapshot["bank_key"].astext != bank_key,
+            or_(
+                Event.snapshot["bank_polizas"][P1218].astext.in_(ids),
+                Event.snapshot["bank_polizas"][SPORTS].astext.in_(ids),
+            ),
+        )
+        .limit(1)
+    )
+    if already_used is not None:
+        raise DirectConflict("partner_payroll_bank_journal_reused")
+
+
 async def _transfer_source(
     session: AsyncSession, policy: Policy, charge: Charge, request: Request, lock: bool
 ) -> dict:
@@ -610,6 +641,12 @@ async def _transfer_source(
         total - await _applied(session, Event.credit_bank_id == credit.id),
         request.amount,
     )
+    journal_ids = {
+        movement.related_poliza_id
+        for movement in (debit, credit)
+        if movement.related_poliza_id is not None
+    }
+    await _require_journals_for_transfer(session, journal_ids, bank_key, lock=lock)
     await _accounts(
         session,
         policy.p1218_payable,
@@ -640,6 +677,29 @@ async def _transfer_source(
             SPORTS: str(credit.related_poliza_id) if credit.related_poliza_id else None,
         },
     }
+
+
+async def _require_open_book_periods(
+    session: AsyncSession, books: dict, *, lock: bool
+) -> None:
+    dates = {date.fromisoformat(book["date"]) for book in books.values()}
+    periods = {(day.year, day.month) for day in dates}
+    if not periods:
+        return
+    year = AccountingClosePeriod.fiscal_year
+    month = AccountingClosePeriod.fiscal_month
+    query = (
+        select(year, month, AccountingClosePeriod.status)
+        .where(tuple_(year, month).in_(periods))
+        .order_by(year, month)
+    )
+    if lock:
+        query = query.with_for_update()
+    status_by_period = {(y, m): status for y, m, status in await session.execute(query)}
+    if periods - status_by_period.keys():
+        raise DirectConflict("explicit_open_accounting_period_required")
+    if any(status != "open" for status in status_by_period.values()):
+        raise DirectConflict("closed_amex_accounting_period")
 
 
 async def prepare(
@@ -711,6 +771,9 @@ async def prepare(
         source = await _transfer_source(
             session, policy, charge, request, confirm_hash is not None
         )
+    await _require_open_book_periods(
+        session, source["books"], lock=confirm_hash is not None
+    )
     result = {
         **source,
         "reference": f"AMEX-{item_id}",

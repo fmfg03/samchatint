@@ -25,8 +25,9 @@ Los cargos anteriores se revisan en su propio proceso de corrección.
 3. Al transferir a Sports, seleccionar el cargo bancario de 1218 y el
    abono de Sports con la misma clave de rastreo. El flujo conserva las
    pólizas bancarias ya vinculadas que coinciden con ambos movimientos
-   contables esperados. Los movimientos restantes generan su archivo
-   COI por empresa.
+   contables esperados. Cada póliza bancaria respalda una sola transferencia
+   y permite repartirla entre cargos sin exceder su importe. Los movimientos
+   restantes generan su archivo COI por empresa en periodos contables abiertos.
 
 Cada archivo incluye la empresa, el cargo, el UUID de la confirmación
 y la fecha contable. Verificar esa referencia al importar en COI. La
