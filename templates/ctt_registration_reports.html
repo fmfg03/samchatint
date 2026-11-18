@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+
+{% block title %}Reportes de cédulas - Copa Telmex{% endblock %}
+
+{% block content %}
+<style>
+    .ctt-reports {
+        display: grid;
+        gap: 24px;
+        color: #18253d;
+    }
+    .ctt-reports-header,
+    .ctt-reports-actions,
+    .ctt-reports-index {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+    }
+    .ctt-reports-header {
+        justify-content: space-between;
+    }
+    .ctt-reports-meta {
+        margin-top: 6px;
+        color: #475569;
+    }
+    .ctt-reports a:not(.btn) {
+        color: #37499e;
+    }
+    .ctt-reports .btn {
+        min-height: 42px;
+        padding: 10px 16px;
+        border: 0;
+        background: #454cb1;
+        font: inherit;
+        font-weight: 650;
+        cursor: pointer;
+    }
+    .ctt-reports .btn:hover {
+        background: #353a89;
+    }
+    .ctt-reports-filters {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+        align-items: end;
+        gap: 14px;
+        padding: 16px;
+        border: 1px solid #dbe4ee;
+        border-radius: 12px;
+        background: #f8fafc;
+    }
+    .ctt-reports-filters label {
+        display: grid;
+        gap: 6px;
+        font-size: .9rem;
+        font-weight: 650;
+    }
+    .ctt-reports-filters select {
+        width: 100%;
+        min-height: 42px;
+        padding: 8px;
+        border: 1px solid #94a3b8;
+        border-radius: 6px;
+        background: #fff;
+        color: inherit;
+        font: inherit;
+    }
+    .ctt-reports-summary {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+    }
+    .ctt-reports-summary > div,
+    .ctt-reports-message {
+        padding: 16px;
+        border: 1px solid #dbe4ee;
+        border-radius: 10px;
+        background: #f8fafc;
+    }
+    .ctt-reports-summary dt {
+        font-size: .9rem;
+        color: #475569;
+    }
+    .ctt-reports-summary dd {
+        margin-top: 3px;
+        font-size: 1.7rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+    }
+    .ctt-reports-index {
+        gap: 8px 20px;
+        padding: 0 0 16px;
+        border-bottom: 1px solid #dbe4ee;
+    }
+    .ctt-reports-table {
+        max-width: 100%;
+        overflow-x: auto;
+    }
+    .ctt-reports-table table {
+        margin-top: 8px;
+    }
+    .ctt-reports-table :is(th, td) {
+        padding: 9px;
+        font-size: .9rem;
+    }
+    .ctt-reports-table .ctt-report-number {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+    @media (max-width: 820px) {
+        .ctt-reports-filters {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+    @media (max-width: 460px) {
+        .ctt-reports-filters {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
+<div class="ctt-reports">
+    <header class="ctt-reports-header">
+        <div>
+            <h2>Reportes de cédulas</h2>
+            {% if report.available %}
+            <p class="ctt-reports-meta">Edición {{ report.edition_year }} · Corte de edad <time datetime="{{ report.as_of_date }}">{{ report.as_of_date }}</time></p>
+            {% if report.captured_at|default('') %}
+            <p class="ctt-reports-meta">Consulta del padrón <time datetime="{{ report.captured_at }}">{{ report.captured_at[:19]|replace('T', ' ') }} UTC</time></p>
+            {% endif %}
+            {% endif %}
+        </div>
+        <div class="ctt-reports-actions">
+            {% if roster_url|default('') %}<a href="{{ roster_url }}">Consultar padrón</a>{% endif %}
+            {% if report.available and download_url %}<a href="{{ download_url }}" class="btn">Descargar Excel</a>{% endif %}
+        </div>
+    </header>
+
+    {% set options = report.options|default({}) %}
+    <form action="{{ reports_url }}" method="get" class="ctt-reports-filters" aria-label="Filtros del reporte">
+        <label>Edición
+            <select name="edition_year" required>
+                {% for year in editions %}<option value="{{ year }}"{% if year == selected_year %} selected{% endif %}>{{ year }}</option>{% endfor %}
+            </select>
+        </label>
+        <label>Estado
+            <select name="state"{% if state_scope_locked|default(false) %} required{% endif %}>
+                {% if not state_scope_locked|default(false) %}<option value="">Todos los estados</option>{% endif %}
+                {% for option in options.states|default([]) %}<option value="{{ option.value }}"{% if option.value == selected_state %} selected{% endif %}>{{ option.label }}</option>{% endfor %}
+            </select>
+        </label>
+        <label>Municipio o demarcación
+            <select name="municipality">
+                <option value="">Todos los municipios</option>
+                {% for option in options.municipalities|default([]) %}<option value="{{ option.value }}"{% if option.value == selected_municipality %} selected{% endif %}>{{ option.label }}</option>{% endfor %}
+            </select>
+        </label>
+        <label>Categoría
+            <select name="category">
+                <option value="">Todas las categorías</option>
+                {% for option in options.categories|default([]) %}<option value="{{ option.value }}"{% if option.value == selected_category %} selected{% endif %}>{{ option.label }}</option>{% endfor %}
+            </select>
+        </label>
+        <button type="submit" class="btn">Aplicar filtros</button>
+    </form>
+
+    {% if not report.available %}
+    <p class="ctt-reports-message" role="status">{{ status_message|default('El padrón de esta edición no está disponible.', true) }}</p>
+    {% else %}
+    <dl class="ctt-reports-summary">
+        <div><dt>Equipos registrados</dt><dd>{{ "{:,}".format(report.summary.equipos) }}</dd></div>
+        <div><dt>Jugadores activos</dt><dd>{{ "{:,}".format(report.summary.jugadores) }}</dd></div>
+    </dl>
+    <p class="ctt-reports-meta">FMF / Liga MX y RENAPO · Pendiente de validación externa</p>
+
+    <nav class="ctt-reports-index" aria-label="Secciones del reporte">
+        {% for table in report_tables %}<a href="#{{ table.key }}">{{ table.title }}</a>{% endfor %}
+    </nav>
+
+    {% for table in report_tables %}
+    <section aria-labelledby="{{ table.key }}">
+        <h3 id="{{ table.key }}">{{ table.title }}</h3>
+        {% if table.key == 'cobertura_municipal' %}
+        <p class="ctt-reports-meta">
+            Fuente {{ report.catalog_source }}{% if report.catalog_date %} · {{ report.catalog_date }}{% endif %}
+            {% if report.catalog_url %} · <a href="{{ report.catalog_url }}">Consultar catálogo</a>{% endif %}
+        </p>
+        {% endif %}
+        {% if table.rows %}
+        <div class="ctt-reports-table" role="region" aria-labelledby="{{ table.key }}" tabindex="0">
+            <table aria-labelledby="{{ table.key }}">
+                <thead><tr>
+                    {% for column in table.columns %}<th scope="col"{% if column.kind != 'text' %} class="ctt-report-number"{% endif %}>{{ column.label }}</th>{% endfor %}
+                </tr></thead>
+                <tbody>
+                    {% for row in table.rows %}
+                    <tr>
+                        {% for value in row %}
+                        {% set kind = table.columns[loop.index0].kind %}
+                        <td{% if kind != 'text' %} class="ctt-report-number"{% endif %}>
+                            {%- if value is none or value == '' -%}—
+                            {%- elif kind == 'percent' -%}{{ '%.2f'|format(value) }} %
+                            {%- elif kind == 'count' -%}{{ "{:,}".format(value) }}
+                            {%- else -%}{{ value }}
+                            {%- endif -%}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="ctt-reports-meta">Sin registros para los filtros seleccionados.</p>
+        {% endif %}
+    </section>
+    {% endfor %}
+    {% endif %}
+</div>
+
+<script>
+    const cttReportsState = document.querySelector('.ctt-reports-filters select[name="state"]');
+    const cttReportsMunicipality = document.querySelector('.ctt-reports-filters select[name="municipality"]');
+    cttReportsState.addEventListener('change', () => {
+        cttReportsMunicipality.value = '';
+        for (const option of cttReportsMunicipality.options) {
+            if (option.value) {
+                const outsideState = Boolean(cttReportsState.value) && !option.value.startsWith(cttReportsState.value);
+                option.disabled = outsideState;
+                option.hidden = outsideState;
+            }
+        }
+    });
+</script>
+{% endblock %}

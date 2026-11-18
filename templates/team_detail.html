@@ -4,10 +4,12 @@
 
 {% block content %}
 <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
-    <a href="/teams" style="color: #667eea; text-decoration: none;">← Volver a Equipos</a>
+    <a href="/teams{% if roster_slug %}?roster_slug={{ roster_slug|urlencode }}{% endif %}" style="color: #667eea; text-decoration: none;">← Volver a Equipos</a>
+    {% if can_edit %}
     <div style="display: flex; gap: 10px;">
         <button onclick="editTeam()" class="btn" style="background: #667eea;">✏️ Editar Equipo</button>
     </div>
+    {% endif %}
 </div>
 
 <h2 style="margin-bottom: 30px;">⚽ {{ team.name }}</h2>
@@ -16,10 +18,11 @@
 <div style="background: #fff; padding: 20px; border-radius: 8px; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
     <h3 style="margin-top: 0; margin-bottom: 15px; color: #667eea;">📸 Imagen del Roster OCR</h3>
     <div style="text-align: center;">
-        <img src="/{{ team.roster_image_path }}"
-             alt="Roster de {{ team.name }}"
-             style="max-width: 100%; height: auto; border-radius: 4px; border: 1px solid #ddd; cursor: pointer;"
-             onclick="window.open('/{{ team.roster_image_path }}', '_blank')">
+        <a href="/{{ team.roster_image_path }}" target="_blank" rel="noopener">
+            <img src="/{{ team.roster_image_path }}"
+                 alt="Roster de {{ team.name }}"
+                 style="max-width: 100%; height: auto; border-radius: 4px; border: 1px solid #ddd;">
+        </a>
         <p style="margin-top: 10px; font-size: 12px; color: #6c757d;">Click en la imagen para ver en tamaño completo</p>
     </div>
 </div>
@@ -56,6 +59,10 @@
             {{ team.get('contact_phone', 'N/A') }}
         </div>
         <div>
+            <strong style="color: #6c757d;">Correo de contacto</strong><br>
+            {{ team.contact_email }}
+        </div>
+        <div>
             <strong style="color: #6c757d;">Estado:</strong><br>
             {{ team.state }}
         </div>
@@ -66,7 +73,33 @@
     </div>
 </div>
 
+{% if staff %}
+<h3>Cuerpo técnico</h3>
+<table>
+    <thead><tr><th>Foto</th><th>Cargo</th><th>Nombre</th><th>Fecha de nacimiento</th><th>CURP</th></tr></thead>
+    <tbody>
+    {% for person in staff %}
+        <tr>
+            <td>
+                {% if person.photo_url %}<img src="{{ person.photo_url }}" alt="Foto del integrante" width="54" height="72">{% else %}Sin foto{% endif %}
+            </td>
+            <td>{{ person.role }}</td>
+            <td>{{ person.name or 'Sin nombre registrado' }}</td>
+            <td>{{ person.birth_date or 'Sin fecha' }}</td>
+            <td>{{ person.curp or 'Sin CURP' }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
 <h3 style="margin-bottom: 20px;">👥 Jugadores ({{ players|length }})</h3>
+
+{% if external_checks %}
+<ul aria-label="Validaciones oficiales">
+    {% for source in external_checks %}<li>{{ source }} · Pendiente de validación externa</li>{% endfor %}
+</ul>
+{% endif %}
 
 {% if players %}
 <table>
@@ -79,7 +112,7 @@
             <th>Email</th>
             <th>Confianza OCR</th>
             <th>Estado</th>
-            <th>Acciones</th>
+            {% if can_edit %}<th>Acciones</th>{% endif %}
         </tr>
     </thead>
     <tbody>
@@ -99,19 +132,19 @@
             <td>{{ player.ocr_confidence }}</td>
             <td>
                 {% if player.verified_by_human %}
-                    <span class="badge badge-success">✅ Verificado</span>
+                    <span class="badge badge-success">Verificado en cédula</span>
                 {% elif player.needs_review %}
                     <span class="badge badge-warning">⚠️ Necesita Revisión</span>
                 {% else %}
-                    <span class="badge badge-success">✅ Validado</span>
+                    <span class="badge badge-success">Registrado</span>
                 {% endif %}
             </td>
-            <td>
+            {% if can_edit %}<td>
                 <button onclick="editPlayer('{{ player.id }}')" class="btn-sm" style="background: #667eea; margin-right: 5px;">✏️</button>
                 {% if player.needs_review %}
                 <button onclick="verifyPlayer('{{ player.id }}')" class="btn-sm" style="background: #28a745; margin-right: 5px;">✓</button>
                 {% endif %}
-            </td>
+            </td>{% endif %}
         </tr>
         {% endfor %}
     </tbody>
@@ -122,12 +155,15 @@
 </div>
 {% endif %}
 
+{% if can_edit %}
+{% macro field_value(value) -%}{{ value if value != 'N/A' else '' }}{%- endmacro %}
 <!-- Modal para editar equipo -->
 <div id="editTeamModal" class="modal">
     <div class="modal-content">
         <span class="close" onclick="closeModal('editTeamModal')">&times;</span>
         <h3>✏️ Editar Equipo</h3>
         <form id="editTeamForm">
+            <input type="hidden" name="expected_revision" value="{{ team.postcommit_revision }}">
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                 <div>
                     <label>Nombre del Equipo:</label>
@@ -135,54 +171,51 @@
                 </div>
                 <div>
                     <label>Categoría:</label>
-                    <select name="category">
-                        <option value="U10" {% if team.category == 'U10' %}selected{% endif %}>U10</option>
-                        <option value="U12" {% if team.category == 'U12' %}selected{% endif %}>U12</option>
-                        <option value="U14" {% if team.category == 'U14' %}selected{% endif %}>U14</option>
-                        <option value="U16" {% if team.category == 'U16' %}selected{% endif %}>U16</option>
-                        <option value="U18" {% if team.category == 'U18' %}selected{% endif %}>U18</option>
-                        <option value="Juvenil" {% if team.category == 'Juvenil' %}selected{% endif %}>Juvenil</option>
-                        <option value="Open" {% if team.category == 'Open' %}selected{% endif %}>Open</option>
-                    </select>
+                    <input type="text" name="category" list="roster-categories" value="{{ field_value(team.category) }}" maxlength="20">
+                    <datalist id="roster-categories">
+                        <option value="Juvenil"><option value="Libre">
+                        {% if not scoped_ctt %}
+                        <option value="U10"><option value="U12"><option value="U14">
+                        <option value="U16"><option value="U18"><option value="Open">
+                        {% endif %}
+                    </datalist>
                 </div>
                 <div>
                     <label>Rama:</label>
-                    <select name="gender">
-                        <option value="Varonil" {% if team.gender == 'Varonil' %}selected{% endif %}>Varonil</option>
-                        <option value="Femenil" {% if team.gender == 'Femenil' %}selected{% endif %}>Femenil</option>
-                    </select>
+                    <input type="text" name="gender" list="roster-branches" value="{{ field_value(team.gender) }}" maxlength="10">
+                    <datalist id="roster-branches"><option value="Varonil"><option value="Femenil"></datalist>
                 </div>
                 <div>
                     <label>Liga:</label>
-                    <input type="text" name="league" value="{{ team.league }}">
+                    <input type="text" name="league" value="{{ field_value(team.league) }}">
                 </div>
                 <div>
                     <label>Teléfono Liga:</label>
-                    <input type="text" name="league_phone" value="{{ team.get('league_phone', '') }}">
+                    <input type="text" name="league_phone" value="{{ field_value(team.league_phone) }}">
                 </div>
                 <div>
                     <label>Dirección Liga:</label>
-                    <input type="text" name="league_address" value="{{ team.get('league_address', '') }}">
+                    <input type="text" name="league_address" value="{{ field_value(team.league_address) }}">
                 </div>
                 <div>
                     <label>Representante:</label>
-                    <input type="text" name="representative_name" value="{{ team.representative_name }}">
+                    <input type="text" name="representative_name" value="{{ field_value(team.representative_name) }}">
                 </div>
                 <div>
                     <label>Teléfono Contacto:</label>
-                    <input type="text" name="contact_phone" value="{{ team.get('contact_phone', '') }}">
+                    <input type="text" name="contact_phone" value="{{ field_value(team.contact_phone) }}">
                 </div>
                 <div>
                     <label>Email Contacto:</label>
-                    <input type="email" name="contact_email" value="{{ team.get('contact_email', '') }}">
+                    <input type="email" name="contact_email" value="{{ field_value(team.contact_email) }}">
                 </div>
                 <div>
                     <label>Estado:</label>
-                    <input type="text" name="state" value="{{ team.state }}">
+                    <input type="text" name="state" value="{{ field_value(team.state) }}">
                 </div>
                 <div>
                     <label>Municipio:</label>
-                    <input type="text" name="municipality" value="{{ team.municipality }}">
+                    <input type="text" name="municipality" value="{{ field_value(team.municipality) }}">
                 </div>
             </div>
             <div style="margin-top: 15px;">
@@ -206,6 +239,7 @@
         <h3>✏️ Editar Jugador</h3>
         <form id="editPlayerForm">
             <input type="hidden" id="edit-player-id" name="player_id">
+            <input type="hidden" id="edit-player-revision" name="expected_revision">
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                 <div>
                     <label>Nombre:</label>
@@ -311,14 +345,10 @@ function editPlayer(playerId) {
     const player = playersData.find(p => p.id === playerId);
     if (!player) return;
 
-    // Split full name
-    const nameParts = player.full_name.split(' ');
-    const firstName = nameParts[0];
-    const lastName = nameParts.slice(1).join(' ');
-
     document.getElementById('edit-player-id').value = playerId;
-    document.getElementById('edit-first-name').value = firstName;
-    document.getElementById('edit-last-name').value = lastName;
+    document.getElementById('edit-player-revision').value = player.postcommit_revision;
+    document.getElementById('edit-first-name').value = player.first_name;
+    document.getElementById('edit-last-name').value = player.last_name;
     document.getElementById('edit-birth-date').value = player.birth_date !== 'N/A' ? player.birth_date : '';
     document.getElementById('edit-curp').value = player.curp !== 'N/A' ? player.curp : '';
     document.getElementById('edit-email').value = player.email !== 'N/A' ? player.email : '';
@@ -327,6 +357,8 @@ function editPlayer(playerId) {
 }
 
 async function verifyPlayer(playerId) {
+    const player = playersData.find(p => p.id === playerId);
+    if (!player) return;
     if (!confirm('¿Marcar este jugador como verificado?')) {
         return;
     }
@@ -339,6 +371,7 @@ async function verifyPlayer(playerId) {
     try {
         const formData = new FormData();
         formData.append('mutation_request_id', newMutationRequestId());
+        formData.append('expected_revision', player.postcommit_revision);
         formData.append('mutation_reason', reason.trim());
         const response = await fetch(`/api/player/${playerId}/verify`, {
             method: 'POST',
@@ -440,6 +473,7 @@ window.onclick = function(event) {
     });
 }
 </script>
+{% endif %}
 
 <style>
 .modal {

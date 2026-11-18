@@ -1,7 +1,7 @@
 """Private photo delivery requires access, a committed binding and intact bytes."""
 
-from types import SimpleNamespace
 import os
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -12,6 +12,7 @@ os.environ.setdefault(
 )
 
 import copa_telmex_dashboard as dashboard  # noqa: E402
+
 from devnous.copa_telmex.staff_photo_store import (  # noqa: E402
     PrivateReviewPhotoStore,
     encode_review_photo,
@@ -24,7 +25,7 @@ def delivery(monkeypatch, tmp_path):
     root.mkdir(mode=0o700)
     photo = encode_review_photo(Image.new("RGB", (80, 80), "blue"))
     PrivateReviewPhotoStore(root).stage(photo)
-    state = SimpleNamespace(committed=True, queries=0, failure=None)
+    state = SimpleNamespace(committed=True, queries=0, failure=None, visible=True)
 
     class Session:
         async def __aenter__(self):
@@ -43,8 +44,17 @@ def delivery(monkeypatch, tmp_path):
                 raise state.failure
             return SimpleNamespace(scalar_one=lambda: state.committed)
 
+        async def scalars(self, statement):
+            assert "copa_telmex_players.photo_path" in str(statement)
+            assert "copa_telmex_team_staff.photo_path" in str(statement)
+            return [SimpleNamespace(tournament_slug="copa-telmex-2026")]
+
+    async def scoped_owners(_session, _request, owners):
+        return owners if state.visible else []
+
     monkeypatch.setenv("CTT_REVIEW_PHOTO_ROOT", str(root))
     monkeypatch.setattr(dashboard, "async_session_maker", Session)
+    monkeypatch.setattr(dashboard, "_visible_ctt_roster_teams", scoped_owners)
     monkeypatch.setattr(
         dashboard, "_ensure_legacy_copa_dashboard_access", lambda _: None
     )
@@ -65,6 +75,16 @@ async def test_committed_photo_is_served_with_private_headers(delivery):
     assert dashboard._public_storage_path(photo.photo_path) == (
         "/api/registration-photos/" + photo.sha256
     )
+
+
+@pytest.mark.asyncio
+async def test_committed_photo_outside_roster_scope_is_hidden(delivery):
+    _, photo, state = delivery
+    state.visible = False
+    with pytest.raises(HTTPException) as denied:
+        await dashboard.serve_committed_registration_photo(photo.sha256, object())
+    assert denied.value.status_code == 404
+    assert state.queries == 1
 
 
 @pytest.mark.parametrize("committed", [False, None, 1, "true"])
