@@ -496,6 +496,98 @@ async def test_owner_and_payment_authority_boundaries(case):
 
 
 @pytest.mark.asyncio
+async def test_configured_accounting_button_and_form_require_available_paid_advance(
+    case,
+):
+    import httpx
+    from fastapi import FastAPI
+
+    from devnous.gastos.routes.dependencies import get_current_empleado, get_db_session
+
+    case.accountant.rol = "finanzas"
+    case.monkeypatch.setenv(
+        "SAMCHAT_PAYMENT_RUN_PAYMENT_CONFIRMER_EMPLOYEE_IDS", str(case.accountant.id)
+    )
+    app = FastAPI()
+    app.include_router(user_routes.router)
+    app.dependency_overrides[get_current_empleado] = lambda: case.accountant
+    app.dependency_overrides[get_db_session] = lambda: case.session
+    app.dependency_overrides[user_routes.get_db_session] = lambda: case.session
+    detail_url = f"/documentos/{case.advance.id}"
+    form_url = f"{detail_url}/comprobar-anticipo-proveedor"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        unpaid = await client.get(form_url)
+        assert unpaid.status_code == 409
+        assert f'href="{form_url}"' not in (await client.get(detail_url)).text
+
+        await pay(case, case.advance)
+        detail = await client.get(detail_url)
+        assert detail.status_code == 200
+        assert f'href="{form_url}">Comprobar anticipo</a>' in detail.text
+        form = await client.get(form_url)
+        assert form.status_code == 200
+        assert 'name="archivo_xml"' in form.text
+
+        await submit(case)
+        assert f'href="{form_url}"' not in (await client.get(detail_url)).text
+        assert (await client.get(form_url)).status_code == 409
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("role", "configured", "active", "impersonating"),
+    [
+        ("empleado", False, True, False),
+        ("finanzas", False, True, False),
+        ("admin", False, True, False),
+        ("superadmin", False, True, False),
+        ("finanzas", True, False, False),
+        ("finanzas", True, True, True),
+    ],
+)
+async def test_outside_approved_accounting_scope_cannot_submit_supplier_invoice(
+    case, role, configured, active, impersonating
+):
+    await pay(case, case.advance)
+    actor = case.outsider
+    actor.rol = role
+    actor.activo = active
+    if configured:
+        case.monkeypatch.setenv(
+            "SAMCHAT_PAYMENT_RUN_PAYMENT_CONFIRMER_EMPLOYEE_IDS", str(actor.id)
+        )
+    if impersonating:
+        actor.impersonator_empleado_id = str(uuid4())
+
+    html = await routes.render_supplier_advance_controls(
+        case.session, case.advance, actor
+    )
+    assert "Comprobar anticipo" not in html
+    with pytest.raises(HTTPException) as form:
+        await routes.supplier_invoice_form(case.advance.id, case.session, actor)
+    assert form.value.status_code == 403
+
+    upload = AsyncMock()
+    with pytest.raises(HTTPException) as post:
+        await routes.supplier_invoice_submit(
+            case.advance.id, uuid4(), upload, None, case.session, actor
+        )
+    assert post.value.status_code == 403
+    upload.read.assert_not_awaited()
+
+    with pytest.raises(SolicitudValidationError, match="solicitante"):
+        await service.submit_supplier_invoice(
+            case.session,
+            advance_id=case.advance.id,
+            actor=actor,
+            submission_id=uuid4(),
+            xml=xml_attachment(),
+        )
+
+
+@pytest.mark.asyncio
 async def test_ui_and_evidence_immutability(case):
     await pay(case, case.advance)
     html = await routes.supplier_invoice_form(case.advance.id, case.session, case.owner)

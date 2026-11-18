@@ -17,6 +17,7 @@ from ..services.documento_service import (
 )
 from ..services.supplier_advance_service import (
     advance_balances,
+    can_submit_supplier_invoice,
     submit_supplier_invoice,
 )
 from .dependencies import get_current_empleado, get_db_session
@@ -25,12 +26,15 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-async def _owned_paid_advance(session, document_id, actor):
+async def _require_paid_advance_for_invoice(session, document_id, actor):
     advance = await session.get(Documento, document_id)
     if advance is None or not advance.is_supplier_advance:
         raise HTTPException(404, "Anticipo no encontrado")
-    if advance.empleado_id != actor.id:
-        raise HTTPException(403, "Solo el solicitante puede comprobar el anticipo")
+    if not can_submit_supplier_invoice(advance, actor):
+        raise HTTPException(
+            403,
+            "Solo el solicitante o Contabilidad autorizada puede comprobar el anticipo",
+        )
     if advance.estado != "pagado" or not advance.pagado_en:
         raise HTTPException(409, "Primero debe confirmarse el pago del anticipo")
     return advance
@@ -71,7 +75,7 @@ async def render_supplier_advance_controls(session, documento, actor) -> str:
     )
     action = (
         f'<a class="button primary" href="/documentos/{documento.id}/comprobar-anticipo-proveedor">Comprobar anticipo</a>'
-        if documento.empleado_id == actor.id and balance["available"] > 0
+        if balance["available"] > 0 and can_submit_supplier_invoice(documento, actor)
         else ""
     )
     return (
@@ -93,7 +97,7 @@ async def supplier_invoice_form(
     session: AsyncSession = Depends(get_db_session),
     actor: Empleado = Depends(get_current_empleado),
 ):
-    advance = await _owned_paid_advance(session, documento_id, actor)
+    advance = await _require_paid_advance_for_invoice(session, documento_id, actor)
     balances = await advance_balances(session, advance)
     if balances["available"] <= 0:
         raise HTTPException(409, "El anticipo ya está aplicado o reservado")
@@ -122,7 +126,7 @@ async def supplier_invoice_submit(
     session: AsyncSession = Depends(get_db_session),
     actor: Empleado = Depends(get_current_empleado),
 ):
-    await _owned_paid_advance(session, documento_id, actor)
+    await _require_paid_advance_for_invoice(session, documento_id, actor)
     try:
         xml = SolicitudTercerosAttachment(
             raw_bytes=await archivo_xml.read(15 * 1024 * 1024 + 1),
