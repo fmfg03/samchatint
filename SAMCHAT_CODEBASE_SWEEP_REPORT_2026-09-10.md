@@ -342,9 +342,22 @@ resultados exactos se consultan en el informe fechado del paquete. Esta evidenci
 no afirma que el servicio en producción haya cambiado ni que los once
 expedientes del piloto se hayan capturado.
 
+### 2026-11-09 — CTT-BULK-CAPTURE-001 — aprobación de diseño
+
+Aprobación humana expresa: «aprobada» sobre historia, especificación y estos textos literales. Razón: preparar captura por lotes con revisión de excepciones y consentimiento acotado, sin atribuir revisión humana individual a registros automáticos. Evidencia: `docs/roadmap/ctt-bulk-capture-20261109.md`. Estado: diseño aprobado y construcción en curso; migración, promoción, admisión de fuentes/facultades y captura real conservan sus comprobantes y autorizaciones separados.
+
+### Candidato de captura batch
+
+La historia CTT-BULK-CAPTURE-001 aprobada propone captura por conjuntos y revisión de excepciones sobre el corpus privado inventariado de dieciséis PDF y setecientas setenta y una páginas. El número real de equipos, la precisión de la versión vigente del extractor y la proporción de excepciones permanecen por medir. La especificación y sus límites no constituyen una captura, facultad productiva, admisión de originales ni aceptación humana. Los resultados de pruebas, revisión independiente, migración, promoción, calificación documental y primer bloque autorizado deberán acreditarse mediante recibos separados antes de describir la modalidad como desplegada o aceptada.
 
 ### 2026-11-09 — Diseño aprobado del piloto aislado Batiseñal
 
 Aprobación humana expresa: «aprobada», registrada el 2026-11-10, sobre la especificación técnica y estos textos literales. Razón: primera entrega aislada con procedencia auténtica de Chatty. Evidencia: `docs/roadmap/batisenal-real-pilot-20261109-story.md` y `docs/roadmap/batisenal-real-pilot-20261109-spec.md`, sección 12. Construcción autorizada; instalación y aceptación real conservan sus propios recibos.
 
 El PR516 incorporó CI y fixtures de composición sintética, sin montar Batiseñal en el runtime financiero. Se aprobó la historia de una primera entrega real aislada; su especificación propone portado controlado, procedencia auténtica, esquema sintético y retorno privado. Implementación, alta de cliente/herramientas, instalación y aceptación real conservan evidencia y checkpoints propios. No hay activación productiva ni aceptación E2E acreditadas por este documento.
+
+### 2026-11-10 — Preparación visual previa al manifiesto
+
+Aprobación humana expresa recibida el 2026-11-12: «arobada» sobre el ajuste y estos textos literales. Motivo: resolver preparación visual anterior a la admisión de documentos. Evidencia: `docs/roadmap/ctt-source-preparation-20261112.md`; recibo de aprobación ligado al SHA-256 `57b81061ac6b6419e354da19d2b77dde845c3881a953f16c18e7f732fe83dfd7`. Diseño aprobado; implementación, admisión operativa, despliegue y captura conservan sus recibos separados.
+
+La revisión del incremento de lector API y correcciones no textuales identificó un hueco entre el inventario físico y la admisión de documentos agrupados: el texto nativo no basta para observar de forma fiable la estructura de todo el corpus. El ajuste de preparación visual y presupuesto compartido es un diseño sujeto a aprobación e implementación separadas. Las pruebas sintéticas del lector, fotografías y correcciones con nueva UV no prueban calidad o rendimiento del corpus real. Los recibos posteriores distinguirán implementación, prueba documental, coste, admisión, calificación y captura.

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Captura por lotes · Copa Telmex{% endblock %}
+{% block content %}
+<style>
+.batch-shell{max-width:1100px;margin:auto;color:#172b43}.batch-top{display:flex;justify-content:space-between;gap:16px;align-items:start;margin-bottom:22px}.batch-top h2{margin:0 0 8px}.batch-top p{color:#526174;margin:0;max-width:680px}.batch-card{border:1px solid #d8e0ea;border-radius:12px;padding:20px;margin:16px 0;background:#fff}.batch-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.batch-metric{padding:12px;background:#f3f6fa;border-radius:8px}.batch-metric strong{display:block;font-size:1.5rem}.batch-caption,.batch-muted{font-size:.9rem;color:#526174}.batch-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px}.batch-shell button,.batch-shell select,.batch-shell textarea{font:inherit}.batch-shell button{padding:10px 14px;min-height:44px;border-radius:8px;border:1px solid #b8c6d8;cursor:pointer;background:#fff;color:#172b43}.batch-shell button.primary{background:#2457b5;color:#fff;border-color:#2457b5}.batch-shell button:disabled{cursor:not-allowed;opacity:.5}.batch-shell button:focus-visible,.batch-shell a:focus-visible,.batch-shell input:focus-visible,.batch-shell select:focus-visible{outline:3px solid #2563eb;outline-offset:3px}.batch-shell label{display:block;line-height:1.5}.batch-shell input[type=checkbox]{width:19px;height:19px;vertical-align:middle;margin-right:8px}.batch-status{padding:12px 14px;background:#eff5ff;border-left:4px solid #2457b5;border-radius:6px}.batch-error{padding:12px 14px;color:#8a1c1c;background:#fff1f1;border:1px solid #e5aeae;border-radius:6px}.batch-complete{padding:18px;color:#14532d;background:#edf9f0;border:1px solid #82c69a;border-radius:10px;margin:16px 0}.batch-table-wrap{overflow:auto}.batch-table{border-collapse:collapse;width:100%;font-size:.93rem}.batch-table th,.batch-table td{padding:10px;text-align:left;border-bottom:1px solid #e0e7ef;vertical-align:top}.batch-table th{color:#526174}.batch-table select{width:100%;max-width:300px;padding:8px}.batch-table textarea{width:100%;max-width:300px;min-height:56px;padding:8px;border:1px solid #bcc8d7;border-radius:6px}.batch-source{display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,.5fr);gap:16px;align-items:start}.batch-source img{max-width:100%;max-height:75vh;object-fit:contain;border:1px solid #d8e0ea;background:#f4f6f9}.batch-source dl{margin:0}.batch-source dt{font-weight:700;margin-top:8px}.batch-source dd{margin:2px 0;color:#334155;overflow-wrap:anywhere}.batch-source-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.batch-source-list label{padding:10px;border-bottom:1px solid #e0e7ef}.batch-source-list small{display:block;margin-left:28px;color:#526174}.batch-empty{padding:12px;color:#526174}.batch-shell [hidden]{display:none!important}@media(max-width:700px){.nav ul{flex-wrap:wrap}.nav a{padding:12px 16px}.batch-source-list label{overflow-wrap:anywhere}.batch-top{display:block}.batch-top>a{display:inline-block;margin-top:12px}.batch-card{padding:14px}.batch-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.batch-source{grid-template-columns:1fr}.batch-actions button{flex:1 1 auto}.batch-table{font-size:.86rem}}
+.batch-correction-field{min-width:0;margin:16px 0;padding:14px;border:1px solid #d8e0ea;border-radius:8px}.batch-correction-field legend{font-weight:700;overflow-wrap:anywhere;max-width:100%}.batch-correction-field input:not([type=checkbox]),.batch-correction-field select{display:block;width:100%;max-width:100%;min-height:44px;padding:9px;margin:5px 0 12px;font:inherit;box-sizing:border-box}.batch-correction-geometry{padding-top:6px}.batch-pixel-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.batch-correction-geometry canvas{display:block;max-width:100%;height:auto;border:1px solid #d8e0ea;margin:10px 0;background:#f4f6f9}@media(max-width:700px){.batch-pixel-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+<main class="batch-shell" data-batch-review data-csrf="{{ batch_review_csrf }}">
+    <header class="batch-top">
+        <div><h2>Captura por lotes</h2><p>Contrasta la muestra y las excepciones. Autoriza un conjunto exacto sin confirmar cada equipo individualmente.</p></div>
+        <a href="/registration-review">Volver a precaptura</a>
+    </header>
+    <section class="batch-complete" data-batch-complete role="status" aria-live="polite" aria-atomic="true" tabindex="-1" hidden></section>
+    <p class="batch-error" data-batch-error role="alert" hidden></p>
+    <p class="batch-status" data-batch-status role="status" aria-live="polite">Consultando el estado del lote…</p>
+    <section class="batch-card" data-batch-create hidden>
+        <h3>Fuentes disponibles</h3>
+        <p class="batch-muted">Selecciona las fuentes de la edición que quieres preparar. Este paso analiza documentos; todavía no captura equipos.</p>
+        <label>Edición <select data-batch-edition aria-label="Edición"></select></label>
+        <div class="batch-source-list" data-batch-catalog></div>
+        <div class="batch-actions"><button type="button" class="primary" data-batch-create-button disabled>Preparar fuentes seleccionadas</button></div>
+        <h3>Continuar una preparación</h3><div data-batch-existing></div>
+    </section>
+    <div data-batch-run hidden>
+        <section class="batch-metrics" aria-label="Conciliación del lote" data-batch-counts></section>
+        <section class="batch-card">
+            <h3>Control de calidad</h3><div data-batch-quality></div>
+            <p class="batch-caption">La medición de automatización se conserva sobre el conjunto inicial. No es una garantía de exactitud de todos los datos.</p>
+        </section>
+        <section class="batch-card" data-batch-sample-section>
+            <h3>Muestra para contrastar</h3>
+            <p class="batch-muted">Compara las cédulas seleccionadas con sus fuentes y registra el resultado. Este contraste se acreditará al autorizar el bloque con tu passkey.</p>
+            <div class="batch-table-wrap"><table class="batch-table"><thead><tr><th>Cédula y fuentes</th><th>Resultado del contraste</th><th>Observación</th></tr></thead><tbody data-batch-sample></tbody></table></div>
+            <div class="batch-actions"><button type="button" data-batch-save-sample disabled>Guardar contraste propuesto</button></div>
+            <p class="batch-caption" data-batch-sample-state></p>
+        </section>
+        <section class="batch-card" data-batch-source-panel hidden>
+            <h3 data-batch-source-title>Fuente original</h3>
+            <div class="batch-source-toolbar" data-batch-source-pages></div>
+            <div class="batch-source"><img data-batch-source-image alt="Página original de la cédula seleccionada"><dl data-batch-source-fields></dl></div>
+        </section>
+        <section class="batch-card" data-batch-corrections hidden>
+            <h3 data-batch-corrections-title>Contrastar una excepción</h3>
+            <p class="batch-muted" data-batch-corrections-description>Contrasta el original y propone sólo los datos, presencia o recortes que requieren corrección. Las coordenadas se expresan en píxeles del original y quedan dentro del espacio admitido de esa persona.</p>
+            <div data-batch-correction-fields></div>
+            <p class="batch-caption" data-batch-correction-state>Corrección propuesta; se confirmará con la passkey del bloque.</p>
+            <div class="batch-actions"><button type="button" data-batch-save-corrections disabled>Guardar corrección propuesta</button><button type="button" data-batch-discard-corrections disabled>Descartar cambios locales</button></div>
+            <div data-batch-quality-report-panel hidden>
+                <label>Discrepancia crítica observada<textarea data-batch-quality-reason maxlength="500" rows="3"></textarea></label>
+                <p class="batch-caption">Este informe detiene el grupo afectado. No corrige automáticamente datos ni deshace capturas confirmadas.</p>
+                <div class="batch-actions"><button type="button" data-batch-report-quality disabled>Informar discrepancia crítica</button></div>
+            </div>
+        </section>
+        <section class="batch-card">
+            <h3>Preparar el siguiente bloque</h3>
+            <p class="batch-muted" data-batch-selection-summary></p><div data-batch-selection></div>
+            <div class="batch-actions"><button type="button" data-batch-prepare disabled>Preparar bloque</button></div>
+        </section>
+        <section class="batch-card" data-batch-block-section>
+            <h3>Autorizar y seguir el bloque</h3><div data-batch-block-summary></div>
+            <label><input type="checkbox" data-batch-confirm disabled>Autorizo capturar este bloque con las validaciones automáticas y la muestra indicadas; no declaro haber revisado individualmente todos sus datos.</label>
+            <div class="batch-actions">
+                <button type="button" class="primary" data-batch-approve disabled>Autorizar bloque con passkey</button>
+                <button type="button" data-batch-query>Consultar estado</button>
+                <button type="button" data-batch-pause disabled>Pausar</button>
+                <button type="button" data-batch-resume disabled>Reanudar</button>
+                <button type="button" data-batch-revoke disabled>Revocar autorización</button>
+            </div>
+            <p class="batch-caption">Primer bloque: hasta 5 equipos. Siguientes: hasta 50. Cada autorización vence como máximo en una hora; reanudar no amplía ese plazo.</p>
+        </section>
+        <section class="batch-card"><h3>Excepciones y resultados</h3><div class="batch-table-wrap"><table class="batch-table"><thead><tr><th>Equipo</th><th>Estado</th><th>Observaciones y fuente</th></tr></thead><tbody data-batch-members></tbody></table></div><div class="batch-actions"><button type="button" data-batch-previous disabled>Anterior</button><span data-batch-page></span><button type="button" data-batch-next disabled>Siguiente</button></div></section>
+    </div>
+    <script type="application/json" data-batch-initial>{{ {'view': batch_review_view|default(none), 'catalog': batch_catalog|default(none)}|tojson }}</script>
+</main>
+<script src="/static/js/ctt_batch_review.js?v=c1cb147f64f6b141" defer></script>
+{% endblock %}

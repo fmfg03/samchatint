@@ -29,7 +29,7 @@ from samchat.private_plugin.contracts import AuditSink, IdentityProvider
 
 PREFIX = "samchat_batisenal_"
 SOURCE_PATH = "SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md"
-SOURCE_SHA = "2609607e1e2ae2676c670392cab1218e306492fae1b45f13340490efe75b75ee"
+SOURCE_SHA = "b14c7b7d1bd510a344b7cbab14ef3daa896dd83652a3114f0bf69d773bdd1fe7"
 ROOT = Path(__file__).resolve().parents[2]
 
 

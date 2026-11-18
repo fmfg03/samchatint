@@ -54,14 +54,16 @@ def assembly(monkeypatch):
         key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
     ).hexdigest()
     url = URL.create(
-        "postgresql+psycopg",
+        "postgresql+asyncpg",
         username=data["runtime_role"],
         database=data["database"],
         query={"host": data["socket_directory"], "port": "5432"},
     )
+    # The assembly only configures engines. Live DBAPI behavior is covered
+    # separately by the isolated PostgreSQL acceptance suite.
     oauth = create_engine(url)
     readonly = create_engine(url, execution_options={"postgresql_readonly": True})
-    asynchronous = create_async_engine(url.set(drivername="postgresql+asyncpg"))
+    asynchronous = create_async_engine(url)
     resources = RuntimeResources(
         asynchronous,
         oauth,

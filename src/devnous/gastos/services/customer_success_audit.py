@@ -153,10 +153,11 @@ async def record_customer_success_audit_event(
         if request is not None
         else AuditRequestContext()
     )
-    isolated_schema = session.info.get("batisenal_preprovisioned_audit")
-    isolated_mode = isolated_schema is not None
+    isolated_audit_key = "batisenal_preprovisioned_audit"
+    isolated_mode = isolated_audit_key in session.info
     try:
         if isolated_mode:
+            isolated_schema = session.info[isolated_audit_key]
             if not isinstance(isolated_schema, str) or not re.fullmatch(
                 r"bs_test_v01_[a-f0-9]{32}", isolated_schema
             ):

@@ -7,12 +7,12 @@ the effect. Receipt emission alone is not a database commit.
 """
 
 import asyncio
-from copy import deepcopy
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import json
 import re
 import time
+from copy import deepcopy
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Any, NoReturn
 from uuid import UUID, uuid4
@@ -24,11 +24,17 @@ from .staff_capture_finality_authorization import (
     verify_pre_authorization,
 )
 from .staff_capture_finality_effect import (
+    BatchFinalityContext,
     FinalityContext,
     freeze_finality_effect,
     verify_finality_bundle,
 )
-from .staff_capture_persistence import PendingCaptureWriter, _observed, _value
+from .staff_capture_persistence import (
+    BatchPendingCaptureWriter,
+    PendingCaptureWriter,
+    _observed,
+    _value,
+)
 
 
 def _deny() -> NoReturn:
@@ -190,6 +196,12 @@ class FinalizingCaptureWriter:
         self._review_key, self._effect_key = review_key, effect_key
         self._service, self._database_identity = finality_service, database_identity
         self._photos = photo_store
+        self._batch_pending = BatchPendingCaptureWriter(
+            public_keys=self._keys,
+            review_key=review_key,
+            effect_key=effect_key,
+            photo_store=photo_store,
+        )
         self._pending = PendingCaptureWriter(
             public_keys=self._keys,
             review_key=review_key,
@@ -236,7 +248,15 @@ class FinalizingCaptureWriter:
         try:
             if not conn.is_in_transaction() or type(signed_review) is not bytes:
                 _deny()
-            pending_token = await self._pending.persist(conn, **authorization)
+            from .staff_batch_authorization import BatchReviewScope
+
+            batch = type(authorization["scope"]) is BatchReviewScope
+            if batch:
+                pending_token = await self._batch_pending.persist(
+                    conn, member_proof_bytes=signed_review, **authorization
+                )
+            else:
+                pending_token = await self._pending.persist(conn, **authorization)
             pending = _private_json(authorization["effect_bytes"])
             observed = await self._read_rows(conn, pending)
             if observed != {key: pending[key] for key in ("team", "players", "staff")}:
@@ -275,7 +295,8 @@ class FinalizingCaptureWriter:
                 "blocking_incident_count": incidents
             }:
                 _deny()
-            context = FinalityContext(
+            context_type = BatchFinalityContext if batch else FinalityContext
+            context = context_type(
                 database_identity=loaded["database_identity"],
                 database_oid=int(loaded["database_oid"]),
                 pg_top_xid=int(loaded["pg_top_xid"]),
@@ -427,7 +448,7 @@ class FinalizingCaptureWriter:
                 )
                 statement = (
                     f"UPDATE public.{model.__tablename__} SET {assignment} "
-                    f"WHERE id=${len(fields)+1} "
+                    f"WHERE id=${len(fields) + 1} "
                     "AND governance_state='PENDING_FINALITY' "
                     "AND finality_receipt_id IS NULL RETURNING *"
                 )

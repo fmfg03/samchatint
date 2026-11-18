@@ -48,12 +48,57 @@ def verify_capture_authorization(
     review_key: bytes,
     effect_key: bytes,
     now_seconds: int,
+    member_proof_bytes: bytes | None = None,
 ) -> str:
     """Check pinned gate signature, expiry, complete scope and exact effect.
 
     attempt_id and nonce must come from locked protected state, not the caller
     browser. Return only the signed authorization hash for private audit.
     """
+
+    from .staff_batch_authorization import (
+        CAPTURE_SCHEMA,
+        BatchReviewScope,
+        batch_scope_hash,
+        verify_batch_proof,
+    )
+
+    if type(scope) is BatchReviewScope:
+        from .staff_capture_effect import check_batch_effect_follows_review
+
+        try:
+            body = verify_batch_proof(
+                envelope,
+                schema=CAPTURE_SCHEMA,
+                public_keys=public_keys,
+                now=now_seconds,
+            )
+            if (
+                type(member_proof_bytes) is not bytes
+                or not member_proof_bytes
+                or body["member_proof_hash"]
+                != hashlib.sha256(member_proof_bytes).hexdigest()
+                or body["attempt_id"] != str(attempt_id)
+                or body["nonce"] != str(nonce)
+                or body["scope_hash"] != batch_scope_hash(scope)
+                or body["review_plan_binding"]
+                != bind_review_plan(review_bytes, review_key)
+                or body["effect_binding"]
+                != bind_capture_effect(effect_bytes, effect_key)
+            ):
+                raise ValueError("batch binding mismatch")
+            check_batch_effect_follows_review(
+                review_bytes=review_bytes,
+                effect_bytes=effect_bytes,
+                scope=scope,
+                review_key=review_key,
+                authority_metadata=body["authority_metadata"],
+            )
+            return "sha256:" + hashlib.sha256(envelope).hexdigest()
+        except Exception:
+            raise CaptureDenied("capture denied") from None
+    if member_proof_bytes is not None:
+        raise CaptureDenied("capture denied")
 
     def pairs(items):
         value = {}

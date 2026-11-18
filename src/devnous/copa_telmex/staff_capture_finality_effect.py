@@ -6,12 +6,12 @@ An event/receipt is evidence of an attempted transition, never durable commit.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
 import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, NoReturn
 from uuid import UUID
 
@@ -19,7 +19,10 @@ from .staff_capture_effect import bind_capture_effect
 from .staff_capture_executor import CaptureDenied
 from .staff_capture_source_adapter import SourceSnapshot
 from .staff_governance_receipt import verify_staff_evidence_receipt
-from .staff_review_challenge import canonical_scope_bytes, scope_hash
+from .staff_review_challenge import (
+    canonical_scope_bytes,
+)
+from .staff_review_challenge import scope_hash as _individual_scope_hash
 
 MAX_BYTES = 8 * 1024 * 1024
 EFFECT_DOMAIN = b"ctt.capture.finality-effect.v1\x00"
@@ -203,7 +206,11 @@ def operation_id(event: dict) -> str:
     ]
     subject = (
         "player_id"
-        if event["event_type"] == "samchat_registration_player_finality_attestation_v2"
+        if event["event_type"]
+        in (
+            "samchat_registration_player_finality_attestation_v2",
+            "samchat_registration_player_finality_attestation_v3",
+        )
         else "staff_id"
     )
     return digest({key: event[key] for key in keys + [subject]})
@@ -257,7 +264,13 @@ def finality_event(
         ]
     }
     base.update(
-        event_type="samchat_registration_" + kind.lower() + "_finality_attestation_v2",
+        event_type="samchat_registration_"
+        + kind.lower()
+        + (
+            "_finality_attestation_v3"
+            if _is_batch(scope)
+            else "_finality_attestation_v2"
+        ),
         timestamp=datetime.fromtimestamp(context.issued_at, timezone.utc)
         .isoformat()
         .replace("+00:00", "Z"),
@@ -438,7 +451,11 @@ def freeze_finality_effect(
         ):
             deny()
         result = {
-            "schema": "ctt.capture.finality-effect.v1",
+            "schema": (
+                "ctt.capture.finality-effect.v3"
+                if _is_batch(scope)
+                else "ctt.capture.finality-effect.v1"
+            ),
             "scope_hash": scope_hash(scope),
             "review_attempt_id": str(protected_context.review_attempt_id),
             "database_transaction_id": protected_context.database_transaction_id,
@@ -531,3 +548,50 @@ def freeze_finality_effect(
         return raw
     except Exception:
         deny()
+
+
+def _is_batch(scope):
+    from .staff_batch_authorization import BatchReviewScope
+
+    return type(scope) is BatchReviewScope
+
+
+def scope_hash(scope):
+    if _is_batch(scope):
+        from .staff_batch_authorization import batch_scope_hash
+
+        return batch_scope_hash(scope)
+    return _individual_scope_hash(scope)
+
+
+@dataclass(frozen=True, repr=False)
+class BatchFinalityContext(FinalityContext):
+    """Transaction-bound source-bundle context; never accepted as JSON input."""
+
+    def verify(self, scope, attempt_id, *, now_seconds=None):
+        from time import time
+
+        from .staff_batch_authorization import canonical_batch_scope_bytes
+        from .staff_batch_source_adapter import SourceSnapshotV2
+
+        now = int(time()) if now_seconds is None else now_seconds
+        if (
+            type(self) is not BatchFinalityContext
+            or not _is_batch(scope)
+            or type(self.review_attempt_id) is not UUID
+            or self.review_attempt_id != attempt_id
+            or type(self.nonce) is not UUID
+            or type(self.issued_at) is not int
+            or type(self.expires_at) is not int
+            or not 0 < self.expires_at - self.issued_at <= 300
+            or type(now) is not int
+            or not self.issued_at <= now < self.expires_at
+            or self.cas_succeeded is not True
+            or type(self.blocking_incident_count) is not int
+            or self.blocking_incident_count != 0
+            or type(self.snapshot) is not SourceSnapshotV2
+            or self.snapshot.scope_bytes != canonical_batch_scope_bytes(scope)
+        ):
+            deny()
+        self.database_transaction_id
+        self.snapshot.verify_unchanged()

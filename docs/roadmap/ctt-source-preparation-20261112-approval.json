@@ -1,0 +1,19 @@
+{
+  "approved_at": "2026-11-11T23:12:32.291991+00:00",
+  "user_reply": "arobada",
+  "interpreted_as": "aprobada",
+  "approved_object": "source-preparation-addendum-proposed-20261110.md",
+  "sha256": "57b81061ac6b6419e354da19d2b77dde845c3881a953f16c18e7f732fe83dfd7",
+  "scope": [
+    "source_preparation_adjustment",
+    "literal_canon",
+    "shared_api_consumption_ceiling_25_usd"
+  ],
+  "existing_credential_reuse": "previously_approved_unchanged",
+  "does_not_authorize": [
+    "deployment",
+    "production_capture",
+    "automatic_source_or_profile_admission"
+  ],
+  "consumption_limit_micro_usd": 25000000
+}
