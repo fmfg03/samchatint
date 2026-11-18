@@ -1,6 +1,6 @@
 {
   "baseline": "6cd122f1030ab39631d77e706a9f5a1a7192231d",
-  "source_file_count": 555,
+  "source_file_count": 556,
   "exclusions": [
     "Private plugin integration package excluded from business-source inventory; baseline pinned deliberately, source hashes detect changes",
     "Active frontend is not versioned here; UI function/profile parity remains UNPROVEN",
@@ -20632,11 +20632,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "76988cd354c0",
+      "id": "ee62deef6562",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 206,
+      "line": 207,
       "handler": "direction_executive_dashboard",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "6b7b1b7006abf25647666615bdc1ca3175e81afc144ec0401181bdf66a8fb20c",
       "method": "GET",
       "paths": [
         "/direccion/tableros"
@@ -20673,7 +20673,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:direction_executive_dashboard",
-      "proposed_tool": "direction_direction_executive_dashboard_get_76988c",
+      "proposed_tool": "direction_direction_executive_dashboard_get_ee62de",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -20692,11 +20692,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "d6d8b640102e",
+      "id": "54e767da814a",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 224,
+      "line": 225,
       "handler": "direction_executive_assistant_summary",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "6b7b1b7006abf25647666615bdc1ca3175e81afc144ec0401181bdf66a8fb20c",
       "method": "GET",
       "paths": [
         "/direccion/tableros/asistente/resumen"
@@ -20735,7 +20735,7 @@
         "build_client_executive_summary"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:direction_executive_assistant_summary",
-      "proposed_tool": "direction_direction_executive_assistant_summary_get_d6d8b6",
+      "proposed_tool": "direction_direction_executive_assistant_summary_get_54e767",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -20754,11 +20754,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e7e0a8f3381a",
+      "id": "bb1e251f2f51",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 238,
+      "line": 239,
       "handler": "direction_published_reports",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "6b7b1b7006abf25647666615bdc1ca3175e81afc144ec0401181bdf66a8fb20c",
       "method": "GET",
       "paths": [
         "/direccion/reportes"
@@ -20795,7 +20795,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:direction_published_reports",
-      "proposed_tool": "direction_direction_published_reports_get_e7e0a8",
+      "proposed_tool": "direction_direction_published_reports_get_bb1e25",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "current_empleado"
@@ -20813,11 +20813,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "399fb0d94070",
+      "id": "d14599d42c24",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 267,
+      "line": 268,
       "handler": "direction_executive_tournament_dashboard",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "6b7b1b7006abf25647666615bdc1ca3175e81afc144ec0401181bdf66a8fb20c",
       "method": "GET",
       "paths": [
         "/direccion/tableros/torneos/{tournament_id}"
@@ -20854,7 +20854,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:direction_executive_tournament_dashboard",
-      "proposed_tool": "direction_direction_executive_tournament_dashboard_get_399fb0",
+      "proposed_tool": "direction_direction_executive_tournament_dashboard_get_d14599",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "tournament_id",
@@ -20874,11 +20874,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "3c5fe09226e7",
+      "id": "f7ce779b32cb",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 349,
+      "line": 350,
       "handler": "direction_home",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "6b7b1b7006abf25647666615bdc1ca3175e81afc144ec0401181bdf66a8fb20c",
       "method": "GET",
       "paths": [
         "/direccion/inicio"
@@ -20908,7 +20908,7 @@
         "build_home"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:direction_home",
-      "proposed_tool": "direction_direction_home_get_3c5fe0",
+      "proposed_tool": "direction_direction_home_get_f7ce77",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "current_empleado",
@@ -20932,11 +20932,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "e050062281e4",
+      "id": "09e5905edb3b",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 445,
+      "line": 446,
       "handler": "direction_context_query",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "6b7b1b7006abf25647666615bdc1ca3175e81afc144ec0401181bdf66a8fb20c",
       "method": "POST",
       "paths": [
         "/direccion/tableros/asistente/consulta"
@@ -20973,7 +20973,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:direction_context_query",
-      "proposed_tool": "direction_direction_context_query_post_e05006",
+      "proposed_tool": "direction_direction_context_query_post_09e590",
       "scope_proposal": "direction:write; never grants business authority",
       "object_parameters": [
         "payload",
@@ -20995,11 +20995,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "143c5e8bdeaf",
+      "id": "aae6d293f75f",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 509,
+      "line": 510,
       "handler": "direction_export_report",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "6b7b1b7006abf25647666615bdc1ca3175e81afc144ec0401181bdf66a8fb20c",
       "method": "POST",
       "paths": [
         "/direccion/reportes/exportar/{output_format}"
@@ -21038,7 +21038,7 @@
         "build_report"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:direction_export_report",
-      "proposed_tool": "direction_direction_export_report_post_143c5e",
+      "proposed_tool": "direction_direction_export_report_post_aae6d2",
       "scope_proposal": "direction:write; never grants business authority",
       "object_parameters": [
         "output_format",
@@ -21061,11 +21061,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "55f03ebc58b4",
+      "id": "8a69e52adb42",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 574,
+      "line": 575,
       "handler": "legacy_client_dashboards_redirect",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "6b7b1b7006abf25647666615bdc1ca3175e81afc144ec0401181bdf66a8fb20c",
       "method": "GET",
       "paths": [
         "/cliente/tableros"
@@ -21093,7 +21093,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:legacy_client_dashboards_redirect",
-      "proposed_tool": "direction_legacy_client_dashboards_redirect_get_55f03e",
+      "proposed_tool": "direction_legacy_client_dashboards_redirect_get_8a69e5",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [],
       "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
@@ -21109,11 +21109,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "3862032acc4f",
+      "id": "72312b828bad",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 579,
+      "line": 580,
       "handler": "legacy_client_dashboard_summary_redirect",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "6b7b1b7006abf25647666615bdc1ca3175e81afc144ec0401181bdf66a8fb20c",
       "method": "GET",
       "paths": [
         "/cliente/tableros/asistente/resumen"
@@ -21141,7 +21141,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:legacy_client_dashboard_summary_redirect",
-      "proposed_tool": "direction_legacy_client_dashboard_summary_redirect_get_386203",
+      "proposed_tool": "direction_legacy_client_dashboard_summary_redirect_get_72312b",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [],
       "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
@@ -21157,11 +21157,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "6c427289272c",
+      "id": "a1720a65aeaf",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 584,
+      "line": 585,
       "handler": "legacy_client_reports_redirect",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "6b7b1b7006abf25647666615bdc1ca3175e81afc144ec0401181bdf66a8fb20c",
       "method": "GET",
       "paths": [
         "/cliente/reportes"
@@ -21189,7 +21189,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:legacy_client_reports_redirect",
-      "proposed_tool": "direction_legacy_client_reports_redirect_get_6c4272",
+      "proposed_tool": "direction_legacy_client_reports_redirect_get_a1720a",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [],
       "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
@@ -21205,11 +21205,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "a317eb777e35",
+      "id": "399cfac427de",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
-      "line": 589,
+      "line": 590,
       "handler": "legacy_client_tournament_redirect",
-      "source_sha256": "d78459e0e45aadfaec66969cd9bdbe9cd7b78010b06327f2d923132759ebb1bb",
+      "source_sha256": "6b7b1b7006abf25647666615bdc1ca3175e81afc144ec0401181bdf66a8fb20c",
       "method": "GET",
       "paths": [
         "/cliente/tableros/torneos/{tournament_id}"
@@ -21237,7 +21237,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/client_executive_routes.py:legacy_client_tournament_redirect",
-      "proposed_tool": "direction_legacy_client_tournament_redirect_get_a317eb",
+      "proposed_tool": "direction_legacy_client_tournament_redirect_get_399cfa",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "tournament_id"
@@ -21569,6 +21569,235 @@
       "proposed_tool": "documents_and_other_legacy_client_report_management_redi_bf085c",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "357a47c03edf",
+      "source": "src/devnous/gastos/routes/direction_dossier_routes.py",
+      "line": 623,
+      "handler": "direction_entry",
+      "source_sha256": "38502fba50eb14c4fffa747878a7bc50d70466c0facbfdb2b3797e3c8c6910ae",
+      "method": "GET",
+      "paths": [
+        "/direccion"
+      ],
+      "declared_path": "/direccion",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "router",
+      "mount_chain": [
+        {
+          "prefix": "",
+          "evidence": "src/devnous/gastos/routes/client_executive_routes.py:594",
+          "status": "include_router_factory_static; runtime execution unverified"
+        }
+      ],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "direction",
+      "mount_evidence": "live_entrypoint_static",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/direction_dossier_routes.py:direction_entry",
+      "proposed_tool": "direction_direction_entry_get_357a47",
+      "scope_proposal": "direction:read; never grants business authority",
+      "object_parameters": [
+        "employee"
+      ],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "0bb317ef2341",
+      "source": "src/devnous/gastos/routes/direction_dossier_routes.py",
+      "line": 632,
+      "handler": "dossier",
+      "source_sha256": "38502fba50eb14c4fffa747878a7bc50d70466c0facbfdb2b3797e3c8c6910ae",
+      "method": "GET",
+      "paths": [
+        "/direccion/expediente-vivo"
+      ],
+      "declared_path": "/direccion/expediente-vivo",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "router",
+      "mount_chain": [
+        {
+          "prefix": "",
+          "evidence": "src/devnous/gastos/routes/client_executive_routes.py:594",
+          "status": "include_router_factory_static; runtime execution unverified"
+        }
+      ],
+      "guard_definitions": [
+        "src/devnous/gastos/routes/direction_dossier_routes.py:322:_scope_choices",
+        "src/devnous/gastos/routes/direction_dossier_routes.py:564:scoped_tournament",
+        "src/devnous/gastos/routes/direction_dossier_routes.py:577:authorized_sources",
+        "src/devnous/gastos/routes/direction_dossier_routes.py:584:scoped_editions"
+      ],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "direction",
+      "mount_evidence": "live_entrypoint_static",
+      "profile_evidence": [
+        "_scope_choices(sources, records)",
+        "authorized_sources(session, employee)",
+        "capture_permissions(session, employee)",
+        "scoped_editions(session, tournament, domains)",
+        "scoped_tournament(session, employee, params.get('tournament_id', ''))"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/direction_dossier_routes.py:dossier",
+      "proposed_tool": "direction_dossier_get_0bb317",
+      "scope_proposal": "direction:read; never grants business authority",
+      "object_parameters": [
+        "employee"
+      ],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "7b003d9da6fc",
+      "source": "src/devnous/gastos/routes/direction_dossier_routes.py",
+      "line": 743,
+      "handler": "capture",
+      "source_sha256": "38502fba50eb14c4fffa747878a7bc50d70466c0facbfdb2b3797e3c8c6910ae",
+      "method": "POST",
+      "paths": [
+        "/direccion/expediente-vivo/captura"
+      ],
+      "declared_path": "/direccion/expediente-vivo/captura",
+      "declared_methods": [
+        "POST"
+      ],
+      "router": "router",
+      "mount_chain": [
+        {
+          "prefix": "",
+          "evidence": "src/devnous/gastos/routes/client_executive_routes.py:594",
+          "status": "include_router_factory_static; runtime execution unverified"
+        }
+      ],
+      "guard_definitions": [
+        "src/devnous/gastos/routes/direction_dossier_routes.py:322:_scope_choices",
+        "src/devnous/gastos/routes/direction_dossier_routes.py:564:scoped_tournament",
+        "src/devnous/gastos/routes/direction_dossier_routes.py:577:authorized_sources",
+        "src/devnous/gastos/routes/direction_dossier_routes.py:584:scoped_editions"
+      ],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "direction",
+      "mount_evidence": "live_entrypoint_static",
+      "profile_evidence": [
+        "_scope_choices(sources, captures['rows'])",
+        "authorized_sources(session, employee)",
+        "capture_permissions(session, employee)",
+        "scope.items()",
+        "scoped_editions(session, tournament, domains)",
+        "scoped_tournament(session, employee, _uuid(values.get('tournament_id', '')))"
+      ],
+      "service_candidates": [
+        "session.commit",
+        "validate_record",
+        "validated['fields'].get"
+      ],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/direction_dossier_routes.py:capture",
+      "proposed_tool": "direction_capture_post_7b003d",
+      "scope_proposal": "direction:write; never grants business authority",
+      "object_parameters": [
+        "employee"
+      ],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "write_or_effect_candidate",
+      "confirmation": "trusted human approval of exact draft/version/amount/currency/destination/digest; recheck at commit",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity",
+        "exact confirmation/version",
+        "retry/crash/no duplicates",
+        "verified receipt"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "43f19e7153e6",
+      "source": "src/devnous/gastos/routes/direction_dossier_routes.py",
+      "line": 921,
+      "handler": "photo",
+      "source_sha256": "38502fba50eb14c4fffa747878a7bc50d70466c0facbfdb2b3797e3c8c6910ae",
+      "method": "GET",
+      "paths": [
+        "/direccion/expediente-vivo/fotografias/{record_id}"
+      ],
+      "declared_path": "/direccion/expediente-vivo/fotografias/{record_id}",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "router",
+      "mount_chain": [
+        {
+          "prefix": "",
+          "evidence": "src/devnous/gastos/routes/client_executive_routes.py:594",
+          "status": "include_router_factory_static; runtime execution unverified"
+        }
+      ],
+      "guard_definitions": [
+        "src/devnous/gastos/routes/direction_dossier_routes.py:564:scoped_tournament"
+      ],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "direction",
+      "mount_evidence": "live_entrypoint_static",
+      "profile_evidence": [
+        "scoped_tournament(session, employee, _uuid(request.query_params.get('tournament_id', '')))"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/direction_dossier_routes.py:photo",
+      "proposed_tool": "direction_photo_get_43f19e",
+      "scope_proposal": "direction:read; never grants business authority",
+      "object_parameters": [
+        "record_id",
+        "employee"
+      ],
       "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
       "effect": "read_candidate; side effects NOT verified",
       "confirmation": "none only after read-purity proof",
@@ -22849,7 +23078,7 @@
             "editar",
             "administrar"
           ],
-          "evidence": "src/devnous/gastos/services/access_control_service.py:367"
+          "evidence": "src/devnous/gastos/services/access_control_service.py:412"
         }
       ],
       "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
@@ -22927,7 +23156,7 @@
             "editar",
             "administrar"
           ],
-          "evidence": "src/devnous/gastos/services/access_control_service.py:367"
+          "evidence": "src/devnous/gastos/services/access_control_service.py:412"
         }
       ],
       "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
@@ -23015,7 +23244,7 @@
             "editar",
             "administrar"
           ],
-          "evidence": "src/devnous/gastos/services/access_control_service.py:376"
+          "evidence": "src/devnous/gastos/services/access_control_service.py:421"
         },
         {
           "key": "configuracion.authorization_warnings",
@@ -23028,7 +23257,7 @@
           "actions": [
             "ver"
           ],
-          "evidence": "src/devnous/gastos/services/access_control_service.py:385"
+          "evidence": "src/devnous/gastos/services/access_control_service.py:430"
         }
       ],
       "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
@@ -23108,7 +23337,7 @@
             "editar",
             "administrar"
           ],
-          "evidence": "src/devnous/gastos/services/access_control_service.py:376"
+          "evidence": "src/devnous/gastos/services/access_control_service.py:421"
         }
       ],
       "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
@@ -23187,7 +23416,7 @@
             "editar",
             "administrar"
           ],
-          "evidence": "src/devnous/gastos/services/access_control_service.py:376"
+          "evidence": "src/devnous/gastos/services/access_control_service.py:421"
         }
       ],
       "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
@@ -23271,7 +23500,7 @@
             "editar",
             "administrar"
           ],
-          "evidence": "src/devnous/gastos/services/access_control_service.py:376"
+          "evidence": "src/devnous/gastos/services/access_control_service.py:421"
         }
       ],
       "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
@@ -49729,6 +49958,76 @@
       "status": "DEFAULT_POLICY_ONLY; configured denials, active positions and object scope prevail"
     },
     {
+      "key": "direccion.expediente_operaciones",
+      "label": "Expediente · Operaciones",
+      "group": "Dirección",
+      "description": "Captura operativa dentro del alcance de torneo y edición.",
+      "paths": [],
+      "default_roles": [],
+      "actions": [
+        "ver",
+        "editar"
+      ],
+      "evidence": "src/devnous/gastos/services/access_control_service.py:367",
+      "status": "DEFAULT_POLICY_ONLY; configured denials, active positions and object scope prevail"
+    },
+    {
+      "key": "direccion.expediente_finanzas",
+      "label": "Expediente · Finanzas",
+      "group": "Dirección",
+      "description": "Asociación de documentos financieros existentes al expediente.",
+      "paths": [],
+      "default_roles": [],
+      "actions": [
+        "ver",
+        "editar"
+      ],
+      "evidence": "src/devnous/gastos/services/access_control_service.py:376",
+      "status": "DEFAULT_POLICY_ONLY; configured denials, active positions and object scope prevail"
+    },
+    {
+      "key": "direccion.expediente_mercadotecnia",
+      "label": "Expediente · Mercadotecnia",
+      "group": "Dirección",
+      "description": "Captura de activaciones y evidencia de patrocinadores.",
+      "paths": [],
+      "default_roles": [],
+      "actions": [
+        "ver",
+        "editar"
+      ],
+      "evidence": "src/devnous/gastos/services/access_control_service.py:385",
+      "status": "DEFAULT_POLICY_ONLY; configured denials, active positions and object scope prevail"
+    },
+    {
+      "key": "direccion.expediente_contactos",
+      "label": "Expediente · Contactos personales",
+      "group": "Dirección",
+      "description": "Lectura y captura de responsables autorizados.",
+      "paths": [],
+      "default_roles": [],
+      "actions": [
+        "ver",
+        "editar"
+      ],
+      "evidence": "src/devnous/gastos/services/access_control_service.py:394",
+      "status": "DEFAULT_POLICY_ONLY; configured denials, active positions and object scope prevail"
+    },
+    {
+      "key": "direccion.expediente_fotografias",
+      "label": "Expediente · Fotografías",
+      "group": "Dirección",
+      "description": "Lectura y asociación de evidencia fotográfica autorizada.",
+      "paths": [],
+      "default_roles": [],
+      "actions": [
+        "ver",
+        "editar"
+      ],
+      "evidence": "src/devnous/gastos/services/access_control_service.py:403",
+      "status": "DEFAULT_POLICY_ONLY; configured denials, active positions and object scope prevail"
+    },
+    {
       "key": "configuracion.control_accesos",
       "label": "Control de accesos",
       "group": "Configuración",
@@ -49745,7 +50044,7 @@
         "editar",
         "administrar"
       ],
-      "evidence": "src/devnous/gastos/services/access_control_service.py:367",
+      "evidence": "src/devnous/gastos/services/access_control_service.py:412",
       "status": "DEFAULT_POLICY_ONLY; configured denials, active positions and object scope prevail"
     },
     {
@@ -49766,7 +50065,7 @@
         "editar",
         "administrar"
       ],
-      "evidence": "src/devnous/gastos/services/access_control_service.py:376",
+      "evidence": "src/devnous/gastos/services/access_control_service.py:421",
       "status": "DEFAULT_POLICY_ONLY; configured denials, active positions and object scope prevail"
     },
     {
@@ -49786,7 +50085,7 @@
       "actions": [
         "ver"
       ],
-      "evidence": "src/devnous/gastos/services/access_control_service.py:385",
+      "evidence": "src/devnous/gastos/services/access_control_service.py:430",
       "status": "DEFAULT_POLICY_ONLY; configured denials, active positions and object scope prevail"
     }
   ],
@@ -49873,6 +50172,12 @@
       "source": "src/devnous/gastos/routes/auth_routes.py",
       "line": 893,
       "expression": "router.add_api_route('/login', limiter.limit('5/minute')(login) if SLOWAPI_AVAILABLE else login, methods=['POST'], response_class=RedirectResponse)",
+      "gap": "STATIC_REGISTRATION_REVIEW"
+    },
+    {
+      "source": "src/devnous/gastos/routes/client_executive_routes.py",
+      "line": 594,
+      "expression": "router.include_router(create_dossier_router(_assigned_direction_portfolios, _direction_source_access, _is_superadmin))",
       "gap": "STATIC_REGISTRATION_REVIEW"
     },
     {

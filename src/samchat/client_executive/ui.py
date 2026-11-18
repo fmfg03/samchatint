@@ -1034,7 +1034,7 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
           <div><span class="eyebrow">Plataforma Sports</span><h1>Tablero ejecutivo de Dirección</h1><p><a href="/direccion/inicio">Abrir portada ejecutiva y Sam contextual</a></p><p>Una vista de decisión: presupuesto, operación y evidencia dentro de la cartera y torneos asignados. Sólo lectura.</p></div>
           <form class="filters" method="get" action="/direccion/tableros"><label>Edición<select name="edition_year">{year_options}</select></label><button type="submit">Actualizar</button></form>
         </header>
-        <nav aria-label="Secciones">{section_links}<a href="/direccion/reportes">Reportes publicados</a></nav>
+        <nav aria-label="Secciones">{section_links}<a href="/direccion/expediente-vivo?edition_year={edition_year}">Expediente Vivo</a><a href="/direccion/reportes">Reportes publicados</a></nav>
         {tournaments}
       </main>
     </body>

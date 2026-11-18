@@ -135,6 +135,27 @@ def mounted_routers():
                 ),
             }
         )
+    direction = ROOT / "src/devnous/gastos/routes/client_executive_routes.py"
+    direction_mounts = result.get((str(direction.relative_to(ROOT)), "router"), [])
+    for node in ast.walk(ast.parse(direction.read_text())):
+        if not (
+            isinstance(node, ast.Call)
+            and expr(node.func) == "router.include_router"
+            and node.args
+            and isinstance(node.args[0], ast.Call)
+            and expr(node.args[0].func) == "create_dossier_router"
+        ):
+            continue
+        target = imported_symbol(direction, "create_dossier_router")
+        if target:
+            result[(str(target[0].relative_to(ROOT)), "router")] = [
+                {
+                    "prefix": mount["prefix"],
+                    "evidence": f"{direction.relative_to(ROOT)}:{node.lineno}",
+                    "status": "include_router_factory_static; runtime execution unverified",
+                }
+                for mount in direction_mounts
+            ]
     # This module defines routes inside a registration function, not APIRouter.
     admin = ROOT / "src/devnous/gastos/routes/admin_routes.py"
     for node in ast.walk(ast.parse(admin.read_text())):
