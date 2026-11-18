@@ -1,0 +1,42 @@
+name: SamChat self-hosted CI smoke
+
+on:
+  push:
+    branches: [ci/samchat-self-hosted-smoke-20261118]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Verify isolated SamChat runner
+    runs-on: samchat-ci
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify dependencies and network boundary
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = self-hosted
+          test "$(systemd-detect-virt)" = kvm
+          python -c 'import sys; assert sys.version_info[:2] == (3, 12)'
+          /usr/lib/postgresql/16/bin/initdb --version
+          docker run --rm --network none redis:7 redis-server --version
+          docker run --rm --network none postgres:15 postgres --version
+          curl -fsS --max-time 10 -o /dev/null https://api.github.com/
+          blocked="$(curl -s --max-time 5 -o /dev/null -w '%{http_connect}' https://sam.chat/ || true)"
+          test "$blocked" = 403
+          printf 'self-hosted KVM runner with working Docker, PostgreSQL, Python and restricted egress\n' > runner-smoke.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: samchat-runner-smoke
+          path: runner-smoke.txt
+          if-no-files-found: error
+          retention-days: 7
