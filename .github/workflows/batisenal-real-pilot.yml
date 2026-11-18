@@ -44,12 +44,28 @@ jobs:
         run: python -m playwright install --with-deps firefox
       - name: Run integrated technical acceptance
         run: python scripts/batisenal/run_isolated_acceptance.py --tier technical --browser firefox
-      - name: Preserve technical evidence
+      - name: Summarize technical acceptance
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: batisenal-integrated-technical-not-chatty-e2e
-          path: artifacts/batisenal-real/
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 7
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = Path("artifacts/batisenal-real")
+          receipt_file = evidence / "receipt.json"
+          coverage_file = evidence / "module-coverage.json"
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## Batiseñal technical acceptance\n\n")
+              if not receipt_file.is_file() or not coverage_file.is_file():
+                  summary.write("Technical evidence is incomplete. See the job log.\n")
+                  raise SystemExit("Batiseñal technical evidence is missing")
+              receipt = json.loads(receipt_file.read_text())
+              modules = json.loads(coverage_file.read_text())
+              for check, status in sorted(receipt["technical_exit_codes"].items()):
+                  summary.write(f"- {check}: exit {status}\n")
+              passed = sum(module["passed"] for module in modules)
+              summary.write(f"- Modules at or above 85%: {passed}/{len(modules)}\n")
+              summary.write(f"- Chatty E2E: {receipt['real_chatty_e2e']}\n")
+              summary.write(f"- Real login and consent: {receipt['real_login_consent']}\n")
+          PY

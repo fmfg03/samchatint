@@ -71,6 +71,9 @@ jobs:
   unit-tests:
     name: Unit tests (Python 3.12)
     runs-on: ${{ vars.SAMCHAT_CI_SELF_HOSTED == 'true' && 'samchat-ci' || 'ubuntu-24.04' }}
+    outputs:
+      coverage_b64: ${{ steps.export_coverage.outputs.coverage_b64 }}
+      coverage_sha256: ${{ steps.export_coverage.outputs.coverage_sha256 }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -133,6 +136,13 @@ jobs:
             echo "Pytest exited $pytest_status; all failures matched the explicit baseline."
           fi
 
+      - name: Set up Node.js for the readonly PostgreSQL tests
+        if: runner.environment == 'self-hosted'
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24.22.3"
+          package-manager-cache: false
+
       - name: Run isolated readonly PostgreSQL acceptance
         shell: bash
         run: |
@@ -184,26 +194,71 @@ jobs:
           mv .coverage .coverage.repository.unit
           python -m coverage combine .coverage.repository.unit reports/private-plugin/unit.coverage reports/readonly_gateway/unit.coverage reports/readonly_gateway/native-candidate.coverage
 
-      - name: Upload unit-test report
+      - name: Summarize unit tests
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: unit-tests-python-3.12
-          path: reports/unit-3.12.xml
-          if-no-files-found: error
+        env:
+          JUNIT_REPORTS: reports/unit-3.12.xml
+        run: &junit-summary |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from xml.etree import ElementTree
 
-      - name: Upload unit coverage data
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-data-unit
-          path: .coverage
-          include-hidden-files: true
-          if-no-files-found: error
+          reports = [Path(name) for name in os.environ["JUNIT_REPORTS"].splitlines()]
+          lines = ["| Report | Tests | Failures | Errors | Skipped |",
+                   "| --- | ---: | ---: | ---: | ---: |"]
+          missing = []
+          for report in reports:
+              if not report.is_file():
+                  lines.append(f"| {report.name} | Missing | | | |")
+                  missing.append(report.name)
+                  continue
+              suites = list(ElementTree.parse(report).getroot().iter("testsuite"))
+              if not suites:
+                  raise SystemExit(f"No test suite in {report.name}")
+              counts = [str(sum(int(suite.get(key, 0)) for suite in suites))
+                        for key in ("tests", "failures", "errors", "skipped")]
+              lines.append("| " + " | ".join([report.name, *counts]) + " |")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## Test results\n\n" + "\n".join(lines) + "\n")
+          if missing:
+              raise SystemExit("Missing JUnit report: " + ", ".join(missing))
+          PY
+
+      - &export-coverage
+        name: Pass coverage to the changed-code check
+        id: export_coverage
+        if: github.event_name == 'pull_request'
+        run: |
+          python - <<'PY'
+          import base64
+          import gzip
+          import hashlib
+          import os
+          from pathlib import Path
+
+          source = Path(".coverage")
+          if not 0 < source.stat().st_size <= 16 * 1024 * 1024:
+              raise SystemExit("Coverage database size is outside the supported range")
+          data = source.read_bytes()
+          if not data.startswith(b"SQLite format 3\0"):
+              raise SystemExit("Expected a SQLite coverage database")
+          payload = base64.b64encode(gzip.compress(data, mtime=0)).decode("ascii")
+          # Leave room below Linux's 128 KiB limit for a single environment entry.
+          if len(payload) > 120_000:
+              raise SystemExit("Compressed coverage exceeds the job output limit")
+          checksum = hashlib.sha256(data).hexdigest()
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="ascii") as output:
+              output.write(f"coverage_b64={payload}\ncoverage_sha256={checksum}\n")
+          print(f"Prepared {len(payload)} characters of coverage with SHA-256 {checksum}")
+          PY
 
   integration-tests:
     name: Integration tests (Python 3.12)
     runs-on: ${{ vars.SAMCHAT_CI_SELF_HOSTED == 'true' && 'samchat-ci' || 'ubuntu-24.04' }}
+    outputs:
+      coverage_b64: ${{ steps.export_coverage.outputs.coverage_b64 }}
+      coverage_sha256: ${{ steps.export_coverage.outputs.coverage_sha256 }}
     services:
       redis:
         image: redis:7
@@ -309,24 +364,15 @@ jobs:
           mv .coverage .coverage.repository.integration
           python -m coverage combine .coverage.repository.integration reports/private-plugin/integration.coverage reports/ctt-operational.coverage
 
-      - name: Upload integration-test report
+      - name: Summarize integration tests
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: integration-tests-python-3.12
-          path: |
+        env:
+          JUNIT_REPORTS: |
             reports/integration-3.12.xml
             reports/ctt-operational.xml
-          if-no-files-found: error
+        run: *junit-summary
 
-      - name: Upload integration coverage data
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-data-integration
-          path: .coverage
-          include-hidden-files: true
-          if-no-files-found: error
+      - *export-coverage
 
   changed-code-coverage:
     name: Changed-code coverage (85%)
@@ -347,32 +393,67 @@ jobs:
       - name: Install coverage tools
         run: python -m pip install coverage diff-cover
 
-      - name: Download coverage data
-        uses: actions/download-artifact@v4
-        with:
-          pattern: coverage-data-*
-          path: coverage-data
+      - name: Restore and verify coverage from both jobs
+        env:
+          UNIT_COVERAGE_B64: ${{ needs.unit-tests.outputs.coverage_b64 }}
+          UNIT_COVERAGE_SHA256: ${{ needs.unit-tests.outputs.coverage_sha256 }}
+          INTEGRATION_COVERAGE_B64: ${{ needs.integration-tests.outputs.coverage_b64 }}
+          INTEGRATION_COVERAGE_SHA256: ${{ needs.integration-tests.outputs.coverage_sha256 }}
+        run: |
+          python - <<'PY'
+          import base64
+          import gzip
+          import hashlib
+          import io
+          import os
+          from pathlib import Path
+
+          directory = Path(os.environ["RUNNER_TEMP"]) / "samchat-coverage"
+          directory.mkdir()
+          maximum_bytes = 16 * 1024 * 1024
+          for job in ("unit", "integration"):
+              prefix = job.upper() + "_COVERAGE_"
+              payload = os.environ[prefix + "B64"]
+              checksum = os.environ[prefix + "SHA256"]
+              if not payload or len(payload) > 120_000 or not checksum:
+                  raise SystemExit(f"Missing or oversized coverage output from {job}")
+              compressed = base64.b64decode(payload, validate=True)
+              with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as archive:
+                  data = archive.read(maximum_bytes + 1)
+              if len(data) > maximum_bytes or not data.startswith(b"SQLite format 3\0"):
+                  raise SystemExit(f"Invalid coverage database from {job}")
+              if hashlib.sha256(data).hexdigest() != checksum:
+                  raise SystemExit(f"Coverage checksum mismatch for {job}")
+              (directory / f".coverage.{job}").write_bytes(data)
+              print(f"Verified {job} coverage SHA-256 {checksum}")
+          PY
 
       - name: Combine coverage data
         run: |
-          mv coverage-data/coverage-data-unit/.coverage coverage-data/.coverage.unit
-          mv coverage-data/coverage-data-integration/.coverage coverage-data/.coverage.integration
-          coverage combine coverage-data
+          coverage combine "$RUNNER_TEMP/samchat-coverage"
           coverage xml -o coverage.xml
 
       - name: Enforce coverage on changed lines
+        shell: bash
         run: |
           diff-cover coverage.xml \
             --compare-branch=origin/${{ github.base_ref }} \
-            --fail-under=85
+            --fail-under=85 | tee "$RUNNER_TEMP/samchat-changed-coverage.txt"
 
-      - name: Upload coverage report
+      - name: Summarize changed-code coverage
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: changed-code-coverage
-          path: coverage.xml
-          if-no-files-found: error
+        run: |
+          {
+            echo '## Changed-code coverage (85% required)'
+            echo
+            if [[ -f "$RUNNER_TEMP/samchat-changed-coverage.txt" ]]; then
+              printf '```text\n'
+              cat "$RUNNER_TEMP/samchat-changed-coverage.txt"
+              printf '```\n'
+            else
+              echo 'No coverage report was produced. See the job log.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   security-scan:
     name: Python security baseline
