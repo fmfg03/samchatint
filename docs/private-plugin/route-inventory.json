@@ -22155,11 +22155,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "68e7cd82638f",
+      "id": "fe48389cfc6f",
       "source": "src/devnous/gastos/routes/supplier_advance_routes.py",
-      "line": 91,
+      "line": 95,
       "handler": "supplier_invoice_form",
-      "source_sha256": "ef658c6031c171c1ed8d3bfe8b69103bbc476006194bdc085e4096e42ff977da",
+      "source_sha256": "7bfee64e301f1a3f769911188964f701eb7f8c7e0f13970194f65bceff7581c6",
       "method": "GET",
       "paths": [],
       "declared_path": "/documentos/{documento_id}/comprobar-anticipo-proveedor",
@@ -22168,18 +22168,20 @@
       ],
       "router": "router",
       "mount_chain": [],
-      "guard_definitions": [],
+      "guard_definitions": [
+        "src/devnous/gastos/routes/supplier_advance_routes.py:29:_require_paid_advance_for_invoice"
+      ],
       "profile_symbols": [],
       "default_profile_candidates": [],
       "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
       "family": "documents_and_other",
       "mount_evidence": "secondary_or_unproven_mount",
       "profile_evidence": [
-        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+        "_require_paid_advance_for_invoice(session, documento_id, actor)"
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/supplier_advance_routes.py:supplier_invoice_form",
-      "proposed_tool": "documents_and_other_supplier_invoice_form_get_68e7cd",
+      "proposed_tool": "documents_and_other_supplier_invoice_form_get_fe4838",
       "scope_proposal": "documents_and_other:read; never grants business authority",
       "object_parameters": [
         "documento_id",
@@ -22198,11 +22200,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "167b2684455f",
+      "id": "f05a560ec051",
       "source": "src/devnous/gastos/routes/supplier_advance_routes.py",
-      "line": 117,
+      "line": 121,
       "handler": "supplier_invoice_submit",
-      "source_sha256": "ef658c6031c171c1ed8d3bfe8b69103bbc476006194bdc085e4096e42ff977da",
+      "source_sha256": "7bfee64e301f1a3f769911188964f701eb7f8c7e0f13970194f65bceff7581c6",
       "method": "POST",
       "paths": [],
       "declared_path": "/documentos/{documento_id}/comprobar-anticipo-proveedor",
@@ -22211,20 +22213,22 @@
       ],
       "router": "router",
       "mount_chain": [],
-      "guard_definitions": [],
+      "guard_definitions": [
+        "src/devnous/gastos/routes/supplier_advance_routes.py:29:_require_paid_advance_for_invoice"
+      ],
       "profile_symbols": [],
       "default_profile_candidates": [],
       "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
       "family": "documents_and_other",
       "mount_evidence": "secondary_or_unproven_mount",
       "profile_evidence": [
-        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+        "_require_paid_advance_for_invoice(session, documento_id, actor)"
       ],
       "service_candidates": [
         "session.commit"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/supplier_advance_routes.py:supplier_invoice_submit",
-      "proposed_tool": "documents_and_other_supplier_invoice_submit_post_167b26",
+      "proposed_tool": "documents_and_other_supplier_invoice_submit_post_f05a56",
       "scope_proposal": "documents_and_other:write; never grants business authority",
       "object_parameters": [
         "documento_id",
