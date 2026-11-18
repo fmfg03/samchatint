@@ -27,7 +27,7 @@ permissions:
 jobs:
   isolated-technical:
     name: Isolated Batiseñal pilot checks (not Chatty E2E)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.SAMCHAT_CI_SELF_HOSTED == 'true' && 'samchat-ci' || 'ubuntu-24.04' }}
     timeout-minutes: 30
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.batisenal-browsers

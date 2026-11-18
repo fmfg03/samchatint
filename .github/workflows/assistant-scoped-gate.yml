@@ -8,7 +8,7 @@ on:
 
 jobs:
   assistant-scoped-gate:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SAMCHAT_CI_SELF_HOSTED == 'true' && 'samchat-ci' || 'ubuntu-latest' }}
 
     steps:
       - name: Checkout code

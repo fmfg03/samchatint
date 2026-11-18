@@ -16,7 +16,7 @@ env:
 jobs:
   browser-smoke:
     name: Browser UX smoke
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.SAMCHAT_CI_SELF_HOSTED == 'true' && 'samchat-ci' || 'ubuntu-24.04' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
