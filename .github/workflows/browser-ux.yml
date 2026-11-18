@@ -16,7 +16,12 @@ env:
 jobs:
   browser-smoke:
     name: Browser UX smoke
-    runs-on: ubuntu-24.04
+    runs-on: >-
+      ${{ github.event_name == 'pull_request'
+        && github.event.pull_request.number == 536
+        && github.event.pull_request.head.repo.full_name == github.repository
+        && github.event.pull_request.head.ref == 'feat/direction-bank-balances-20261118'
+        && 'samchat-ci' || 'ubuntu-24.04' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
