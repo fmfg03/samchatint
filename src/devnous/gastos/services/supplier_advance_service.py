@@ -18,6 +18,7 @@ from ..models import (
     CFDIReport,
     CuentaContable,
     Documento,
+    Empleado,
     ProveedorCliente,
     RFCConfig,
 )
@@ -31,6 +32,7 @@ from .documento_service import (
     parse_optional_date,
     validate_solicitud_terceros_attachment,
 )
+from .payment_run_service import configured_payment_run_payment_confirmer_ids
 
 ADVANCE_ACCOUNT = "1215-001-001"
 LIABILITY_ACCOUNT = "2120-002-099"
@@ -147,6 +149,18 @@ async def advance_balances(session, advance: Documento) -> dict[str, Decimal]:
     }
 
 
+def can_submit_supplier_invoice(advance: Documento, actor: Empleado) -> bool:
+    """Allow the original requester and the configured accounting operators."""
+    if not actor.activo:
+        return False
+    if advance.empleado_id == actor.id:
+        return True
+    return (
+        not getattr(actor, "impersonator_empleado_id", None)
+        and str(actor.id).lower() in configured_payment_run_payment_confirmer_ids()
+    )
+
+
 async def submit_supplier_invoice(
     session,
     *,
@@ -161,9 +175,10 @@ async def submit_supplier_invoice(
     from .project_authorization_service import prepare_document_authorization_route
 
     advance = await _lock_advance(session, advance_id)
-    if advance.empleado_id != actor.id:
+    if not can_submit_supplier_invoice(advance, actor):
         raise SolicitudValidationError(
-            "owner_mismatch", "Solo el solicitante puede comprobar este anticipo."
+            "supplier_invoice_forbidden",
+            "Solo el solicitante o Contabilidad autorizada puede comprobar el anticipo.",
         )
     if advance.estado != "pagado" or not advance.pagado_en:
         raise SolicitudValidationError(
@@ -172,7 +187,7 @@ async def submit_supplier_invoice(
     existing = (
         await session.execute(
             select(Documento).where(
-                Documento.empleado_id == actor.id,
+                Documento.empleado_id == advance.empleado_id,
                 Documento.client_submission_id == submission_id,
             )
         )
