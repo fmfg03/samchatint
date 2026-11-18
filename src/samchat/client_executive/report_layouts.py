@@ -34,6 +34,21 @@ COLUMN_LABELS = (
     "Variación · mes",
     "Variación · acumulado",
 )
+CASHFLOW_FIELDS = (
+    ("opening", "Saldo inicial"),
+    ("origins_total", "Orígenes"),
+    ("applications_total", "Aplicaciones"),
+    ("closing", "Saldo final"),
+)
+BANK_CASHFLOW_FIELDS = (
+    ("opening", "Saldo inicial"),
+    ("origins_total", "Abonos bancarios"),
+    ("applications_total", "Cargos bancarios"),
+    ("closing", "Saldo final"),
+)
+BANK_CLASSIFICATION_GAP = (
+    "La clasificación de abonos y cargos por concepto o proyecto está pendiente."
+)
 
 
 def number(value):
@@ -216,11 +231,72 @@ def cashflow_layout(*, period: dict, periods: list[dict] | None = None) -> dict:
     }
 
 
-def report_layouts(period: dict) -> dict:
+def cashflow_fields(layout: dict) -> tuple[tuple[str, str], ...]:
+    """Use bank labels when totals come directly from certified cash movements."""
+    return BANK_CASHFLOW_FIELDS if "bank_revision" in layout else CASHFLOW_FIELDS
+
+
+def cashflow_display(layout: dict, value) -> str | None:
+    """Preserve the precision of MXN cents when displaying thousands of MXN."""
+    parsed = number(value)
+    if parsed is None:
+        return None
+    if "bank_revision" not in layout:
+        return f"{parsed:,.2f}"
+    integer, fraction = f"{parsed:,.5f}".split(".")
+    return f"{integer}.{fraction.rstrip('0').ljust(2, '0')}"
+
+
+def _bank_cashflow_layout(*, period: dict, bank: dict) -> dict:
+    entries = bank["periods"]
+    if len(entries) > 6:
+        raise ValueError("Cashflow comparison has six explicit period slots")
+    result = []
+    for entry in entries:
+        start = date.fromisoformat(entry["start"])
+        end = date.fromisoformat(entry["end"])
+        if start > end:
+            raise ValueError("Cashflow requires explicit ordered periods")
+        values = {}
+        gaps = {}
+        for key, _label in BANK_CASHFLOW_FIELDS:
+            value = number(entry.get(key))
+            values[key] = str(value / 1000) if value is not None else None
+            if value is None and (reason := entry.get("gaps", {}).get(key)):
+                gaps[key] = reason
+        result.append(
+            {
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "label": entry.get("label") or f"{start} a {end}",
+                "source": entry.get("source"),
+                "scope_label": entry.get("scope_label"),
+                "gaps": gaps,
+                "origins": [None] * 6,
+                "applications": [None] * 6,
+                **values,
+            }
+        )
+    return {
+        "period": period,
+        "periods": result,
+        "unit": "Miles de MXN",
+        "input_unit": "MXN",
+        "source": "Estados de cuenta acreditados por Tesorería",
+        "gap": bank["gap"],
+        "bank_revision": bank.get("revision"),
+    }
+
+
+def report_layouts(period: dict, *, bank: dict | None = None) -> dict:
     """Missing mappings are actionable gaps, never documentary totals as cash."""
     return {
         "budget": budget_layout(period=period),
-        "cashflow": cashflow_layout(period=period),
+        "cashflow": (
+            cashflow_layout(period=period)
+            if bank is None
+            else _bank_cashflow_layout(period=period, bank=bank)
+        ),
     }
 
 
@@ -229,6 +305,7 @@ def report_cell_evidence(layouts: dict, selection: dict) -> dict:
     report = selection.get("report")
     layout = layouts[report]
     key = selection.get("column")
+    source, gap, scope_label = layout["source"], layout.get("gap"), None
     if report == "budget":
         if key not in COLUMNS:
             raise ValueError("Unknown report column")
@@ -245,32 +322,40 @@ def report_cell_evidence(layouts: dict, selection: dict) -> dict:
             + end
         )
     elif report == "cashflow":
-        if key not in {"opening", "origins_total", "applications_total", "closing"}:
+        fields = dict(cashflow_fields(layout))
+        if key not in fields:
             raise ValueError("Unknown cashflow field")
         slot = int(selection.get("period", "0"))
         if not 0 <= slot < len(layout["periods"]):
             raise ValueError("Unknown cashflow period")
         entry = layout["periods"][slot]
         value = entry[key]
-        label = {
-            "opening": "Saldo inicial",
-            "origins_total": "Orígenes",
-            "applications_total": "Aplicaciones",
-            "closing": "Saldo final",
-        }[key]
+        label = fields[key]
         period = entry["start"] + " a " + entry["end"]
         definition = "Apertura + orígenes − aplicaciones = cierre. Los saldos son existencias; no se suman como acumulados."
+        if "bank_revision" in layout:
+            source = entry.get("source") or source
+            scope_label = entry.get("scope_label")
+            gap = (entry["gaps"].get(key) or gap) if value is None else None
+            definition = (
+                "Saldo inicial + abonos bancarios − cargos bancarios = saldo final."
+            )
     else:
         raise ValueError("Unknown report")
-    parsed = number(value)
+    if report == "cashflow":
+        display = cashflow_display(layout, value)
+    else:
+        parsed = number(value)
+        display = f"{parsed:,.2f}" if parsed is not None else None
     return {
         "label": label,
         "value": value,
         "formatted_value": (
-            f'{parsed:,.2f} {layout["unit"]}' if parsed is not None else "Sin dato"
+            f'{display} {layout["unit"]}' if display is not None else "Sin dato"
         ),
         "period": period,
         "definition": definition,
-        "source": layout["source"],
-        "gap": layout.get("gap"),
+        "source": source,
+        "gap": gap,
+        **({"scope_label": scope_label} if scope_label else {}),
     }
