@@ -60,7 +60,7 @@
   let generation = 0;
   let reportSelection = null;
   const money = metric => metric.formatted_value;
-  const context = () => `${selected.label} · ${selected.period} · ${snapshot.tournaments.map(t => t.name).join(', ') || 'Sin torneos'} · corte ${snapshot.as_of}`;
+  const context = () => `${selected.label} · ${selected.period} · ${selected.scopeLabel || snapshot.tournaments.map(t => t.name).join(', ') || 'Sin torneos'} · corte ${snapshot.as_of}`;
   function select(id) {
     const found = snapshot.indicators.find(m => m.id === id);
     if (!found) return;
@@ -80,10 +80,12 @@
     byId('home-send').disabled = false;
   }
   function evidence() {
+    const bankCell = reportSelection?.report === 'cashflow' && 'bank_revision' in snapshot.reports.cashflow;
     const fields = {Valor: money(selected), Definición: selected.definition, Fórmula: selected.formula,
       Fuente: selected.source, Periodo: selected.period, Corte: selected.as_of,
-      Cobertura: reportSelection ? 'Celda del reporte dentro del alcance firmado; revisar límites de la fuente.' : `${selected.coverage.covered}/${selected.coverage.total} torneos · ${selected.status}`,
-      'Responsable propuesto de validación': selected.validator, Brechas: selected.gaps.join('; ') || 'Conciliación de negocio pendiente'};
+      Cobertura: reportSelection ? selected.scopeLabel || 'Celda del reporte dentro del alcance firmado.' : `${selected.coverage.covered}/${selected.coverage.total} torneos · ${selected.status}`,
+      'Responsable propuesto de validación': selected.validator,
+      Brechas: selected.gaps.join('; ') || (bankCell ? 'Fuente acreditada para esta cifra' : 'Conciliación de negocio pendiente')};
     const area = byId('home-evidence');
     area.replaceChildren();
     Object.entries(fields).forEach(([label, value]) => {
@@ -114,7 +116,7 @@
       if (requestGeneration !== generation) return;
       if (!response.ok) throw new Error(typeof payload.detail === 'string' ? payload.detail : 'No se pudo verificar la consulta. Actualiza el tablero.');
       if (payload.snapshot_id !== snapshot.snapshot_id || payload.metric_id !== metricId) throw new Error('El contexto cambió. Actualiza el tablero.');
-      conversationId = payload.conversation_id;
+      conversationId = payload.conversation_id || conversationId;
       analysisToken = payload.analysis_token || null;
       analysisReceipt = payload.analysis_receipt || null;
       byId("home-report-status").textContent = payload.report_requested ? "Reporte preparado con este contexto. Descarga PDF o Excel." : (payload.scenario ? "El reporte incluye este escenario separado de las cifras reales." : "El reporte incluye la conclusión de esta consulta.");
@@ -188,10 +190,12 @@
     if (b.dataset.row) reportSelection.row = b.dataset.row;
     if (b.dataset.period) reportSelection.period = b.dataset.period;
     const layout = snapshot.reports[b.dataset.report];
+    const gap = b.dataset.gap ?? layout.gap;
     selected = {...selected, label: b.dataset.label, formatted_value: b.dataset.display,
-      period: b.dataset.periodLabel, source: layout.source,
-      formula: b.dataset.report === 'cashflow' ? 'Apertura + orígenes − aplicaciones = cierre; saldos no sumables.' : 'Variación = presupuesto − real; subtotales sin duplicar partidas.',
-      definition: 'Celda del reporte firmado. Consulta su fórmula, fuente y límites con Sam.', gaps: layout.gap ? [layout.gap] : []};
+      period: b.dataset.periodLabel, source: b.dataset.source || layout.source,
+      scopeLabel: b.dataset.scopeLabel,
+      formula: b.dataset.formula || 'Variación = presupuesto − real. Los subtotales incluyen cada partida una vez.',
+      definition: 'Celda del reporte firmado. Consulta su fórmula, fuente y límites con Sam.', gaps: gap ? [gap] : []};
     byId('home-context').textContent = context();
     byId('home-answer').textContent = `${selected.label}: ${money(selected)}. Los escenarios se calculan desde los indicadores del Resumen.`;
     byId('home-scenario').inert = true;

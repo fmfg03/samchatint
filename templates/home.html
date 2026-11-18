@@ -24,6 +24,11 @@
         margin: 6px 0 0;
         color: #64748b;
     }
+    .review-operations-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
     .review-operations-counts {
         display: grid;
         grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -178,7 +183,10 @@
             <h3 id="review-operations-title" style="margin: 0;">Operación de precaptura</h3>
             <p>Expedientes que requieren seguimiento antes de la captura definitiva.</p>
         </div>
-        <a href="/registration-review" class="btn">Abrir bandeja completa</a>
+        <div class="review-operations-actions">
+            <a href="/registration-review" class="btn">Abrir bandeja completa</a>
+            {% if ctt_reports_url|default('') %}<a href="{{ ctt_reports_url }}" class="btn">Reportes de cédulas</a>{% endif %}
+        </div>
     </header>
 
     <div class="review-operations-counts" aria-label="Resumen de revisiones">

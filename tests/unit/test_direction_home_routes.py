@@ -10,6 +10,7 @@ from test_direction_route_middleware import _direction_client, _employee
 
 from devnous.gastos.routes import client_executive_routes as routes
 from samchat.client_executive.conversation import sign_context
+from samchat.client_executive.report_layouts import report_layouts
 
 
 @pytest.fixture
@@ -57,6 +58,93 @@ def test_question_uses_exact_visible_snapshot(context_client):
     assert response.json()["snapshot_id"] == page["snapshot"]["snapshot_id"]
     assert response.json()["metric_id"] == "actual"
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_bank_snapshot_is_revalidated_for_sam_and_downloads(
+    context_client, monkeypatch
+):
+    client, page = context_client
+    signed_snapshot = page["snapshot"]
+    signed_snapshot["reports"]["cashflow"]["bank_revision"] = "treasury-v1"
+    page["token"] = sign_context(signed_snapshot, str(_employee().id))
+    loader = AsyncMock(return_value={"revision": "treasury-v1"})
+    monkeypatch.setattr(routes, "load_direction_bank_period", loader)
+    assert ask(client, page).status_code == 200
+    assert loader.await_count == 1
+
+    loader.return_value = {"revision": None}
+    assert ask(client, page).status_code == 409
+    for fmt in ("pdf", "xlsx"):
+        response = client.post(
+            f"/direccion/reportes/exportar/{fmt}",
+            json={"context_token": page["token"]},
+            headers={"X-Direction-CSRF": page["csrf"]},
+        )
+        assert response.status_code == 409
+        assert "evidencia bancaria cambió" in response.text
+
+
+def test_explicit_bank_source_denial_prevents_read_and_invalidates_context(
+    context_client, monkeypatch
+):
+    client, page = context_client
+
+    async def decision(_session, _actor, tool, _action):
+        return False if tool == "admin.contabilidad" else None
+
+    monkeypatch.setattr(routes, "explicit_tool_decision", decision)
+    assert client.get("/direccion/inicio").status_code == 200
+    assert routes.build_home.await_args.kwargs["bank_allowed"] is False
+
+    page["snapshot"]["reports"]["cashflow"]["bank_revision"] = "treasury-v1"
+    page["token"] = sign_context(page["snapshot"], str(_employee().id))
+    loader = AsyncMock()
+    monkeypatch.setattr(routes, "load_direction_bank_period", loader)
+    assert ask(client, page).status_code == 409
+    loader.assert_not_awaited()
+
+
+def test_certified_bank_cell_stays_in_the_governed_sam_context(
+    context_client, monkeypatch
+):
+    client, page = context_client
+    signed_snapshot = page["snapshot"]
+    period = signed_snapshot["period"]
+    signed_snapshot["reports"] = report_layouts(
+        period,
+        bank={
+            "revision": "treasury-v1",
+            "gap": None,
+            "periods": [
+                {
+                    **period,
+                    "opening": "0.01",
+                    "origins_total": "0.00",
+                    "applications_total": "0.00",
+                    "closing": "0.01",
+                    "gaps": {},
+                    "scope_label": "Cuenta •••• 1234",
+                    "source": "Tesorería · extracto",
+                }
+            ],
+        },
+    )
+    page["token"] = sign_context(signed_snapshot, str(_employee().id))
+    monkeypatch.setattr(
+        routes,
+        "load_direction_bank_period",
+        AsyncMock(return_value={"revision": "treasury-v1"}),
+    )
+    response = ask(
+        client,
+        page,
+        report_cell={"report": "cashflow", "column": "closing", "period": "0"},
+    )
+    assert response.status_code == 200
+    assert "0.00001" in response.json()["assistant_message"]
+    assert response.json()["conversation_id"] is None
+    assert response.json()["analysis_token"]
+    routes.save_turn.assert_not_awaited()
 
 
 def test_detached_context_sam_scenario_and_exports_share_exact_receipt(

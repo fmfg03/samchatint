@@ -194,8 +194,9 @@ def answer_snapshot(
             )
         from .report_layouts import report_cell_evidence
 
+        layouts = snapshot.get("reports") or {}
         try:
-            cell = report_cell_evidence(snapshot.get("reports") or {}, report_cell)
+            cell = report_cell_evidence(layouts, report_cell)
         except (ValueError, KeyError, TypeError) as exc:
             raise ContextError("La celda no pertenece a este reporte firmado.") from exc
         facts = [
@@ -204,13 +205,19 @@ def answer_snapshot(
             cell["definition"],
             f"Fuente: {cell['source']}.",
         ]
+        if cell.get("scope_label"):
+            facts.append(f"Alcance acreditado · {cell['scope_label']}.")
         gaps = [cell["gap"]] if cell.get("gap") else []
+        bank_cell = (
+            report_cell.get("report") == "cashflow"
+            and "bank_revision" in layouts["cashflow"]
+        )
+        limits = gaps or ([] if bank_cell else ["La variación no acredita una causa."])
         message = "\n".join(
             [
                 "Hechos",
                 *facts,
-                "Límites",
-                *(gaps or ["La variación no acredita una causa."]),
+                *(["Límites", *limits] if limits else []),
                 "Para comparar torneos o calcular escenarios, selecciona un indicador del Resumen.",
             ]
         )
