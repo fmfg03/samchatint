@@ -28,6 +28,7 @@ ROUTE_OWNED_AUTHORIZATION_PREFIXES = ("/direccion/",)
 # visibility through the role-default access-control middleware.
 ROUTE_OWNED_AUTHORIZATION_PATHS = frozenset(
     {
+        "/direccion",
         "/admin/finanzas/payment-history",
         "/admin/finanzas/no-deducibles",
         "/admin/finanzas/no-deducibles/export.xlsx",

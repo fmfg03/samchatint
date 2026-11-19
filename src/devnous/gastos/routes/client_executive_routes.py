@@ -1,4 +1,4 @@
-"""Read-only internal Direction executive surfaces.
+"""Internal Direction executive surfaces.
 
 The package name is retained temporarily for database/package compatibility.
 It is not a client portal: access is derived from active organizational
@@ -52,6 +52,7 @@ from samchat.executive.exporter import (
 )
 
 from .dependencies import get_current_empleado, get_db_session
+from .direction_dossier_routes import create_dossier_router
 
 # Two receipts plus JSON string escaping and bounded tokens/questions. Count the
 # actual stream as well as Content-Length, before FastAPI parses any request JSON.
@@ -628,3 +629,10 @@ async def legacy_client_reports_redirect(request: Request):
 @router.get("/cliente/tableros/torneos/{tournament_id}", include_in_schema=False)
 async def legacy_client_tournament_redirect(tournament_id: str, request: Request):
     return _legacy_redirect(request, f"/direccion/tableros/torneos/{tournament_id}")
+
+
+router.include_router(
+    create_dossier_router(
+        _assigned_direction_portfolios, _direction_source_access, _is_superadmin
+    )
+)
