@@ -13,7 +13,7 @@ from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -249,11 +249,26 @@ async def test_old_check_rejects_real_service_commit_and_rolls_back(pg):
 
 
 @pytest.mark.asyncio
-async def test_handler_commit_replay_and_independent_readback(pg):
+@pytest.mark.parametrize("as_accounting", [False, True])
+async def test_handler_commit_replay_and_independent_readback(
+    pg, monkeypatch, as_accounting
+):
     await upgrade(pg)
     key, xml = uuid4(), invoice_xml()
+    actor_id = pg.actor_id
+    if as_accounting:
+        actor_id = uuid4()
+        async with pg.factory.begin() as session:
+            session.add(
+                models.Empleado(
+                    id=actor_id, nombre="Synthetic accounting", rol="finanzas"
+                )
+            )
+        monkeypatch.setenv(
+            "SAMCHAT_PAYMENT_RUN_PAYMENT_CONFIRMER_EMPLOYEE_IDS", str(actor_id)
+        )
     async with pg.factory() as session:
-        actor = await session.get(models.Empleado, pg.actor_id)
+        actor = await session.get(models.Empleado, actor_id)
         first = await routes.supplier_invoice_submit(
             pg.advance_id,
             key,
@@ -272,13 +287,30 @@ async def test_handler_commit_replay_and_independent_readback(pg):
             actor,
         )
         assert replay.headers["location"] == first.headers["location"]
+    child_id = first.headers["location"].rsplit("/", 1)[1]
+    async with pg.factory() as independent:
+        child = await independent.get(models.Documento, UUID(child_id))
+        audit = (
+            await independent.execute(
+                select(models.Aprobacion).where(
+                    models.Aprobacion.entidad_id == child.id
+                )
+            )
+        ).scalar_one()
+        assert child.empleado_id == pg.actor_id
+        assert child.supplier_advance_id == pg.advance_id
+        assert child.estado == "control_presupuestal"
+        assert audit.aprobador_id == actor_id
+        assert audit.accion == ACTION
     assert await snapshot(pg) == {
         "documents": 2,
         "audits": 1,
         "cfdis": 1,
         "attachments": 1,
     }
-    pg.notification.assert_called_once()
+    pg.notification.assert_called_once_with(
+        documento_id=child_id, actor_id=str(actor_id)
+    )
 
 
 @pytest.mark.asyncio
