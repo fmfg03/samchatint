@@ -1,26 +1,11 @@
 name: Batiseñal isolated real-client pilot code
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'src/samchat/batisenal*'
-      - 'src/samchat/batisenal_transport/**'
-      - 'src/samchat/private_plugin/**'
-      - 'src/devnous/gastos/services/batisenal*'
-      - 'src/devnous/gastos/services/support_ticket_service.py'
-      - 'src/devnous/gastos/services/customer_success_audit.py'
-      - 'src/devnous/gastos/routes/batisenal*'
-      - 'src/devnous/gastos/routes/support_routes.py'
-      - 'static/batisenal.js'
-      - 'database/migrations/*batisenal*'
-      - 'config/batisenal-pilot-manifest.schema.json'
-      - 'scripts/batisenal/**'
-      - 'scripts/batisenal_real_pilot.py'
-      - 'tests/unit/batisenal/**'
-      - 'tests/integration/batisenal/**'
-      - 'tests/browser/test_batisenal_real_pilot.py'
-      - 'tests/browser/fixtures/batisenal/**'
-      - '.github/workflows/batisenal-real-pilot.yml'
+  workflow_call:
+    outputs:
+      coverage_b64:
+        value: ${{ jobs.isolated-technical.outputs.coverage_b64 }}
+      coverage_sha256:
+        value: ${{ jobs.isolated-technical.outputs.coverage_sha256 }}
   workflow_dispatch:
 permissions:
   contents: read
@@ -29,6 +14,9 @@ jobs:
     name: Isolated Batiseñal pilot checks (not Chatty E2E)
     runs-on: ${{ vars.SAMCHAT_CI_SELF_HOSTED == 'true' && 'samchat-ci' || 'ubuntu-24.04' }}
     timeout-minutes: 30
+    outputs:
+      coverage_b64: ${{ steps.export_coverage.outputs.coverage_b64 }}
+      coverage_sha256: ${{ steps.export_coverage.outputs.coverage_sha256 }}
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.batisenal-browsers
     steps:
@@ -52,6 +40,10 @@ jobs:
         run: python -m playwright install --with-deps firefox
       - name: Run integrated technical acceptance
         run: python scripts/batisenal/run_isolated_acceptance.py --tier technical --browser firefox
+      - name: Pass isolated coverage to the changed-code check
+        id: export_coverage
+        if: github.event_name == 'pull_request'
+        run: python scripts/ci/export-coverage.py artifacts/batisenal-real/.coverage
       - name: Summarize technical acceptance
         if: always()
         run: |

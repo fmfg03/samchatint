@@ -25,6 +25,8 @@ jobs:
   policy:
     name: Policy and repository contract
     runs-on: ${{ vars.SAMCHAT_CI_SELF_HOSTED == 'true' && 'samchat-ci' || 'ubuntu-latest' }}
+    outputs:
+      batisenal_required: ${{ steps.batisenal_scope.outputs.required }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -43,6 +45,36 @@ jobs:
 
       - name: Check workflow contract
         run: python scripts/ci/check-pr-quality-gate.py
+
+      - name: Detect changes that require Batiseñal acceptance
+        id: batisenal_scope
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --quiet --no-renames "$PR_BASE_SHA...$PR_HEAD_SHA" -- \
+              ':(glob)src/samchat/batisenal*' \
+              src/samchat/batisenal_transport/ src/samchat/private_plugin/ \
+              ':(glob)src/devnous/gastos/services/batisenal*' \
+              src/devnous/gastos/services/support_ticket_service.py \
+              src/devnous/gastos/services/customer_success_audit.py \
+              ':(glob)src/devnous/gastos/routes/batisenal*' \
+              src/devnous/gastos/routes/support_routes.py static/batisenal.js \
+              ':(glob)database/migrations/*batisenal*' \
+              config/batisenal-pilot-manifest.schema.json \
+              scripts/batisenal/ scripts/batisenal_real_pilot.py \
+              tests/unit/batisenal/ tests/integration/batisenal/ \
+              tests/browser/test_batisenal_real_pilot.py tests/browser/fixtures/batisenal/ \
+              .github/workflows/batisenal-real-pilot.yml scripts/ci/export-coverage.py; then
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            if [[ "$status" -ne 1 ]]; then
+              exit "$status"
+            fi
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Check runtime, registration, and accepted regressions
         run: |
@@ -229,29 +261,7 @@ jobs:
         name: Pass coverage to the changed-code check
         id: export_coverage
         if: github.event_name == 'pull_request'
-        run: |
-          python - <<'PY'
-          import base64
-          import gzip
-          import hashlib
-          import os
-          from pathlib import Path
-
-          source = Path(".coverage")
-          if not 0 < source.stat().st_size <= 16 * 1024 * 1024:
-              raise SystemExit("Coverage database size is outside the supported range")
-          data = source.read_bytes()
-          if not data.startswith(b"SQLite format 3\0"):
-              raise SystemExit("Expected a SQLite coverage database")
-          payload = base64.b64encode(gzip.compress(data, mtime=0)).decode("ascii")
-          # Leave room below Linux's 128 KiB limit for a single environment entry.
-          if len(payload) > 120_000:
-              raise SystemExit("Compressed coverage exceeds the job output limit")
-          checksum = hashlib.sha256(data).hexdigest()
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="ascii") as output:
-              output.write(f"coverage_b64={payload}\ncoverage_sha256={checksum}\n")
-          print(f"Prepared {len(payload)} characters of coverage with SHA-256 {checksum}")
-          PY
+        run: python scripts/ci/export-coverage.py .coverage
 
   integration-tests:
     name: Integration tests (Python 3.12)
@@ -386,10 +396,24 @@ jobs:
 
       - *export-coverage
 
+  batisenal:
+    name: Batiseñal technical acceptance
+    needs: policy
+    if: github.event_name == 'pull_request' && needs.policy.outputs.batisenal_required == 'true'
+    uses: ./.github/workflows/batisenal-real-pilot.yml
+
   changed-code-coverage:
     name: Changed-code coverage (85%)
-    if: github.event_name == 'pull_request'
-    needs: [unit-tests, integration-tests]
+    if: >-
+      ${{
+        !cancelled() && github.event_name == 'pull_request' &&
+        needs.policy.result == 'success' &&
+        needs.unit-tests.result == 'success' &&
+        needs.integration-tests.result == 'success' &&
+        (needs.policy.outputs.batisenal_required == 'false' ||
+          needs.batisenal.result == 'success')
+      }}
+    needs: [policy, unit-tests, integration-tests, batisenal]
     runs-on: ${{ vars.SAMCHAT_CI_SELF_HOSTED == 'true' && 'samchat-ci' || 'ubuntu-latest' }}
     steps:
       - name: Checkout code
@@ -405,12 +429,15 @@ jobs:
       - name: Install coverage tools
         run: python -m pip install coverage diff-cover
 
-      - name: Restore and verify coverage from both jobs
+      - name: Restore and verify coverage from the required jobs
         env:
+          BATISENAL_REQUIRED: ${{ needs.policy.outputs.batisenal_required }}
           UNIT_COVERAGE_B64: ${{ needs.unit-tests.outputs.coverage_b64 }}
           UNIT_COVERAGE_SHA256: ${{ needs.unit-tests.outputs.coverage_sha256 }}
           INTEGRATION_COVERAGE_B64: ${{ needs.integration-tests.outputs.coverage_b64 }}
           INTEGRATION_COVERAGE_SHA256: ${{ needs.integration-tests.outputs.coverage_sha256 }}
+          BATISENAL_COVERAGE_B64: ${{ needs.batisenal.outputs.coverage_b64 }}
+          BATISENAL_COVERAGE_SHA256: ${{ needs.batisenal.outputs.coverage_sha256 }}
         run: |
           python - <<'PY'
           import base64
@@ -423,7 +450,13 @@ jobs:
           directory = Path(os.environ["RUNNER_TEMP"]) / "samchat-coverage"
           directory.mkdir()
           maximum_bytes = 16 * 1024 * 1024
-          for job in ("unit", "integration"):
+          batisenal_required = os.environ["BATISENAL_REQUIRED"]
+          if batisenal_required not in {"true", "false"}:
+              raise SystemExit("Batiseñal coverage scope is missing")
+          jobs = ["unit", "integration"]
+          if batisenal_required == "true":
+              jobs.append("batisenal")
+          for job in jobs:
               prefix = job.upper() + "_COVERAGE_"
               payload = os.environ[prefix + "B64"]
               checksum = os.environ[prefix + "SHA256"]
@@ -514,7 +547,7 @@ jobs:
   required-pr-gate:
     name: Required PR gate
     if: always()
-    needs: [policy, unit-tests, integration-tests, changed-code-coverage, security-scan]
+    needs: [policy, unit-tests, integration-tests, batisenal, changed-code-coverage, security-scan]
     runs-on: ${{ vars.SAMCHAT_CI_SELF_HOSTED == 'true' && 'samchat-ci' || 'ubuntu-latest' }}
     steps:
       - name: Require every mandatory job
@@ -524,6 +557,8 @@ jobs:
           INTEGRATION_RESULT: ${{ needs.integration-tests.result }}
           COVERAGE_RESULT: ${{ needs.changed-code-coverage.result }}
           SECURITY_RESULT: ${{ needs.security-scan.result }}
+          BATISENAL_REQUIRED: ${{ needs.policy.outputs.batisenal_required }}
+          BATISENAL_RESULT: ${{ needs.batisenal.result }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           python - <<'PY'
@@ -537,6 +572,11 @@ jobs:
           }
           if os.environ["EVENT_NAME"] == "pull_request":
               required["coverage"] = os.environ["COVERAGE_RESULT"]
+              batisenal_required = os.environ["BATISENAL_REQUIRED"]
+              if batisenal_required == "true":
+                  required["batisenal"] = os.environ["BATISENAL_RESULT"]
+              elif batisenal_required != "false":
+                  required["batisenal_scope"] = "missing"
 
           failed = {name: result for name, result in required.items() if result != "success"}
           if failed:
