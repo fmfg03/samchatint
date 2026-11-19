@@ -214,6 +214,8 @@ class LocalOAuthFlow:
 
     @staticmethod
     def _failure(exc: Exception) -> Denied:
+        if isinstance(exc, OAuthStoreError) and str(exc) == "STORE_BUSY":
+            return Denied("OAUTH_BUSY")
         allowed = {
             "UNAUTHENTICATED",
             "INVALID_AUTHORIZATION_REQUEST",
@@ -373,7 +375,15 @@ class LocalOAuthFlow:
                     resource=values["resource"],
                     verifier=values["code_verifier"],
                 )
-                employee = await self._employee(code.employee_id)
+            # Resolve the async employee callback only after releasing this
+            # read-only preflight transaction. A composed callback may need the
+            # same policy guard on a different connection.
+            employee = await self._employee(code.employee_id)
+            preflight_code = code
+            with self.store.transaction(now=self._time(), clock=self._time) as tx:
+                code = tx.read_code(code_hash)
+                if code != preflight_code:
+                    raise Denied("INVALID_GRANT")
                 now = self._time()
                 if now >= code.expires_at:
                     raise Denied("INVALID_GRANT")

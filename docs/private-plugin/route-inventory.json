@@ -1,6 +1,6 @@
 {
   "baseline": "6cd122f1030ab39631d77e706a9f5a1a7192231d",
-  "source_file_count": 561,
+  "source_file_count": 581,
   "exclusions": [
     "Private plugin integration package excluded from business-source inventory; baseline pinned deliberately, source hashes detect changes",
     "Active frontend is not versioned here; UI function/profile parity remains UNPROVEN",
@@ -20865,6 +20865,377 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
+      "id": "76c0cff65a9c",
+      "source": "src/devnous/gastos/routes/batisenal_pilot_routes.py",
+      "line": 329,
+      "handler": "authorization_metadata",
+      "source_sha256": "0315383a8d190645426d6ede1fe6fa0f97d82209fe5a79dc146f45f63ff94f90",
+      "method": "GET",
+      "paths": [],
+      "declared_path": "DYNAMIC:AUTH_META",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "identity",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/batisenal_pilot_routes.py:authorization_metadata",
+      "proposed_tool": "identity_authorization_metadata_get_76c0cf",
+      "scope_proposal": "identity:read; never grants business authority",
+      "object_parameters": [],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "1225ced1b1a2",
+      "source": "src/devnous/gastos/routes/batisenal_pilot_routes.py",
+      "line": 335,
+      "handler": "resource_metadata",
+      "source_sha256": "0315383a8d190645426d6ede1fe6fa0f97d82209fe5a79dc146f45f63ff94f90",
+      "method": "GET",
+      "paths": [],
+      "declared_path": "DYNAMIC:RESOURCE_META",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/batisenal_pilot_routes.py:resource_metadata",
+      "proposed_tool": "documents_and_other_resource_metadata_get_1225ce",
+      "scope_proposal": "documents_and_other:read; never grants business authority",
+      "object_parameters": [],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "429a870d37ab",
+      "source": "src/devnous/gastos/routes/batisenal_pilot_routes.py",
+      "line": 341,
+      "handler": "style",
+      "source_sha256": "0315383a8d190645426d6ede1fe6fa0f97d82209fe5a79dc146f45f63ff94f90",
+      "method": "GET",
+      "paths": [],
+      "declared_path": "DYNAMIC:PREFIX + '/style.css'",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/batisenal_pilot_routes.py:style",
+      "proposed_tool": "documents_and_other_style_get_429a87",
+      "scope_proposal": "documents_and_other:read; never grants business authority",
+      "object_parameters": [],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "b570b2df11b7",
+      "source": "src/devnous/gastos/routes/batisenal_pilot_routes.py",
+      "line": 349,
+      "handler": "widget",
+      "source_sha256": "0315383a8d190645426d6ede1fe6fa0f97d82209fe5a79dc146f45f63ff94f90",
+      "method": "GET",
+      "paths": [],
+      "declared_path": "DYNAMIC:PREFIX + '/widget.js'",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/batisenal_pilot_routes.py:widget",
+      "proposed_tool": "documents_and_other_widget_get_b570b2",
+      "scope_proposal": "documents_and_other:read; never grants business authority",
+      "object_parameters": [],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "93d659ce404c",
+      "source": "src/devnous/gastos/routes/batisenal_pilot_routes.py",
+      "line": 360,
+      "handler": "authorize",
+      "source_sha256": "0315383a8d190645426d6ede1fe6fa0f97d82209fe5a79dc146f45f63ff94f90",
+      "method": "GET",
+      "paths": [],
+      "declared_path": "DYNAMIC:PREFIX + '/authorize'",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "identity",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [
+        "validate_authorization_request"
+      ],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/batisenal_pilot_routes.py:authorize",
+      "proposed_tool": "identity_authorize_get_93d659",
+      "scope_proposal": "identity:read; never grants business authority",
+      "object_parameters": [],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "82751912bd12",
+      "source": "src/devnous/gastos/routes/batisenal_pilot_routes.py",
+      "line": 399,
+      "handler": "consent",
+      "source_sha256": "0315383a8d190645426d6ede1fe6fa0f97d82209fe5a79dc146f45f63ff94f90",
+      "method": "POST",
+      "paths": [],
+      "declared_path": "DYNAMIC:PREFIX + '/consent'",
+      "declared_methods": [
+        "POST"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/batisenal_pilot_routes.py:consent",
+      "proposed_tool": "documents_and_other_consent_post_827519",
+      "scope_proposal": "documents_and_other:write; never grants business authority",
+      "object_parameters": [],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "write_or_effect_candidate",
+      "confirmation": "trusted human approval of exact draft/version/amount/currency/destination/digest; recheck at commit",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity",
+        "exact confirmation/version",
+        "retry/crash/no duplicates",
+        "verified receipt"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "7bb29c6d88dc",
+      "source": "src/devnous/gastos/routes/batisenal_pilot_routes.py",
+      "line": 471,
+      "handler": "token",
+      "source_sha256": "0315383a8d190645426d6ede1fe6fa0f97d82209fe5a79dc146f45f63ff94f90",
+      "method": "POST",
+      "paths": [],
+      "declared_path": "DYNAMIC:PREFIX + '/token'",
+      "declared_methods": [
+        "POST"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/batisenal_pilot_routes.py:token",
+      "proposed_tool": "documents_and_other_token_post_7bb29c",
+      "scope_proposal": "documents_and_other:write; never grants business authority",
+      "object_parameters": [],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "write_or_effect_candidate",
+      "confirmation": "trusted human approval of exact draft/version/amount/currency/destination/digest; recheck at commit",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity",
+        "exact confirmation/version",
+        "retry/crash/no duplicates",
+        "verified receipt"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "a7c23dffef74",
+      "source": "src/devnous/gastos/routes/batisenal_pilot_routes.py",
+      "line": 518,
+      "handler": "case",
+      "source_sha256": "0315383a8d190645426d6ede1fe6fa0f97d82209fe5a79dc146f45f63ff94f90",
+      "method": "GET",
+      "paths": [],
+      "declared_path": "DYNAMIC:PREFIX + '/case'",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "detail['pilot_permission'].startswith(('Revocada;', 'Vencida;'))"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/batisenal_pilot_routes.py:case",
+      "proposed_tool": "documents_and_other_case_get_a7c23d",
+      "scope_proposal": "documents_and_other:read; never grants business authority",
+      "object_parameters": [],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "85413b7912fe",
+      "source": "src/devnous/gastos/routes/batisenal_pilot_routes.py",
+      "line": 611,
+      "handler": "revoke",
+      "source_sha256": "0315383a8d190645426d6ede1fe6fa0f97d82209fe5a79dc146f45f63ff94f90",
+      "method": "POST",
+      "paths": [],
+      "declared_path": "DYNAMIC:PREFIX + '/revoke'",
+      "declared_methods": [
+        "POST"
+      ],
+      "router": "router",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/batisenal_pilot_routes.py:revoke",
+      "proposed_tool": "documents_and_other_revoke_post_85413b",
+      "scope_proposal": "documents_and_other:write; never grants business authority",
+      "object_parameters": [],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "write_or_effect_candidate",
+      "confirmation": "trusted human approval of exact draft/version/amount/currency/destination/digest; recheck at commit",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity",
+        "exact confirmation/version",
+        "retry/crash/no duplicates",
+        "verified receipt"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
       "id": "b09ba1c8f7c0",
       "source": "src/devnous/gastos/routes/client_executive_routes.py",
       "line": 208,
@@ -22257,7 +22628,7 @@
       "source": "src/devnous/gastos/routes/support_routes.py",
       "line": 667,
       "handler": "support_my_tickets",
-      "source_sha256": "3357db1100219dd6369cf035742f89dc96c8cb397fcd8e1a7d7274cba14ae0c7",
+      "source_sha256": "73e229aa8b5e91e9646a618cfee53d09a9cb6a0ea5e0e0e38b194a5f10706f3b",
       "method": "GET",
       "paths": [
         "/soporte"
@@ -22324,7 +22695,7 @@
       "source": "src/devnous/gastos/routes/support_routes.py",
       "line": 792,
       "handler": "support_new_ticket_form",
-      "source_sha256": "3357db1100219dd6369cf035742f89dc96c8cb397fcd8e1a7d7274cba14ae0c7",
+      "source_sha256": "73e229aa8b5e91e9646a618cfee53d09a9cb6a0ea5e0e0e38b194a5f10706f3b",
       "method": "GET",
       "paths": [
         "/soporte/nuevo"
@@ -22391,7 +22762,7 @@
       "source": "src/devnous/gastos/routes/support_routes.py",
       "line": 931,
       "handler": "support_new_ticket_submit",
-      "source_sha256": "3357db1100219dd6369cf035742f89dc96c8cb397fcd8e1a7d7274cba14ae0c7",
+      "source_sha256": "73e229aa8b5e91e9646a618cfee53d09a9cb6a0ea5e0e0e38b194a5f10706f3b",
       "method": "POST",
       "paths": [
         "/soporte/nuevo"
@@ -22466,7 +22837,7 @@
       "source": "src/devnous/gastos/routes/support_routes.py",
       "line": 992,
       "handler": "support_ticket_detail",
-      "source_sha256": "3357db1100219dd6369cf035742f89dc96c8cb397fcd8e1a7d7274cba14ae0c7",
+      "source_sha256": "73e229aa8b5e91e9646a618cfee53d09a9cb6a0ea5e0e0e38b194a5f10706f3b",
       "method": "GET",
       "paths": [
         "/soporte/{ticket_id}"
@@ -22535,7 +22906,7 @@
       "source": "src/devnous/gastos/routes/support_routes.py",
       "line": 1215,
       "handler": "support_ticket_add_comment",
-      "source_sha256": "3357db1100219dd6369cf035742f89dc96c8cb397fcd8e1a7d7274cba14ae0c7",
+      "source_sha256": "73e229aa8b5e91e9646a618cfee53d09a9cb6a0ea5e0e0e38b194a5f10706f3b",
       "method": "POST",
       "paths": [
         "/soporte/{ticket_id}/comentarios"
@@ -22606,7 +22977,7 @@
       "source": "src/devnous/gastos/routes/support_routes.py",
       "line": 1275,
       "handler": "support_admin_dashboard",
-      "source_sha256": "3357db1100219dd6369cf035742f89dc96c8cb397fcd8e1a7d7274cba14ae0c7",
+      "source_sha256": "73e229aa8b5e91e9646a618cfee53d09a9cb6a0ea5e0e0e38b194a5f10706f3b",
       "method": "GET",
       "paths": [
         "/admin/soporte"
@@ -22685,7 +23056,7 @@
       "source": "src/devnous/gastos/routes/support_routes.py",
       "line": 1487,
       "handler": "support_system_status",
-      "source_sha256": "3357db1100219dd6369cf035742f89dc96c8cb397fcd8e1a7d7274cba14ae0c7",
+      "source_sha256": "73e229aa8b5e91e9646a618cfee53d09a9cb6a0ea5e0e0e38b194a5f10706f3b",
       "method": "GET",
       "paths": [
         "/admin/soporte/estado-sistema"
@@ -22760,7 +23131,7 @@
       "source": "src/devnous/gastos/routes/support_routes.py",
       "line": 1824,
       "handler": "support_admin_ticket_detail",
-      "source_sha256": "3357db1100219dd6369cf035742f89dc96c8cb397fcd8e1a7d7274cba14ae0c7",
+      "source_sha256": "73e229aa8b5e91e9646a618cfee53d09a9cb6a0ea5e0e0e38b194a5f10706f3b",
       "method": "GET",
       "paths": [
         "/admin/soporte/{ticket_id}"
@@ -22838,7 +23209,7 @@
       "source": "src/devnous/gastos/routes/support_routes.py",
       "line": 2111,
       "handler": "support_admin_update_ticket",
-      "source_sha256": "3357db1100219dd6369cf035742f89dc96c8cb397fcd8e1a7d7274cba14ae0c7",
+      "source_sha256": "73e229aa8b5e91e9646a618cfee53d09a9cb6a0ea5e0e0e38b194a5f10706f3b",
       "method": "POST",
       "paths": [
         "/admin/soporte/{ticket_id}/actualizar"
@@ -47167,6 +47538,126 @@
         "read purity"
       ],
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "5e8d73b798c4",
+      "source": "src/samchat/batisenal_isolated_app.py",
+      "line": 67,
+      "handler": "health",
+      "source_sha256": "789513ea863df2765e4ce4caf92f03b10a92b45dfc63af4d866f2d66082540e1",
+      "method": "GET",
+      "paths": [],
+      "declared_path": "/healthz",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "app",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/batisenal_isolated_app.py:health",
+      "proposed_tool": "documents_and_other_health_get_5e8d73",
+      "scope_proposal": "documents_and_other:read; never grants business authority",
+      "object_parameters": [],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "a4775ae01e2d",
+      "source": "src/samchat/batisenal_isolated_app.py",
+      "line": 71,
+      "handler": "ready",
+      "source_sha256": "789513ea863df2765e4ce4caf92f03b10a92b45dfc63af4d866f2d66082540e1",
+      "method": "GET",
+      "paths": [],
+      "declared_path": "/readyz",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "app",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/batisenal_isolated_app.py:ready",
+      "proposed_tool": "documents_and_other_ready_get_a4775a",
+      "scope_proposal": "documents_and_other:read; never grants business authority",
+      "object_parameters": [],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
+    },
+    {
+      "id": "929dc983f9f0",
+      "source": "src/samchat/batisenal_isolated_app.py",
+      "line": 269,
+      "handler": "panel",
+      "source_sha256": "789513ea863df2765e4ce4caf92f03b10a92b45dfc63af4d866f2d66082540e1",
+      "method": "GET",
+      "paths": [],
+      "declared_path": "/panel",
+      "declared_methods": [
+        "GET"
+      ],
+      "router": "app",
+      "mount_chain": [],
+      "guard_definitions": [],
+      "profile_symbols": [],
+      "default_profile_candidates": [],
+      "profile_mapping_status": "UNPROVEN: guards/dependencies are evidence, not a complete effective-role matrix",
+      "family": "documents_and_other",
+      "mount_evidence": "secondary_or_unproven_mount",
+      "profile_evidence": [
+        "NO_LOCAL_GUARD_FOUND; inherited/middleware review required"
+      ],
+      "service_candidates": [],
+      "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/samchat/batisenal_isolated_app.py:panel",
+      "proposed_tool": "documents_and_other_panel_get_929dc9",
+      "scope_proposal": "documents_and_other:read; never grants business authority",
+      "object_parameters": [],
+      "business_scope": "current employee + effective faculty + object + organization/legal entity + portfolio/tournament; UNPROVEN",
+      "effect": "read_candidate; side effects NOT verified",
+      "confirmation": "none only after read-purity proof",
+      "evidence_idempotency": "scoped source IDs/version and redacted durable receipt; writes need canonical transactional dedup + postcondition",
+      "tests_required": [
+        "role/object/company deny",
+        "revoked/expired",
+        "isolation",
+        "read purity"
+      ],
+      "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     }
   ],
   "actions": [
@@ -50409,6 +50900,18 @@
       "source": "src/devnous/gastos/routes/auth_routes.py",
       "line": 893,
       "expression": "router.add_api_route('/login', limiter.limit('5/minute')(login) if SLOWAPI_AVAILABLE else login, methods=['POST'], response_class=RedirectResponse)",
+      "gap": "STATIC_REGISTRATION_REVIEW"
+    },
+    {
+      "source": "src/devnous/gastos/routes/batisenal_pilot_routes.py",
+      "line": 621,
+      "expression": "app.include_router(router)",
+      "gap": "STATIC_REGISTRATION_REVIEW"
+    },
+    {
+      "source": "src/devnous/gastos/routes/batisenal_pilot_routes.py",
+      "line": 622,
+      "expression": "app.mount(PREFIX, PilotResource(pilot, origin), name='batisenal-pilot')",
       "gap": "STATIC_REGISTRATION_REVIEW"
     },
     {

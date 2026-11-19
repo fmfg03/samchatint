@@ -684,6 +684,12 @@ La expansión debe mapear principal y actores, acciones tipadas, owners, ámbito
 
 La modalidad individual previa conserva su contrato. El app público no adquiere autoridad de operador, emisor o escritor. La ejecución nueva permanece apagada hasta aprobar el contrato externo, admitir fuentes y perfil, calificar la extracción y recibir el consentimiento humano exacto del bloque.
 
+### 2026-11-09 — Diseño aprobado del piloto aislado Batiseñal
+
+Aprobación humana expresa: «aprobada», registrada el 2026-11-10, sobre la especificación técnica y estos textos literales. Razón: primera entrega aislada con procedencia auténtica de Chatty. Evidencia: `docs/roadmap/batisenal-real-pilot-20261109-story.md` y `docs/roadmap/batisenal-real-pilot-20261109-spec.md`, sección 12. Construcción autorizada; instalación y aceptación real conservan sus propios recibos.
+
+La composición del piloto Batiseñal utiliza un entrypoint aislado con los owners canónicos de autenticación y soporte, sin importar el startup financiero ni reutilizar credenciales/cookies productivas. El OAuth de soporte se mantiene separado del contrato de lecturas y del scope administrativo de Agentius. Caso y grafo sintéticos usan esquema y protocolo transaccional propios; ningún hook se aplica a la instalación financiera. Borrador, operación, recibo y auditoría de integración se comprometen atómicamente en PostgreSQL. La auditoría de transporte separada no constituye una transacción distribuida. La procedencia técnica deriva de cliente/grant/binding verificados y nunca de un argumento del modelo ni de renombrar un stub. Cliente, destino, permisos e instalación efectivos requieren manifiesto y autorización específicos antes de activar.
+
 ### 2026-11-10 — Preparación visual previa al manifiesto
 
 Aprobación humana expresa recibida el 2026-11-12: «arobada» sobre el ajuste y estos textos literales. Motivo: resolver preparación visual anterior a la admisión de documentos. Evidencia: `docs/roadmap/ctt-source-preparation-20261112.md`; recibo de aprobación ligado al SHA-256 `57b81061ac6b6419e354da19d2b77dde845c3881a953f16c18e7f732fe83dfd7`. Diseño aprobado; implementación, admisión operativa, despliegue y captura conservan sus recibos separados.

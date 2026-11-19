@@ -51,12 +51,33 @@ jobs:
             --timeout=90 \
             --junitxml=reports/browser.xml
 
-      - name: Upload browser test evidence
+      - name: Summarize browser tests
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: browser-ux-pilot
-          path: |
-            reports/browser.xml
-            artifacts/browser/
-          if-no-files-found: error
+        env:
+          JUNIT_REPORTS: reports/browser.xml
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          reports = [Path(name) for name in os.environ["JUNIT_REPORTS"].splitlines()]
+          lines = ["| Report | Tests | Failures | Errors | Skipped |",
+                   "| --- | ---: | ---: | ---: | ---: |"]
+          missing = []
+          for report in reports:
+              if not report.is_file():
+                  lines.append(f"| {report.name} | Missing | | | |")
+                  missing.append(report.name)
+                  continue
+              suites = list(ElementTree.parse(report).getroot().iter("testsuite"))
+              if not suites:
+                  raise SystemExit(f"No test suite in {report.name}")
+              counts = [str(sum(int(suite.get(key, 0)) for suite in suites))
+                        for key in ("tests", "failures", "errors", "skipped")]
+              lines.append("| " + " | ".join([report.name, *counts]) + " |")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## Test results\n\n" + "\n".join(lines) + "\n")
+          if missing:
+              raise SystemExit("Missing JUnit report: " + ", ".join(missing))
+          PY

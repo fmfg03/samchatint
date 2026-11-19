@@ -1,0 +1,71 @@
+name: Batiseñal isolated real-client pilot code
+on:
+  workflow_call:
+    outputs:
+      coverage_b64:
+        value: ${{ jobs.isolated-technical.outputs.coverage_b64 }}
+      coverage_sha256:
+        value: ${{ jobs.isolated-technical.outputs.coverage_sha256 }}
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated-technical:
+    name: Isolated Batiseñal pilot checks (not Chatty E2E)
+    runs-on: ${{ vars.SAMCHAT_CI_SELF_HOSTED == 'true' && 'samchat-ci' || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    outputs:
+      coverage_b64: ${{ steps.export_coverage.outputs.coverage_b64 }}
+      coverage_sha256: ${{ steps.export_coverage.outputs.coverage_sha256 }}
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.batisenal-browsers
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare the Python tool cache on the self-hosted runner
+        if: runner.environment == 'self-hosted'
+        run: sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" /opt/hostedtoolcache
+
+      - uses: actions/setup-python@v5
+        env:
+          AGENT_TOOLSDIRECTORY: ${{ runner.environment == 'self-hosted' && '/opt/hostedtoolcache' || '' }}
+        with:
+          python-version: '3.12'
+      - name: Install isolated test dependencies
+        run: bash scripts/ci/install-cpu-test-dependencies.sh python -r requirements-browser.txt -r requirements-private-plugin-postgres.txt
+      - name: Verify Python in the sanitized test environment
+        run: env -i PATH=/usr/bin:/bin "$(command -v python)" -c 'import pytest, coverage'
+      - name: Install Firefox test browser (default sandbox)
+        run: python -m playwright install --with-deps firefox
+      - name: Run integrated technical acceptance
+        run: python scripts/batisenal/run_isolated_acceptance.py --tier technical --browser firefox
+      - name: Pass isolated coverage to the changed-code check
+        id: export_coverage
+        if: github.event_name == 'pull_request'
+        run: python scripts/ci/export-coverage.py artifacts/batisenal-real/.coverage
+      - name: Summarize technical acceptance
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = Path("artifacts/batisenal-real")
+          receipt_file = evidence / "receipt.json"
+          coverage_file = evidence / "module-coverage.json"
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("## Batiseñal technical acceptance\n\n")
+              if not receipt_file.is_file() or not coverage_file.is_file():
+                  summary.write("Technical evidence is incomplete. See the job log.\n")
+                  raise SystemExit("Batiseñal technical evidence is missing")
+              receipt = json.loads(receipt_file.read_text())
+              modules = json.loads(coverage_file.read_text())
+              for check, status in sorted(receipt["technical_exit_codes"].items()):
+                  summary.write(f"- {check}: exit {status}\n")
+              passed = sum(module["passed"] for module in modules)
+              summary.write(f"- Modules at or above 85%: {passed}/{len(modules)}\n")
+              summary.write(f"- Chatty E2E: {receipt['real_chatty_e2e']}\n")
+              summary.write(f"- Real login and consent: {receipt['real_login_consent']}\n")
+          PY

@@ -997,12 +997,6 @@ async def support_ticket_detail(
     error: Optional[str] = Query(None),
     ok: Optional[str] = Query(None),
 ) -> str:
-    from .user_routes import (  # noqa: WPS433
-        _render_workspace_hero,
-        _workspace_shell_styles,
-        render_top_navigation,
-    )
-
     ticket_uuid = _safe_uuid(ticket_id, field="ticket_id")
     try:
         ticket = await get_ticket_for_user(
@@ -1015,6 +1009,12 @@ async def support_ticket_detail(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SupportTicketPermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    from .user_routes import (  # noqa: WPS433
+        _render_workspace_hero,
+        _workspace_shell_styles,
+        render_top_navigation,
+    )
 
     nav = render_top_navigation(current_empleado, "soporte")
 
@@ -1830,12 +1830,6 @@ async def support_admin_ticket_detail(
     ok: Optional[str] = Query(None),
 ) -> str:
     _ensure_superadmin(current_empleado)
-    from .user_routes import (  # noqa: WPS433
-        _render_workspace_hero,
-        _workspace_shell_styles,
-        render_top_navigation,
-    )
-
     ticket_uuid = _safe_uuid(ticket_id, field="ticket_id")
     try:
         ticket = await get_ticket_for_user(
@@ -1846,6 +1840,12 @@ async def support_admin_ticket_detail(
         )
     except SupportTicketNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    from .user_routes import (  # noqa: WPS433
+        _render_workspace_hero,
+        _workspace_shell_styles,
+        render_top_navigation,
+    )
 
     nav = render_top_navigation(current_empleado, "soporte")
 

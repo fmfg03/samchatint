@@ -19,15 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..models import (
-    Empleado,
     SUPPORT_TICKET_CATEGORIES,
     SUPPORT_TICKET_OPEN_STATUSES,
     SUPPORT_TICKET_PRIORITIES,
     SUPPORT_TICKET_STATUSES,
+    Empleado,
     SupportTicket,
     SupportTicketComment,
 )
-
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -57,6 +56,12 @@ class SupportTicketValidationError(SupportTicketError):
 
 SUPERADMIN_ROLES: frozenset[str] = frozenset({"superadmin", "super_admin"})
 STAFF_ROLES: frozenset[str] = frozenset({"superadmin", "super_admin", "admin"})
+
+# Batiseñal has a stricter company/project boundary and its own guarded UI.
+# Legacy endpoints must never enumerate or mutate these records.
+LEGACY_TICKET = or_(
+    SupportTicket.page_url.is_(None), SupportTicket.page_url != "batisenal:private"
+)
 
 MAX_ASUNTO_LEN = 200
 MAX_DESCRIPCION_LEN = 8000
@@ -161,6 +166,7 @@ async def list_my_tickets(
 ) -> Sequence[SupportTicket]:
     result = await session.execute(
         select(SupportTicket)
+        .where(LEGACY_TICKET)
         .where(SupportTicket.requester_empleado_id == empleado_id)
         .order_by(SupportTicket.created_at.desc())
     )
@@ -178,6 +184,7 @@ async def list_admin_tickets(
 ) -> Sequence[SupportTicket]:
     query = (
         select(SupportTicket)
+        .where(LEGACY_TICKET)
         .options(
             selectinload(SupportTicket.requester),
             selectinload(SupportTicket.assignee),
@@ -209,13 +216,15 @@ async def list_admin_tickets(
 
 
 async def summarize_admin_tickets(session: AsyncSession) -> AdminTicketSummary:
-    total = await session.scalar(select(func.count(SupportTicket.id)))
+    total = await session.scalar(
+        select(func.count(SupportTicket.id)).where(LEGACY_TICKET)
+    )
     summary = AdminTicketSummary(total=int(total or 0))
 
     estado_rows = await session.execute(
-        select(SupportTicket.estado, func.count(SupportTicket.id)).group_by(
-            SupportTicket.estado
-        )
+        select(SupportTicket.estado, func.count(SupportTicket.id))
+        .where(LEGACY_TICKET)
+        .group_by(SupportTicket.estado)
     )
     for estado, count in estado_rows.all():
         summary.by_estado[estado] = int(count or 0)
@@ -223,16 +232,18 @@ async def summarize_admin_tickets(session: AsyncSession) -> AdminTicketSummary:
             summary.open_count += int(count or 0)
 
     prioridad_rows = await session.execute(
-        select(SupportTicket.prioridad, func.count(SupportTicket.id)).group_by(
-            SupportTicket.prioridad
-        )
+        select(SupportTicket.prioridad, func.count(SupportTicket.id))
+        .where(LEGACY_TICKET)
+        .group_by(SupportTicket.prioridad)
     )
     for prioridad, count in prioridad_rows.all():
         summary.by_prioridad[prioridad] = int(count or 0)
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     resolved = await session.scalar(
-        select(func.count(SupportTicket.id)).where(
+        select(func.count(SupportTicket.id))
+        .where(LEGACY_TICKET)
+        .where(
             and_(
                 SupportTicket.estado.in_(("resuelto", "cerrado")),
                 SupportTicket.resolved_at.is_not(None),
@@ -270,6 +281,7 @@ async def get_ticket_for_user(
     """Return ticket if the empleado is the requester or staff."""
     result = await session.execute(
         select(SupportTicket)
+        .where(LEGACY_TICKET)
         .options(
             selectinload(SupportTicket.requester),
             selectinload(SupportTicket.assignee),
@@ -311,6 +323,9 @@ async def create_ticket(
         categoria=categoria,
         prioridad=prioridad,
     )
+
+    if (page_url or "").strip().startswith("batisenal:"):
+        raise SupportTicketValidationError("Contexto reservado.")
 
     ticket = SupportTicket(
         requester_empleado_id=requester_empleado_id,
@@ -411,7 +426,7 @@ async def update_ticket_admin_fields(
     cleaned_resolution = _truncate(resolution_note, MAX_RESOLUTION_LEN)
 
     result = await session.execute(
-        select(SupportTicket).where(SupportTicket.id == ticket_id)
+        select(SupportTicket).where(LEGACY_TICKET, SupportTicket.id == ticket_id)
     )
     ticket = result.scalar_one_or_none()
     if ticket is None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from typing import Any, Optional
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 SUPERADMIN_ROLES = frozenset({"superadmin", "super_admin"})
 AUDIT_DEFAULT_LIMIT = 100
 AUDIT_MAX_LIMIT = 500
+PREPROVISIONED_SESSION_SUPPORTED = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,8 +153,57 @@ async def record_customer_success_audit_event(
         if request is not None
         else AuditRequestContext()
     )
+    isolated_audit_key = "batisenal_preprovisioned_audit"
+    isolated_mode = isolated_audit_key in session.info
     try:
-        await ensure_customer_success_audit_schema(session)
+        if isolated_mode:
+            isolated_schema = session.info[isolated_audit_key]
+            if not isinstance(isolated_schema, str) or not re.fullmatch(
+                r"bs_test_v01_[a-f0-9]{32}", isolated_schema
+            ):
+                raise RuntimeError("ISOLATED_AUDIT_SCHEMA_INVALID")
+            schema_matches = await session.scalar(
+                text("SELECT current_schema() = :expected"),
+                {"expected": isolated_schema},
+            )
+            if schema_matches is not True:
+                raise RuntimeError("ISOLATED_AUDIT_SCHEMA_MISMATCH")
+            # Resolve only this exact schema; do not create/repair or fall back.
+            columns = set(
+                (
+                    await session.execute(
+                        text(
+                            "SELECT a.attname FROM pg_attribute a JOIN pg_class c ON"
+                            " c.oid=a.attrelid JOIN pg_namespace n ON"
+                            " n.oid=c.relnamespace WHERE n.nspname=:schema AND"
+                            " c.relname='customer_success_audit_events' AND"
+                            " c.relkind='r' AND a.attnum>0 AND NOT a.attisdropped"
+                        ),
+                        {"schema": isolated_schema},
+                    )
+                ).scalars()
+            )
+            if columns != {
+                "id",
+                "created_at",
+                "action",
+                "surface",
+                "actor_empleado_id",
+                "target_empleado_id",
+                "documento_id",
+                "entity_type",
+                "entity_id",
+                "documento_referencia",
+                "ip_address",
+                "user_agent",
+                "request_path",
+                "request_method",
+                "summary",
+                "metadata_json",
+            }:
+                raise RuntimeError("ISOLATED_AUDIT_NOT_PROVISIONED")
+        else:
+            await ensure_customer_success_audit_schema(session)
         await session.execute(
             text(
                 """
@@ -190,6 +241,13 @@ async def record_customer_success_audit_event(
         if commit:
             await session.commit()
     except Exception:
+        if isolated_mode:
+            # Login establishes its cookie before auditing. On failure remove
+            # that authority even when its route catches this exception.
+            if request is not None:
+                request.session.clear()
+            await session.rollback()
+            raise RuntimeError("ISOLATED_AUDIT_FAILED") from None
         logger.exception("Failed to record customer success audit event")
         try:
             await session.rollback()
