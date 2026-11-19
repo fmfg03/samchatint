@@ -288,6 +288,7 @@ jobs:
 
       - name: Run mandatory CTT operational RPC with four separate numeric UIDs
         run: |
+          python -m pip install pytest pytest-cov pytest-timeout
           sudo env \
             PYTHONPATH="$PYTHONPATH" \
             CTT_SCHEMA_ONLY_DIRECTORY="$CTT_SCHEMA_ONLY_DIRECTORY" \
