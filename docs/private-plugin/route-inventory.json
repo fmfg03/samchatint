@@ -22190,7 +22190,7 @@
       "source": "src/devnous/gastos/routes/direction_dossier_routes.py",
       "line": 622,
       "handler": "direction_entry",
-      "source_sha256": "d1c7d9c817c90f1f12e804b0b88a1212b36d0faedf74a3de560ac19e09ccd3f1",
+      "source_sha256": "a512e77402c8bd8668fa25fe268efad3a3042c088b619a9c43f62811cfcf7f17",
       "method": "GET",
       "paths": [
         "/direccion"
@@ -22240,7 +22240,7 @@
       "source": "src/devnous/gastos/routes/direction_dossier_routes.py",
       "line": 631,
       "handler": "dossier",
-      "source_sha256": "d1c7d9c817c90f1f12e804b0b88a1212b36d0faedf74a3de560ac19e09ccd3f1",
+      "source_sha256": "a512e77402c8bd8668fa25fe268efad3a3042c088b619a9c43f62811cfcf7f17",
       "method": "GET",
       "paths": [
         "/direccion/expediente-vivo"
@@ -22259,6 +22259,7 @@
       ],
       "guard_definitions": [
         "src/devnous/gastos/routes/direction_dossier_routes.py:321:_scope_choices",
+        "src/devnous/gastos/routes/direction_dossier_routes.py:339:_scope_matches",
         "src/devnous/gastos/routes/direction_dossier_routes.py:563:scoped_tournament",
         "src/devnous/gastos/routes/direction_dossier_routes.py:576:authorized_sources",
         "src/devnous/gastos/routes/direction_dossier_routes.py:583:scoped_editions"
@@ -22270,6 +22271,7 @@
       "mount_evidence": "live_entrypoint_static",
       "profile_evidence": [
         "_scope_choices(sources, records)",
+        "_scope_matches(row, tournament_filters)",
         "authorized_sources(session, employee)",
         "capture_permissions(session, employee)",
         "scoped_editions(session, tournament, domains)",
@@ -22295,11 +22297,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "b478315ca8ab",
+      "id": "b1ceae93dd7d",
       "source": "src/devnous/gastos/routes/direction_dossier_routes.py",
-      "line": 742,
+      "line": 773,
       "handler": "capture",
-      "source_sha256": "d1c7d9c817c90f1f12e804b0b88a1212b36d0faedf74a3de560ac19e09ccd3f1",
+      "source_sha256": "a512e77402c8bd8668fa25fe268efad3a3042c088b619a9c43f62811cfcf7f17",
       "method": "POST",
       "paths": [
         "/direccion/expediente-vivo/captura"
@@ -22341,7 +22343,7 @@
         "validated['fields'].get"
       ],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/direction_dossier_routes.py:capture",
-      "proposed_tool": "direction_capture_post_b47831",
+      "proposed_tool": "direction_capture_post_b1ceae",
       "scope_proposal": "direction:write; never grants business authority",
       "object_parameters": [
         "employee"
@@ -22362,11 +22364,11 @@
       "status": "DISABLED; CANONICAL_SCOPE_UNPROVEN; route presence is not adapter or UI parity proof"
     },
     {
-      "id": "4967c029531a",
+      "id": "3d109a0a0422",
       "source": "src/devnous/gastos/routes/direction_dossier_routes.py",
-      "line": 920,
+      "line": 951,
       "handler": "photo",
-      "source_sha256": "d1c7d9c817c90f1f12e804b0b88a1212b36d0faedf74a3de560ac19e09ccd3f1",
+      "source_sha256": "a512e77402c8bd8668fa25fe268efad3a3042c088b619a9c43f62811cfcf7f17",
       "method": "GET",
       "paths": [
         "/direccion/expediente-vivo/fotografias/{record_id}"
@@ -22396,7 +22398,7 @@
       ],
       "service_candidates": [],
       "canonical_owner": "ROUTE OWNER ONLY; service authority unproven: src/devnous/gastos/routes/direction_dossier_routes.py:photo",
-      "proposed_tool": "direction_photo_get_4967c0",
+      "proposed_tool": "direction_photo_get_3d109a",
       "scope_proposal": "direction:read; never grants business authority",
       "object_parameters": [
         "record_id",

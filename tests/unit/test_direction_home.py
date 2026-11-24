@@ -1284,3 +1284,13 @@ def test_receipt_generation_and_utf8_boundaries(signed, monkeypatch):
 def test_invalid_receipt_unicode_fails_closed():
     with pytest.raises(chat.ContextError, match="válido"):
         chat._receipt_bytes("\ud800")
+
+
+def test_live_dossier_links_preserve_edition_and_tournament():
+    selected = scope()
+    selected["selected"] = selected["selected"][:1]
+    data = snapshot([row()])
+    page = render_home(data, selected, token="signed", csrf="csrf")
+    link = f"/direccion/expediente-vivo?edition_year={YEAR}&amp;tournament_id={T1}"
+    assert f'href="{link}">Expediente Vivo</a>' in page
+    assert page.count(f'href="{link}"') == 2
