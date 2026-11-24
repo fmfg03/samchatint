@@ -53,6 +53,12 @@ def dossier_client(monkeypatch):
         return {"operations"} if action == "editar" else set()
 
     monkeypatch.setattr(routes, "known_editions", AsyncMock(return_value=[2027, 2026]))
+    monkeypatch.setattr(routes, "load_dossier_registry", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        routes,
+        "read_expense_lines",
+        AsyncMock(return_value={"status": "empty", "rows": []}),
+    )
     monkeypatch.setattr(
         routes, "load_dossier_sources", AsyncMock(side_effect=load_sources)
     )
@@ -408,3 +414,385 @@ def test_capture_conflict_rolls_back_without_committing(dossier_client, monkeypa
     assert client.post(f"{PATH}/captura", data=confirmed).status_code == 409
     session.commit.assert_not_awaited()
     session.rollback.assert_awaited_once()
+
+
+def test_observed_roster_uses_bounded_exact_cut_without_live_sources(
+    dossier_client, monkeypatch
+):
+    from datetime import date
+
+    client, tid = dossier_client
+    client.get("/_test/login")
+    roster = [
+        {
+            "id": str(uuid4()),
+            "label": f"Equipo histórico {index:03d}",
+            "entity": "Morelos",
+            "category": "Juvenil",
+            "player_registrations": index,
+            "phase": None,
+        }
+        for index in range(101)
+    ]
+    registry = AsyncMock(
+        return_value={
+            "entities": ["Morelos"],
+            "categories": ["Juvenil"],
+            "team_roster": {
+                "source": "Padrón observado",
+                "status": "available",
+                "rows": roster,
+                "observed_at": "2026-11-20T16:07:00Z",
+            },
+            "directory": {
+                "source": "Directorio",
+                "rows": [{"representative_name": "Nombre fuera del corte"}],
+            },
+        }
+    )
+    monkeypatch.setattr(routes, "load_dossier_registry", registry)
+    params = {
+        "tournament_id": tid,
+        "edition_year": 2026,
+        "cut_date": "2026-11-20",
+        "entity": "Morelos",
+    }
+    response = client.get(PATH, params=params)
+    assert response.status_code == 200
+    assert "Padrón observado el 2026-11-20" in response.text
+    assert "Observación registrada 2026-11-20T16:07:00Z" in response.text
+    assert "Equipo histórico 099" in response.text
+    assert "Equipo histórico 100" not in response.text
+    assert "Nombre fuera del corte" not in response.text
+    assert "Capturar o vincular datos" not in response.text
+    assert 'name="phase"' not in response.text
+    assert (
+        "Página siguiente" in response.text and "cut_date=2026-11-20" in response.text
+    )
+    second = client.get(PATH, params={**params, "team_page": 2})
+    assert second.status_code == 200
+    assert (
+        "Equipo histórico 100" in second.text
+        and "Equipo histórico 099" not in second.text
+    )
+    assert "Página anterior" in second.text
+    assert registry.await_args.kwargs["cut_date"] == date(2026, 11, 20)
+    assert "Sin corte registrado" not in second.text
+    routes.load_dossier_sources.assert_not_awaited()
+    routes.read_records.assert_not_awaited()
+    routes.read_expense_lines.assert_not_awaited()
+    assert (
+        client.get(PATH, params={**params, "cut_date": "20261120"}).status_code == 422
+    )
+
+
+def test_local_contact_validates_authorized_directory_entity_or_allows_verified_name(
+    dossier_client, monkeypatch
+):
+    client, tid = dossier_client
+    client.get("/_test/login")
+    representative_id = str(uuid4())
+    monkeypatch.setattr(
+        routes,
+        "read_domains",
+        AsyncMock(return_value={"operations", "contacts"}),
+    )
+    monkeypatch.setattr(
+        routes, "capture_permissions", AsyncMock(return_value={"contacts"})
+    )
+    monkeypatch.setattr(
+        routes,
+        "load_dossier_sources",
+        AsyncMock(return_value={}),
+    )
+    monkeypatch.setattr(
+        routes,
+        "load_dossier_registry",
+        AsyncMock(
+            return_value={
+                "entities": ["Morelos", "Puebla"],
+                "directory": {
+                    "source": "Directorio oficial",
+                    "status": "available",
+                    "rows": [
+                        {
+                            "entity": "Morelos",
+                            "position": "Representante estatal",
+                            "representative_id": representative_id,
+                            "representative_name": "Nombre autorizado",
+                            "representation_status": "confirmed",
+                        },
+                    ],
+                },
+            }
+        ),
+    )
+    page = client.get(PATH, params={"edition_year": 2026})
+    assert page.status_code == 200
+    assert "Nombre del representante" in page.text
+    assert (
+        f'<option value="{representative_id}">Nombre autorizado · Morelos</option>'
+        in page.text
+    )
+    assert f"<dd>{representative_id}</dd>" not in page.text
+    payload = {
+        "csrf": _Inputs(page.text).values["csrf"],
+        "tournament_id": tid,
+        "edition_year": "2026",
+        "kind": "contact",
+        "phase": "estatal",
+        "entity": "Morelos",
+        "category": "",
+        "field_responsibility": "Representación estatal",
+        "field_name": "Nombre autorizado",
+        "field_contact_role": "representante_local",
+        "field_person_id": representative_id,
+        "intent": "preview",
+        "evidence_reference": "Nombramiento",
+    }
+    assert client.post(f"{PATH}/captura", data=payload).status_code == 200
+    for change in ({"entity": "Puebla"}, {"field_person_id": str(uuid4())}):
+        denied = client.post(f"{PATH}/captura", data={**payload, **change})
+        assert denied.status_code == 422
+        assert representative_id not in denied.text
+    response = client.post(f"{PATH}/captura", data={**payload, "field_person_id": ""})
+    assert response.status_code == 200
+    assert "Nombramiento" in response.text
+
+
+def test_private_directory_uses_only_bound_server_identity_and_current_scope(
+    dossier_client, monkeypatch
+):
+    from samchat.client_executive import dossier_view
+    from samchat.client_executive.dossier_directory_private import (
+        RepresentativeSourceIdentity,
+    )
+
+    client, tid = dossier_client
+    client.get("/_test/login")
+    scopes = {"operations", "contacts"}
+
+    async def domains(_session, _employee):
+        return scopes.copy()
+
+    monkeypatch.setattr(routes, "read_domains", domains)
+    monkeypatch.setattr(routes, "load_dossier_sources", AsyncMock(return_value={}))
+    representative_id = str(uuid4())
+
+    async def registry(_session, *, contacts_allowed, **_scope):
+        rows = (
+            [
+                {
+                    "entity": "Morelos",
+                    "representative_id": representative_id,
+                    "representative_name": "Representante autorizado",
+                    "representation_status": "confirmed",
+                }
+            ]
+            if contacts_allowed
+            else []
+        )
+        return {
+            "entities": ["Morelos"],
+            "directory": {
+                "source": "Directorio vigente",
+                "status": "available",
+                "rows": rows,
+            },
+        }
+
+    monkeypatch.setattr(routes, "load_dossier_registry", registry)
+
+    async def identity(employee_id):
+        return RepresentativeSourceIdentity(
+            employee_id, uuid4(), "token-servidor-prueba"
+        )
+
+    resolver = AsyncMock(side_effect=identity)
+    client.app.state.direction_ctt_private_identity = resolver
+    private = AsyncMock(
+        return_value={
+            "source": "Fuente personal autorizada",
+            "status": "available",
+            "rows": [
+                {
+                    "entity": "Morelos",
+                    "label": "Representante autorizado",
+                    "representative_birthday": "24/11",
+                    "spouse_name": "Cónyuge autorizado",
+                    "spouse_birthday": "18/08",
+                    "unexpected_secret": "identificador-no-publicable",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(dossier_view, "read_directory_private", private)
+    response = client.get(PATH, params={"tournament_id": tid, "edition_year": 2026})
+    assert response.status_code == 200
+    assert "Cónyuge autorizado" in response.text and "24/11" in response.text
+    assert "identificador-no-publicable" not in response.text
+    assert "token-servidor-prueba" not in response.text
+    assert private.await_args.kwargs["employee_id"] == resolver.await_args.args[0]
+
+    resolver.reset_mock()
+    private.reset_mock()
+    cut = client.get(PATH, params={"edition_year": 2026, "cut_date": "2026-11-20"})
+    assert cut.status_code == 200 and "Cónyuge autorizado" not in cut.text
+    scopes.remove("contacts")
+    denied = client.get(PATH, params={"edition_year": 2026})
+    assert denied.status_code == 200 and "Cónyuge autorizado" not in denied.text
+    resolver.assert_not_awaited()
+    private.assert_not_awaited()
+
+    scopes.add("contacts")
+    resolver.side_effect = RuntimeError("falla-identidad-privada-oculta")
+    result = client.get(PATH, params={"edition_year": 2026})
+    assert result.status_code == 200 and "Acceso restringido" in result.text
+    assert "falla-identidad-privada-oculta" not in result.text
+    private.assert_not_awaited()
+
+
+def test_linked_visit_requires_finance_without_disabling_ordinary_operations_capture(
+    dossier_client, monkeypatch
+):
+    client, tid = dossier_client
+    client.get("/_test/login")
+    document_id, record_id = str(uuid4()), str(uuid4())
+    visit_scope = {"phase": "estatal", "entity": "Morelos", "category": "Juvenil"}
+    visit = {
+        **visit_scope,
+        "id": record_id,
+        "kind": "visit",
+        "domain": "operations",
+        "fields": {
+            "responsible": "AZ",
+            "visit_date": "2026-11-20",
+            "report_document_id": document_id,
+            "report_reference": document_id,
+        },
+        "revision": 1,
+        "evidence_reference": document_id,
+    }
+    monkeypatch.setattr(
+        routes,
+        "load_dossier_sources",
+        AsyncMock(return_value={"entities": ["Morelos"], "categories": ["Juvenil"]}),
+    )
+    reader = AsyncMock(return_value={"status": "available", "rows": [visit]})
+    monkeypatch.setattr(routes, "read_records", reader)
+    monkeypatch.setattr(
+        routes, "read_domains", AsyncMock(return_value={"operations", "finance"})
+    )
+    permitted = client.get(PATH, params={"edition_year": 2026})
+    assert 'name="field_report_document_id"' in permitted.text
+    payload = {
+        **visit_scope,
+        "csrf": _Inputs(permitted.text).values["csrf"],
+        "tournament_id": tid,
+        "edition_year": "2026",
+        "kind": "visit",
+        "field_responsible": "AZ",
+        "field_visit_date": "2026-11-20",
+        "evidence_reference": "Acta de visita",
+        "intent": "preview",
+    }
+    preview = client.post(
+        f"{PATH}/captura", data={**payload, "field_report_document_id": document_id}
+    )
+    assert preview.status_code == 200
+    confirmed = {**_Inputs(preview.text).values, "intent": "confirm"}
+
+    monkeypatch.setattr(routes, "read_domains", AsyncMock(return_value={"operations"}))
+    restricted = client.get(PATH, params={"edition_year": 2026})
+    assert restricted.status_code == 200
+    assert document_id not in restricted.text
+    assert 'name="field_report_document_id"' not in restricted.text
+    assert "Editar registro" not in restricted.text
+    assert "Acceso restringido" in restricted.text and "2026-11-20" in restricted.text
+
+    reader.reset_mock()
+    for submitted in (
+        {**payload, "field_report_document_id": document_id},
+        {**payload, "field_report_document_id": ""},
+        confirmed,
+    ):
+        response = client.post(f"{PATH}/captura", data=submitted)
+        assert response.status_code == 403
+        assert document_id not in response.text
+    reader.assert_not_awaited()
+    save = AsyncMock()
+    monkeypatch.setattr(routes, "save_record", save)
+    denied_edit = client.post(
+        f"{PATH}/captura",
+        data={**payload, "record_id": record_id, "expected_revision": "1"},
+    )
+    assert denied_edit.status_code == 403
+    assert client.post(f"{PATH}/captura", data=payload).status_code == 200
+    save.assert_not_awaited()
+
+
+def test_medical_transfer_remains_readable_without_finance_report_access(
+    dossier_client, monkeypatch
+):
+    client, tid = dossier_client
+    client.get("/_test/login")
+    report_id, venue_id, service_id = (str(uuid4()) for _ in range(3))
+    scope = {"phase": "nacional", "entity": "", "category": "Juvenil"}
+    transfer = {
+        **scope,
+        "id": str(uuid4()),
+        "kind": "medical_transfer",
+        "domain": "medical_transfers",
+        "fields": {
+            "incident_date": "2026-11-21",
+            "incident_time": "18:30",
+            "venue_id": venue_id,
+            "medical_service_id": service_id,
+        },
+        "evidence_reference": report_id,
+        "revision": 1,
+    }
+    monkeypatch.setattr(
+        routes,
+        "load_dossier_sources",
+        AsyncMock(return_value={"categories": ["Juvenil"]}),
+    )
+    monkeypatch.setattr(
+        routes,
+        "read_domains",
+        AsyncMock(return_value={"operations", "medical_transfers"}),
+    )
+    monkeypatch.setattr(
+        routes,
+        "capture_permissions",
+        AsyncMock(return_value={"operations", "medical_transfers"}),
+    )
+    reader = AsyncMock(return_value={"status": "available", "rows": [transfer]})
+    monkeypatch.setattr(routes, "read_records", reader)
+    page = client.get(PATH, params={"edition_year": 2026})
+    assert page.status_code == 200
+    assert "<dd>2026-11-21</dd>" in page.text and "<dd>18:30</dd>" in page.text
+    assert report_id not in page.text
+    assert "Editar registro" not in page.text
+    assert 'name="field_incident_date"' not in page.text
+
+    reader.reset_mock()
+    response = client.post(
+        f"{PATH}/captura",
+        data={
+            **scope,
+            "csrf": _Inputs(page.text).values["csrf"],
+            "tournament_id": tid,
+            "edition_year": "2026",
+            "kind": "medical_transfer",
+            "field_incident_date": "2026-11-21",
+            "field_venue_id": venue_id,
+            "field_medical_service_id": service_id,
+            "evidence_reference": report_id,
+            "intent": "preview",
+        },
+    )
+    assert response.status_code == 403
+    assert "El respaldo requiere acceso a Finanzas" in response.text
+    assert report_id not in response.text
+    reader.assert_not_awaited()

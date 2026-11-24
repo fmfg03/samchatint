@@ -735,6 +735,7 @@ class OAuthTransaction:
                 "get_profile",
                 "direction_list_scopes",
                 "direction_read_summary",
+                "direction_read_dossier",
                 "mcp.tools.list",
                 "mcp.tools.call",
                 "unregistered",

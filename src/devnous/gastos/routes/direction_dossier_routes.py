@@ -6,6 +6,8 @@ import hashlib
 import json
 import os
 import secrets
+from datetime import date
+from inspect import isawaitable
 from typing import Any
 from urllib.parse import parse_qsl, urlencode
 from uuid import UUID, uuid4
@@ -14,20 +16,29 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from itsdangerous import BadData, URLSafeTimedSerializer
 
+from samchat.client_executive.dossier_directory_private import (
+    PRIVATE_DIRECTORY_SOURCE,
+    RepresentativeSourceIdentity,
+)
+from samchat.client_executive.dossier_finance import read_expense_lines
 from samchat.client_executive.dossier_records import (
     CAPTURE_FIELDS,
+    CONTACT_ROLES,
     FINANCE_CONCEPTS,
     GENDERS,
+    MEAL_KINDS,
+    NATIONAL_ITINERARY_EVENTS,
+    SENSITIVE_PARENT_DOMAINS,
     STATE_CONCEPTS,
     DossierRecordError,
     capture_permissions,
-    document_category_matches,
     known_editions,
     read_domains,
     read_records,
     save_record,
     validate_record,
 )
+from samchat.client_executive.dossier_registry import load_dossier_registry
 from samchat.client_executive.dossier_sources import (
     load_dossier_sources,
     resolve_dossier_photo,
@@ -39,6 +50,11 @@ from samchat.client_executive.dossier_ui import (
     PHASES,
     render_capture_preview,
     render_dossier,
+)
+from samchat.client_executive.dossier_view import (
+    finance_link_matches,
+    operations_edition,
+    read_dossier_view,
 )
 from samchat.client_executive.service import _authorized_tournaments
 
@@ -56,7 +72,20 @@ SECURE_PAGE = (
     "default-src 'none'; style-src 'self'; img-src 'self'; "
     "frame-ancestors 'none'; form-action 'self'; base-uri 'none'"
 )
-DOMAIN_FOR_GROUP = {"contacts": "operations", "media": "marketing"}
+TEAM_PAGE_SIZE = 100
+FIELD_CHOICES = {
+    "finance_concept": FINANCE_CONCEPTS,
+    "gender": GENDERS,
+    "contact_role": CONTACT_ROLES,
+    "itinerary_event": NATIONAL_ITINERARY_EVENTS,
+    "meal_kind": MEAL_KINDS,
+}
+PRIVATE_DIRECTORY_FIELDS = (
+    "representative_birthday",
+    "spouse_name",
+    "spouse_birthday",
+    "zone",
+)
 SOURCE_METADATA = {
     "label",
     "id",
@@ -71,6 +100,13 @@ SOURCE_METADATA = {
     "edition_year",
     "photo_id",
     "person_id",
+    "representative_id",
+    "representation_status",
+    "state_slug",
+    "document_id",
+    "visit_id",
+    "dossier_concept",
+    "service_type",
     "curp",
     "birth_date",
 }
@@ -89,6 +125,26 @@ def _year(value: str) -> int | None:
         if 2000 <= number <= 2100:
             return number
     raise HTTPException(422, "La edición no es válida.")
+
+
+def _cut_date(value: str) -> date | None:
+    if not value:
+        return None
+    try:
+        parsed = date.fromisoformat(value) if len(value) == 10 else None
+        if parsed is not None and value == parsed.isoformat():
+            return parsed
+    except ValueError:
+        pass
+    raise HTTPException(422, "La fecha del corte no es válida.")
+
+
+def _team_page(value: str) -> int:
+    if not value:
+        return 1
+    if len(value) <= 4 and value.isascii() and value.isdecimal() and int(value):
+        return int(value)
+    raise HTTPException(422, "La página del padrón no es válida.")
 
 
 def _uuid(value: str) -> str:
@@ -115,17 +171,7 @@ def _edition_url(tournament_id: str, edition_year: int, **filters) -> str:
 
 def _record_domain(kind):
     domain = CAPTURE_FIELDS[kind]["domain"]
-    return DOMAIN_FOR_GROUP.get(domain, domain)
-
-
-def _finance_link_matches(capture: dict, document: dict) -> bool:
-    phase = document.get("phase")
-    if (phase or document.get("phase_label")) and phase != capture["phase"]:
-        return False
-    categories = document.get("categories") or (
-        [document["category"]] if document.get("category") else []
-    )
-    return document_category_matches(capture["category"], categories)
+    return SENSITIVE_PARENT_DOMAINS.get(domain, domain)
 
 
 def _target_progress(target: dict, registration: dict) -> list[tuple]:
@@ -169,32 +215,59 @@ def _target_progress(target: dict, registration: dict) -> list[tuple]:
     return result
 
 
+def _record_requires_finance(row: dict) -> bool:
+    return row["kind"] == "medical_transfer" or (
+        row["kind"] == "visit" and bool(row["fields"].get("report_document_id"))
+    )
+
+
 def _view_record(
-    row: dict, sources: dict, finance_by_id: dict, tournament_id: str, year: int
+    row: dict,
+    sources: dict,
+    refs: dict,
+    tournament_id: str,
+    year: int,
+    *,
+    finance_allowed: bool,
 ) -> dict:
     kind = row["kind"]
     config = CAPTURE_FIELDS[kind]
     fields = row["fields"]
+    protected_reference = _record_requires_finance(row) and not finance_allowed
     details = [
         (field["label"], _field_value(field["type"], fields.get(key)))
         for key, field in config["fields"].items()
-        if field["type"] not in {"photo", "activation", "document", "visit"}
+        if field["type"]
+        not in {
+            "photo",
+            "activation",
+            "document",
+            "visit",
+            "expense",
+            "contact_person",
+            "medical_service",
+            "medical_venue",
+        }
         and not (kind == "team_target" and key == "actual_teams")
+        and not (protected_reference and key == "report_reference")
     ]
     if kind == "national_event":
         details.append(("Duración (días)", fields.get("duration_days")))
     state = "documented"
     categories: list[str] = []
+    document_url = None
     if kind == "team_target":
         details.extend(_target_progress(row, sources.get("registration", {})))
     if kind == "financial_link":
-        canonical = finance_by_id.get(fields["document_id"])
+        canonical = refs["finance"].get(fields["document_id"])
+        resolved = refs["resolved_finance"].get(fields["document_id"])
         if canonical is None:
             details.append(
                 ("Documento asociado", "Fuente no disponible en esta edición")
             )
             state = "unavailable"
-        elif _finance_link_matches(row, canonical):
+        elif resolved is not None and finance_link_matches(row, canonical):
+            canonical = resolved
             categories = canonical.get("categories") or []
             details.extend(
                 [
@@ -209,7 +282,55 @@ def _view_record(
                 ("Documento asociado", "El alcance actual requiere conciliación")
             )
             state = "requires_reconciliation"
-    details.append(("Referencia de respaldo", row["evidence_reference"]))
+    if kind == "expense_line_link":
+        canonical = refs["finance_lines"].get(fields["expense_id"])
+        if canonical is not None:
+            details.append(("Fuente de la partida", canonical["source"]))
+            details.append(("Actualización de la partida", canonical["updated_at"]))
+            details.extend(_source_details(canonical, include_category=False))
+        elif fields["expense_id"] in refs["known_expenses"]:
+            state = "requires_reconciliation"
+        else:
+            state = "unavailable"
+    if kind == "visit" and finance_allowed and fields.get("report_document_id"):
+        report = refs["finance"].get(fields["report_document_id"])
+        if (
+            report is not None
+            and report.get("kind") == "INFORME"
+            and finance_link_matches(row, report)
+        ):
+            details.append(
+                ("Referencia del informe en Gastos", report.get("reference"))
+            )
+            document_url = f"/documentos/{UUID(fields['report_document_id'])}"
+    if kind == "medical_transfer":
+        venue = refs["captures"].get(fields["venue_id"], {}).get("fields", {})
+        service = (
+            refs["captures"].get(fields["medical_service_id"], {}).get("fields", {})
+        )
+        details.extend(
+            [
+                ("Sede del traslado", venue.get("sports_complex") or venue.get("city")),
+                (
+                    "Servicio médico",
+                    service.get("provider") or service.get("description"),
+                ),
+            ]
+        )
+    if kind == "sponsor_guest":
+        activation = refs["captures"].get(fields["activation_id"], {}).get("fields", {})
+        details.extend(
+            [
+                ("Activación", activation.get("activity")),
+                ("Patrocinador", activation.get("sponsor")),
+            ]
+        )
+    details.append(
+        (
+            "Referencia de respaldo",
+            "Acceso restringido" if protected_reference else row["evidence_reference"],
+        )
+    )
     item = {
         **row,
         "label": config["label"],
@@ -217,6 +338,8 @@ def _view_record(
         "categories": categories,
         "source": "dossier_capture",
         "status": state,
+        "can_edit": not protected_reference,
+        "document_url": document_url,
         "search_text": " ".join(
             [config["label"], row["category"], row["entity"], "SamChat", *categories]
         ),
@@ -229,11 +352,7 @@ def _view_record(
 
 
 def _field_value(field_type: str, value):
-    if field_type == "finance_concept":
-        return FINANCE_CONCEPTS.get(value, value)
-    if field_type == "gender":
-        return GENDERS.get(value, value)
-    return value
+    return FIELD_CHOICES.get(field_type, {}).get(value, value)
 
 
 def _source_details(
@@ -242,6 +361,12 @@ def _source_details(
     details: list[tuple[str, Any]] = []
     for key, value in row.items():
         if key in SOURCE_METADATA or (key == "category" and not include_category):
+            continue
+        if key == "name" and value == row.get("label"):
+            continue
+        if key == "branch" and value == row.get("gender"):
+            continue
+        if key == "position" and row.get("representation_status"):
             continue
         if key == "ages" and isinstance(value, list):
             details.append(
@@ -275,8 +400,17 @@ def _source_details(
 
 
 def _view_source(row: dict, section: dict, domain: str) -> dict:
-    label = row.get("label") or DOMAIN_LABELS[domain]
+    label = (
+        row.get("label")
+        or (row.get("position") if domain == "directory" else None)
+        or DOMAIN_LABELS[domain]
+    )
     source = row.get("source") or section.get("source")
+    detail_row = (
+        {key: row[key] for key in PRIVATE_DIRECTORY_FIELDS if key in row}
+        if domain == "directory_private"
+        else row
+    )
     return {
         "label": label,
         "domain": domain,
@@ -288,7 +422,7 @@ def _view_source(row: dict, section: dict, domain: str) -> dict:
         "source": source,
         "status": row.get("status") or section.get("status"),
         "updated_at": row.get("updated_at"),
-        "details": _source_details(row)
+        "details": _source_details(detail_row)
         + (
             [
                 ("Corte de edad", section.get("age_cutoff")),
@@ -301,6 +435,7 @@ def _view_source(row: dict, section: dict, domain: str) -> dict:
             str(value)
             for value in (
                 DOMAIN_LABELS[domain],
+                label if domain == "team_roster" else None,
                 row.get("entity"),
                 row.get("category"),
                 row.get("phase"),
@@ -311,10 +446,11 @@ def _view_source(row: dict, section: dict, domain: str) -> dict:
     }
 
 
-def _source_rows(sources: dict):
+def _source_rows(sources: dict, shown: dict | None = None):
+    shown = shown or {}
     for domain in DOMAIN_LABELS:
         section = sources.get(domain, {})
-        for row in section.get("rows") or []:
+        for row in shown.get(domain, section.get("rows") or []):
             yield domain, section, row
 
 
@@ -348,9 +484,16 @@ def _scope_matches(row: dict, selected: dict) -> bool:
     )
 
 
-def _sections(rows: list[dict], selected: dict, entities: set[str], domains: set[str]):
+def _sections(
+    rows: list[dict],
+    selected: dict,
+    entities: set[str],
+    domains: set[str],
+    *,
+    roster_only=False,
+):
     names = []
-    if selected["phase"] != "estatal":
+    if not roster_only and selected["phase"] != "estatal":
         names.append(("nacional", "", "Fase nacional"))
     if selected["phase"] != "nacional":
         names.extend(
@@ -399,7 +542,7 @@ def _sections(rows: list[dict], selected: dict, entities: set[str], domains: set
                 concepts_present = {
                     row["fields"]["concept"]
                     for row in group_rows
-                    if row.get("kind") == "financial_link"
+                    if row.get("kind") in {"financial_link", "expense_line_link"}
                     and row.get("status") == "documented"
                 }
                 pending = [
@@ -424,8 +567,53 @@ def _sections(rows: list[dict], selected: dict, entities: set[str], domains: set
     return result
 
 
+def _team_slice(
+    sources: dict,
+    selected: dict,
+    page: int,
+    tournament_id: str,
+    year: int,
+    cut: date | None,
+) -> tuple[list[dict], dict]:
+    registration = sources.get("team_roster", {})
+    rows = [
+        row for row in registration.get("rows", []) if _scope_matches(row, selected)
+    ]
+    if not rows:
+        return [], {}
+    pages = (len(rows) + TEAM_PAGE_SIZE - 1) // TEAM_PAGE_SIZE
+    page = min(page, pages)
+    start = (page - 1) * TEAM_PAGE_SIZE
+    end = min(start + TEAM_PAGE_SIZE, len(rows))
+    filters = {key: value for key, value in selected.items() if value}
+    if cut is not None:
+        filters["cut_date"] = cut.isoformat()
+    return rows[start:end], {
+        "first": start + 1,
+        "last": end,
+        "total": len(rows),
+        "partial": registration.get("status") == "partial",
+        "previous": (
+            _edition_url(tournament_id, year, **filters, team_page=page - 1)
+            if page > 1
+            else None
+        ),
+        "next": (
+            _edition_url(tournament_id, year, **filters, team_page=page + 1)
+            if page < pages
+            else None
+        ),
+    }
+
+
 def _capture_config(
-    allowed: set, sources: dict, records: list[dict], edition_year: int
+    allowed: set,
+    sources: dict,
+    records: list[dict],
+    edition_year: int,
+    expenses: list[dict],
+    *,
+    finance_allowed: bool,
 ) -> dict:
     financial_links = {
         row["fields"]["document_id"]: row
@@ -435,8 +623,7 @@ def _capture_config(
     choices = {
         "boolean": [("true", "Sí"), ("false", "No")],
         "currency": [(value, value) for value in ("MXN", "USD", "EUR")],
-        "finance_concept": list(FINANCE_CONCEPTS.items()),
-        "gender": list(GENDERS.items()),
+        **{key: list(values.items()) for key, values in FIELD_CHOICES.items()},
         "visit": [
             (row["id"], f"{row['fields']['visit_date']} · {row['entity']}")
             for row in records
@@ -451,21 +638,63 @@ def _capture_config(
             (row["id"], row["label"])
             for row in sources.get("marketing", {}).get("candidates", [])
         ],
+        "medical_venue": [
+            (
+                row["id"],
+                row["fields"].get("sports_complex") or row["fields"]["city"],
+            )
+            for row in records
+            if row["kind"] == "national_event"
+        ],
+        "medical_service": [
+            (
+                row["id"],
+                row["fields"].get("provider")
+                or row["fields"].get("description")
+                or "Servicio médico registrado",
+            )
+            for row in records
+            if row["kind"] == "medical_service"
+        ],
+    }
+    suggestions = {
+        "contact_person": [
+            (
+                row["representative_id"],
+                f"{row['representative_name']} · {row['entity']}",
+            )
+            for row in sources.get("directory", {}).get("rows", [])
+            if row.get("representative_id") and row.get("representative_name")
+        ],
+        "expense": [
+            (
+                expense["id"],
+                expense.get("expense_reference")
+                or expense.get("reference")
+                or expense["id"],
+            )
+            for expense in expenses
+        ],
     }
     html_types = {
         "integer": "number",
         "positive_integer": "number",
         "money": "number",
         "date": "date",
+        "time": "time",
         "email": "email",
         "tel": "tel",
     }
     result = {}
     for kind, spec in CAPTURE_FIELDS.items():
-        if spec["domain"] not in allowed:
+        if spec["domain"] not in allowed or (
+            kind == "medical_transfer" and not finance_allowed
+        ):
             continue
         fields = {}
         for key, field in spec["fields"].items():
+            if key == "report_document_id" and not finance_allowed:
+                continue
             value_type = field["type"]
             fields[key] = {
                 **field,
@@ -475,16 +704,19 @@ def _capture_config(
             }
             if value_type in choices:
                 fields[key]["choices"] = choices[value_type]
+            if value_type in suggestions:
+                fields[key]["suggestions"] = suggestions[value_type]
             if value_type == "document":
                 fields[key]["suggestions"] = [
                     (row["id"], row.get("reference") or row.get("label") or row["id"])
                     for row in sources.get("finance", {}).get("rows", [])
                     if row.get("id")
+                    and (key != "report_document_id" or row.get("kind") == "INFORME")
                     and (
                         row.get("edition_year", edition_year) == edition_year
                         or (
                             row["id"] in financial_links
-                            and _finance_link_matches(financial_links[row["id"]], row)
+                            and finance_link_matches(financial_links[row["id"]], row)
                         )
                     )
                 ]
@@ -494,22 +726,6 @@ def _capture_config(
             "fields": fields,
         }
     return result
-
-
-def _operations_edition(records: list[dict]) -> str | None:
-    links = [
-        row["fields"]["operations_tournament_id"]
-        for row in records
-        if row["kind"] == "operations_edition"
-    ]
-    return links[0] if len(links) == 1 else None
-
-
-def _edition_verified(sources: dict, editions: list[int], edition_year: int) -> bool:
-    return edition_year in editions or any(
-        sources.get(domain, {}).get("edition_verified") is True
-        for domain in DOMAIN_LABELS
-    )
 
 
 async def _form_values(request: Request) -> dict[str, str]:
@@ -556,6 +772,24 @@ def _capture_signer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(secret, salt="samchat.direction.dossier.capture.v1")
 
 
+async def _trusted_directory_identity(
+    resolver, employee_id: UUID
+) -> RepresentativeSourceIdentity | None:
+    try:
+        identity = resolver(employee_id)
+        if isawaitable(identity):
+            identity = await identity
+    except Exception:
+        # A connector identity failure must not expose claims or disable the public dossier.
+        return None
+    if (
+        isinstance(identity, RepresentativeSourceIdentity)
+        and identity.employee_id == employee_id
+    ):
+        return identity
+    return None
+
+
 def create_dossier_router(guard, source_access, is_superadmin) -> APIRouter:
     """Register dossier paths under the same positions and portfolios as Direction."""
     router = APIRouter(tags=["direction-executive"])
@@ -591,32 +825,71 @@ def create_dossier_router(guard, source_access, is_superadmin) -> APIRouter:
         )
 
     async def edition_data(
-        session, tournament: dict, edition_year: int, domains: set[str]
+        session,
+        tournament: dict,
+        edition_year: int,
+        domains: set[str],
+        years: list[int],
+        cut_date: date | None = None,
+        request: Request | None = None,
+        employee_id: UUID | None = None,
     ):
-        captures = await read_records(
-            session,
-            tournament_id=tournament["id"],
-            edition_year=edition_year,
-            allowed_domains=domains,
+        registry_reader = load_dossier_registry
+        source_identity = None
+        resolver = (
+            getattr(request.app.state, "direction_ctt_private_identity", None)
+            if request is not None and cut_date is None and "contacts" in domains
+            else None
         )
-        ids = tuple(
-            row["fields"]["document_id"]
-            for row in captures["rows"]
-            if row["kind"] == "financial_link"
-        )
-        sources = await load_dossier_sources(
+        if callable(resolver) and employee_id is not None:
+            registry = await registry_reader(
+                session,
+                tournament=tournament,
+                edition_year=edition_year,
+                operations_allowed="operations" in domains,
+                contacts_allowed=True,
+                cut_date=None,
+            )
+
+            async def cached_registry(*_args, **_kwargs):
+                return registry
+
+            registry_reader = cached_registry
+            if any(
+                row.get("representative_id")
+                for row in registry.get("directory", {}).get("rows", [])
+            ):
+                source_identity = await _trusted_directory_identity(
+                    resolver, employee_id
+                )
+        view = await read_dossier_view(
             session,
             tournament=tournament,
             edition_year=edition_year,
-            finance_allowed="finance" in domains,
-            contacts_allowed="contacts" in domains,
-            media_allowed="media" in domains,
-            linked_document_ids=ids,
-            operations_allowed="operations" in domains,
-            marketing_allowed="marketing" in domains,
-            operations_edition_id=_operations_edition(captures["rows"]),
+            domains=domains,
+            cut_date=cut_date,
+            years=years,
+            source_identity=source_identity,
+            employee_id=employee_id,
+            record_reader=read_records,
+            source_reader=load_dossier_sources,
+            registry_reader=registry_reader,
+            expense_reader=read_expense_lines,
         )
-        return captures, sources
+        output_sources = {**view["sources"]}
+        if source_identity is None:
+            output_sources.pop("directory_private", None)
+        if (
+            request is not None
+            and cut_date is None
+            and "contacts" in domains
+            and output_sources.get("directory", {}).get("rows")
+        ):
+            output_sources.setdefault(
+                "directory_private",
+                {"source": PRIVATE_DIRECTORY_SOURCE, "status": "denied", "rows": []},
+            )
+        return {**view, "sources": output_sources}
 
     @router.get("/direccion", include_in_schema=False)
     async def direction_entry(
@@ -634,6 +907,8 @@ def create_dossier_router(guard, source_access, is_superadmin) -> APIRouter:
         employee=Depends(get_current_empleado),
     ):
         params = request.query_params
+        cut = _cut_date(params.get("cut_date", ""))
+        team_page = _team_page(params.get("team_page", ""))
         tournament, tournaments = await scoped_tournament(
             session, employee, params.get("tournament_id", "")
         )
@@ -654,11 +929,20 @@ def create_dossier_router(guard, source_access, is_superadmin) -> APIRouter:
             "sources": [],
             "nonce": nonce,
             "saved": params.get("guardado") == "1",
+            "cut_date": cut.isoformat() if cut else None,
         }
         if tournament and edition_year:
-            captures, sources = await edition_data(
-                session, tournament, edition_year, domains
+            dossier_view = await edition_data(
+                session,
+                tournament,
+                edition_year,
+                domains,
+                editions,
+                cut,
+                request=request,
+                employee_id=UUID(str(employee.id)),
             )
+            captures, sources = dossier_view["captures"], dossier_view["sources"]
             records = captures["rows"]
             entities, categories = _scope_choices(sources, records)
             _selection(selected["phase"], PHASES, "Fase")
@@ -667,38 +951,71 @@ def create_dossier_router(guard, source_access, is_superadmin) -> APIRouter:
             finance_rows = {
                 row["id"]: row
                 for row in sources.get("finance", {}).get("rows", [])
-                if row.get("id")
+                if "finance" in domains and row.get("id")
             }
             linked_finance_ids = {
                 row["fields"]["document_id"]
                 for row in records
                 if row["kind"] == "financial_link"
                 and row["fields"]["document_id"] in finance_rows
-                and _finance_link_matches(
+                and finance_link_matches(
                     row, finance_rows[row["fields"]["document_id"]]
                 )
             }
+            roster_rows, roster_pages = _team_slice(
+                sources, selected, team_page, tournament["id"], edition_year, cut
+            )
+            source_rows = {
+                "finance": [
+                    row
+                    for row in dossier_view["resolved_finance_documents"]
+                    if row.get("id") not in linked_finance_ids
+                ],
+                "finance_lines": [],
+                "team_roster": roster_rows,
+            }
             rows = [
                 _view_source(row, section, domain)
-                for domain, section, row in _source_rows(sources)
-                if domain != "finance"
-                or (
-                    row.get("edition_year", edition_year) == edition_year
-                    and row.get("id") not in linked_finance_ids
-                )
+                for domain, section, row in _source_rows(sources, source_rows)
             ]
+            expense_candidates = dossier_view["expense_candidates"]
+            references = {
+                "finance": finance_rows,
+                "resolved_finance": {
+                    row["id"]: row
+                    for row in dossier_view["resolved_finance_documents"]
+                    if "finance" in domains and row.get("id")
+                },
+                "finance_lines": {
+                    row["id"]: row
+                    for row in sources.get("finance_lines", {}).get("rows", [])
+                },
+                "known_expenses": {row["id"] for row in expense_candidates},
+                "captures": {row["id"]: row for row in records},
+            }
             rows.extend(
-                _view_record(row, sources, finance_rows, tournament["id"], edition_year)
+                _view_record(
+                    row,
+                    sources,
+                    references,
+                    tournament["id"],
+                    edition_year,
+                    finance_allowed="finance" in domains,
+                )
                 for row in records
             )
-            verified = _edition_verified(sources, editions, edition_year)
             write_access = set()
-            if captures.get("status") in {"available", "partial"}:
+            if cut is None and captures.get("status") in {"available", "partial"}:
                 write_access = domains & await capture_permissions(session, employee)
             capture_config = _capture_config(
-                write_access, sources, records, edition_year
+                write_access,
+                sources,
+                records,
+                edition_year,
+                expense_candidates,
+                finance_allowed="finance" in domains,
             )
-            if not verified:
+            if not dossier_view["edition_verified"]:
                 capture_config = {
                     kind: config
                     for kind, config in capture_config.items()
@@ -706,7 +1023,7 @@ def create_dossier_router(guard, source_access, is_superadmin) -> APIRouter:
                 }
             elif sources.get("operations", {}).get(
                 "edition_verified"
-            ) and not _operations_edition(records):
+            ) and not operations_edition(records):
                 capture_config.pop("operations_edition", None)
             context.update(
                 sources=[
@@ -714,7 +1031,11 @@ def create_dossier_router(guard, source_access, is_superadmin) -> APIRouter:
                     for domain, label in DOMAIN_LABELS.items()
                     if domain in sources
                 ]
-                + [("Captura", {**captures, "source": "dossier_capture"})],
+                + (
+                    [("Captura", {**captures, "source": "dossier_capture"})]
+                    if cut is None
+                    else []
+                ),
                 registration_summary=(
                     _view_source(
                         sources["registration"]["summary"],
@@ -726,13 +1047,25 @@ def create_dossier_router(guard, source_access, is_superadmin) -> APIRouter:
                     else None
                 ),
                 queried_at=sources.get("queried_at"),
+                roster_observed_at=sources.get("team_roster", {}).get("observed_at"),
+                roster_pages=roster_pages,
                 selected=selected,
-                sections=_sections(rows, selected, entities, domains),
+                sections=_sections(
+                    rows,
+                    selected,
+                    entities,
+                    domains if cut is None else set(),
+                    roster_only=cut is not None,
+                ),
                 entity_options=_choices(entities),
                 category_options=_choices(categories),
                 phase_options=list(PHASES.items()),
                 writable=bool(capture_config),
-                csrf=request.session.setdefault(CSRF_KEY, secrets.token_urlsafe(32)),
+                csrf=(
+                    request.session.setdefault(CSRF_KEY, secrets.token_urlsafe(32))
+                    if cut is None
+                    else ""
+                ),
                 capture_config=capture_config,
                 blank={**selected, "fields": {}},
             )
@@ -785,13 +1118,18 @@ def create_dossier_router(guard, source_access, is_superadmin) -> APIRouter:
         domains = await authorized_sources(session, employee)
         if config["domain"] not in domains:
             raise HTTPException(403, "No tienes acceso a la fuente de esta captura.")
-        captures, sources = await edition_data(
-            session, tournament, edition_year, domains
-        )
-        editions = await scoped_editions(session, tournament, domains)
-        if kind != "operations_edition" and not _edition_verified(
-            sources, editions, edition_year
+        finance_allowed = "finance" in domains
+        if not finance_allowed and (
+            kind == "medical_transfer"
+            or (kind == "visit" and "field_report_document_id" in values)
         ):
+            raise HTTPException(403, "El respaldo requiere acceso a Finanzas.")
+        editions = await scoped_editions(session, tournament, domains)
+        dossier_view = await edition_data(
+            session, tournament, edition_year, domains, editions
+        )
+        captures, sources = dossier_view["captures"], dossier_view["sources"]
+        if kind != "operations_edition" and not dossier_view["edition_verified"]:
             raise HTTPException(422, "Vincula primero una fuente para esta edición.")
         if captures.get("status") not in {"available", "partial"}:
             raise HTTPException(503, "La fuente de captura no está disponible.")
@@ -821,6 +1159,8 @@ def create_dossier_router(guard, source_access, is_superadmin) -> APIRouter:
             )
             if not existing or existing["kind"] != kind:
                 raise HTTPException(404, "El registro no existe en este alcance.")
+            if not finance_allowed and _record_requires_finance(existing):
+                raise HTTPException(403, "El respaldo requiere acceso a Finanzas.")
             if any(existing[key] != value for key, value in scope.items()):
                 raise HTTPException(422, "El alcance del registro es fijo.")
             if str(existing["revision"]) != revision:
@@ -829,6 +1169,22 @@ def create_dossier_router(guard, source_access, is_superadmin) -> APIRouter:
             validated = validate_record(kind, scope, fields, evidence)
         except DossierRecordError as exc:
             raise HTTPException(422, str(exc)) from None
+        person_id = validated["fields"].get("person_id")
+        if (
+            kind == "contact"
+            and validated["fields"].get("contact_role") == "representante_local"
+            and person_id
+            and not any(
+                contact.get("representative_id") == person_id
+                and contact.get("entity") == validated["entity"]
+                and contact.get("representation_status") == "confirmed"
+                for contact in sources.get("directory", {}).get("rows", [])
+            )
+        ):
+            raise HTTPException(
+                422,
+                "El representante indicado no coincide con el directorio y la entidad.",
+            )
         if kind == "activation_photo":
             photo = next(
                 (
@@ -964,7 +1320,7 @@ def create_dossier_router(guard, source_access, is_superadmin) -> APIRouter:
             edition_year,
             record["fields"]["photo_id"],
             expected_category=record["category"] or None,
-            operations_edition_id=_operations_edition(captures["rows"]),
+            operations_edition_id=operations_edition(captures["rows"]),
         )
         if result is None:
             raise HTTPException(404, "Fotografía no disponible.")

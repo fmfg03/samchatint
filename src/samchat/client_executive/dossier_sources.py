@@ -827,6 +827,7 @@ def _finance_row(row: dict) -> dict:
             _iso(row.get("fecha_pago_efectiva")) if proven else None
         ),
         "payment_recorded_at": _iso(row.get("pagado_en")) if paid else None,
+        "payment_method": row.get("metodo_pago") if proven else None,
         "proof_available": proven,
         "updated_at": _iso(row.get("last_recorded_event_at")),
         "supplier_advance": row.get("is_supplier_advance"),
@@ -868,7 +869,7 @@ async def _finance(
                        END AS category,
                        d.monto_total, d.monto_solicitado, d.concepto_pago, d.currency,
                        d.is_supplier_advance, d.creado_en, d.pagado_en,
-                       d.fecha_pago_efectiva,
+                       d.fecha_pago_efectiva, d.metodo_pago,
                        GREATEST(d.creado_en, d.enviado_en, d.aprobado_en, d.pagado_en,
                                 expenses.latest_update) AS last_recorded_event_at,
                        expenses.expense_dates, expenses.expenses_by_currency,

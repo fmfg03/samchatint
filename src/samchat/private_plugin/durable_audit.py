@@ -21,6 +21,7 @@ from .catalog import operations
 ACTIONS = frozenset(op.action for op in operations()) | {
     "get_profile",
     "direction_read_summary",
+    "direction_read_dossier",
     "direction_list_scopes",
     "mcp.tools.list",
     "mcp.tools.call",

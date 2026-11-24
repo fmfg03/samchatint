@@ -19,6 +19,14 @@ from mcp.shared.exceptions import McpError
 
 from .contracts import AuditSink, Denied, Identity, IdentityProvider
 from .direction_read import DIRECTION_OUTPUT_SCHEMA, DIRECTION_SCOPES_OUTPUT_SCHEMA
+from .dossier_read import ACTION as DOSSIER_ACTION
+from .dossier_read import (
+    DOSSIER_INPUT_SCHEMA,
+    DOSSIER_OUTPUT_SCHEMA,
+    DossierQuery,
+    DossierReadResult,
+    parse_dossier_query,
+)
 from .perimeter import digest
 
 
@@ -48,6 +56,18 @@ class DirectionReader(Protocol):
         year: int = 2026,
     ) -> dict:
         """Repeat canonical employee/scope/source authorization before reading."""
+
+
+class DossierReader(Protocol):
+    async def read(
+        self, *, identity: Identity, query: DossierQuery
+    ) -> DossierReadResult:
+        """Read only the authenticated caller's exact dossier scope."""
+
+    async def verify_release(
+        self, *, identity: Identity, query: DossierQuery, authority: tuple
+    ) -> None:
+        """Revalidate the read scope after the durable receipt writes."""
 
 
 PROFILE_SCHEMA = {
@@ -86,7 +106,9 @@ def _descriptor(name: str, description: str, schema: dict, scopes: list) -> type
     )
 
 
-def descriptors(identity: Identity) -> list[types.Tool]:
+def descriptors(
+    identity: Identity, *, dossier_enabled: bool = False
+) -> list[types.Tool]:
     """Finite local catalog; scope membership restricts, never grants authority."""
     profile = _descriptor(
         "get_profile",
@@ -121,6 +143,18 @@ def descriptors(identity: Identity) -> list[types.Tool]:
         )
         scopes.outputSchema = DIRECTION_SCOPES_OUTPUT_SCHEMA
         result.append(scopes)
+        if dossier_enabled:
+            dossier = _descriptor(
+                DOSSIER_ACTION,
+                "Read the live dossier for one authorized tournament and edition. "
+                "Use exact entity, phase, category or recorded cut-date selectors when known. "
+                "Missing sources remain gaps. Protected details open in authenticated Dirección. "
+                "Follow pagination.next_offset when present; partial sources are not totals.",
+                DOSSIER_INPUT_SCHEMA,
+                ["direction:read"],
+            )
+            dossier.outputSchema = DOSSIER_OUTPUT_SCHEMA
+            result.append(dossier)
     return result
 
 
@@ -130,7 +164,7 @@ def _selectors(arguments: dict) -> dict:
     year = arguments.get("year")
     if type(year) is not int or not 2000 <= year <= 2100:
         raise Denied("INVALID_ARGUMENTS")
-    result = {"year": year}
+    result: dict[str, int | str] = {"year": year}
     for key in ("portfolio_id", "tournament_id"):
         if key not in arguments:
             continue
@@ -154,6 +188,7 @@ def create_local_read_server(
     issuer: str,
     audience: str,
     installation_id: str,
+    dossier: DossierReader | None = None,
 ) -> Server:
     """Construct only an in-process SDK object; callers supply no runtime config.
 
@@ -214,7 +249,7 @@ def create_local_read_server(
         try:
             identity = authenticate()
             record(identity, "mcp.tools.list", "READ_CATALOG")
-            return descriptors(identity)
+            return descriptors(identity, dossier_enabled=dossier is not None)
         except Denied as exc:
             code = str(exc)
             if code != "AUDIT_UNAVAILABLE":
@@ -227,12 +262,15 @@ def create_local_read_server(
     async def call_tool(request: types.CallToolRequest) -> types.ServerResult:
         identity = None
         action = "unregistered"
+        dossier_authority = None
+        dossier_query = None
         try:
             identity = authenticate()
             if request.params.name not in {
                 "get_profile",
                 "direction_read_summary",
                 "direction_list_scopes",
+                DOSSIER_ACTION,
             }:
                 raise Denied("CAPABILITY_DISABLED")
             action = request.params.name
@@ -252,12 +290,21 @@ def create_local_read_server(
                     if not Draft202012Validator(SCOPES_INPUT).is_valid(arguments):
                         raise Denied("INVALID_ARGUMENTS")
                     selectors = arguments
+                elif action == DOSSIER_ACTION:
+                    if dossier is None:
+                        raise Denied("CAPABILITY_DISABLED")
+                    dossier_query = parse_dossier_query(arguments)
                 else:
                     selectors = _selectors(arguments)
                 record(identity, action, "READ_REQUESTED")
                 if action == "direction_list_scopes":
                     data = await direction.list_scopes(identity=identity, **selectors)
                     output_schema = DIRECTION_SCOPES_OUTPUT_SCHEMA
+                elif action == DOSSIER_ACTION:
+                    assert dossier is not None and dossier_query is not None
+                    result = await dossier.read(identity=identity, query=dossier_query)
+                    data, dossier_authority = result.data, result.authority
+                    output_schema = DOSSIER_OUTPUT_SCHEMA
                 else:
                     data = await direction.read(identity=identity, **selectors)
                     output_schema = DIRECTION_OUTPUT_SCHEMA
@@ -297,6 +344,14 @@ def create_local_read_server(
             # that expired, changed identity or was revoked during that wait.
             if authenticate() != identity:
                 raise Denied("UNAUTHENTICATED")
+            if dossier is not None and dossier_query is not None:
+                if dossier_authority is None:
+                    raise Denied("SCOPE_UNPROVEN")
+                await dossier.verify_release(
+                    identity=identity, query=dossier_query, authority=dossier_authority
+                )
+                if authenticate() != identity:
+                    raise Denied("UNAUTHENTICATED")
             return types.ServerResult(
                 types.CallToolResult(
                     isError=False,

@@ -140,13 +140,13 @@ class MountEvidenceTest(unittest.TestCase):
 
     def test_profile_defaults_are_evidence_and_direction_not_role_grant(self):
         catalog = {entry["key"]: entry for entry in self.data["access_profile_catalog"]}
-        self.assertEqual(len(catalog), 42)
+        self.assertEqual(len(catalog), 44)
         dossier_access = {
             key: entry
             for key, entry in catalog.items()
             if key.startswith("direccion.expediente_")
         }
-        self.assertEqual(len(dossier_access), 5)
+        self.assertEqual(len(dossier_access), 7)
         self.assertTrue(
             all(entry["default_roles"] == [] for entry in dossier_access.values())
         )

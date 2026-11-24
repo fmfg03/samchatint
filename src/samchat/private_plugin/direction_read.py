@@ -394,7 +394,9 @@ class DirectionReadAdapter:
             raise Denied("UNAUTHENTICATED")
         return context
 
-    async def _authorize(self, identity, portfolio_id, tournament_id):
+    async def _authorize(
+        self, identity: Identity, portfolio_id: str | None, tournament_id: str | None
+    ) -> tuple[DirectionContext, dict, dict, dict[str, bool], str]:
         context = await self._current(identity)
         employee, owners = context.employee, self._owners
         assigned = await owners.assigned_portfolios(context.session, employee)
@@ -418,6 +420,32 @@ class DirectionReadAdapter:
         ):
             raise Denied("FORBIDDEN")
         return context, args, scope, access, organization
+
+    async def authorize_tournament(
+        self,
+        *,
+        identity: Identity,
+        portfolio_id: str | None,
+        tournament_id: str,
+    ) -> tuple[DirectionContext, dict, dict, dict[str, bool], str]:
+        """Provide current owner authorization for an exact single-tournament read."""
+        try:
+            if not identity.profile_id or _selection(tournament_id) != tournament_id:
+                raise Denied("FORBIDDEN")
+            authorized = await self._authorize(identity, portfolio_id, tournament_id)
+            scope = authorized[2]
+            selected = scope["selected"]
+            if (
+                scope["tournament_id"] != tournament_id
+                or (portfolio_id is not None and scope["portfolio_id"] != portfolio_id)
+                or len(selected) != 1
+                or selected[0]["id"] != tournament_id
+                or not scope["portfolio_ids"]
+            ):
+                raise Denied("SCOPE_CHANGED")
+            return authorized
+        except Exception as exc:
+            raise self._safe_error(exc) from None
 
     async def list_scopes(
         self, *, identity: Identity, cursor: str | None = None
