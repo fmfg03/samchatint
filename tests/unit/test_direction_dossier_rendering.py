@@ -40,6 +40,12 @@ def dossier_client(monkeypatch):
         AsyncMock(return_value=[{"id": tournament_id, "name": "Copa de prueba"}]),
     )
     monkeypatch.setattr(routes, "known_editions", AsyncMock(return_value=[2026]))
+    monkeypatch.setattr(routes, "load_dossier_registry", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        routes,
+        "read_expense_lines",
+        AsyncMock(return_value={"status": "empty", "rows": []}),
+    )
     return TestClient(app, follow_redirects=False), tournament_id
 
 
@@ -392,3 +398,156 @@ def test_dossier_photo_preview_requires_scope_evidence_and_only_links_protected_
     else:
         assert preview.status_code == 422
         assert "esta edición y categoría" in preview.json()["detail"]
+
+
+def test_attributed_expense_appears_once_without_whole_invoice_amount(
+    dossier_client, monkeypatch
+):
+    client, tid = dossier_client
+    parent, expense_id = str(uuid4()), str(uuid4())
+    capture = _record(
+        "expense_line_link",
+        "finance",
+        phase="nacional",
+        entity="",
+        expense_id=expense_id,
+        source_document_id=parent,
+        concept="hotel_liquidacion",
+        service_type="Hospedaje",
+    )
+    _stub_page(
+        monkeypatch,
+        records=[capture],
+        sources={
+            "categories": ["Juvenil"],
+            "finance": {
+                "source": "Gastos",
+                "status": "available",
+                "rows": [
+                    {
+                        "id": parent,
+                        "label": "Informe de hotel",
+                        "kind": "INFORME",
+                        "amount_document": "22450.00",
+                        "edition_year": 2026,
+                    }
+                ],
+            },
+        },
+        permissions={"operations", "finance"},
+    )
+    reader = AsyncMock(
+        return_value={
+            "status": "available",
+            "rows": [
+                {
+                    "id": expense_id,
+                    "document_id": parent,
+                    "expense_reference": "PARTIDA-045",
+                    "reference": "INF-425",
+                    "amount": "100.25",
+                    "currency": "MXN",
+                    "expense_date": "2027-01-09",
+                    "updated_at": "2027-01-10T10:30:00Z",
+                    "source": "Gastos · Partidas de informes",
+                    "expense_phase": "nacional",
+                    "document_phase": "nacional",
+                    "expense_categories": ["Juvenil"],
+                    "document_categories": ["Juvenil"],
+                },
+            ],
+        }
+    )
+    monkeypatch.setattr(routes, "read_expense_lines", reader)
+    response = client.get(PATH, params={"tournament_id": tid, "edition_year": 2026})
+    assert response.status_code == 200
+    assert "Liquidación de hotel" in response.text
+    assert "Hospedaje" in response.text
+    assert response.text.count("<dd>100.25</dd>") == 1
+    assert "22450.00" not in response.text
+    assert "<dd>2027-01-09</dd>" in response.text
+    assert "<dd>PARTIDA-045</dd>" in response.text
+    assert reader.await_args.kwargs["expense_ids"] == (expense_id,)
+    # The title is not painted as a second record with the invoice's total.
+    assert "<h4>Informe de hotel</h4>" not in response.text
+
+
+def test_visit_report_link_and_evidenced_operator_transfer_stage(
+    dossier_client, monkeypatch
+):
+    client, tid = dossier_client
+    report_id, first_id, later_id = (str(uuid4()) for _ in range(3))
+    visit = _record(
+        "visit", responsible="AZ", visit_date="2026-11-18", report_document_id=report_id
+    )
+    first = _record(
+        "financial_link", "finance", document_id=first_id, concept="ayuda_operador"
+    )
+    later = _record(
+        "financial_link", "finance", document_id=later_id, concept="ayuda_operador"
+    )
+
+    def transfer(document_id, reference, effective_payment_date):
+        return {
+            "id": document_id,
+            "label": reference,
+            "reference": reference,
+            "kind": "SOLICITUD",
+            "phase": "estatal",
+            "edition_year": 2026,
+            "category": "Juvenil",
+            "payment_method": "Transferencia",
+            "proof_available": True,
+            "effective_payment_date": effective_payment_date,
+        }
+
+    _stub_page(
+        monkeypatch,
+        records=[visit, first, later],
+        sources={
+            "finance": {
+                "source": "Gastos",
+                "status": "available",
+                "rows": [
+                    {
+                        "id": report_id,
+                        "label": "Informe de la visita",
+                        "kind": "INFORME",
+                        "phase": "estatal",
+                        "reference": "INF-VISITA",
+                        "edition_year": 2026,
+                    },
+                    transfer(later_id, "AYUDA-2", "2027-01-01"),
+                    transfer(first_id, "AYUDA-1", "2026-10-01"),
+                ],
+            },
+        },
+        permissions={"operations", "finance"},
+    )
+    result = client.get(PATH, params={"tournament_id": tid, "edition_year": 2026})
+    assert result.status_code == 200
+    assert f'<a href="/documentos/{report_id}">Ver informe en Gastos</a>' in result.text
+    assert (
+        _cell(
+            _article(result.text, "Ver informe en Gastos"),
+            "Referencia del informe en Gastos",
+        )
+        == "INF-VISITA"
+    )
+    assert "Primera fecha vinculada con transferencia acreditada" in _article(
+        result.text, "<dd>AYUDA-1</dd>"
+    )
+    assert "Transferencia posterior acreditada" in _article(
+        result.text, "<dd>AYUDA-2</dd>"
+    )
+
+    monkeypatch.setattr(routes, "read_domains", AsyncMock(return_value={"operations"}))
+    monkeypatch.setattr(
+        routes,
+        "read_records",
+        AsyncMock(return_value={"status": "available", "rows": [visit]}),
+    )
+    page = client.get(PATH, params={"tournament_id": tid, "edition_year": 2026})
+    assert page.status_code == 200
+    assert "Ver informe en Gastos" not in page.text
+    assert f"/documentos/{report_id}" not in page.text

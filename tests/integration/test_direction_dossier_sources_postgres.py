@@ -53,7 +53,7 @@ async def test_canonical_roster_and_finance_are_scoped_by_edition(dossier_postgr
                 id uuid, tipo text, estado text, numero_referencia text,
                 referencia_operaciones text, fase text, categorias jsonb,
                 monto_total numeric, monto_solicitado numeric, concepto_pago text,
-                currency text, is_supplier_advance boolean, creado_en timestamp,
+                currency text, is_supplier_advance boolean, creado_en timestamp, metodo_pago text,
                 enviado_en timestamp, aprobado_en timestamp, pagado_en timestamp,
                 fecha_pago_efectiva date, fecha_pago date, pago_urgente boolean,
                 empleado_id uuid, beneficiario_empleado_id uuid,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -26,6 +27,14 @@ PERMISSION_KEYS = {
     "marketing": "direccion.expediente_mercadotecnia",
     "contacts": "direccion.expediente_contactos",
     "media": "direccion.expediente_fotografias",
+    "medical_transfers": "direccion.expediente_traslados",
+    "sponsor_guests": "direccion.expediente_invitados",
+}
+SENSITIVE_PARENT_DOMAINS = {
+    "contacts": "operations",
+    "media": "marketing",
+    "medical_transfers": "operations",
+    "sponsor_guests": "marketing",
 }
 
 
@@ -58,9 +67,19 @@ CAPTURE_FIELDS = {
         STATE,
         responsibility=_field("Responsabilidad"),
         name=_field("Nombre"),
+        contact_role=_field("Ámbito de la responsabilidad", "contact_role", False),
+        person_id=_field("ID de la persona de referencia", "contact_person", False),
         email=_field("Correo", "email", False),
         phone=_field("Teléfono", "tel", False),
         birth_date=_field("Fecha de nacimiento", "date", False),
+        birth_date_reference=_field(
+            "Respaldo de la fecha de nacimiento", "text", False
+        ),
+        spouse_name=_field("Nombre del cónyuge", "text", False),
+        spouse_birth_date=_field("Fecha de nacimiento del cónyuge", "date", False),
+        spouse_birth_date_reference=_field(
+            "Respaldo de la fecha de nacimiento del cónyuge", "text", False
+        ),
         personal_date=_field("Otra fecha personal autorizada", "date", False),
         personal_date_label=_field("Descripción de la otra fecha", "text", False),
     ),
@@ -130,6 +149,17 @@ CAPTURE_FIELDS = {
         end_date=_field("Fin", "date"),
         sports_complex=_field("Unidad deportiva", "text", False),
         fields=_field("Canchas", "text", False),
+        field_count=_field("Número de canchas", "integer", False),
+        field_types=_field("Tipos de canchas", "text", False),
+    ),
+    "national_itinerary": _capture(
+        "Hito del itinerario nacional",
+        "operations",
+        NATIONAL,
+        event_type=_field("Hito", "itinerary_event"),
+        event_date=_field("Fecha", "date"),
+        event_time=_field("Hora local", "time", False),
+        venue=_field("Sede", "text", False),
     ),
     "lodging": _capture(
         "Hotel y camas-noche",
@@ -142,7 +172,8 @@ CAPTURE_FIELDS = {
         "Alimentos",
         "operations",
         NATIONAL,
-        meal_type=_field("Tipo de alimento"),
+        meal_type=_field("Detalle de los alimentos"),
+        meal_kind=_field("Servicio de alimentos", "meal_kind", False),
         servings=_field("Raciones", "integer"),
     ),
     "medical_service": _capture(
@@ -151,6 +182,16 @@ CAPTURE_FIELDS = {
         NATIONAL,
         provider=_field("Servicio o proveedor", "text", False),
         transfers=_field("Accidentes que requirieron traslado", "integer", False),
+        description=_field("Descripción y cobertura del servicio", "text", False),
+    ),
+    "medical_transfer": _capture(
+        "Traslado sin datos personales",
+        "medical_transfers",
+        NATIONAL,
+        incident_date=_field("Fecha del traslado", "date"),
+        incident_time=_field("Hora local del traslado", "time", False),
+        venue_id=_field("Sede acreditada", "medical_venue"),
+        medical_service_id=_field("Servicio médico acreditado", "medical_service"),
     ),
     "visit": _capture(
         "Visita de AZ, CL u otro responsable",
@@ -159,6 +200,8 @@ CAPTURE_FIELDS = {
         responsible=_field("Responsable de la visita"),
         visit_date=_field("Fecha", "date"),
         report_reference=_field("Referencia del informe", "text", False),
+        report_document_id=_field("Informe de SamChat", "document", False),
+        outcome=_field("Resultados de la visita", "text", False),
     ),
     "financial_link": _capture(
         "Vínculo de una solicitud o informe existente",
@@ -167,17 +210,35 @@ CAPTURE_FIELDS = {
         document_id=_field("Documento de SamChat", "document"),
         concept=_field("Concepto del expediente", "finance_concept"),
         visit_id=_field("Visita asociada", "visit", False),
+        service_type=_field("Tipo de servicio del hotel", "text", False),
+    ),
+    "expense_line_link": _capture(
+        "Vínculo de una partida existente de Gastos",
+        "finance",
+        BOTH,
+        expense_id=_field("Partida de Gastos", "expense"),
+        concept=_field("Concepto del expediente", "finance_concept"),
+        visit_id=_field("Visita asociada", "visit", False),
+        service_type=_field("Tipo de servicio del hotel", "text", False),
     ),
     "activation": _capture(
         "Activación y visitantes de patrocinadores",
         "marketing",
         NATIONAL,
         supplier=_field("Proveedor de activación", "text", False),
+        supplier_on_site=_field("Asistencia presencial acreditada", "boolean", False),
         sponsor=_field("Patrocinador", "text", False),
         visitors=_field("Visitantes vinculados", "integer", False),
         activity=_field("Actividad"),
         activity_date=_field("Fecha", "date", False),
         results=_field("Resultados", "text", False),
+    ),
+    "sponsor_guest": _capture(
+        "Invitado de patrocinador",
+        "sponsor_guests",
+        NATIONAL,
+        activation_id=_field("Activación vinculada", "activation"),
+        guest_name=_field("Nombre del invitado"),
     ),
     "activation_photo": _capture(
         "Fotografía de una activación",
@@ -193,6 +254,7 @@ FINANCE_CONCEPTS = {
     "uniformes": "Uniformes",
     "balones": "Balones",
     "equipamiento": "Equipamiento",
+    "utileria": "Utilería",
     "gasto_visita": "Gastos de visita",
     "viaje_personal": "Viajes del personal",
     "hotel_anticipo": "Anticipo de hotel",
@@ -200,6 +262,9 @@ FINANCE_CONCEPTS = {
     "hotel_otro": "Otro concepto hotelero",
     "proveedor": "Proveedor nacional",
     "servicio_medico": "Servicio médico",
+    "medicos": "Honorarios de médicos",
+    "ambulancias": "Ambulancias",
+    "material_curacion": "Material de curación",
     "seguro": "Seguro",
 }
 STATE_CONCEPTS = {
@@ -207,9 +272,40 @@ STATE_CONCEPTS = {
     "uniformes",
     "balones",
     "equipamiento",
+    "utileria",
     "gasto_visita",
 }
+MEAL_KINDS = {
+    "desayuno": "Desayuno",
+    "comida": "Comida",
+    "box_lunch": "Box lunch",
+    "cena": "Cena",
+    "otro": "Otro servicio de alimentos",
+}
 GENDERS = {"femenil": "Femenil", "varonil": "Varonil", "mixto": "Mixto"}
+CONTACT_ROLES = {
+    "plataforma_sports": "Responsable de Plataforma Sports",
+    "representante_local": "Representante de la entidad",
+}
+NATIONAL_ITINERARY_EVENTS = {
+    "inauguracion": "Inauguración",
+    "clausura": "Clausura",
+    "finales": "Finales",
+}
+HOTEL_CONCEPTS = {"hotel_anticipo", "hotel_liquidacion", "hotel_otro"}
+UUID_FIELD_TYPES = frozenset(
+    {
+        "activation",
+        "contact_person",
+        "document",
+        "expense",
+        "medical_service",
+        "medical_venue",
+        "operations_id",
+        "photo",
+        "visit",
+    }
+)
 
 
 class DossierRecordError(ValueError):
@@ -246,10 +342,11 @@ async def read_domains(session: Any, employee: Any) -> set[str]:
         for domain in ("operations", "finance", "marketing")
         if decisions[domain] is not False
     }
-    if "operations" in domains and decisions["contacts"] is True:
-        domains.add("contacts")
-    if "marketing" in domains and decisions["media"] is True:
-        domains.add("media")
+    domains.update(
+        domain
+        for domain, parent in SENSITIVE_PARENT_DOMAINS.items()
+        if parent in domains and decisions[domain] is True
+    )
     return domains
 
 
@@ -313,6 +410,12 @@ def _typed_value(value: Any, value_type: str) -> str | int | bool:
     try:
         if value_type == "date":
             return date.fromisoformat(value).isoformat()
+        if (
+            value_type == "time"
+            and isinstance(value, str)
+            and re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9])?", value)
+        ):
+            return value
         if value_type in {"integer", "positive_integer", "money"}:
             if isinstance(value, bool):
                 raise ValueError
@@ -332,6 +435,18 @@ def _typed_value(value: Any, value_type: str) -> str | int | bool:
             return value
         if value_type == "gender" and isinstance(value, str) and value in GENDERS:
             return value
+        if (
+            value_type == "contact_role"
+            and isinstance(value, str)
+            and value in CONTACT_ROLES
+        ):
+            return value
+        if (
+            value_type == "itinerary_event"
+            and isinstance(value, str)
+            and value in NATIONAL_ITINERARY_EVENTS
+        ):
+            return value
         if value_type == "boolean":
             if value is True or value == "true":
                 return True
@@ -343,11 +458,54 @@ def _typed_value(value: Any, value_type: str) -> str | int | bool:
             and value in FINANCE_CONCEPTS
         ):
             return value
-        if value_type in {"document", "visit", "activation", "photo", "operations_id"}:
+        if value_type == "meal_kind" and isinstance(value, str) and value in MEAL_KINDS:
+            return value
+        if value_type in UUID_FIELD_TYPES:
             return str(UUID(str(value)))
     except (InvalidOperation, AttributeError, TypeError, ValueError) as exc:
         raise DossierRecordError("Un campo tiene un formato o valor inválido.") from exc
     raise DossierRecordError("Un campo tiene un formato o valor inválido.")
+
+
+def _validate_contact(fields: dict) -> None:
+    if ("personal_date" in fields) != ("personal_date_label" in fields):
+        raise DossierRecordError("Indica tanto la fecha personal como su descripción.")
+    if ("person_id" in fields and "contact_role" not in fields) or (
+        fields.get("contact_role") == "plataforma_sports" and "person_id" not in fields
+    ):
+        raise DossierRecordError("Identifica el ámbito y la persona de referencia.")
+    if "birth_date_reference" in fields and "birth_date" not in fields:
+        raise DossierRecordError("Indica la fecha de nacimiento para su respaldo.")
+    if (
+        "birth_date" in fields
+        and len(fields["birth_date"]) == 10
+        and "birth_date_reference" not in fields
+    ):
+        raise DossierRecordError("Indica el respaldo de la fecha de nacimiento.")
+    if ("spouse_birth_date" in fields) != ("spouse_birth_date_reference" in fields):
+        raise DossierRecordError("Indica la fecha del cónyuge junto con su respaldo.")
+    if "spouse_birth_date" in fields and "spouse_name" not in fields:
+        raise DossierRecordError("Identifica el cónyuge para registrar su fecha.")
+
+
+def _validate_financial_link(kind: str, phase: str, fields: dict) -> None:
+    concept = fields["concept"]
+    if (concept in STATE_CONCEPTS) != (phase == "estatal"):
+        raise DossierRecordError("El concepto financiero no corresponde a esta fase.")
+    if ("visit_id" in fields) != (concept == "gasto_visita"):
+        raise DossierRecordError(
+            "El gasto por visita requiere vincular la visita correspondiente."
+        )
+    if "service_type" in fields and concept not in HOTEL_CONCEPTS:
+        raise DossierRecordError(
+            "El tipo de servicio corresponde a conceptos de hotel."
+        )
+    if (
+        kind == "expense_line_link"
+        and concept in HOTEL_CONCEPTS
+        and "service_type" not in fields
+    ):
+        raise DossierRecordError("Indica el tipo de servicio acreditado del hotel.")
 
 
 def validate_record(
@@ -373,6 +531,13 @@ def validate_record(
     evidence = _clean_string(evidence_reference, 240)
     if not evidence:
         raise DossierRecordError("Indica una referencia de respaldo.")
+    if kind == "medical_transfer":
+        try:
+            evidence = str(UUID(evidence))
+        except ValueError:
+            raise DossierRecordError(
+                "Indica el ID del respaldo del traslado."
+            ) from None
     cleaned = {}
     for key, field in spec["fields"].items():
         value = fields.get(key)
@@ -405,10 +570,8 @@ def validate_record(
         raise DossierRecordError("Captura un avance, clasificación o posición.")
     if kind == "activation" and "visitors" in cleaned and "sponsor" not in cleaned:
         raise DossierRecordError("Indica el patrocinador vinculado a los visitantes.")
-    if kind == "contact" and ("personal_date" in cleaned) != (
-        "personal_date_label" in cleaned
-    ):
-        raise DossierRecordError("Indica tanto la fecha personal como su descripción.")
+    if kind == "contact":
+        _validate_contact(cleaned)
     if kind == "player_breakdown":
         if ("age" in cleaned) != ("age_cutoff" in cleaned):
             raise DossierRecordError("Indica la edad junto con su fecha de corte.")
@@ -420,16 +583,8 @@ def validate_record(
             cleaned["registrations"]
         ):
             raise DossierRecordError("Las personas únicas exceden las inscripciones.")
-    if kind == "financial_link":
-        concept = cleaned["concept"]
-        if (concept in STATE_CONCEPTS) != (phase == "estatal"):
-            raise DossierRecordError(
-                "El concepto financiero no corresponde a esta fase."
-            )
-        if ("visit_id" in cleaned) != (concept == "gasto_visita"):
-            raise DossierRecordError(
-                "El gasto por visita requiere vincular la visita correspondiente."
-            )
+    if kind in {"financial_link", "expense_line_link"}:
+        _validate_financial_link(kind, phase, cleaned)
     return {
         "phase": phase,
         "entity": entity,
@@ -440,6 +595,16 @@ def validate_record(
     }
 
 
+EXTENDED_KINDS = frozenset(
+    {
+        "national_itinerary",
+        "medical_transfer",
+        "sponsor_guest",
+        "expense_line_link",
+    }
+)
+
+
 async def read_records(
     session: Any, *, tournament_id: str, edition_year: int, allowed_domains: set[str]
 ) -> dict:
@@ -447,16 +612,25 @@ async def read_records(
         text("SELECT to_regclass('direction_dossier_records') IS NOT NULL")
     ):
         return {"status": "unavailable", "rows": []}
+    installed = await session.scalar(
+        text("SELECT to_regclass('direction_dossier_extended_records') IS NOT NULL")
+    )
+    base = """
+        SELECT id::text AS id, kind, domain, phase, entity, category, fields,
+               evidence_reference, updated_at, revision
+        FROM direction_dossier_records
+        WHERE tournament_id = CAST(:tournament AS uuid)
+          AND edition_year = :edition AND domain = ANY(:domains)
+    """
+    extended = base.replace(
+        "direction_dossier_records", "direction_dossier_extended_records"
+    )
+    query = base + (" UNION ALL " + extended if installed else "")
     rows = await session.execute(
-        text("""
-            SELECT id::text AS id, kind, domain, phase, entity, category, fields,
-                   evidence_reference, updated_at, revision
-            FROM direction_dossier_records
-            WHERE tournament_id = CAST(:tournament AS uuid)
-              AND edition_year = :edition AND domain = ANY(:domains)
-            ORDER BY phase, entity, category, kind, updated_at DESC, id
-            LIMIT 1001
-        """),
+        text(
+            query
+            + " ORDER BY phase, entity, category, kind, updated_at DESC, id LIMIT 1001"
+        ),
         {
             "tournament": tournament_id,
             "edition": edition_year,
@@ -502,26 +676,100 @@ async def _verify_reference(session: Any, capture: dict, params: dict) -> None:
             raise DossierRecordError(
                 "Primero acredita el vínculo del proyecto con Operaciones en Torneos."
             )
-    if "document_id" in fields:
+    from samchat.client_executive.dossier_finance import (
+        has_document_attribution,
+        has_expense_attributions,
+        scope_matches,
+        verify_expense_link,
+    )
+    from samchat.client_executive.dossier_sources import _phase
+
+    references = [
+        (fields.get("document_id"), "attribution"),
+        (fields.get("report_document_id"), "visit"),
+        (
+            capture["reference"] if params["kind"] == "medical_transfer" else None,
+            "medical",
+        ),
+    ]
+    for document_id, use in references:
+        if not document_id:
+            continue
         result = await session.execute(
             text("""
-                SELECT id, categorias FROM documentos
+                SELECT id, tipo, fase, categorias FROM documentos
                 WHERE id = CAST(:document AS uuid) AND torneo_id = CAST(:tournament AS uuid)
                   AND (edicion = :edition OR edicion IS NULL)
-                  AND (fase IS NULL OR btrim(fase) = '' OR lower(btrim(fase)) = :phase)
                   AND tipo IN ('SOLICITUD', 'INFORME')
-                FOR SHARE
+                FOR UPDATE
             """),
-            params,
+            {**params, "document": document_id},
         )
         document = result.mappings().one_or_none()
-        if document is None:
+        if (
+            document is None
+            or (use != "attribution" and document["tipo"] != "INFORME")
+            or (
+                str(document["fase"] or "").strip()
+                and _phase(document["fase"]) != capture["phase"]
+            )
+        ):
             raise DossierRecordError(
                 "El documento no coincide con el torneo, la edición o la fase."
             )
         if not document_category_matches(capture["category"], document["categorias"]):
             raise DossierRecordError("El documento no coincide con la categoría.")
-    for kind, field in (("visit", "visit_id"), ("activation", "activation_id")):
+        if use == "attribution" and await has_expense_attributions(
+            session, document_id
+        ):
+            raise DossierRecordError(
+                "El informe ya tiene partidas vinculadas. Usa sus partidas."
+            )
+    if fields.get("expense_id"):
+        installed = await session.scalar(
+            text(
+                "SELECT to_regclass('uq_direction_dossier_expense_attribution') IS NOT NULL"
+            )
+        )
+        if not installed:
+            raise DossierRecordError(
+                "El vínculo de partidas no está habilitado en esta instalación."
+            )
+        expense = await verify_expense_link(
+            session,
+            tournament_id=params["tournament"],
+            edition_year=params["edition"],
+            expense_id=fields["expense_id"],
+        )
+        if expense is None or not scope_matches(
+            expense, capture["phase"], capture["category"]
+        ):
+            raise DossierRecordError(
+                "La partida no coincide con el expediente seleccionado."
+            )
+        if await has_document_attribution(session, expense["document_id"]):
+            raise DossierRecordError(
+                "El informe ya está vinculado como documento completo."
+            )
+        fields["source_document_id"] = expense["document_id"]
+        params["fields"] = json.dumps(fields, ensure_ascii=False)
+    if fields.get("person_id") and fields.get("contact_role") == "plataforma_sports":
+        employee = await session.scalar(
+            text(
+                "SELECT id FROM empleados WHERE id = CAST(:person AS uuid) AND activo"
+            ),
+            {"person": fields["person_id"]},
+        )
+        if employee is None:
+            raise DossierRecordError(
+                "El responsable de PS no corresponde a un empleado activo."
+            )
+    for kind, field in (
+        ("visit", "visit_id"),
+        ("activation", "activation_id"),
+        ("national_event", "venue_id"),
+        ("medical_service", "medical_service_id"),
+    ):
         if field not in fields:
             continue
         result = await session.execute(
@@ -531,6 +779,7 @@ async def _verify_reference(session: Any, capture: dict, params: dict) -> None:
                   AND tournament_id = CAST(:tournament AS uuid) AND edition_year = :edition
                   AND phase = :phase AND entity = :entity
                   AND (category = :category OR category = '')
+                  AND (:kind <> 'sponsor_guest' OR NULLIF(btrim(fields ->> 'sponsor'), '') IS NOT NULL)
                 FOR SHARE
             """),
             {**params, "linked_record": fields[field], "linked_kind": kind},
@@ -561,6 +810,23 @@ async def save_record(
         raise DossierRecordError(
             "La captura del expediente no está habilitada en esta instalación."
         )
+    extended = kind in EXTENDED_KINDS
+    if extended and not await session.scalar(
+        text("SELECT to_regclass('direction_dossier_extended_records') IS NOT NULL")
+    ):
+        raise DossierRecordError(
+            "La captura ampliada no está habilitada en esta instalación."
+        )
+    table = (
+        "direction_dossier_extended_records"
+        if extended
+        else "direction_dossier_records"
+    )
+    revisions = (
+        "direction_dossier_extended_revisions"
+        if extended
+        else "direction_dossier_revisions"
+    )
     params = {
         **capture,
         "tournament": str(UUID(tournament_id)),
@@ -581,8 +847,8 @@ async def save_record(
     if not tournament_is_active:
         raise DossierRecordError("El torneo dejó de estar disponible para la captura.")
     await _verify_reference(session, capture, params)
-    mutate = """
-        INSERT INTO direction_dossier_records
+    mutate = f"""
+        INSERT INTO {table}
             (id, tournament_id, edition_year, phase, entity, category, domain,
              kind, fields, document_id, evidence_reference, revision, updated_by)
         VALUES (
@@ -592,8 +858,8 @@ async def save_record(
         ) ON CONFLICT (id) DO NOTHING
     """
     if record_id is not None:
-        mutate = """
-            UPDATE direction_dossier_records SET
+        mutate = f"""
+            UPDATE {table} SET
                 fields = CAST(:fields AS jsonb), document_id = CAST(:document AS uuid),
                 evidence_reference = :reference, updated_by = CAST(:actor AS uuid),
                 updated_at = now(), revision = revision + 1
@@ -610,9 +876,9 @@ async def save_record(
         row = result.mappings().one_or_none()
         if row is None and record_id is None:
             replay = await session.execute(
-                text("""
+                text(f"""
                     SELECT id::text AS id, revision, updated_at
-                    FROM direction_dossier_records
+                    FROM {table}
                     WHERE id = CAST(:record AS uuid) AND tournament_id = CAST(:tournament AS uuid)
                       AND edition_year = :edition AND phase = :phase AND entity = :entity
                       AND category = :category AND domain = :domain AND kind = :kind
@@ -629,11 +895,11 @@ async def save_record(
                 "La captura cambió. Recarga el expediente y revisa el registro."
             )
         await session.execute(
-            text("""
-                INSERT INTO direction_dossier_revisions
+            text(f"""
+                INSERT INTO {revisions}
                     (record_id, revision, actor_id, evidence_reference, snapshot)
                 SELECT id, revision, updated_by, evidence_reference, to_jsonb(record)
-                FROM direction_dossier_records AS record
+                FROM {table} AS record
                 WHERE id = CAST(:record AS uuid) AND revision = :revision
             """),
             {**params, "revision": row["revision"]},

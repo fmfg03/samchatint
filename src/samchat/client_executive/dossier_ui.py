@@ -6,8 +6,12 @@ DOSSIER_PATH = "/direccion/expediente-vivo"
 PHASES = {"estatal": "Estatal", "nacional": "Nacional"}
 DOMAIN_LABELS = {
     "registration": "Inscripciones",
+    "team_roster": "Padrón por equipo",
+    "directory": "Directorio estatal vigente",
+    "directory_private": "Datos personales autorizados del directorio",
     "operations": "Operaciones",
     "finance": "Finanzas",
+    "finance_lines": "Partidas de Gastos",
     "marketing": "Mercadotecnia",
 }
 STATUS_LABELS = {
@@ -18,6 +22,8 @@ STATUS_LABELS = {
     "documented": "Documentado",
     "unsupported": "Sin fuente configurada",
     "not_configured": "Sin fuente configurada",
+    "not_recorded": "Sin corte registrado",
+    "not_applicable": "No aplica",
     "scope_missing": "Sin vínculo de edición",
     "scope_ambiguous": "Vínculo de edición ambiguo",
     "scope_inactive": "Edición inactiva",
@@ -105,6 +111,19 @@ FIELD_LABELS = {
     "amount_requested": "Importe solicitado",
     "amount_paid": "Importe pagado",
     "proof_available": "Comprobante de pago vigente",
+    "player_registrations": "Inscripciones de jugadores",
+    "representative_name": "Nombre del representante",
+    "representative_birthday": "Cumpleaños del representante",
+    "spouse_name": "Nombre del cónyuge",
+    "spouse_birthday": "Cumpleaños del cónyuge",
+    "participation_status": "Participación en la edición",
+    "declared_entity": "Entidad registrada en origen",
+    "state_code": "Clave de entidad",
+    "zone": "Zona",
+    "phone": "Teléfono",
+    "email": "Correo",
+    "expense_reference": "Referencia de partida",
+    "aid_payment_stage": "Orden de la ayuda al operador",
 }
 
 
@@ -245,14 +264,15 @@ _VIEW = _TEMPLATES.from_string("""
                  {% if field.type in ('integer', 'positive_integer', 'money') %}
                  min="{{ field.min | default(0) }}"
                  step="{{ '0.01' if field.type == 'money' else '1' }}"
+                 {% elif field.type == 'time' %}step="1"
                  {% else %}maxlength="{{ field.max_length | default(240) }}"{% endif %}
                  {% if field.required %}required{% endif %}>
           {% endif %}
           </label>
         {% endfor %}
-        <label class="full">Referencia de respaldo
+        <label class="full">{{ 'ID del informe de respaldo' if kind == 'medical_transfer' else 'Referencia de respaldo' }}
           <input name="evidence_reference" value="{{ item.evidence_reference or '' }}"
-                 maxlength="240" required>
+                 maxlength="{{ 36 if kind == 'medical_transfer' else 240 }}" required>
         </label>
         <button type="submit" name="intent" value="preview">Revisar captura</button>
       </form>
@@ -278,7 +298,10 @@ _VIEW = _TEMPLATES.from_string("""
         {% if item.image_url %}
           <img src="{{ item.image_url }}" alt="{{ item.label }}" loading="lazy">
         {% endif %}
-        {% if writable and item.kind in capture_config %}
+        {% if item.document_url %}
+        <p><a href="{{ item.document_url }}">Ver informe en Gastos</a></p>
+        {% endif %}
+        {% if writable and item.can_edit and item.kind in capture_config %}
           <details class="edit">
             <summary>Editar registro</summary>
             {{ capture_form(item.kind, capture_config[item.kind], item) }}
@@ -301,6 +324,9 @@ _VIEW = _TEMPLATES.from_string("""
             <input name="edition_year" type="number" inputmode="numeric" min="2000" max="2100"
                    list="ediciones" value="{{ edition_year if edition_year else '' }}">
           </label>
+          <label>Corte histórico del padrón
+            <input name="cut_date" type="date" value="{{ cut_date or '' }}">
+          </label>
           <datalist id="ediciones">{{ options(editions, edition_year) }}</datalist>
           <button type="submit">Consultar</button>
         </form>
@@ -311,6 +337,13 @@ _VIEW = _TEMPLATES.from_string("""
     {% endif %}
 
     {% if sources %}
+    {% if cut_date %}
+    <section class="panel" aria-label="Padrón histórico">
+      <h2>Padrón observado el {{ cut_date }}</h2>
+      {% if roster_observed_at %}<p class="source">Observación registrada {{ roster_observed_at }}</p>{% endif %}
+      <p>Esta vista muestra el listado de equipos del corte. Para consultar el expediente vigente, deja vacía la fecha del corte histórico.</p>
+    </section>
+    {% endif %}
     <nav class="jump" aria-label="Secciones del expediente">
       {% for section in sections %}
       <a href="#seccion-{{ loop.index }}">{{ section.name }}</a>
@@ -322,18 +355,19 @@ _VIEW = _TEMPLATES.from_string("""
       <form action="{{ path }}" method="get" class="form">
         <input type="hidden" name="tournament_id" value="{{ tournament.id }}">
         <input type="hidden" name="edition_year" value="{{ edition_year }}">
+        {% if cut_date %}<input type="hidden" name="cut_date" value="{{ cut_date }}">{% endif %}
         <label>Entidad
           <select name="entity">
             <option value="">Todas las entidades</option>
             {{ options(entity_options, selected.entity) }}
           </select>
         </label>
-        <label>Fase
+        {% if not cut_date %}<label>Fase
           <select name="phase">
             <option value="">Todas las fases</option>
             {{ options(phase_options, selected.phase) }}
           </select>
-        </label>
+        </label>{% endif %}
         <label>Categoría
           <select name="category">
             <option value="">Todas las categorías</option>
@@ -342,13 +376,23 @@ _VIEW = _TEMPLATES.from_string("""
         </label>
         <button type="submit">Aplicar filtros</button>
       </form>
-      <label class="search" for="buscar">Buscar por sección, categoría o fuente
+      <label class="search" for="buscar">Buscar en esta página por equipo, sección, categoría o fuente
         <input id="buscar" type="search" maxlength="100" autocomplete="off">
       </label>
       <p class="empty" id="sin-resultados" role="status" hidden>
         No hay registros que coincidan con la búsqueda.
       </p>
     </section>
+
+    {% if roster_pages %}
+    <nav class="jump" aria-label="Páginas del padrón">
+      <span>Equipos {{ roster_pages.first }} a {{ roster_pages.last }} de {{ roster_pages.total }}
+        {% if roster_pages.partial %} disponibles en la consulta parcial{% endif %}
+      </span>
+      {% if roster_pages.previous %}<a href="{{ roster_pages.previous }}">Página anterior</a>{% endif %}
+      {% if roster_pages.next %}<a href="{{ roster_pages.next }}">Página siguiente</a>{% endif %}
+    </nav>
+    {% endif %}
 
     <section class="panel" aria-labelledby="fuentes">
       <h2 id="fuentes">Fuentes de la edición</h2>

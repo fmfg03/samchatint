@@ -77,3 +77,65 @@ autorizar capturas.
 Canon unchanged. La proyección respeta el alcance y las denegaciones de
 Dirección. La captura explícita y auditada incorpora datos faltantes y
 asociaciones sin modificar los flujos propietarios del padrón o Finanzas.
+
+## Directorio, cortes diarios y consulta de Chatty
+
+El padrón de Copa Telmex mantiene el alcance exacto de su edición. El directorio
+estatal en el sitio oficial de Copa Telmex acredita el contacto vigente. Una
+entidad puede tener un representante sin que su participación esté acreditada
+en el padrón consultado. El adaptador selecciona únicamente columnas públicas,
+usa la clave anónima en `DIRECTION_CTT_DIRECTORY_ANON_KEY` y valida el origen
+`https://api.copatelmextelcel.com.mx`. Verificar el origen y la clave del release
+oficial al configurar esta lectura. La clave de servicio queda fuera de este
+adaptador.
+
+La vista privada requiere un permiso de contactos en SamChat y una identidad
+individual autorizada por Copa Telmex. La composición de producción deberá
+proporcionar `app.state.direction_ctt_private_identity` como resolver del
+empleado y su sesión autenticada en Copa Telmex. El adaptador verifica esa misma
+identidad en GoTrue y deja actuar las políticas del Supabase propietario. Los
+cumpleaños del directorio tienen día y mes. La captura de una fecha completa
+exige su propio respaldo. Los detalles privados y fotografías se consultan en
+la vista protegida, incluso cuando la pregunta empieza en Chatty.
+
+El dueño de la base instala en orden las migraciones aditivas
+`20261124_direction_dossier_details.sql` y
+`20261124_direction_dossier_roster_daily_cuts.sql`. Los tipos nuevos y sus
+revisiones se conservan en tablas separadas. El vínculo de una partida valida
+edición, fase, categoría y documento de origen dentro de la misma transacción.
+Una partida atribuida no convierte el gasto en un pago y se evita sumar el
+importe íntegro del informe junto con sus partidas atribuidas. Los pagos
+conservan los comprobantes y fechas efectivas de Payment Run.
+
+El cron o temporizador autorizado ejecuta el siguiente comando con el entorno
+del release y un rol dedicado indicado por `DIRECTION_DOSSIER_CUT_DATABASE_URL`.
+
+```sh
+python scripts/record_direction_dossier_roster_cut.py \
+  --tournament-id <uuid-autorizado> --edition-year <edicion-autorizada> --apply
+```
+
+Programar un corte diario cerca del final del día en `America/Mexico_City` y
+registrar la hora de observación. Para systemd se puede usar
+`OnCalendar=*-*-* 23:55:00 America/Mexico_City` con `Persistent=false`.
+El rol web tiene lectura. El rol del corte requiere lectura del padrón y
+escritura de cortes bajo autorización del dueño. El comando sin `--apply`
+presenta una vista previa. Los días sin corte muestran «Sin corte registrado»
+y un reintento conserva la primera observación completa de ese día.
+
+La composición del conector privado puede habilitar `direction_read_dossier`
+con una instancia de `create_direction_dossier_reader` que recibe el lector
+autenticado de Dirección, el resolver del permiso de consulta vigente y el
+origen HTTPS de SamChat. La consulta es individual, acotada y auditable. El
+catálogo permanece sin la herramienta cuando falta esa composición. La
+verificación en Chatty real requiere confirmar alcance, configuración y permiso
+de una identidad concreta. Probar la misma consulta con esa identidad y con una
+identidad sin acceso. Confirmar que los campos, importes y estados coinciden con
+Dirección, y que los vínculos protegidos vuelven a solicitar la sesión adecuada.
+
+Para revertir, detener el temporizador y la exposición del conector. Suspender
+temporalmente la captura mediante el control de accesos autorizado antes de
+seleccionar el release anterior. Esto protege los campos nuevos frente a una
+edición desde un formulario anterior y evita atribuciones duplicadas durante
+la reversión. Conservar las tablas, su auditoría y los cortes. Las migraciones
+de reversión protegen los registros cuando ya hay evidencia almacenada.

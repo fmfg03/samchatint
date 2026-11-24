@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 from fastapi import FastAPI
@@ -127,12 +128,39 @@ def _make_browser_app(monkeypatch):
             },
         }
 
+    async def registry(_session, *, cut_date, **_scope):
+        if cut_date is None:
+            return {}
+        return {
+            "entities": ["Jalisco"],
+            "categories": ["Juvenil"],
+            "team_roster": {
+                "source": "Padrón de equipos observado",
+                "status": "available",
+                "observed_at": "2026-11-20T18:05:00Z",
+                "rows": [
+                    {
+                        "label": "Equipo histórico A",
+                        "entity": "Jalisco",
+                        "category": "Juvenil",
+                        "player_registrations": 6,
+                    }
+                ],
+            },
+        }
+
     class Session:
         async def commit(self):
             return None
 
     monkeypatch.setenv("SESSION_SECRET_KEY", "isolated-dossier-browser-fixture")
     monkeypatch.setattr(dossier, "known_editions", releases)
+    monkeypatch.setattr(dossier, "load_dossier_registry", registry)
+    monkeypatch.setattr(
+        dossier,
+        "read_expense_lines",
+        AsyncMock(return_value={"status": "empty", "rows": []}),
+    )
     monkeypatch.setattr(dossier, "_authorized_tournaments", assigned)
     monkeypatch.setattr(dossier, "read_domains", domains)
     monkeypatch.setattr(dossier, "capture_permissions", permissions)
@@ -207,6 +235,23 @@ def test_dossier_filters_search_and_capture_confirmation(page: Page, monkeypatch
             filters.get_by_role("button", name="Aplicar filtros").click()
         assert page.get_by_role("heading", name="Partido nacional").is_visible()
         assert not page.get_by_role("heading", name="Padrón de la edición").is_visible()
+
+        consultation = page.locator("#torneo-edicion")
+        consultation.get_by_label("Corte histórico del padrón").fill("2026-11-20")
+        with page.expect_navigation():
+            consultation.get_by_role("button", name="Consultar").click()
+        assert page.get_by_role("heading", name="Equipo histórico A").is_visible()
+        assert page.get_by_text(
+            "Observación registrada 2026-11-20T18:05:00Z"
+        ).is_visible()
+        assert not page.get_by_role("heading", name="Partido nacional").is_visible()
+        assert not page.get_by_role(
+            "heading", name="Capturar o vincular datos"
+        ).is_visible()
+        consultation.get_by_label("Corte histórico del padrón").fill("")
+        with page.expect_navigation():
+            consultation.get_by_role("button", name="Consultar").click()
+        assert page.get_by_role("heading", name="Partido nacional").is_visible()
 
         page.set_viewport_size({"width": 390, "height": 844})
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
