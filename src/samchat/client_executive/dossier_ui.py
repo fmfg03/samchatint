@@ -342,6 +342,16 @@ _VIEW = _TEMPLATES.from_string("""
         </label>
         <button type="submit">Aplicar filtros</button>
       </form>
+      {% if unassigned_finance %}
+      <p class="source">
+        {% if unassigned_finance == 1 %}
+          Entre los documentos consultados hay 1 documento del torneo sin entidad asociada.
+        {% else %}
+          Entre los documentos consultados hay {{ unassigned_finance }} sin entidad asociada.
+        {% endif %}
+        <a href="{{ tournament_finance_url }}">Ver documentos del torneo</a>
+      </p>
+      {% endif %}
       <label class="search" for="buscar">Buscar por sección, categoría o fuente
         <input id="buscar" type="search" maxlength="100" autocomplete="off">
       </label>
@@ -355,7 +365,14 @@ _VIEW = _TEMPLATES.from_string("""
       {% if queried_at %}<p class="source">Consultado {{ queried_at }}</p>{% endif %}
       <dl class="sources">
         {% for name, source in sources %}
-        <div><dt>{{ name }}</dt><dd>{{ source_meta(source) }}</dd></div>
+        <div>
+          <dt>{{ name }}</dt>
+          <dd>{{ source_meta(source) }}
+            {% if name == "Finanzas" and consulted_finance %}
+            <p class="source">Documentos consultados: {{ consulted_finance }}</p>
+            {% endif %}
+          </dd>
+        </div>
         {% endfor %}
       </dl>
       {% if registration_summary %}

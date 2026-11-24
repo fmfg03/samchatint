@@ -708,7 +708,38 @@ def create_dossier_router(guard, source_access, is_superadmin) -> APIRouter:
                 "edition_verified"
             ) and not _operations_edition(records):
                 capture_config.pop("operations_edition", None)
+            tournament_filters = {**selected, "entity": ""}
+            unassigned_finance = (
+                sum(
+                    row["domain"] == "finance"
+                    and (
+                        not row.get("kind")
+                        or (
+                            row["kind"] == "financial_link"
+                            and row["status"] == "documented"
+                        )
+                    )
+                    and not row.get("entity")
+                    and _scope_matches(row, tournament_filters)
+                    for row in rows
+                )
+                if selected["entity"]
+                else 0
+            )
             context.update(
+                unassigned_finance=unassigned_finance,
+                consulted_finance=sum(
+                    row.get("edition_year", edition_year) == edition_year
+                    or row_id in linked_finance_ids
+                    for row_id, row in finance_rows.items()
+                ),
+                tournament_finance_url=_edition_url(
+                    tournament["id"],
+                    edition_year,
+                    **{
+                        key: value for key, value in tournament_filters.items() if value
+                    },
+                ),
                 sources=[
                     (label, sources[domain])
                     for domain, label in DOMAIN_LABELS.items()

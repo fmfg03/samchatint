@@ -392,3 +392,60 @@ def test_dossier_photo_preview_requires_scope_evidence_and_only_links_protected_
     else:
         assert preview.status_code == 422
         assert "esta edición y categoría" in preview.json()["detail"]
+
+
+def test_entity_filter_explains_available_finance_without_entity(
+    dossier_client, monkeypatch
+):
+    client, tid = dossier_client
+    national_id = str(uuid4())
+    sources = {
+        "entities": ["Morelos"],
+        "finance": {
+            "status": "partial",
+            "source": "Gastos",
+            "rows": [
+                {
+                    "id": str(uuid4()),
+                    "edition_year": 2026,
+                    "phase": "estatal",
+                    "label": "DOC-ESTATAL-SIN-ENTIDAD",
+                },
+                {
+                    "id": national_id,
+                    "edition_year": 2026,
+                    "phase": "nacional",
+                    "label": "DOC-NACIONAL-SIN-ENTIDAD",
+                },
+            ],
+        },
+    }
+    national = _record(
+        "financial_link",
+        "finance",
+        phase="nacional",
+        entity="",
+        category="",
+        concept="hotel_anticipo",
+        document_id=national_id,
+    )
+    _stub_page(
+        monkeypatch, records=[national], sources=sources, permissions={"finance"}
+    )
+    monkeypatch.setattr(routes, "capture_permissions", AsyncMock(return_value=set()))
+    selected = client.get(PATH, params={"entity": "Morelos", "phase": "estatal"})
+    assert selected.is_success
+    assert all(
+        "DOC-ESTATAL-SIN-ENTIDAD" not in item for item in _articles(selected.text)
+    )
+    assert "1 documento del torneo sin entidad asociada" in selected.text
+    assert "Documentos consultados: 2" in selected.text
+    link = f"{PATH}?tournament_id={tid}&amp;edition_year=2026&amp;phase=estatal"
+    assert f'href="{link}"' in selected.text
+    tournament = client.get(PATH, params={"tournament_id": tid, "phase": "estatal"})
+    assert "DOC-ESTATAL-SIN-ENTIDAD" in tournament.text
+    assert "DOC-NACIONAL-SIN-ENTIDAD" not in tournament.text
+    national_filter = client.get(
+        PATH, params={"entity": "Morelos", "phase": "nacional"}
+    )
+    assert "1 documento del torneo sin entidad asociada" in national_filter.text
